@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+/server/web-api/configs/application.properties
 
 # OS/editor artifacts
 .DS_Store
