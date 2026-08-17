@@ -73,7 +73,7 @@ func (h *Handler) resolveProgramBizLine(context *gin.Context, programID int64, t
 		httpx.JSON(context, nil, err)
 		return false
 	}
-	if err := httpx.AuthorizeProgram(context, programID); err != nil {
+	if err := httpx.AuthorizeProgramInBizLine(context, bizLine.String(), programID); err != nil {
 		httpx.JSON(context, nil, err)
 		return false
 	}

@@ -23,7 +23,11 @@ export class UserRecord {
 
   bizLines: string[] = [];
 
+	managedBizLines: string[] = [];
+
   programs: ProgramScope[] = [];
+
+	managedPrograms: ProgramScope[] = [];
 
   lastLoginAt?: string;
 

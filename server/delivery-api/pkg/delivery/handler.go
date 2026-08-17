@@ -29,8 +29,8 @@ type Handler struct {
 func NewHandler(deliveryService deliveryservice.Service, bizLineService bizline.Service, identityService identityservice.Service) *Handler {
 	return &Handler{handlers: []routers.Handler{
 		identity.NewHandler(identityService),
-		bizlines.NewHandler(bizLineService),
-		programs.NewHandler(deliveryService),
+		bizlines.NewHandler(bizLineService, identityService),
+		programs.NewHandler(deliveryService, identityService),
 		requirements.NewHandler(deliveryService),
 		items.NewHandler(deliveryService),
 		boards.NewHandler(deliveryService),

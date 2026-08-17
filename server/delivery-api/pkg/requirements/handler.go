@@ -75,6 +75,9 @@ func (h *Handler) bindPlanningSession(context *gin.Context) {
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
 		return
 	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.BindPlanningSession(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
@@ -100,6 +103,9 @@ func (h *Handler) bindTestingSession(context *gin.Context) {
 		return
 	}
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
 		return
 	}
 	req.ActorID = httpx.CallerID(context)
@@ -144,6 +150,9 @@ func (h *Handler) save(context *gin.Context) {
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
 		return
 	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.SaveRequirement(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
@@ -171,6 +180,9 @@ func (h *Handler) savePrototype(context *gin.Context) {
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
 		return
 	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.SaveRequirementPrototype(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
@@ -185,6 +197,9 @@ func (h *Handler) saveTesting(context *gin.Context) {
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
 		return
 	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.UpdateRequirementTesting(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
@@ -197,6 +212,9 @@ func (h *Handler) delete(context *gin.Context) {
 		return
 	}
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
 		return
 	}
 	req.ActorID = httpx.CallerID(context)
@@ -223,12 +241,20 @@ func (h *Handler) resolveProgramBizLine(context *gin.Context, programID int64, t
 		httpx.JSON(context, nil, err)
 		return false
 	}
-	if err := httpx.AuthorizeProgram(context, programID); err != nil {
+	if err := httpx.AuthorizeProgramInBizLine(context, bizLine.String(), programID); err != nil {
 		httpx.JSON(context, nil, err)
 		return false
 	}
 	*target = bizLine
 	return true
+}
+
+func (h *Handler) requireProgramManager(context *gin.Context, bizLine contract.BizLine, programID int64) bool {
+	if httpx.CanManageProgram(context, bizLine.String(), programID) {
+		return true
+	}
+	httpx.Fail(context, "无权管理该项目")
+	return false
 }
 
 var _ routers.Handler = (*Handler)(nil)

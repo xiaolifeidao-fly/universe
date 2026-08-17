@@ -14,6 +14,7 @@ import {
 	Input,
 	Modal,
 	Popconfirm,
+	Select,
 	Space,
 	Switch,
 	Table,
@@ -26,17 +27,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
 	BizLineRecord,
 	deleteBizLine,
+	fetchBizLineAssignment,
 	fetchAllBizLines,
+	saveBizLineAssignment,
 	saveBizLine,
 	type SaveBizLinePayload,
 } from "@/api/bizline.api";
+import { fetchMembers, type MemberRecord } from "@/api/delivery.api";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { getAuthUser } from "@/utils/auth";
 
 interface BizLineFormValues {
 	code: string;
 	name: string;
 	enabled: boolean;
+	userIds: number[];
+	managerIds: number[];
 }
 
 export function BusinessLineWorkspace() {
@@ -44,17 +51,22 @@ export function BusinessLineWorkspace() {
 	const { activeBusinessLine, refreshBusinessLines } = useBusinessLine();
 	const [form] = Form.useForm<BizLineFormValues>();
 	const [rows, setRows] = useState<BizLineRecord[]>([]);
+	const [members, setMembers] = useState<MemberRecord[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editing, setEditing] = useState<BizLineRecord | null>(null);
 	const [deletingCode, setDeletingCode] = useState("");
+	const authUser = getAuthUser();
+	const isSuperAdmin = authUser?.role === "admin";
+	const managedBizLines = authUser?.managedBizLines ?? [];
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [lines] = await Promise.all([fetchAllBizLines(), refreshBusinessLines()]);
+			const [lines, availableMembers] = await Promise.all([fetchAllBizLines(), fetchMembers(), refreshBusinessLines()]);
 			setRows(lines);
+			setMembers(availableMembers);
 		} catch (error) {
 			message.error((error as Error).message);
 		} finally {
@@ -75,15 +87,22 @@ export function BusinessLineWorkspace() {
 	const openCreate = () => {
 		setEditing(null);
 		form.resetFields();
-		form.setFieldsValue({ code: "", name: "", enabled: true });
+		form.setFieldsValue({ code: "", name: "", enabled: true, userIds: [], managerIds: [] });
 		setEditorOpen(true);
 	};
 
-	const openEdit = (record: BizLineRecord) => {
+	const canManage = (record: BizLineRecord) => isSuperAdmin || managedBizLines.includes(record.code);
+
+	const openEdit = async (record: BizLineRecord) => {
+		try {
+			const assignment = await fetchBizLineAssignment(record.code);
 		setEditing(record);
 		form.resetFields();
-		form.setFieldsValue({ code: record.code, name: record.name, enabled: record.enabled });
+		form.setFieldsValue({ code: record.code, name: record.name, enabled: record.enabled, userIds: assignment.userIds, managerIds: assignment.managerIds });
 		setEditorOpen(true);
+		} catch (error) {
+			message.error((error as Error).message);
+		}
 	};
 
 	const save = async () => {
@@ -95,7 +114,10 @@ export function BusinessLineWorkspace() {
 				name: values.name.trim(),
 				enabled: values.enabled,
 			};
-			await saveBizLine(payload);
+			if (isSuperAdmin) {
+				await saveBizLine(payload);
+			}
+			await saveBizLineAssignment(payload.code, { userIds: values.userIds ?? [], managerIds: values.managerIds ?? [] });
 			message.success(t(editing ? "businessLines.saved" : "businessLines.created"));
 			closeEditor();
 			await refresh();
@@ -154,10 +176,10 @@ export function BusinessLineWorkspace() {
 				align: "right",
 				render: (_, record) => (
 					<Space size={0}>
-						<Tooltip title={t("businessLines.edit")}>
-							<Button type="text" icon={<EditOutlined />} aria-label={t("businessLines.edit")} onClick={() => openEdit(record)} />
-						</Tooltip>
-						<Popconfirm
+						{canManage(record) ? <Tooltip title={t("businessLines.edit")}>
+							<Button type="text" icon={<EditOutlined />} aria-label={t("businessLines.edit")} onClick={() => void openEdit(record)} />
+						</Tooltip> : null}
+						{isSuperAdmin ? <Popconfirm
 							title={t("businessLines.deleteConfirm")}
 							okButtonProps={{ danger: true, loading: deletingCode === record.code }}
 							onConfirm={() => remove(record)}
@@ -171,12 +193,12 @@ export function BusinessLineWorkspace() {
 									loading={deletingCode === record.code}
 								/>
 							</Tooltip>
-						</Popconfirm>
+						</Popconfirm> : null}
 					</Space>
 				),
 			},
 		],
-		[deletingCode, t],
+		[deletingCode, isSuperAdmin, managedBizLines, t],
 	);
 
 	return (
@@ -200,9 +222,9 @@ export function BusinessLineWorkspace() {
 						<Tooltip title={t("businessLines.refresh")}>
 							<Button icon={<ReloadOutlined />} aria-label={t("businessLines.refresh")} loading={loading} onClick={() => void refresh()} />
 						</Tooltip>
-						<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+						{isSuperAdmin ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
 							{t("businessLines.new")}
-						</Button>
+						</Button> : null}
 					</Space>
 				</div>
 				{rows.length === 0 && !loading ? (
@@ -243,13 +265,19 @@ export function BusinessLineWorkspace() {
 						]}
 						extra={editing ? t("businessLines.codeHint") : undefined}
 					>
-						<Input disabled={Boolean(editing)} autoComplete="off" />
+						<Input disabled={Boolean(editing) || !isSuperAdmin} autoComplete="off" />
 					</Form.Item>
 					<Form.Item label={t("businessLines.name")} name="name" rules={[{ required: true, message: t("businessLines.required") }]}>
-						<Input autoComplete="off" />
+						<Input disabled={!isSuperAdmin} autoComplete="off" />
 					</Form.Item>
 					<Form.Item label={t("businessLines.status")} name="enabled" valuePropName="checked">
-						<Switch checkedChildren={t("businessLines.enabled")} unCheckedChildren={t("businessLines.disabled")} />
+						<Switch disabled={!isSuperAdmin} checkedChildren={t("businessLines.enabled")} unCheckedChildren={t("businessLines.disabled")} />
+					</Form.Item>
+					<Form.Item label={t("businessLines.members")} name="userIds">
+						<Select mode="multiple" options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
+					</Form.Item>
+					<Form.Item label={t("businessLines.managers")} name="managerIds" extra={t("businessLines.managersHint")}>
+						<Select disabled={!isSuperAdmin} mode="multiple" options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
 					</Form.Item>
 				</Form>
 			</Modal>

@@ -23,6 +23,10 @@ export class LoggedInUser {
   role = "member";
 
   mustChangePassword = false;
+
+	managedBizLines: string[] = [];
+
+	managedPrograms: Array<{ bizLine: string; programId: number }> = [];
 }
 
 export async function login(payload: LoginPayload) {

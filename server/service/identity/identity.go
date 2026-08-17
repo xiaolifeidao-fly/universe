@@ -29,6 +29,10 @@ type Service interface {
 	// ListMembers 供选人控件使用，任何登录用户都能调用，只返回标识和显示名。
 	ListMembers(context.Context, dto.MemberQuery) ([]dto.MemberView, error)
 	GetUser(context.Context, int64) (dto.UserView, error)
+	ListBizLineAssignment(context.Context, string) (dto.ScopeAssignment, error)
+	ReplaceBizLineAssignment(context.Context, string, dto.ScopeAssignment) error
+	ListProgramAssignment(context.Context, int64) (dto.ScopeAssignment, error)
+	ReplaceProgramAssignment(context.Context, string, int64, dto.ScopeAssignment) error
 	SaveUser(context.Context, dto.SaveUserRequest) (dto.UserView, error)
 	ResetPassword(context.Context, dto.ResetPasswordRequest) error
 	ChangeOwnPassword(context.Context, int64, dto.ChangeOwnPasswordRequest) (dto.LoginResult, error)

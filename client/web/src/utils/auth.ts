@@ -10,6 +10,8 @@ export interface AuthUser {
   displayName: string;
   role: string;
   mustChangePassword: boolean;
+	managedBizLines?: string[];
+	managedPrograms?: Array<{ bizLine: string; programId: number }>;
 }
 
 function canUseBrowserStorage() {

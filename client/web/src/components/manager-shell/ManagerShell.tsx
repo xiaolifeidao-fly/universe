@@ -10,6 +10,7 @@ import {
   GlobalOutlined,
   IdcardOutlined,
 	KeyOutlined,
+	LogoutOutlined,
   MenuOutlined,
   ReloadOutlined,
   SettingOutlined,
@@ -23,7 +24,7 @@ import { PropsWithChildren, type CSSProperties, type ReactNode, useEffect, useMe
 import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
-import { getAuthUser, isAuthTokenRemembered, isPasswordChangeRequired, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
+import { clearAuthToken, getAuthUser, isAuthTokenRemembered, isPasswordChangeRequired, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
 import {
   CLAUDE_EFFORTS,
   CLAUDE_MODEL_OPTIONS,
@@ -123,8 +124,35 @@ const SYSTEM_NAV_GROUP: NavGroup = {
   ],
 };
 
-function navGroupsFor(isAdmin: boolean): NavGroup[] {
-  return isAdmin ? [DELIVERY_NAV_GROUP, SYSTEM_NAV_GROUP] : [DELIVERY_NAV_GROUP];
+const PROGRAM_NAV_GROUP: NavGroup = {
+  key: "grp-programs",
+  label: "nav.programs",
+  caption: "PROJECTS",
+  tone: "amber",
+  icon: <FolderOutlined />,
+  children: [
+    { key: "/programs", label: "programs.title", icon: <FolderOutlined /> },
+  ],
+};
+
+const BIZ_LINE_NAV_GROUP: NavGroup = {
+	key: "grp-bizline",
+	label: "nav.businessLines",
+	caption: "BUSINESS LINES",
+	tone: "amber",
+	icon: <BranchesOutlined />,
+	children: [
+		{ key: "/business-lines", label: "nav.businessLines", icon: <BranchesOutlined /> },
+	],
+};
+
+function navGroupsFor(isAdmin: boolean, canManageBizLines: boolean): NavGroup[] {
+	if (isAdmin) return [DELIVERY_NAV_GROUP, SYSTEM_NAV_GROUP];
+	return [
+		DELIVERY_NAV_GROUP,
+		PROGRAM_NAV_GROUP,
+		...(canManageBizLines ? [BIZ_LINE_NAV_GROUP] : []),
+	];
 }
 
 function findGroupKey(path: string, groups: NavGroup[]): string | undefined {
@@ -136,10 +164,11 @@ export function ManagerShell({ children }: ManagerShellProps) {
   const router = useRouter();
   const { locale, setLocale, t } = useLocale();
   const { activeBusinessLine, businessLines, setActiveBusinessLine } = useBusinessLine();
-  const { preferences, setPreferences } = useAIPreferences();
-  const authUser = getAuthUser();
-  const isAdmin = authUser?.role === "admin";
-  const navGroups = useMemo(() => navGroupsFor(isAdmin), [isAdmin]);
+	const { preferences, setPreferences } = useAIPreferences();
+	const authUser = getAuthUser();
+	const isAdmin = authUser?.role === "admin";
+	const canManageBizLines = isAdmin || (authUser?.managedBizLines?.length ?? 0) > 0;
+	const navGroups = useMemo(() => navGroupsFor(isAdmin, canManageBizLines), [canManageBizLines, isAdmin]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -235,6 +264,11 @@ export function ManagerShell({ children }: ManagerShellProps) {
       .then((value) => setProfile(value))
       .catch((error: Error) => message.error(error.message))
       .finally(() => setProfileLoading(false));
+  };
+
+  const logout = () => {
+    clearAuthToken();
+    router.replace("/login");
   };
 
   // 首次登录必须改密码时，改密码弹窗自动弹出并锁住，改完才放行。
@@ -495,8 +529,20 @@ export function ManagerShell({ children }: ManagerShellProps) {
 					items: [
 					  { key: "profile", icon: <IdcardOutlined />, label: t("account.profileInfo") },
 					  { key: "password", icon: <KeyOutlined />, label: t("account.changePassword") },
+					  { type: "divider" },
+					  { key: "logout", danger: true, icon: <LogoutOutlined />, label: t("shell.logout") },
 					],
-					onClick: ({ key }) => (key === "profile" ? openProfile() : setPasswordModalOpen(true)),
+					onClick: ({ key }) => {
+					  if (key === "profile") {
+						openProfile();
+						return;
+					  }
+					  if (key === "password") {
+						setPasswordModalOpen(true);
+						return;
+					  }
+					  logout();
+					},
 				  }}
 				>
 				  <Button aria-label={t("account.profile")} icon={<UserOutlined />}>

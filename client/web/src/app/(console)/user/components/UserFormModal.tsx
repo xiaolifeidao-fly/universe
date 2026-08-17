@@ -2,6 +2,7 @@
 
 import { Button, Form, Input, Modal, Select, Space, Tag } from "antd";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale } from "@/i18n/LocaleProvider";
 import {
   fetchProgramOptions,
   type BizLineOption,
@@ -34,6 +35,7 @@ const scopeKey = (scope: ProgramScope) => `${scope.bizLine}:${scope.programId}`;
 
 export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSubmit }: UserFormModalProps) {
   const [form] = Form.useForm<UserFormValues>();
+  const { t } = useLocale();
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const selectedBizLines = Form.useWatch("bizLines", form) ?? [];
   const isEdit = Boolean(user);
@@ -118,7 +120,19 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
             <Select options={[{ value: "active", label: "启用" }, { value: "disabled", label: "停用" }]} />
           </Form.Item>
         </Space>
-        <Form.Item label={isEdit ? "更新密码" : "初始密码"} name="password" rules={isEdit ? [] : [{ required: true, message: "请输入初始密码" }]} extra={isEdit ? "留空保持当前密码" : "首次登录后用户需要修改密码"}>
+        <Form.Item
+          label={isEdit ? "更新密码" : "初始密码"}
+          name="password"
+          rules={[
+            ...(isEdit ? [] : [{ required: true, whitespace: true, message: "请输入初始密码" }]),
+            {
+              min: 8,
+              transform: (value) => typeof value === "string" ? value.trim() : value,
+              message: t("account.newPasswordRequired"),
+            },
+          ]}
+          extra={isEdit ? "留空保持当前密码" : "首次登录后用户需要修改密码"}
+        >
           <Input.Password autoComplete="new-password" />
         </Form.Item>
         <Form.Item label="可见业务线" name="bizLines" extra="未分配业务线的成员无法访问对应数据。">

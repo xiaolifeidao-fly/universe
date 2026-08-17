@@ -36,10 +36,13 @@ import {
 	fetchModules,
 	fetchModulesPage,
 	fetchCodexLocalProjects,
+	fetchMembers,
+	fetchProgramAssignment,
 	fetchPrograms,
 	fetchStages,
 	migrateProgram,
 	saveModule,
+	saveProgramAssignment,
 	saveProgram,
 	saveStage,
 	validateCodexWorkspace,
@@ -47,11 +50,13 @@ import {
 	type DeliveryModuleRecord,
 	type DeliveryProgramRecord,
 	type DeliveryStageRecord,
+	type MemberRecord,
 	type SaveModulePayload,
 	type SaveProgramPayload,
 	type SaveStagePayload,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { getAuthUser } from "@/utils/auth";
 import {
 	getProjectWorkspacePreference,
 	saveProjectWorkspacePreference,
@@ -64,6 +69,8 @@ interface ProgramFormValues {
 	name: string;
 	summary?: string;
 	status: string;
+	userIds: number[];
+	managerIds: number[];
 }
 
 interface ModuleFormValues {
@@ -93,6 +100,7 @@ export function ProgramManagementWorkspace() {
 	const [moduleForm] = Form.useForm<ModuleFormValues>();
 	const [stageForm] = Form.useForm<StageFormValues>();
 	const [programs, setPrograms] = useState<DeliveryProgramRecord[]>([]);
+	const [members, setMembers] = useState<MemberRecord[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [editorOpen, setEditorOpen] = useState(false);
@@ -124,6 +132,12 @@ export function ProgramManagementWorkspace() {
 	const [workspaceLoading, setWorkspaceLoading] = useState(false);
 	const [workspaceSaving, setWorkspaceSaving] = useState(false);
 	const [workspaceSource, setWorkspaceSource] = useState<"saved" | "matched" | "manual" | "unmatched">("unmatched");
+	const authUser = getAuthUser();
+	const isSuperAdmin = authUser?.role === "admin";
+	const managedBizLines = authUser?.managedBizLines ?? [];
+	const managedProgramIDs = new Set((authUser?.managedPrograms ?? []).map((scope) => scope.programId));
+	const canCreateProgram = isSuperAdmin || managedBizLines.includes(activeBusinessLine.id);
+	const canManageProgram = (program: DeliveryProgramRecord) => isSuperAdmin || managedBizLines.includes(program.bizLine) || managedProgramIDs.has(program.programId);
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -174,6 +188,10 @@ export function ProgramManagementWorkspace() {
 	}, [refresh]);
 
 	useEffect(() => {
+		void fetchMembers().then(setMembers).catch((error: Error) => message.error(error.message));
+	}, []);
+
+	useEffect(() => {
 		if (moduleProgram) void refreshModules(modulePageIndex);
 	}, [modulePageIndex, moduleProgram, refreshModules]);
 
@@ -210,11 +228,15 @@ export function ProgramManagementWorkspace() {
 			name: "",
 			summary: "",
 			status: "active",
+			userIds: [],
+			managerIds: [],
 		});
 		setEditorOpen(true);
 	};
 
-	const openEdit = (program: DeliveryProgramRecord) => {
+	const openEdit = async (program: DeliveryProgramRecord) => {
+		try {
+			const assignment = await fetchProgramAssignment(program.programId);
 		setEditing(program);
 		form.resetFields();
 		form.setFieldsValue({
@@ -224,8 +246,13 @@ export function ProgramManagementWorkspace() {
 			name: program.name,
 			summary: program.summary,
 			status: program.status || "active",
+			userIds: assignment.userIds,
+			managerIds: assignment.managerIds,
 		});
 		setEditorOpen(true);
+		} catch (error) {
+			message.error((error as Error).message);
+		}
 	};
 
 	const save = async () => {
@@ -246,6 +273,9 @@ export function ProgramManagementWorkspace() {
 			} else {
 				await saveProgram(targetBizLine, payload);
 				message.success(t(editing ? "programs.saved" : "programs.created"));
+			}
+			if (editing) {
+				await saveProgramAssignment(editing.programId, { userIds: values.userIds ?? [], managerIds: values.managerIds ?? [] });
 			}
 			closeProgramEditor();
 			if (targetBizLine === activeBusinessLine.id) {
@@ -554,14 +584,14 @@ export function ProgramManagementWorkspace() {
 								onClick={() => void openWorkspacePreference(record)}
 							/>
 						</Tooltip>
-						<Tooltip title={t("programs.edit")}>
-							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.edit")} onClick={() => openEdit(record)} />
-						</Tooltip>
+						{canManageProgram(record) ? <Tooltip title={t("programs.edit")}>
+							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.edit")} onClick={() => void openEdit(record)} />
+						</Tooltip> : null}
 					</Space>
 				),
 			},
 		],
-		[locale, openWorkspacePreference, t],
+		[locale, managedBizLines, managedProgramIDs, openWorkspacePreference, t],
 	);
 
 	const moduleColumns = useMemo<ColumnsType<DeliveryModuleRecord>>(
@@ -610,17 +640,17 @@ export function ProgramManagementWorkspace() {
 				align: "right",
 				render: (_, record) => (
 					<Space size={0}>
-						<Tooltip title={t("programs.modules.edit")}>
+						{moduleProgram && canManageProgram(moduleProgram) ? <Tooltip title={t("programs.modules.edit")}>
 							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.modules.edit")} onClick={() => openEditModule(record)} />
-						</Tooltip>
-						<Tooltip title={t("programs.modules.delete")}>
+						</Tooltip> : null}
+						{moduleProgram && canManageProgram(moduleProgram) ? <Tooltip title={t("programs.modules.delete")}>
 							<Button danger type="text" icon={<DeleteOutlined />} aria-label={t("programs.modules.delete")} loading={deletingModuleKey === record.moduleKey} onClick={() => void openModuleDeletion(record)} />
-						</Tooltip>
+						</Tooltip> : null}
 					</Space>
 				),
 			},
 		],
-		[activeBusinessLine.id, deletingModuleKey, moduleProgram, t],
+		[activeBusinessLine.id, deletingModuleKey, managedBizLines, managedProgramIDs, moduleProgram, t],
 	);
 
 	const stageColumns = useMemo<ColumnsType<DeliveryStageRecord>>(
@@ -661,10 +691,10 @@ export function ProgramManagementWorkspace() {
 				align: "right",
 				render: (_, record) => (
 					<Space size={0}>
-						<Tooltip title={t("programs.stages.edit")}>
+						{stageProgram && canManageProgram(stageProgram) ? <Tooltip title={t("programs.stages.edit")}>
 							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.stages.edit")} onClick={() => openEditStage(record)} />
-						</Tooltip>
-						<Popconfirm
+						</Tooltip> : null}
+						{stageProgram && canManageProgram(stageProgram) ? <Popconfirm
 							title={t("programs.stages.deleteConfirm")}
 							okButtonProps={{ danger: true, loading: deletingStageKey === record.stageKey }}
 							onConfirm={() => removeStage(record)}
@@ -672,12 +702,12 @@ export function ProgramManagementWorkspace() {
 							<Tooltip title={t("programs.stages.delete")}>
 								<Button danger type="text" icon={<DeleteOutlined />} aria-label={t("programs.stages.delete")} loading={deletingStageKey === record.stageKey} />
 							</Tooltip>
-						</Popconfirm>
+						</Popconfirm> : null}
 					</Space>
 				),
 			},
 		],
-		[deletingStageKey, t],
+		[deletingStageKey, managedBizLines, managedProgramIDs, stageProgram, t],
 	);
 
 	return (
@@ -701,9 +731,9 @@ export function ProgramManagementWorkspace() {
 						<Tooltip title={t("programs.refresh")}>
 							<Button icon={<ReloadOutlined />} aria-label={t("programs.refresh")} loading={loading} onClick={() => void refresh()} />
 						</Tooltip>
-						<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+						{canCreateProgram ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
 							{t("programs.new")}
-						</Button>
+						</Button> : null}
 					</Space>
 				</div>
 				{programs.length === 0 && !loading ? (
@@ -790,7 +820,7 @@ export function ProgramManagementWorkspace() {
 			>
 					<Form form={form} layout="vertical">
 						<Form.Item label={t("programs.businessLine")} name="bizLine" rules={[{ required: true, message: t("programs.businessLine.required") }]}>
-							<Select options={businessLines.map((line) => ({ value: line.id, label: `${line.label} · ${line.code}` }))} />
+							<Select disabled={Boolean(editing) && !isSuperAdmin && !managedBizLines.includes(editing?.bizLine ?? "")} options={businessLines.map((line) => ({ value: line.id, label: `${line.label} · ${line.code}` }))} />
 						</Form.Item>
 					{editing ? (
 						<Form.Item label={t("programs.id")} name="programId">
@@ -819,6 +849,14 @@ export function ProgramManagementWorkspace() {
 							]}
 						/>
 					</Form.Item>
+					{editing ? <>
+						<Form.Item label={t("programs.members")} name="userIds">
+							<Select mode="multiple" options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
+						</Form.Item>
+						<Form.Item label={t("programs.managers")} name="managerIds" extra={t("programs.managersHint")}>
+							<Select mode="multiple" options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
+						</Form.Item>
+					</> : null}
 				</Form>
 			</Modal>
 

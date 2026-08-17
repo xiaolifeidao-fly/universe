@@ -60,6 +60,12 @@ export class DeliveryProgramRecord {
   updatedAt?: string;
 }
 
+export class ProgramAssignment {
+	userIds: number[] = [];
+
+	managerIds: number[] = [];
+}
+
 export class DeliveryStageRecord {
   stageKey = "";
 
@@ -1009,6 +1015,15 @@ export async function migrateProgram(bizLine: BusinessLineId, payload: MigratePr
 	return unwrapApiResponse(response.data);
 }
 
+export async function fetchProgramAssignment(programId: number) {
+	return getData(ProgramAssignment, "/delivery/program/assignment", { programId });
+}
+
+export async function saveProgramAssignment(programId: number, assignment: ProgramAssignment) {
+	const response = await instance.post<ApiResponse<null>>("/delivery/program/assignment", { programId, ...assignment });
+	return unwrapApiResponse(response.data);
+}
+
 export async function fetchStages(programId: number) {
   return getDataList(DeliveryStageRecord, "/delivery/stages", { programId });
 }
@@ -1218,7 +1233,7 @@ export async function rebuildSnapshot(programId: number, statDate?: string) {
   return unwrapApiResponse(response.data);
 }
 
-const CODEX_BRIDGE_URL = "http://127.0.0.1:8765";
+const CODEX_BRIDGE_URL = "https://127.0.0.1:8765";
 
 function requiredProjectWorkspace(programId: number) {
   const workspace = getProjectWorkspace(programId);

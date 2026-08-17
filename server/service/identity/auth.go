@@ -59,12 +59,16 @@ func (s *service) AuthenticateToken(ctx context.Context, rawToken string) (httpx
 		return httpx.UserPrincipal{}, err
 	}
 	programIDs := make([]int64, 0, len(view.Programs))
+	managedProgramIDs := make([]int64, 0, len(view.ManagedPrograms))
 	for _, program := range view.Programs {
 		programIDs = append(programIDs, program.ProgramID)
 	}
+	for _, program := range view.ManagedPrograms {
+		managedProgramIDs = append(managedProgramIDs, program.ProgramID)
+	}
 	return httpx.UserPrincipal{
 		ID: strconv.FormatInt(user.ID, 10), Username: user.Username, DisplayName: user.DisplayName,
-		Role: user.Role, MustChangePassword: user.MustChangePassword, BizLines: view.BizLines, ProgramIDs: programIDs,
+		Role: user.Role, MustChangePassword: user.MustChangePassword, BizLines: view.BizLines, ManagedBizLines: view.ManagedBizLines, ProgramIDs: programIDs, ManagedProgramIDs: managedProgramIDs,
 	}, nil
 }
 

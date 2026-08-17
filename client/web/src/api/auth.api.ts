@@ -26,7 +26,11 @@ export class CurrentUserProfile {
 
   bizLines: string[] = [];
 
+	managedBizLines: string[] = [];
+
   programs: CurrentUserProgramScope[] = [];
+
+	managedPrograms: CurrentUserProgramScope[] = [];
 
   lastLoginAt?: string;
 

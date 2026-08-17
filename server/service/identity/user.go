@@ -173,7 +173,7 @@ func (s *service) EnsureDefaultAdmin(ctx context.Context, username, displayName,
 }
 
 func (s *service) toUserView(ctx context.Context, user *repository.IdentityUser) (dto.UserView, error) {
-	bizLines, err := s.repo.ListBizLines(ctx, user.ID)
+	bizLineRows, err := s.repo.ListBizLineAssignments(ctx, user.ID)
 	if err != nil {
 		return dto.UserView{}, err
 	}
@@ -181,9 +181,22 @@ func (s *service) toUserView(ctx context.Context, user *repository.IdentityUser)
 	if err != nil {
 		return dto.UserView{}, err
 	}
-	programs := make([]dto.ProgramScope, 0, len(programRows))
-	for _, row := range programRows {
-		programs = append(programs, dto.ProgramScope{BizLine: row.BizLine, ProgramID: row.ProgramID})
+	bizLines := make([]string, 0, len(bizLineRows))
+	managedBizLines := make([]string, 0, len(bizLineRows))
+	for _, row := range bizLineRows {
+		bizLines = append(bizLines, row.BizLine)
+		if row.IsManager {
+			managedBizLines = append(managedBizLines, row.BizLine)
+		}
 	}
-	return dto.UserView{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: user.Role, Status: user.Status, MustChangePassword: user.MustChangePassword, BizLines: bizLines, Programs: programs, LastLoginAt: user.LastLoginAt, UpdatedAt: timePtr(user.UpdatedTime), CreatedAt: timePtr(user.CreatedTime)}, nil
+	programs := make([]dto.ProgramScope, 0, len(programRows))
+	managedPrograms := make([]dto.ProgramScope, 0, len(programRows))
+	for _, row := range programRows {
+		scope := dto.ProgramScope{BizLine: row.BizLine, ProgramID: row.ProgramID}
+		programs = append(programs, scope)
+		if row.IsManager {
+			managedPrograms = append(managedPrograms, scope)
+		}
+	}
+	return dto.UserView{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: user.Role, Status: user.Status, MustChangePassword: user.MustChangePassword, BizLines: bizLines, ManagedBizLines: managedBizLines, Programs: programs, ManagedPrograms: managedPrograms, LastLoginAt: user.LastLoginAt, UpdatedAt: timePtr(user.UpdatedTime), CreatedAt: timePtr(user.CreatedTime)}, nil
 }

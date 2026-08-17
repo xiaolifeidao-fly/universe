@@ -20,10 +20,11 @@ CREATE TABLE IF NOT EXISTS `zt_identity_user_biz_line` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `user_id` bigint NOT NULL,
   `biz_line` varchar(32) NOT NULL,
+  `is_manager` tinyint(1) NOT NULL DEFAULT 0,
   `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_identity_user_bizline` (`user_id`, `biz_line`),
-  KEY `idx_identity_user_bizline` (`user_id`, `biz_line`)
+  KEY `idx_identity_user_bizline` (`user_id`, `biz_line`, `is_manager`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_identity_user_program` (
@@ -31,8 +32,9 @@ CREATE TABLE IF NOT EXISTS `zt_identity_user_program` (
   `user_id` bigint NOT NULL,
   `biz_line` varchar(32) NOT NULL,
   `program_id` bigint NOT NULL,
+  `is_manager` tinyint(1) NOT NULL DEFAULT 0,
   `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_identity_user_program` (`user_id`, `program_id`),
-  KEY `idx_identity_user_program` (`user_id`, `biz_line`, `program_id`)
+  KEY `idx_identity_user_program` (`user_id`, `biz_line`, `program_id`, `is_manager`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -112,8 +112,8 @@ func (r *IdentityRepository) DeleteUser(ctx context.Context, id int64) error {
 }
 
 func (r *IdentityRepository) ListBizLines(ctx context.Context, userID int64) ([]string, error) {
-	var rows []*IdentityUserBizLine
-	if err := r.Db.WithContext(ctx).Where("user_id = ?", userID).Order("biz_line asc").Find(&rows).Error; err != nil {
+	rows, err := r.ListBizLineAssignments(ctx, userID)
+	if err != nil {
 		return nil, err
 	}
 	values := make([]string, 0, len(rows))
@@ -121,6 +121,22 @@ func (r *IdentityRepository) ListBizLines(ctx context.Context, userID int64) ([]
 		values = append(values, row.BizLine)
 	}
 	return values, nil
+}
+
+func (r *IdentityRepository) ListBizLineAssignments(ctx context.Context, userID int64) ([]*IdentityUserBizLine, error) {
+	var rows []*IdentityUserBizLine
+	if err := r.Db.WithContext(ctx).Where("user_id = ?", userID).Order("biz_line asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *IdentityRepository) ListBizLineAssignmentsByBizLine(ctx context.Context, bizLine string) ([]*IdentityUserBizLine, error) {
+	var rows []*IdentityUserBizLine
+	if err := r.Db.WithContext(ctx).Where("biz_line = ?", bizLine).Order("user_id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *IdentityRepository) ListPrograms(ctx context.Context, userID int64) ([]*IdentityUserProgram, error) {
@@ -131,8 +147,32 @@ func (r *IdentityRepository) ListPrograms(ctx context.Context, userID int64) ([]
 	return rows, nil
 }
 
+func (r *IdentityRepository) ListProgramAssignments(ctx context.Context, programID int64) ([]*IdentityUserProgram, error) {
+	var rows []*IdentityUserProgram
+	if err := r.Db.WithContext(ctx).Where("program_id = ?", programID).Order("user_id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (r *IdentityRepository) ReplaceAssignments(ctx context.Context, userID int64, bizLines []string, programs []IdentityUserProgram) error {
 	return r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existingBizLines []*IdentityUserBizLine
+		if err := tx.Where("user_id = ?", userID).Find(&existingBizLines).Error; err != nil {
+			return err
+		}
+		bizLineManagers := make(map[string]bool, len(existingBizLines))
+		for _, assignment := range existingBizLines {
+			bizLineManagers[assignment.BizLine] = assignment.IsManager
+		}
+		var existingPrograms []*IdentityUserProgram
+		if err := tx.Where("user_id = ?", userID).Find(&existingPrograms).Error; err != nil {
+			return err
+		}
+		programManagers := make(map[int64]bool, len(existingPrograms))
+		for _, assignment := range existingPrograms {
+			programManagers[assignment.ProgramID] = assignment.IsManager
+		}
 		if err := tx.Where("user_id = ?", userID).Delete(&IdentityUserBizLine{}).Error; err != nil {
 			return err
 		}
@@ -140,14 +180,48 @@ func (r *IdentityRepository) ReplaceAssignments(ctx context.Context, userID int6
 			return err
 		}
 		for _, bizLine := range bizLines {
-			if err := tx.Create(&IdentityUserBizLine{UserID: userID, BizLine: bizLine}).Error; err != nil {
+			if err := tx.Create(&IdentityUserBizLine{UserID: userID, BizLine: bizLine, IsManager: bizLineManagers[bizLine]}).Error; err != nil {
 				return err
 			}
 		}
 		for _, program := range programs {
 			program.ID = 0
 			program.UserID = userID
+			program.IsManager = programManagers[program.ProgramID]
 			if err := tx.Create(&program).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *IdentityRepository) ReplaceBizLineAssignments(ctx context.Context, bizLine string, rows []IdentityUserBizLine) error {
+	return r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("biz_line = ?", bizLine).Delete(&IdentityUserBizLine{}).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			row.ID = 0
+			row.BizLine = bizLine
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *IdentityRepository) ReplaceProgramAssignments(ctx context.Context, programID int64, bizLine string, rows []IdentityUserProgram) error {
+	return r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("program_id = ?", programID).Delete(&IdentityUserProgram{}).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			row.ID = 0
+			row.ProgramID = programID
+			row.BizLine = bizLine
+			if err := tx.Create(&row).Error; err != nil {
 				return err
 			}
 		}

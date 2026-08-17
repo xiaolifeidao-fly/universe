@@ -34,7 +34,9 @@ type UserPrincipal struct {
 	Role               string
 	MustChangePassword bool
 	BizLines           []string
+	ManagedBizLines    []string
 	ProgramIDs         []int64
+	ManagedProgramIDs  []int64
 	Service            bool
 }
 
@@ -227,7 +229,7 @@ func AuthorizeBizLine(ginContext *gin.Context, bizLine string) error {
 	if !ok {
 		return errors.New("not login")
 	}
-	if principal.Service || principal.Role == "admin" || contains(principal.BizLines, bizLine) {
+	if principal.Service || principal.Role == "admin" || contains(principal.BizLines, bizLine) || contains(principal.ManagedBizLines, bizLine) {
 		return nil
 	}
 	return errors.New("无权访问该业务线")
@@ -238,10 +240,34 @@ func AuthorizeProgram(ginContext *gin.Context, programID int64) error {
 	if !ok {
 		return errors.New("not login")
 	}
-	if principal.Service || principal.Role == "admin" || containsProgramID(principal.ProgramIDs, programID) {
+	if principal.Service || principal.Role == "admin" || containsProgramID(principal.ProgramIDs, programID) || containsProgramID(principal.ManagedProgramIDs, programID) {
 		return nil
 	}
 	return errors.New("无权访问该项目")
+}
+
+// AuthorizeProgramInBizLine applies the complete project visibility rule.
+// Business-line administrators see every project under their line, while
+// project members and project administrators only see their assigned project.
+func AuthorizeProgramInBizLine(ginContext *gin.Context, bizLine string, programID int64) error {
+	principal, ok := CurrentUser(ginContext)
+	if !ok {
+		return errors.New("not login")
+	}
+	if principal.Service || principal.Role == "admin" || contains(principal.ManagedBizLines, bizLine) {
+		return nil
+	}
+	return AuthorizeProgram(ginContext, programID)
+}
+
+func CanManageBizLine(ginContext *gin.Context, bizLine string) bool {
+	principal, ok := CurrentUser(ginContext)
+	return ok && (principal.Service || principal.Role == "admin" || contains(principal.ManagedBizLines, bizLine))
+}
+
+func CanManageProgram(ginContext *gin.Context, bizLine string, programID int64) bool {
+	principal, ok := CurrentUser(ginContext)
+	return ok && (principal.Service || principal.Role == "admin" || contains(principal.ManagedBizLines, bizLine) || containsProgramID(principal.ManagedProgramIDs, programID))
 }
 
 func CanAccessBizLine(ginContext *gin.Context, bizLine string) bool {

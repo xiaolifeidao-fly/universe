@@ -1211,6 +1211,57 @@ select {
   line-height: 1.2;
 }
 
+.delivery-notification-button.ant-btn {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+}
+
+.delivery-notification-popover {
+  width: 208px;
+}
+
+.delivery-notification-popover__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  border-bottom: 1px solid var(--manager-border);
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-sm);
+}
+
+.delivery-notification-popover__row:last-child {
+  border-bottom: 0;
+}
+
+.delivery-notification-popover__row > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.delivery-notification-popover__row > span::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--manager-text-faint);
+  content: "";
+}
+
+.delivery-notification-popover__row > b {
+  color: var(--manager-text);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-base);
+  font-variant-numeric: tabular-nums;
+}
+
+.delivery-notification-popover__row.is-blocked > span::before { background: #d95c5c; }
+.delivery-notification-popover__row.is-dropped > span::before { background: #9b8c7f; }
+.delivery-notification-popover__row.is-done > span::before { background: #3b9a73; }
+
 .delivery-toolbar {
   display: flex;
   flex-wrap: wrap;

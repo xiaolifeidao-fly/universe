@@ -25,6 +25,7 @@ type IdentityUserBizLine struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	UserID    int64     `gorm:"column:user_id;uniqueIndex:uk_identity_user_bizline,priority:1;index:idx_identity_user_bizline,priority:1"`
 	BizLine   string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_identity_user_bizline,priority:2;index:idx_identity_user_bizline,priority:2"`
+	IsManager bool      `gorm:"column:is_manager;default:false;index:idx_identity_user_bizline,priority:3"`
 	CreatedAt time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP"`
 }
 
@@ -39,6 +40,7 @@ type IdentityUserProgram struct {
 	UserID    int64     `gorm:"column:user_id;uniqueIndex:uk_identity_user_program,priority:1;index:idx_identity_user_program,priority:1"`
 	BizLine   string    `gorm:"column:biz_line;type:varchar(32);index:idx_identity_user_program,priority:2"`
 	ProgramID int64     `gorm:"column:program_id;type:bigint;uniqueIndex:uk_identity_user_program,priority:2;index:idx_identity_user_program,priority:3"`
+	IsManager bool      `gorm:"column:is_manager;default:false;index:idx_identity_user_program,priority:4"`
 	CreatedAt time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP"`
 }
 

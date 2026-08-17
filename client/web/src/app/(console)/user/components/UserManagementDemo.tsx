@@ -22,9 +22,11 @@ import {
 } from "../api/user.api";
 import { UserFormModal } from "./UserFormModal";
 import { useUserManagement } from "../hooks/useUserManagement";
+import { useLocale } from "@/i18n/LocaleProvider";
 
 export function UserManagementDemo() {
   const { users, total, loading, query, refresh } = useUserManagement();
+  const { t } = useLocale();
   const [bizLines, setBizLines] = useState<BizLineOption[]>([]);
   const [search, setSearch] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -66,8 +68,17 @@ export function UserManagementDemo() {
       title: `重置 ${user.displayName || user.username} 的密码`,
       content: <Input.Password style={{ marginTop: 16 }} autoComplete="new-password" onChange={(event) => { password = event.target.value; }} />,
       onOk: async () => {
-        await resetUserPassword(user.id, password.trim());
-        message.success("密码已重置，用户需要重新登录");
+        const nextPassword = password.trim();
+        if (nextPassword.length < 8) {
+          message.error(t("account.newPasswordRequired"));
+          return;
+        }
+        try {
+          await resetUserPassword(user.id, nextPassword);
+          message.success("密码已重置，用户需要重新登录");
+        } catch (error) {
+          message.error((error as Error).message);
+        }
       },
     });
   };
@@ -92,7 +103,7 @@ export function UserManagementDemo() {
         </Popconfirm>
       </Space>,
     },
-  ], [refresh]);
+  ], [refresh, t]);
 
   return (
     <div className="manager-page-stack">

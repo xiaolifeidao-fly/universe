@@ -38,7 +38,9 @@ type UserView struct {
 	Status             string         `json:"status"`
 	MustChangePassword bool           `json:"mustChangePassword"`
 	BizLines           []string       `json:"bizLines"`
+	ManagedBizLines    []string       `json:"managedBizLines"`
 	Programs           []ProgramScope `json:"programs"`
+	ManagedPrograms    []ProgramScope `json:"managedPrograms"`
 	LastLoginAt        *time.Time     `json:"lastLoginAt"`
 	UpdatedAt          *time.Time     `json:"updatedAt"`
 	CreatedAt          *time.Time     `json:"createdAt"`
@@ -60,6 +62,14 @@ type MemberView struct {
 
 type MemberQuery struct {
 	Keyword string `json:"keyword" form:"keyword"`
+}
+
+// ScopeAssignment keeps a resource's members and administrators separate.
+// Managers are always also members, so replacing either list cannot create a
+// manager that has no visibility of the corresponding resource.
+type ScopeAssignment struct {
+	UserIDs    []int64 `json:"userIds"`
+	ManagerIDs []int64 `json:"managerIds"`
 }
 
 type UserQuery struct {

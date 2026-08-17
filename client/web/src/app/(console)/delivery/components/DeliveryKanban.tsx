@@ -10,7 +10,6 @@ import {
   type BoardGroupBy,
   type DeliveryBoardColumn,
 	type DeliveryItemRecord,
-	type DeliveryPhase,
   type DeliveryStatus,
 } from "@/api/delivery.api";
 import { DeliveryDependencyLayer } from "./DeliveryDependencyLayer";
@@ -30,11 +29,10 @@ interface DeliveryKanbanProps {
 	ownerOptions: Array<{ value: string; label: string }>;
 	changingOwnerItemKey: string;
 	onOwnerChange: (item: DeliveryItemRecord, ownerId: string) => void;
-	statusPhase?: DeliveryPhase;
 	selectedItemKeys: string[];
 	onSelectionChange: (itemKeys: string[]) => void;
-  /** 拖动落到别的列：按当前分列方式改阶段 / 状态 / 归属模块。 */
-  onMove: (item: DeliveryItemRecord, columnKey: string, sortOrder: number) => void;
+	/** 拖动落到别的列：按当前分列方式改阶段 / 状态 / 归属模块。 */
+	onMove: (items: DeliveryItemRecord[], columnKey: string, sortOrder: number) => void | Promise<void>;
   onCreateDependency: (predecessorItemKey: string, successorItemKey: string, sourceSide: TargetSide, targetSide: TargetSide) => void;
   onDeleteDependency: (predecessorItemKey: string, successorItemKey: string) => void;
 }
@@ -137,7 +135,6 @@ export function DeliveryKanban({
 	ownerOptions,
 	changingOwnerItemKey,
 	onOwnerChange,
-	statusPhase,
 	selectedItemKeys,
 	onSelectionChange,
   onMove,
@@ -157,8 +154,7 @@ export function DeliveryKanban({
     () => new Map(columns.map((column) => [column.key, parallelItemKeys(column.items)])),
     [columns],
   );
-	const isAdvanceable = (item: DeliveryItemRecord) => groupBy === "status" && statusPhase !== "testing" && item.phase === statusPhase && item.status === "done";
-	const isSelectable = (item: DeliveryItemRecord) => item.status === "todo" || isAdvanceable(item);
+	const isSelectable = (_item: DeliveryItemRecord) => true;
 
   const handleDragEnd = (result: DropResult) => {
     setIsReordering(false);
@@ -166,11 +162,14 @@ export function DeliveryKanban({
     if (!destination) return;
     if (destination.droppableId === source.droppableId && destination.index === source.index) return;
 
-    const item = columns
-      .find((column) => column.key === source.droppableId)
-      ?.items.find((candidate) => candidate.itemKey === draggableId);
-    if (!item) return;
-    onMove(item, destination.droppableId, destination.index);
+    const items = columns.flatMap((column) => column.items);
+    const draggedItem = items.find((item) => item.itemKey === draggableId);
+    if (!draggedItem) return;
+
+    // 拖动已勾选的卡片时，整组一起进入目标列；未勾选的卡片仍保持单卡拖动。
+    const movedItemKeys = selectedItemKeys.includes(draggableId) ? selectedItemKeys : [draggableId];
+    const movedItems = items.filter((item) => movedItemKeys.includes(item.itemKey));
+    void onMove(movedItems.length > 0 ? movedItems : [draggedItem], destination.droppableId, destination.index);
   };
 
   useEffect(() => {

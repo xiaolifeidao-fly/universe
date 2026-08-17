@@ -2,6 +2,7 @@
 
 import {
   ArrowRightOutlined,
+	BellOutlined,
 	FastForwardOutlined,
   PlayCircleOutlined,
   DeploymentUnitOutlined,
@@ -11,7 +12,7 @@ import {
   SearchOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Button, Empty, Input, Modal, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Badge, Button, Empty, Input, Modal, Popover, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -48,6 +49,45 @@ type ViewMode = "board" | "list";
 type PendingGroupedExecution =
   | { mode: "batch"; itemKeys: string[]; closeDrawer?: boolean }
   | { mode: "sequence"; itemKeys?: string[]; startItemKey?: string; closeDrawer?: boolean };
+
+type DeliveryNotificationStatus = "blocked" | "dropped" | "done";
+type DeliveryNotificationCounts = Record<DeliveryNotificationStatus, number>;
+
+interface DeliveryNotificationStorage {
+  counts: DeliveryNotificationCounts;
+  readCounts: DeliveryNotificationCounts;
+}
+
+interface DeliveryNotificationReadState {
+  scope: string;
+  counts: DeliveryNotificationCounts;
+}
+
+const EMPTY_DELIVERY_NOTIFICATION_COUNTS: DeliveryNotificationCounts = {
+  blocked: 0,
+  dropped: 0,
+  done: 0,
+};
+
+function readDeliveryNotificationCounts(value: unknown): DeliveryNotificationCounts {
+  const counts = value as Partial<DeliveryNotificationCounts> | undefined;
+  return {
+    blocked: Math.max(0, Number(counts?.blocked) || 0),
+    dropped: Math.max(0, Number(counts?.dropped) || 0),
+    done: Math.max(0, Number(counts?.done) || 0),
+  };
+}
+
+function readDeliveryNotificationStorage(storageKey: string): DeliveryNotificationCounts {
+  try {
+    const rawValue = window.localStorage.getItem(storageKey);
+    if (!rawValue) return EMPTY_DELIVERY_NOTIFICATION_COUNTS;
+    const saved = JSON.parse(rawValue) as Partial<DeliveryNotificationStorage>;
+    return readDeliveryNotificationCounts(saved.readCounts);
+  } catch {
+    return EMPTY_DELIVERY_NOTIFICATION_COUNTS;
+  }
+}
 
 export function DeliveryWorkspace() {
   const searchParams = useSearchParams();
@@ -133,6 +173,10 @@ export function DeliveryWorkspace() {
 	const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [pendingGroupedExecution, setPendingGroupedExecution] = useState<PendingGroupedExecution | null>(null);
   const [executionConstraints, setExecutionConstraints] = useState("");
+  const [notificationReadState, setNotificationReadState] = useState<DeliveryNotificationReadState>({
+    scope: "",
+    counts: EMPTY_DELIVERY_NOTIFICATION_COUNTS,
+  });
 
   // 分享页先选中链接中的需求；切到全量列表后保留用户自行选择的需求。
   useEffect(() => {
@@ -150,6 +194,51 @@ export function DeliveryWorkspace() {
   }, [requirements, setFilters, sharedRequirementKey, sharedRequirementOnly]);
 
   const overview = board.overview;
+  const notificationStorageKey = useMemo(() => {
+    if (!bizLine || !programId || !filters.requirementKey) return "";
+    return `zb.delivery.notification-center.v1:${bizLine}:${programId}:${filters.requirementKey}`;
+  }, [bizLine, filters.requirementKey, programId]);
+  const notificationCounts = useMemo<DeliveryNotificationCounts>(() => (
+    itemCatalog.reduce<DeliveryNotificationCounts>((counts, item) => {
+      if (item.status === "blocked" || item.status === "dropped" || item.status === "done") {
+        counts[item.status] += 1;
+      }
+      return counts;
+    }, { ...EMPTY_DELIVERY_NOTIFICATION_COUNTS })
+  ), [itemCatalog]);
+  const notificationReadCounts = notificationReadState.scope === notificationStorageKey
+    ? notificationReadState.counts
+    : EMPTY_DELIVERY_NOTIFICATION_COUNTS;
+  const notificationUnreadCount = useMemo(
+    () => (Object.keys(notificationCounts) as DeliveryNotificationStatus[]).reduce(
+      (total, status) => total + Math.max(0, notificationCounts[status] - notificationReadCounts[status]),
+      0,
+    ),
+    [notificationCounts, notificationReadCounts],
+  );
+
+  useEffect(() => {
+    setNotificationReadState({
+      scope: notificationStorageKey,
+      counts: notificationStorageKey
+        ? readDeliveryNotificationStorage(notificationStorageKey)
+        : EMPTY_DELIVERY_NOTIFICATION_COUNTS,
+    });
+  }, [notificationStorageKey]);
+
+  useEffect(() => {
+    if (!notificationStorageKey || notificationReadState.scope !== notificationStorageKey) return;
+    const value: DeliveryNotificationStorage = {
+      counts: notificationCounts,
+      readCounts: notificationReadCounts,
+    };
+    window.localStorage.setItem(notificationStorageKey, JSON.stringify(value));
+  }, [notificationCounts, notificationReadCounts, notificationReadState.scope, notificationStorageKey]);
+
+  const handleNotificationOpenChange = useCallback((open: boolean) => {
+    if (!open || !notificationStorageKey) return;
+    setNotificationReadState({ scope: notificationStorageKey, counts: notificationCounts });
+  }, [notificationCounts, notificationStorageKey]);
   const ownerOptions = useMemo(
     () => Array.from(new Set(allItems.map((item) => item.ownerName.trim()).filter(Boolean)))
       .sort((left, right) => left.localeCompare(right, "zh-CN"))
@@ -235,19 +324,19 @@ export function DeliveryWorkspace() {
     [overview, t],
   );
 
-  const handleMove = (item: DeliveryItemRecord, columnKey: string, sortOrder: number) => {
-    const payload: Parameters<typeof patch>[0] = {
-      itemKey: item.itemKey,
-      version: item.version,
-      sortOrder,
-    };
-    if (filters.groupBy === "stage") payload.stageKey = columnKey;
-	if (filters.groupBy === "status") {
-			payload.status = columnKey as DeliveryStatus;
-		}
-    if (filters.groupBy === "module") payload.moduleKey = columnKey;
-    void patch(payload);
-  };
+  const handleMove = useCallback(async (items: DeliveryItemRecord[], columnKey: string, sortOrder: number) => {
+    await Promise.all(items.map((item, index) => {
+      const payload: Parameters<typeof patch>[0] = {
+        itemKey: item.itemKey,
+        version: item.version,
+        sortOrder: sortOrder + index,
+      };
+      if (filters.groupBy === "stage") payload.stageKey = columnKey;
+      if (filters.groupBy === "status") payload.status = columnKey as DeliveryStatus;
+      if (filters.groupBy === "module") payload.moduleKey = columnKey;
+      return patch(payload);
+    }));
+  }, [filters.groupBy, patch]);
 
   const handleOwnerChange = useCallback(
     async (item: DeliveryItemRecord, ownerId: string) => {
@@ -407,12 +496,12 @@ export function DeliveryWorkspace() {
 		[itemCatalog, selectedItemKeys],
 	);
 
-	const selectedTodoItems = useMemo(
-		() => selectedItems.filter((item) => item.status === "todo"),
+	const selectedExecutableItems = useMemo(
+		() => selectedItems.filter((item) => item.status !== "done"),
 		[selectedItems],
 	);
 
-	const selectedBatchItems = selectedTodoItems;
+	const selectedBatchItems = selectedExecutableItems;
 
 	const selectedAdvanceableItems = useMemo(
 		() => selectedItems.filter((item) => item.status === "done" && item.phase === filters.phase),
@@ -653,6 +742,36 @@ export function DeliveryWorkspace() {
           </div>
         </div>
         <Space>
+          <Popover
+            placement="bottomRight"
+            trigger="click"
+            title={t("delivery.notificationCenter.title")}
+            onOpenChange={handleNotificationOpenChange}
+            content={(
+              <div className="delivery-notification-popover">
+                <div className="delivery-notification-popover__row is-blocked">
+                  <span>{t("delivery.notificationCenter.blocked")}</span>
+                  <b>{notificationCounts.blocked}</b>
+                </div>
+                <div className="delivery-notification-popover__row is-dropped">
+                  <span>{t("delivery.notificationCenter.dropped")}</span>
+                  <b>{notificationCounts.dropped}</b>
+                </div>
+                <div className="delivery-notification-popover__row is-done">
+                  <span>{t("delivery.notificationCenter.done")}</span>
+                  <b>{notificationCounts.done}</b>
+                </div>
+              </div>
+            )}
+          >
+            <Badge count={notificationUnreadCount} overflowCount={99} size="small">
+              <Button
+                className="delivery-notification-button"
+                icon={<BellOutlined />}
+                aria-label={t("delivery.notificationCenter.title")}
+              />
+            </Badge>
+          </Popover>
           <Select
             value={programId || undefined}
             style={{ minWidth: 180 }}
@@ -736,13 +855,13 @@ export function DeliveryWorkspace() {
               <Button
                 icon={<FastForwardOutlined />}
                 loading={sequenceStarting}
-                disabled={!codexBridgeReady || selectedTodoItems.length === 0}
+                disabled={!codexBridgeReady || selectedExecutableItems.length === 0}
                 onClick={() => openGroupedExecution({
                   mode: "sequence",
-                  itemKeys: selectedTodoItems.map((item) => item.itemKey),
+                  itemKeys: selectedExecutableItems.map((item) => item.itemKey),
                 })}
               >
-                {t("delivery.execution.sequenceSelected").replace("{count}", String(selectedTodoItems.length))}
+                {t("delivery.execution.sequenceSelected").replace("{count}", String(selectedExecutableItems.length))}
               </Button>
             </Tooltip>
             <Segmented
@@ -892,8 +1011,7 @@ export function DeliveryWorkspace() {
 				  ownerOptions={taskOwnerOptions}
 				  changingOwnerItemKey={changingOwnerItemKey}
 				  onOwnerChange={(item, ownerId) => void handleOwnerChange(item, ownerId)}
-      			statusPhase={filters.groupBy === "status" ? filters.phase ?? "requirement" : undefined}
-      				selectedItemKeys={selectedItemKeys}
+                  selectedItemKeys={selectedItemKeys}
       				onSelectionChange={setSelectedItemKeys}
                   onMove={handleMove}
                   onCreateDependency={handleCreateDependency}
@@ -907,8 +1025,8 @@ export function DeliveryWorkspace() {
                     columns={columns}
                     dataSource={allItems}
                     rowSelection={{
-      				selectedRowKeys: selectedTodoItems.map((item) => item.itemKey),
-      				getCheckboxProps: (record) => ({ disabled: record.status !== "todo" }),
+                      selectedRowKeys: selectedItemKeys,
+                      getCheckboxProps: () => ({ disabled: false }),
                       onChange: (keys) => setSelectedItemKeys(keys.map(String)),
                     }}
                     pagination={{ pageSize: 20, showSizeChanger: false }}

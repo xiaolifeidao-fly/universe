@@ -32,6 +32,21 @@
 
 ---
 
+## 控制台身份与授权 `zt_identity_*`（缩写 `identity`）
+
+| 表 | 作用 |
+|---|---|
+| `zt_identity_user` | 控制台用户、超级管理员角色与登录凭证版本 |
+| `zt_identity_user_biz_line` | 用户可见业务线；`is_manager=1` 表示业务线管理员 |
+| `zt_identity_user_program` | 用户可见项目；`is_manager=1` 表示项目管理员 |
+
+业务线管理员同时拥有该业务线所有项目的可见与管理权限；项目管理员只管理被授权的项目；
+普通成员只能查看被授权项目并新增模块或里程碑。超级管理员由 `zt_identity_user.role=admin`
+识别，不受两张授权表限制。新环境执行 [`server/identity.sql`](identity.sql)；存量环境执行
+[`migrations/20260817_identity_scope_managers.sql`](migrations/20260817_identity_scope_managers.sql)。
+
+---
+
 ## 交付推进 `zt_delivery_*`（缩写 `dlv`）
 
 **这一层不在 6 层业务 DAG 里，是管理面，零下游依赖。**
