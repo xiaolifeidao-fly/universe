@@ -12,4 +12,6 @@
 # Generated local application artifacts
 /client/web/node_modules/
 /client/web/.next/
+/client/web/package/
 /server/web-api/bin/
+/server/web-api/package/
