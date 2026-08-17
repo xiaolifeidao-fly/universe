@@ -1,0 +1,38 @@
+# Version-control, editor, and operating-system files
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+**/.DS_Store
+
+# Local binaries, process state, logs, test output, and build caches
+**/bin/
+**/logs/
+**/run/
+**/.cache/
+**/coverage/
+**/*.test
+**/*.out
+**/*.prof
+**/*.tmp
+**/*.swp
+
+# Runtime configuration and other secret-bearing material. The container
+# entrypoint creates its application.properties from runtime environment vars.
+web-api/configs/application.properties
+web-api/configs/application_dev.properties
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.crt
+**/*.p12
+**/*.pfx
+
+# Deployment-only database assets and documentation are not needed to build.
+migrations/
+*.sql
+*.md
+go.work
+go.work.sum

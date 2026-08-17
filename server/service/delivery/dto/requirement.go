@@ -1,0 +1,135 @@
+// 需求相关的请求、查询与视图，含 HTML 原型。
+
+package dto
+
+import (
+	"time"
+
+	"contract"
+)
+
+// ---------- 需求 ----------
+
+// RequirementMember 主负责人 / 辅助人。前端选人时给 id，显示名由服务端一并落库，
+// 这样需求列表不用为了显示名字再去关联用户表。
+type RequirementMember struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type RequirementView struct {
+	RequirementKey       string           `json:"requirementKey"`
+	BizLine              contract.BizLine `json:"bizLine"`
+	ProgramID            int64            `json:"programId"`
+	Name                 string           `json:"name"`
+	Detail               string           `json:"detail"`
+	PlannedStartAt       *time.Time       `json:"plannedStartAt"`
+	PlannedEndAt         *time.Time       `json:"plannedEndAt"`
+	Status               string           `json:"status"`
+	Mode                 string           `json:"mode"`
+	StartPhase           string           `json:"startPhase"`
+	GeneratePrototype    bool             `json:"generatePrototype"`
+	PrototypeHTMLPath    string           `json:"prototypeHtmlPath"`
+	PrototypeGeneratedAt *time.Time       `json:"prototypeGeneratedAt"`
+	TestingStatus        string           `json:"testingStatus"`
+	TestingReport        string           `json:"testingReport"`
+	TestingReportPath    string           `json:"testingReportPath"`
+	TestingReportedAt    *time.Time       `json:"testingReportedAt"`
+	// 测试用例设计与真实执行分开保存：研发进行时可以先准备，不得因此改变总体测试结论。
+	TestingCasesStatus string              `json:"testingCasesStatus"`
+	TestingCases       string              `json:"testingCases"`
+	TestingCasesPath   string              `json:"testingCasesPath"`
+	StageKey           string              `json:"stageKey"`
+	ModuleKey          string              `json:"moduleKey"`
+	Kind               string              `json:"kind"`
+	Owners             []RequirementMember `json:"owners"`
+	Assistants         []RequirementMember `json:"assistants"`
+	ItemCount          int64               `json:"itemCount"`
+	Version            int                 `json:"version"`
+	CreatedBy          string              `json:"createdBy"`
+	CreatedByName      string              `json:"createdByName"`
+	CreatedAt          *time.Time          `json:"createdAt"`
+	UpdatedBy          string              `json:"updatedBy"`
+	UpdatedAt          *time.Time          `json:"updatedAt"`
+}
+
+// RequirementPrototypeView 是需求关联的 HTML 原型元数据。文件正文在项目工作区 doc/ 下，
+// 浏览器通过本地桥接读取后用 iframe sandbox 预览。
+type RequirementPrototypeView struct {
+	RequirementKey string     `json:"requirementKey"`
+	Path           string     `json:"path"`
+	Exists         bool       `json:"exists"`
+	GeneratedAt    *time.Time `json:"generatedAt"`
+}
+
+type RequirementPage struct {
+	Total int64             `json:"total"`
+	Data  []RequirementView `json:"data"`
+}
+
+// RequirementQuery Scope=mine 只看和我有关的（我创建 / 我负责 / 我辅助），
+// 其余取值表示不限定。
+type RequirementQuery struct {
+	Page
+	BizLine   contract.BizLine `form:"-"`
+	ProgramID int64            `form:"programId"`
+	Keyword   string           `form:"keyword"`
+	Status    string           `form:"status"`
+	Scope     string           `form:"scope"`
+	ActorID   string           `form:"-"`
+}
+
+// SaveRequirementRequest RequirementKey 为空表示新建；带 key 表示更新，
+// 更新必须带上读到的 Version。
+type SaveRequirementRequest struct {
+	BizLine           contract.BizLine    `json:"-"`
+	ProgramID         int64               `json:"programId"`
+	RequirementKey    string              `json:"requirementKey"`
+	Name              string              `json:"name"`
+	Detail            string              `json:"detail"`
+	PlannedStartAt    *time.Time          `json:"plannedStartAt"`
+	PlannedEndAt      *time.Time          `json:"plannedEndAt"`
+	Status            string              `json:"status"`
+	Mode              string              `json:"mode"`
+	StartPhase        string              `json:"startPhase"`
+	GeneratePrototype bool                `json:"generatePrototype"`
+	StageKey          string              `json:"stageKey"`
+	ModuleKey         string              `json:"moduleKey"`
+	Kind              string              `json:"kind"`
+	Owners            []RequirementMember `json:"owners"`
+	Assistants        []RequirementMember `json:"assistants"`
+	Version           int                 `json:"version"`
+	ActorID           string              `json:"-"`
+	ActorName         string              `json:"actorName"`
+}
+
+type DeleteRequirementRequest struct {
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	ActorID        string           `json:"-"`
+	ActorName      string           `json:"actorName"`
+}
+
+type SaveRequirementPrototypeRequest struct {
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	Path           string           `json:"path"`
+	ActorID        string           `json:"-"`
+	ActorName      string           `json:"actorName"`
+}
+
+// UpdateRequirementTestingRequest 由本地测试桥回写需求总体测试的独立产物。
+// 指针字段区分“本轮不覆盖既有产物”和“明确写入空文本”。
+type UpdateRequirementTestingRequest struct {
+	BizLine            contract.BizLine `json:"-"`
+	ProgramID          int64            `json:"programId"`
+	RequirementKey     string           `json:"requirementKey"`
+	TestingStatus      *string          `json:"testingStatus"`
+	TestingReport      *string          `json:"testingReport"`
+	TestingCasesStatus *string          `json:"testingCasesStatus"`
+	TestingCases       *string          `json:"testingCases"`
+	ActorID            string           `json:"-"`
+	ActorName          string           `json:"actorName"`
+}

@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "client/web",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7899"
+      ],
+      "port": 7899
+    },
+    {
+      "name": "web-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "client/web", "run", "dev", "--", "-p", "7897"],
+      "port": 7897,
+      "autoPort": false
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# Runtime deployment configuration and local secrets
+.env
+.env.*
+!.env.example
+
+# OS/editor artifacts
+.DS_Store
+.idea/
+.vscode/
+
+# Generated local application artifacts
+/client/web/node_modules/
+/client/web/.next/
+/server/web-api/bin/

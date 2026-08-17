@@ -1,0 +1,39 @@
+name: ${COMPOSE_PROJECT_NAME:-universe}
+
+services:
+  web-api:
+    image: ${WEB_API_IMAGE:-universe-web-api}:${IMAGE_TAG:-local}
+    build:
+      context: ./server
+      dockerfile: web-api/Dockerfile
+    environment:
+      WEB_API_SQLCONN: ${WEB_API_SQLCONN:?WEB_API_SQLCONN must be set in .env}
+      WEB_API_AUTH_TOKEN_SECRET: ${WEB_API_AUTH_TOKEN_SECRET:?WEB_API_AUTH_TOKEN_SECRET must be set in .env}
+      WEB_API_AUTH_TOKEN_TTL_SECONDS: ${WEB_API_AUTH_TOKEN_TTL_SECONDS:-604800}
+      WEB_API_ADDR: :10001
+      TZ: ${TZ:-Asia/Shanghai}
+    restart: unless-stopped
+    networks:
+      - application
+
+  client-web:
+    image: ${CLIENT_WEB_IMAGE:-universe-client-web}:${IMAGE_TAG:-local}
+    build:
+      context: ./client/web
+      dockerfile: Dockerfile
+    environment:
+      SERVER_TARGET: http://web-api:10001
+      APP_URL_PREFIX: /api
+      TZ: ${TZ:-Asia/Shanghai}
+    depends_on:
+      web-api:
+        condition: service_healthy
+    ports:
+      - ${CLIENT_WEB_BIND:-127.0.0.1}:${CLIENT_WEB_PORT:-7893}:7893
+    restart: unless-stopped
+    networks:
+      - application
+
+networks:
+  application:
+    driver: bridge
