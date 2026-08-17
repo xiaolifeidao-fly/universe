@@ -3,7 +3,7 @@
 import { plainToInstance } from "class-transformer";
 import { instance } from "@/utils/axios";
 
-const AI_BRIDGE_URL = "http://127.0.0.1:8765";
+const AI_BRIDGE_URL = "https://127.0.0.1:8765";
 
 export class AIEnvironmentHealth {
   ready = false;
