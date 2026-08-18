@@ -207,6 +207,8 @@ export function DeliveryRequirementSessionModal({
   const [splitTasks, setSplitTasks] = useState(true);
   // 预生成是任务需求文档的初稿，正式梳理仍会在同一文件中校正和补全。
   const [preGenerateTaskDocuments, setPreGenerateTaskDocuments] = useState(false);
+  // 单任务模式下，唯一业务任务必须直接承接完整需求文档；不改写用户保存的开关值。
+  const taskDocumentPreGenerationRequired = preGenerateTaskDocuments || !splitTasks;
   const [generatePrototype, setGeneratePrototype] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -1301,14 +1303,15 @@ export function DeliveryRequirementSessionModal({
                             onChange={setSplitTasks}
                           />
                         </div>
-                        <div className={`delivery-planning-context__toggle${preGenerateTaskDocuments ? " is-on" : ""}`}>
-                          <div role="presentation" onClick={() => setPreGenerateTaskDocuments((current) => !current)}>
+                        <div className={`delivery-planning-context__toggle${taskDocumentPreGenerationRequired ? " is-on" : ""}`}>
+                          <div role="presentation" onClick={() => { if (splitTasks) setPreGenerateTaskDocuments((current) => !current); }}>
                             <b>{t("delivery.requirement.preGenerateTaskDocuments")}</b>
                             <small>{t("delivery.requirement.preGenerateTaskDocumentsHint")}</small>
                           </div>
                           <Switch
                             size="small"
-                            checked={preGenerateTaskDocuments}
+                            checked={taskDocumentPreGenerationRequired}
+                            disabled={!splitTasks}
                             aria-label={t("delivery.requirement.preGenerateTaskDocuments")}
                             onChange={setPreGenerateTaskDocuments}
                           />
