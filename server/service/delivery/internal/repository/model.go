@@ -103,6 +103,8 @@ type DeliveryRequirement struct {
 	StartPhase string `gorm:"column:start_phase;type:varchar(16);default:requirement" description:"任务起始阶段：requirement/development/testing"`
 	// SplitTasks 决定这条需求要不要拆成多条任务：关掉时整条需求只落一条任务，适合改动本来就不可分的小需求。
 	SplitTasks bool `gorm:"column:split_tasks;default:true" description:"拆解会话是否把需求拆成多条任务；false 表示只建一条"`
+	// GenerateTaskOutline 决定拆解时要不要给每条任务单独写一份需求大纲：默认关闭，只留需求级大纲。
+	GenerateTaskOutline bool `gorm:"column:generate_task_outline;default:false" description:"拆解会话是否为每条任务生成需求大纲；默认否"`
 	// GeneratePrototype 仅专业模式可用。任务拆解确认后，由用户二次确认是否生成关联到本需求的 HTML 原型。
 	GeneratePrototype bool `gorm:"column:generate_prototype;default:false" description:"专业模式需求是否启用拆解后生成 HTML 原型"`
 	// PrototypeHTMLPath 是项目工作区 doc/ 下的原型目录；目录内按功能模块存放多个 HTML，正文不进入任务面板数据库。

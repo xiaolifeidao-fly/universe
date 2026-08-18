@@ -85,7 +85,7 @@ func TestRequirementChangeEventsOnlyRecordActualChanges(t *testing.T) {
 		SplitTasks: true, StageKey: "s1", ModuleKey: "module-a", Kind: KindCapability, OwnerNames: "甲", AssistantNames: "乙",
 	}
 	events := requirementChangeEvents(current, "新名称", "原始范围", &start, &start,
-		RequirementStatusOpen, RequirementModeProfessional, PhaseRequirement, true, false,
+		RequirementStatusOpen, RequirementModeProfessional, PhaseRequirement, true, false, false,
 		"s1", "module-a", KindCapability, "甲", "乙", "u-1", "张三")
 	if len(events) != 1 {
 		t.Fatalf("仅名称变化应记录一条事件，实际 %d", len(events))

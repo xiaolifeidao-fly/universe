@@ -29,6 +29,7 @@ type RequirementView struct {
 	Mode                 string           `json:"mode"`
 	StartPhase           string           `json:"startPhase"`
 	SplitTasks           bool             `json:"splitTasks"`
+	GenerateTaskOutline  bool             `json:"generateTaskOutline"`
 	GeneratePrototype    bool             `json:"generatePrototype"`
 	PrototypeHTMLPath    string           `json:"prototypeHtmlPath"`
 	PrototypeGeneratedAt *time.Time       `json:"prototypeGeneratedAt"`
@@ -83,27 +84,29 @@ type RequirementQuery struct {
 // SaveRequirementRequest RequirementKey 为空表示新建；带 key 表示更新，
 // 更新必须带上读到的 Version。
 type SaveRequirementRequest struct {
-	BizLine           contract.BizLine    `json:"-"`
-	ProgramID         int64               `json:"programId"`
-	RequirementKey    string              `json:"requirementKey"`
-	Name              string              `json:"name"`
-	Detail            string              `json:"detail"`
-	PlannedStartAt    *time.Time          `json:"plannedStartAt"`
-	PlannedEndAt      *time.Time          `json:"plannedEndAt"`
-	Status            string              `json:"status"`
-	Mode              string              `json:"mode"`
-	StartPhase        string              `json:"startPhase"`
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail"`
+	PlannedStartAt *time.Time       `json:"plannedStartAt"`
+	PlannedEndAt   *time.Time       `json:"plannedEndAt"`
+	Status         string           `json:"status"`
+	Mode           string           `json:"mode"`
+	StartPhase     string           `json:"startPhase"`
 	// SplitTasks 用指针表达「本次请求没提这件事」：老客户端不传时新建按默认拆解、编辑保持原值。
-	SplitTasks        *bool               `json:"splitTasks"`
-	GeneratePrototype bool                `json:"generatePrototype"`
-	StageKey          string              `json:"stageKey"`
-	ModuleKey         string              `json:"moduleKey"`
-	Kind              string              `json:"kind"`
-	Owners            []RequirementMember `json:"owners"`
-	Assistants        []RequirementMember `json:"assistants"`
-	Version           int                 `json:"version"`
-	ActorID           string              `json:"-"`
-	ActorName         string              `json:"actorName"`
+	SplitTasks *bool `json:"splitTasks"`
+	// GenerateTaskOutline 同样用指针区分「没提」：新建默认不生成任务大纲，编辑保持需求原值。
+	GenerateTaskOutline *bool               `json:"generateTaskOutline"`
+	GeneratePrototype   bool                `json:"generatePrototype"`
+	StageKey            string              `json:"stageKey"`
+	ModuleKey           string              `json:"moduleKey"`
+	Kind                string              `json:"kind"`
+	Owners              []RequirementMember `json:"owners"`
+	Assistants          []RequirementMember `json:"assistants"`
+	Version             int                 `json:"version"`
+	ActorID             string              `json:"-"`
+	ActorName           string              `json:"actorName"`
 }
 
 type DeleteRequirementRequest struct {

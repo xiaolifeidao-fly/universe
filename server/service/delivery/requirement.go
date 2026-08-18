@@ -115,6 +115,11 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.SplitTasks != nil {
 		splitTasks = *req.SplitTasks
 	}
+	// 每条任务单独出一份需求大纲默认关闭：多数需求只需要需求级那一份。
+	generateTaskOutline := false
+	if req.GenerateTaskOutline != nil {
+		generateTaskOutline = *req.GenerateTaskOutline
+	}
 	ownerIDs, ownerNames, err := normalizeRequirementMembers(req.Owners, "主负责人")
 	if err != nil {
 		return dto.RequirementView{}, err
@@ -127,29 +132,30 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	requirementKey := strings.TrimSpace(req.RequirementKey)
 	if requirementKey == "" {
 		row := &repository.DeliveryRequirement{
-			BizLine:           req.BizLine.String(),
-			ProgramID:         req.ProgramID,
-			RequirementKey:    generateRequirementKey(),
-			Name:              name,
-			Detail:            req.Detail,
-			PlannedStartAt:    plannedStartAt,
-			PlannedEndAt:      plannedEndAt,
-			Status:            status,
-			Mode:              mode,
-			StartPhase:        startPhase,
-			SplitTasks:        splitTasks,
-			GeneratePrototype: generatePrototype,
-			StageKey:          strings.TrimSpace(req.StageKey),
-			ModuleKey:         strings.TrimSpace(req.ModuleKey),
-			Kind:              normalizeKind(req.Kind),
-			OwnerIDs:          ownerIDs,
-			OwnerNames:        ownerNames,
-			AssistantIDs:      assistantIDs,
-			AssistantNames:    assistantNames,
-			Version:           1,
-			CreatedBy:         req.ActorID,
-			CreatedByName:     actorOf(req.ActorID, req.ActorName),
-			UpdatedBy:         actorOf(req.ActorID, req.ActorName),
+			BizLine:             req.BizLine.String(),
+			ProgramID:           req.ProgramID,
+			RequirementKey:      generateRequirementKey(),
+			Name:                name,
+			Detail:              req.Detail,
+			PlannedStartAt:      plannedStartAt,
+			PlannedEndAt:        plannedEndAt,
+			Status:              status,
+			Mode:                mode,
+			StartPhase:          startPhase,
+			SplitTasks:          splitTasks,
+			GenerateTaskOutline: generateTaskOutline,
+			GeneratePrototype:   generatePrototype,
+			StageKey:            strings.TrimSpace(req.StageKey),
+			ModuleKey:           strings.TrimSpace(req.ModuleKey),
+			Kind:                normalizeKind(req.Kind),
+			OwnerIDs:            ownerIDs,
+			OwnerNames:          ownerNames,
+			AssistantIDs:        assistantIDs,
+			AssistantNames:      assistantNames,
+			Version:             1,
+			CreatedBy:           req.ActorID,
+			CreatedByName:       actorOf(req.ActorID, req.ActorName),
+			UpdatedBy:           actorOf(req.ActorID, req.ActorName),
 		}
 		if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
 			if err := tx.CreateRequirement(ctx, row); err != nil {
@@ -169,6 +175,9 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.SplitTasks == nil {
 		splitTasks = current.SplitTasks
 	}
+	if req.GenerateTaskOutline == nil {
+		generateTaskOutline = current.GenerateTaskOutline
+	}
 	if req.Version <= 0 {
 		return dto.RequirementView{}, errors.New("缺少版本号，请刷新后重试")
 	}
@@ -176,26 +185,27 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		return dto.RequirementView{}, contract.ErrVersionConflict
 	}
 	values := map[string]any{
-		"name":               name,
-		"detail":             req.Detail,
-		"planned_start_at":   plannedStartAt,
-		"planned_end_at":     plannedEndAt,
-		"status":             status,
-		"mode":               mode,
-		"start_phase":        startPhase,
-		"split_tasks":        splitTasks,
-		"generate_prototype": generatePrototype,
-		"stage_key":          strings.TrimSpace(req.StageKey),
-		"module_key":         strings.TrimSpace(req.ModuleKey),
-		"kind":               normalizeKind(req.Kind),
-		"owner_ids":          ownerIDs,
-		"owner_names":        ownerNames,
-		"assistant_ids":      assistantIDs,
-		"assistant_names":    assistantNames,
-		"updated_by":         actorOf(req.ActorID, req.ActorName),
+		"name":                  name,
+		"detail":                req.Detail,
+		"planned_start_at":      plannedStartAt,
+		"planned_end_at":        plannedEndAt,
+		"status":                status,
+		"mode":                  mode,
+		"start_phase":           startPhase,
+		"split_tasks":           splitTasks,
+		"generate_task_outline": generateTaskOutline,
+		"generate_prototype":    generatePrototype,
+		"stage_key":             strings.TrimSpace(req.StageKey),
+		"module_key":            strings.TrimSpace(req.ModuleKey),
+		"kind":                  normalizeKind(req.Kind),
+		"owner_ids":             ownerIDs,
+		"owner_names":           ownerNames,
+		"assistant_ids":         assistantIDs,
+		"assistant_names":       assistantNames,
+		"updated_by":            actorOf(req.ActorID, req.ActorName),
 	}
 	events := requirementChangeEvents(current, name, req.Detail, plannedStartAt, plannedEndAt, status, mode, startPhase,
-		splitTasks, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
+		splitTasks, generateTaskOutline, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
 		req.ActorID, req.ActorName)
 	var affected int64
 	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
@@ -418,6 +428,7 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 		Mode:                 requirementModeOrDefault(row.Mode),
 		StartPhase:           requirementStartPhaseOrDefault(row.StartPhase),
 		SplitTasks:           row.SplitTasks,
+		GenerateTaskOutline:  row.GenerateTaskOutline,
 		GeneratePrototype:    row.GeneratePrototype,
 		PrototypeHTMLPath:    row.PrototypeHTMLPath,
 		PrototypeGeneratedAt: row.PrototypeGeneratedAt,
@@ -454,7 +465,7 @@ func requirementChangeEvents(
 	name, detail string,
 	plannedStartAt, plannedEndAt *time.Time,
 	status, mode, startPhase string,
-	splitTasks, generatePrototype bool,
+	splitTasks, generateTaskOutline, generatePrototype bool,
 	stageKey, moduleKey, kind, ownerNames, assistantNames,
 	actorID, actorName string,
 ) []*repository.DeliveryRequirementEvent {
@@ -477,6 +488,7 @@ func requirementChangeEvents(
 	record("mode", requirementModeOrDefault(current.Mode), mode)
 	record("startPhase", requirementStartPhaseOrDefault(current.StartPhase), startPhase)
 	record("splitTasks", strconv.FormatBool(current.SplitTasks), strconv.FormatBool(splitTasks))
+	record("generateTaskOutline", strconv.FormatBool(current.GenerateTaskOutline), strconv.FormatBool(generateTaskOutline))
 	record("generatePrototype", strconv.FormatBool(current.GeneratePrototype), strconv.FormatBool(generatePrototype))
 	record("stageKey", current.StageKey, stageKey)
 	record("moduleKey", current.ModuleKey, moduleKey)

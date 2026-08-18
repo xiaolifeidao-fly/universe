@@ -151,6 +151,9 @@ export class DeliveryRequirementRecord {
   /** 关掉时这条需求只落一条任务；默认按多任务拆解。 */
   splitTasks = true;
 
+  /** 打开时拆解会话额外为每条任务写一份需求大纲；默认只留需求级大纲。 */
+  generateTaskOutline = false;
+
   /** 仅专业模式可设置；任务确认写入后可再次确认生成需求 HTML 原型。 */
   generatePrototype = false;
 
@@ -1093,6 +1096,7 @@ export interface SaveRequirementPayload {
   mode?: RequirementMode;
   startPhase?: DeliveryPhase;
   splitTasks?: boolean;
+  generateTaskOutline?: boolean;
   generatePrototype?: boolean;
   stageKey?: string;
   moduleKey?: string;
@@ -1342,6 +1346,15 @@ export async function fetchCodexRequirementOutline(programId: number, requiremen
   const response = await instance.get<CodexRequirementOutline>(
     `${CODEX_BRIDGE_URL}/v1/codex/requirement-outline`,
     { params: bridgeWorkspaceParams(programId, { programId, requirementKey }), timeout: 20000 },
+  );
+  return plainToInstance(CodexRequirementOutline, response.data);
+}
+
+export async function saveCodexRequirementOutline(programId: number, requirementKey: string, markdown: string) {
+  const response = await instance.post<CodexRequirementOutline>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-outline`,
+    bridgeWorkspaceParams(programId, { programId, requirementKey, markdown }),
+    { timeout: 20000 },
   );
   return plainToInstance(CodexRequirementOutline, response.data);
 }
@@ -1714,6 +1727,8 @@ export interface SendCodexPlanningMessageOptions {
   requirementStartPhase?: DeliveryPhase;
   /** 关掉时这一轮只允许拆出一条覆盖整条需求的任务。 */
   requirementSplitTasks?: boolean;
+  /** 打开时拆解会话额外为每条任务写一份需求大纲；默认只写需求级大纲。 */
+  requirementGenerateTaskOutline?: boolean;
   /** 专业模式下确认拆解写入后，可由面板再次确认生成需求 HTML 原型。 */
   requirementGeneratePrototype?: boolean;
   /** 已上传附件的标识，与任务会话用的是同一套附件仓库。 */

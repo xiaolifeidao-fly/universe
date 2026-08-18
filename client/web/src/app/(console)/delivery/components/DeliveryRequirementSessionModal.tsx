@@ -22,7 +22,7 @@ import {
 } from "@ant-design/icons";
 import { Button, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import dayjs from "dayjs";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type DragEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   CLAUDE_EFFORTS,
@@ -107,6 +107,14 @@ interface DeliveryRequirementSessionModalProps {
 type RequirementPhaseTab = "requirement" | "testing";
 type RequirementStageTab = "requirement" | "result" | "outline" | "prototype";
 type TestingStageTab = "testingCases" | "testingReport";
+
+// 右侧需求详情可拖宽，但要给中间的会话留出能读的宽度。
+const MIN_CONTEXT_PANEL_WIDTH = 320;
+const MIN_PLANNING_CONVERSATION_WIDTH = 380;
+
+const defaultContextPanelWidth = () => (typeof window === "undefined"
+  ? 480
+  : Math.max(MIN_CONTEXT_PANEL_WIDTH, Math.min(760, Math.round(window.innerWidth * 0.32))));
 
 function normalizedDateTime(value?: string | null) {
   if (!value) return null;
@@ -197,6 +205,8 @@ export function DeliveryRequirementSessionModal({
   const [mode, setMode] = useState<RequirementMode>("simple");
   const [startPhase, setStartPhase] = useState<DeliveryPhase>("development");
   const [splitTasks, setSplitTasks] = useState(true);
+  // 每条任务单独出一份需求大纲默认关掉：多数需求只需要需求级那一份。
+  const [generateTaskOutline, setGenerateTaskOutline] = useState(false);
   const [generatePrototype, setGeneratePrototype] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -220,13 +230,77 @@ export function DeliveryRequirementSessionModal({
   const [prototypeEditDraft, setPrototypeEditDraft] = useState("");
   const [prototypeEditLoading, setPrototypeEditLoading] = useState(false);
   const [prototypeEditSending, setPrototypeEditSending] = useState(false);
+  const [contextPanelWidth, setContextPanelWidth] = useState(defaultContextPanelWidth);
+  const [resizingContext, setResizingContext] = useState(false);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const planningShellRef = useRef<HTMLDivElement>(null);
+  const contextResizePointerIdRef = useRef<number | null>(null);
   const prototypeEditTranscriptRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const awaitingPlanningResultRef = useRef("");
 
   const requirementKey = saved?.requirementKey ?? "";
+
+  const clampContextPanelWidth = useCallback((width: number) => {
+    const shell = planningShellRef.current;
+    if (!shell) return Math.max(MIN_CONTEXT_PANEL_WIDTH, Math.round(width));
+    const historyWidth = shell.querySelector<HTMLElement>(".delivery-planning-history")?.getBoundingClientRect().width ?? 0;
+    const maximum = Math.max(
+      MIN_CONTEXT_PANEL_WIDTH,
+      shell.getBoundingClientRect().width - historyWidth - MIN_PLANNING_CONVERSATION_WIDTH,
+    );
+    return Math.min(maximum, Math.max(MIN_CONTEXT_PANEL_WIDTH, Math.round(width)));
+  }, []);
+
+  const setClampedContextPanelWidth = useCallback((width: number) => {
+    setContextPanelWidth(clampContextPanelWidth(width));
+  }, [clampContextPanelWidth]);
+
+  const resizeContextPanel = useCallback((clientX: number) => {
+    const shell = planningShellRef.current;
+    if (!shell) return;
+    setClampedContextPanelWidth(shell.getBoundingClientRect().right - clientX);
+  }, [setClampedContextPanelWidth]);
+
+  const handleContextResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    contextResizePointerIdRef.current = event.pointerId;
+    setResizingContext(true);
+    resizeContextPanel(event.clientX);
+  };
+
+  const handleContextResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (contextResizePointerIdRef.current === event.pointerId) resizeContextPanel(event.clientX);
+  };
+
+  const handleContextResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (contextResizePointerIdRef.current === event.pointerId) contextResizePointerIdRef.current = null;
+    setResizingContext(false);
+  };
+
+  const handleContextResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setClampedContextPanelWidth(contextPanelWidth + 24);
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setClampedContextPanelWidth(contextPanelWidth - 24);
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      setClampedContextPanelWidth(MIN_CONTEXT_PANEL_WIDTH);
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      const shell = planningShellRef.current;
+      if (shell) setClampedContextPanelWidth(shell.getBoundingClientRect().width);
+    }
+  };
 
   const load = useCallback(async (threadId = "", preserveSelected = false) => {
     if (!programId || !requirementKey) return null;
@@ -284,6 +358,7 @@ export function DeliveryRequirementSessionModal({
       setPrototypeEditDraft("");
       setPrototypeEditLoading(false);
       setPrototypeEditSending(false);
+      setResizingContext(false);
       awaitingPlanningResultRef.current = "";
       return;
     }
@@ -300,6 +375,7 @@ export function DeliveryRequirementSessionModal({
     setMode(nextMode);
     setStartPhase(requirement?.startPhase ?? (nextMode === "simple" ? "development" : "requirement"));
     setSplitTasks(requirement?.splitTasks ?? true);
+    setGenerateTaskOutline(Boolean(requirement?.generateTaskOutline));
     setGeneratePrototype(requirement?.generatePrototype ?? false);
     setStageKey(requirement?.stageKey ?? "");
     setModuleKey(requirement?.moduleKey ?? "");
@@ -494,6 +570,30 @@ export function DeliveryRequirementSessionModal({
   }, [active, activePhaseTab, activeRequirementTab, codexBridgeReady, loadOutline, open, requirementKey]);
 
   useEffect(() => {
+    if (!open) return undefined;
+    const handleWindowResize = () => setContextPanelWidth((width) => clampContextPanelWidth(width));
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, [clampContextPanelWidth, open]);
+
+  useEffect(() => {
+    if (!resizingContext) return undefined;
+    const handlePointerMove = (event: PointerEvent) => resizeContextPanel(event.clientX);
+    const handlePointerEnd = () => {
+      contextResizePointerIdRef.current = null;
+      setResizingContext(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [resizeContextPanel, resizingContext]);
+
+  useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
   }, [active, flattenedItems.length]);
 
@@ -524,6 +624,7 @@ export function DeliveryRequirementSessionModal({
       || mode !== saved.mode
       || startPhase !== saved.startPhase
       || splitTasks !== (saved.splitTasks ?? true)
+      || generateTaskOutline !== Boolean(saved.generateTaskOutline)
       || generatePrototype !== Boolean(saved.generatePrototype)
       || stageKey !== (saved.stageKey ?? "")
       || moduleKey !== (saved.moduleKey ?? "")
@@ -531,7 +632,7 @@ export function DeliveryRequirementSessionModal({
       || !sameMembers(ownerIds, saved.owners)
       || !sameMembers(assistantIds, saved.assistants)
     );
-  }, [assistantIds, detail, generatePrototype, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
+  }, [assistantIds, detail, generatePrototype, generateTaskOutline, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
 
   const memberOptions = useMemo(
     () => members.map((member) => ({ value: member.id, label: member.displayName || member.username })),
@@ -569,6 +670,7 @@ export function DeliveryRequirementSessionModal({
         // 简易模式的起始阶段由服务端按模式定死，这里传的是专业模式下用户的选择。
         startPhase,
         splitTasks,
+        generateTaskOutline,
         generatePrototype,
         stageKey,
         moduleKey,
@@ -625,6 +727,7 @@ export function DeliveryRequirementSessionModal({
         requirementAssistants: (current.assistants ?? []).map((member) => member.name).join("、"),
         requirementStartPhase: current.startPhase,
         requirementSplitTasks: current.splitTasks,
+        requirementGenerateTaskOutline: current.generateTaskOutline,
         requirementGeneratePrototype: current.generatePrototype,
         attachmentIds: uploaded.map((attachment) => attachment.id),
         confirmWrite,
@@ -818,7 +921,11 @@ export function DeliveryRequirementSessionModal({
         />
       ) : (
       <>
-      <div className="delivery-planning-shell">
+      <div
+        className={`delivery-planning-shell${resizingContext ? " is-resizing-context" : ""}`}
+        ref={planningShellRef}
+        style={{ "--delivery-planning-context-width": `${contextPanelWidth}px` } as CSSProperties}
+      >
         {/* 左：会话列表。同一条需求可以开多轮拆解，追问和重开在这里切。 */}
         <aside className="delivery-planning-history">
           <header className="delivery-session-history__header">
@@ -1048,6 +1155,20 @@ export function DeliveryRequirementSessionModal({
 
         {/* 右：需求详情。项目是只读的 —— 需求跟着当前项目走，不在这里换。 */}
         <aside className="delivery-planning-context">
+          <div
+            className="delivery-planning-context__resize-handle"
+            role="separator"
+            aria-label={t("delivery.planning.resizeContext")}
+            aria-orientation="vertical"
+            aria-valuemin={MIN_CONTEXT_PANEL_WIDTH}
+            aria-valuenow={contextPanelWidth}
+            tabIndex={0}
+            onPointerDown={handleContextResizeStart}
+            onPointerMove={handleContextResizeMove}
+            onPointerUp={handleContextResizeEnd}
+            onPointerCancel={handleContextResizeEnd}
+            onKeyDown={handleContextResizeKeyDown}
+          />
           <section className="delivery-planning-tabs">
             <div className="delivery-planning-phase-tabs" role="tablist" aria-label={t("delivery.planning.title")}>
               <button
@@ -1178,6 +1299,19 @@ export function DeliveryRequirementSessionModal({
                             checked={splitTasks}
                             aria-label={t("delivery.requirement.splitTasks")}
                             onChange={setSplitTasks}
+                          />
+                        </div>
+                        {/* 任务级需求大纲默认不生成：需要逐条留文档时才打开，避免每条任务都多一份要维护的文件。 */}
+                        <div className={`delivery-planning-context__toggle${generateTaskOutline ? " is-on" : ""}`}>
+                          <div role="presentation" onClick={() => setGenerateTaskOutline((current) => !current)}>
+                            <b>{t("delivery.requirement.generateTaskOutline")}</b>
+                            <small>{t("delivery.requirement.generateTaskOutlineHint")}</small>
+                          </div>
+                          <Switch
+                            size="small"
+                            checked={generateTaskOutline}
+                            aria-label={t("delivery.requirement.generateTaskOutline")}
+                            onChange={setGenerateTaskOutline}
                           />
                         </div>
                         {mode === "professional" ? (

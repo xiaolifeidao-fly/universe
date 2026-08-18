@@ -4,6 +4,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
+  FileTextOutlined,
 	HistoryOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
@@ -62,6 +63,8 @@ interface DeliveryRequirementListProps {
   onCreate: () => void;
   onEdit: (requirement: DeliveryRequirementRecord) => void;
   onTest: (requirement: DeliveryRequirementRecord) => void;
+  /** 需求大纲弹窗：和任务需求大纲一样可以直接改并保存回工作区。 */
+  onOutline: (requirement: DeliveryRequirementRecord) => void;
 	/** 需求时间线包含需求本身及其下所有任务的变动。 */
   onTimeline: (requirement: DeliveryRequirementRecord) => void;
   onStatusChange: (requirement: DeliveryRequirementRecord, status: RequirementStatus) => Promise<void>;
@@ -90,6 +93,7 @@ export function DeliveryRequirementList({
   onCreate,
   onEdit,
   onTest,
+  onOutline,
 	onTimeline,
   onStatusChange,
   onDelete,
@@ -214,102 +218,117 @@ export function DeliveryRequirementList({
         }}
       >
         <div className="delivery-requirement-card__head">
-          <b title={requirement.name || requirement.requirementKey}>{requirement.name || requirement.requirementKey}</b>
-          <div className="delivery-requirement-card__actions" onClick={(event) => event.stopPropagation()}>
-            <Dropdown
-              trigger={["click"]}
-              menu={{
-                items: REQUIREMENT_STATUSES.map((status) => ({
-                  key: status,
-                  label: t(`delivery.requirement.status.${status}`),
-                  disabled: status === requirement.status || statusChanging,
-                })),
-                onClick: ({ key }) => void changeStatus(key as RequirementStatus),
-              }}
-            >
-              <Tooltip title={t("delivery.requirement.quickStatus")}>
-                <Button
-                  type="text"
-                  size="small"
-                  shape="circle"
-                  icon={<SwapOutlined />}
-                  loading={statusChanging}
-                  disabled={disabled}
-                  aria-label={t("delivery.requirement.quickStatus")}
-                />
-              </Tooltip>
-            </Dropdown>
-            <Tooltip title={t("delivery.requirement.startTesting")}>
+          <Tooltip title={requirement.name || requirement.requirementKey}>
+            <b>{requirement.name || requirement.requirementKey}</b>
+          </Tooltip>
+        </div>
+        <div className="delivery-requirement-card__actions" onClick={(event) => event.stopPropagation()}>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: REQUIREMENT_STATUSES.map((status) => ({
+                key: status,
+                label: t(`delivery.requirement.status.${status}`),
+                disabled: status === requirement.status || statusChanging,
+              })),
+              onClick: ({ key }) => void changeStatus(key as RequirementStatus),
+            }}
+          >
+            <Tooltip title={t("delivery.requirement.quickStatus")}>
               <Button
                 type="text"
                 size="small"
                 shape="circle"
-                icon={<ExperimentOutlined />}
+                icon={<SwapOutlined />}
+                loading={statusChanging}
                 disabled={disabled}
-                aria-label={t("delivery.requirement.startTesting")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onTest(requirement);
-                }}
+                aria-label={t("delivery.requirement.quickStatus")}
               />
             </Tooltip>
-			<Tooltip title={t("delivery.requirement.viewTimeline")}>
-			  <Button
-				  type="text"
-				  size="small"
-				  shape="circle"
-				  icon={<HistoryOutlined />}
-				  aria-label={t("delivery.requirement.viewTimeline")}
-				  onClick={(event) => {
-					event.stopPropagation();
-					onTimeline(requirement);
-				  }}
-			  />
-			</Tooltip>
-            <Tooltip title={t("delivery.requirement.shareLink")}>
+          </Dropdown>
+          <Tooltip title={t("delivery.requirement.startTesting")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<ExperimentOutlined />}
+              disabled={disabled}
+              aria-label={t("delivery.requirement.startTesting")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTest(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.requirement.viewTimeline")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<HistoryOutlined />}
+              aria-label={t("delivery.requirement.viewTimeline")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTimeline(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.requirement.shareLink")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<ShareAltOutlined />}
+              aria-label={t("delivery.requirement.shareLink")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onShare(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.requirement.outline")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<FileTextOutlined />}
+              aria-label={t("delivery.requirement.outline")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOutline(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.requirement.edit")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<EditOutlined />}
+              aria-label={t("delivery.requirement.edit")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit(requirement);
+              }}
+            />
+          </Tooltip>
+          <Popconfirm
+            title={t("delivery.requirement.deleteConfirm")}
+            okButtonProps={{ danger: true }}
+            onConfirm={() => onDelete(requirement.requirementKey)}
+          >
+            <Tooltip title={t("delivery.requirement.delete")}>
               <Button
+                danger
                 type="text"
                 size="small"
                 shape="circle"
-                icon={<ShareAltOutlined />}
-                aria-label={t("delivery.requirement.shareLink")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onShare(requirement);
-                }}
+                icon={<DeleteOutlined />}
+                aria-label={t("delivery.requirement.delete")}
+                onClick={(event) => event.stopPropagation()}
               />
             </Tooltip>
-            <Tooltip title={t("delivery.requirement.edit")}>
-              <Button
-                type="text"
-                size="small"
-                shape="circle"
-                icon={<EditOutlined />}
-                aria-label={t("delivery.requirement.edit")}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEdit(requirement);
-                }}
-              />
-            </Tooltip>
-            <Popconfirm
-              title={t("delivery.requirement.deleteConfirm")}
-              okButtonProps={{ danger: true }}
-              onConfirm={() => onDelete(requirement.requirementKey)}
-            >
-              <Tooltip title={t("delivery.requirement.delete")}>
-                <Button
-                  danger
-                  type="text"
-                  size="small"
-                  shape="circle"
-                  icon={<DeleteOutlined />}
-                  aria-label={t("delivery.requirement.delete")}
-                  onClick={(event) => event.stopPropagation()}
-                />
-              </Tooltip>
-            </Popconfirm>
-          </div>
+          </Popconfirm>
         </div>
         <small className="delivery-requirement-card__meta">
           {requirement.createdAt ? dayjs(requirement.createdAt).format("MM-DD HH:mm") : ""}

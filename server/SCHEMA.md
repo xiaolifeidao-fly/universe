@@ -182,4 +182,8 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 [`migrations/20260818_delivery_requirement_split_tasks.sql`](migrations/20260818_delivery_requirement_split_tasks.sql)。
 该脚本可安全重复执行；它补齐的 `split_tasks` 默认为 `TRUE`，存量需求维持原有的多任务拆解行为。
 
+已有需求表升级到支持「每个任务生成需求大纲」开关时，执行
+[`migrations/20260818_delivery_requirement_task_outline.sql`](migrations/20260818_delivery_requirement_task_outline.sql)。
+该脚本可安全重复执行；它补齐的 `generate_task_outline` 默认为 `FALSE`，存量需求只保留需求级大纲。
+
 省掉 `-file` 就只建表。**DDL 不在服务启动时跑** —— 线上建表不该是进程启动的副作用。
