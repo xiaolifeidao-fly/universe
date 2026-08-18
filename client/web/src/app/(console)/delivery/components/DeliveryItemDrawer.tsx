@@ -38,8 +38,7 @@ import {
   DELIVERY_KINDS,
   DELIVERY_STATUSES,
 	STATUS_COLORS,
-  fetchCodexRequirementDocument,
-  fetchItemDetail,
+	fetchItemDetail,
   fetchItemEvents,
   type DeliveryEventRecord,
   type DeliveryItemRecord,
@@ -53,7 +52,7 @@ import {
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { sceneForPhase, toolDisplayName, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { SessionDocumentText } from "./DeliverySessionMessage";
-import { DeliveryTaskOutlinePanel } from "./DeliveryTaskOutline";
+import { DeliveryTaskDocumentPanel } from "./DeliveryTaskDocument";
 
 const { Text } = Typography;
 
@@ -250,14 +249,11 @@ export function DeliveryItemDrawer({
   const [events, setEvents] = useState<DeliveryEventRecord[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [processOpen, setProcessOpen] = useState(false);
-  const [requirementDocument, setRequirementDocument] = useState("");
-  const [requirementDocumentLoading, setRequirementDocumentLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"edit" | "document" | "timeline">("edit");
   const [descriptionView, setDescriptionView] = useState<"edit" | "preview">("edit");
 
   useEffect(() => {
     setDetail(null);
-    setRequirementDocument("");
     setDraft(item ? toDraft(item) : null);
     setComment("");
   }, [item]);
@@ -268,20 +264,6 @@ export function DeliveryItemDrawer({
     setActiveTab("edit");
     setDescriptionView("edit");
   }, [item?.itemKey, open]);
-
-  const loadRequirementDocument = useCallback(async () => {
-    if (!item || !programId || !codexBridgeReady) return;
-    setRequirementDocumentLoading(true);
-    try {
-      const document = await fetchCodexRequirementDocument(programId, item.itemKey);
-      setRequirementDocument(document.exists ? document.content : "");
-    } catch (error) {
-      setRequirementDocument("");
-      message.error((error as Error).message);
-    } finally {
-      setRequirementDocumentLoading(false);
-    }
-  }, [codexBridgeReady, item, programId]);
 
   const loadDetail = useCallback(async () => {
     if (!item || !programId) return;
@@ -318,9 +300,8 @@ export function DeliveryItemDrawer({
   useEffect(() => {
     if (open) {
       void loadDetail();
-      void loadRequirementDocument();
     }
-  }, [loadDetail, loadRequirementDocument, open]);
+  }, [loadDetail, open]);
 
   const activeItem = detail ?? item;
 
@@ -625,19 +606,7 @@ export function DeliveryItemDrawer({
                           key: "requirement",
                           label: t("delivery.session.document.requirement"),
                           children: (
-                            <section className="delivery-document-panel">
-                              {activeItem.requirementDocumentPath ? <code className="delivery-document-panel__path">{activeItem.requirementDocumentPath}</code> : null}
-                              <Spin spinning={requirementDocumentLoading}>
-                                <SessionDocumentText value={requirementDocument || activeItem.requirementDocument} fallback={t("delivery.document.requirementEmpty")} />
-                              </Spin>
-                            </section>
-                          ),
-                        },
-                        {
-                          key: "outline",
-                          label: t("delivery.outline.task"),
-                          children: (
-                            <DeliveryTaskOutlinePanel programId={programId} item={activeItem} codexBridgeReady={codexBridgeReady} />
+                            <DeliveryTaskDocumentPanel programId={programId} item={activeItem} codexBridgeReady={codexBridgeReady} />
                           ),
                         },
                         {

@@ -6,19 +6,10 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   fetchCodexRequirementOutline,
-  fetchCodexTaskOutline,
   saveCodexRequirementOutline,
-  saveCodexTaskOutline,
-  type DeliveryItemRecord,
   type DeliveryRequirementRecord,
 } from "@/api/delivery.api";
 import { SessionDocumentText } from "./DeliverySessionMessage";
-
-interface DeliveryTaskOutlineProps {
-  programId: number;
-  item: DeliveryItemRecord | null;
-  codexBridgeReady: boolean;
-}
 
 interface OutlineEditorProps {
   /** 变了就重新拉一次：任务用任务键，需求用需求键。 */
@@ -32,8 +23,7 @@ interface OutlineEditorProps {
 }
 
 /**
- * 需求大纲编辑面板。任务大纲落在 doc/requirements/<需求键>/<任务键>/需求大纲.md，
- * 需求大纲落在 doc/requirements/<需求键>/需求大纲.md，两者读写方式一致，只差一个接口。
+ * 需求级大纲编辑面板。需求大纲落在 doc/requirements/<需求键>/需求大纲.md。
  */
 function OutlineEditor({ subjectKey, title, codexBridgeReady, emptyText, load, save }: OutlineEditorProps) {
   const { t } = useLocale();
@@ -145,22 +135,7 @@ function OutlineEditor({ subjectKey, title, codexBridgeReady, emptyText, load, s
   );
 }
 
-/** 任务需求大纲面板，展示沿用任务详情「需求」页签那套文档组件，只是多了一档可编辑状态。 */
-export function DeliveryTaskOutlinePanel({ programId, item, codexBridgeReady, title }: DeliveryTaskOutlineProps & { title?: ReactNode }) {
-  const { t } = useLocale();
-  return (
-    <OutlineEditor
-      subjectKey={item && programId ? item.itemKey : ""}
-      title={title}
-      codexBridgeReady={codexBridgeReady}
-      emptyText={t("delivery.outline.taskEmpty")}
-      load={() => fetchCodexTaskOutline(programId, item!.itemKey)}
-      save={(markdown) => saveCodexTaskOutline(programId, item!.itemKey, markdown)}
-    />
-  );
-}
-
-/** 需求级需求大纲面板，读写的是需求拆解沉淀下来的那份大纲，编辑方式与任务大纲一致。 */
+/** 需求级需求大纲面板，读写需求拆解沉淀下来的那份大纲。 */
 export function DeliveryRequirementOutlinePanel({
   programId,
   requirement,
@@ -185,38 +160,7 @@ export function DeliveryRequirementOutlinePanel({
   );
 }
 
-/** 看板卡片上的「需求大纲」按钮打开的独立弹窗，正文与任务详情里的面板是同一个组件。 */
-export function DeliveryTaskOutlineModal({
-  open,
-  programId,
-  item,
-  codexBridgeReady,
-  onClose,
-}: DeliveryTaskOutlineProps & { open: boolean; onClose: () => void }) {
-  const { t } = useLocale();
-  return (
-    <Modal
-      className="delivery-outline-modal"
-      open={open}
-      title={null}
-      width={880}
-      footer={null}
-      destroyOnClose
-      onCancel={onClose}
-    >
-      {open && item ? (
-        <DeliveryTaskOutlinePanel
-          programId={programId}
-          item={item}
-          codexBridgeReady={codexBridgeReady}
-          title={<span title={item.title}>{`${t("delivery.outline.task")} · ${item.title}`}</span>}
-        />
-      ) : null}
-    </Modal>
-  );
-}
-
-/** 需求列表上的「需求大纲」按钮打开的弹窗，和任务大纲弹窗共用同一套编辑体验。 */
+/** 需求列表上的「需求大纲」按钮打开的独立编辑弹窗。 */
 export function DeliveryRequirementOutlineModal({
   open,
   programId,

@@ -24,8 +24,8 @@ interface DeliveryKanbanProps {
   showDependencies: boolean;
   onOpen: (item: DeliveryItemRecord) => void;
   onOpenSession: (item: DeliveryItemRecord) => void;
-  /** 卡片上的独立入口：直接打开这条任务的需求大纲进行修改。 */
-  onOpenOutline: (item: DeliveryItemRecord) => void;
+  /** 卡片上的独立入口：直接打开这条任务唯一的需求文档。 */
+  onOpenDocument: (item: DeliveryItemRecord) => void;
   onExecute: (item: DeliveryItemRecord) => void;
   canExecute: (item: DeliveryItemRecord) => boolean;
   executingItemKey: string;
@@ -133,7 +133,7 @@ export function DeliveryKanban({
   showDependencies,
   onOpen,
   onOpenSession,
-  onOpenOutline,
+  onOpenDocument,
   onExecute,
 	canExecute,
 	executingItemKey,
@@ -405,20 +405,20 @@ export function DeliveryKanban({
 														{t("delivery.session.viewTask")}
 													</Button>
 												</Tooltip>
-												<Tooltip title={t("delivery.outline.taskHint")}>
+											<Tooltip title={t("delivery.document.taskHint")}>
 													<Button
 														className="delivery-card-session-button"
 														type="text"
 														size="small"
 														icon={<FileTextOutlined />}
-														aria-label={t("delivery.outline.task")}
+														aria-label={t("delivery.detail.document")}
 														onPointerDown={(event) => event.stopPropagation()}
 														onClick={(event) => {
 															event.stopPropagation();
-															onOpenOutline(item);
+															onOpenDocument(item);
 														}}
 													>
-														{t("delivery.outline.task")}
+														{t("delivery.detail.document")}
 													</Button>
 												</Tooltip>
 											</div>

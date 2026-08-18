@@ -205,8 +205,8 @@ export function DeliveryRequirementSessionModal({
   const [mode, setMode] = useState<RequirementMode>("simple");
   const [startPhase, setStartPhase] = useState<DeliveryPhase>("development");
   const [splitTasks, setSplitTasks] = useState(true);
-  // 每条任务单独出一份需求大纲默认关掉：多数需求只需要需求级那一份。
-  const [generateTaskOutline, setGenerateTaskOutline] = useState(false);
+  // 预生成是任务需求文档的初稿，正式梳理仍会在同一文件中校正和补全。
+  const [preGenerateTaskDocuments, setPreGenerateTaskDocuments] = useState(false);
   const [generatePrototype, setGeneratePrototype] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -375,7 +375,7 @@ export function DeliveryRequirementSessionModal({
     setMode(nextMode);
     setStartPhase(requirement?.startPhase ?? (nextMode === "simple" ? "development" : "requirement"));
     setSplitTasks(requirement?.splitTasks ?? true);
-    setGenerateTaskOutline(Boolean(requirement?.generateTaskOutline));
+    setPreGenerateTaskDocuments(Boolean(requirement?.preGenerateTaskDocuments));
     setGeneratePrototype(requirement?.generatePrototype ?? false);
     setStageKey(requirement?.stageKey ?? "");
     setModuleKey(requirement?.moduleKey ?? "");
@@ -624,7 +624,7 @@ export function DeliveryRequirementSessionModal({
       || mode !== saved.mode
       || startPhase !== saved.startPhase
       || splitTasks !== (saved.splitTasks ?? true)
-      || generateTaskOutline !== Boolean(saved.generateTaskOutline)
+      || preGenerateTaskDocuments !== Boolean(saved.preGenerateTaskDocuments)
       || generatePrototype !== Boolean(saved.generatePrototype)
       || stageKey !== (saved.stageKey ?? "")
       || moduleKey !== (saved.moduleKey ?? "")
@@ -632,7 +632,7 @@ export function DeliveryRequirementSessionModal({
       || !sameMembers(ownerIds, saved.owners)
       || !sameMembers(assistantIds, saved.assistants)
     );
-  }, [assistantIds, detail, generatePrototype, generateTaskOutline, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
+  }, [assistantIds, detail, generatePrototype, preGenerateTaskDocuments, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
 
   const memberOptions = useMemo(
     () => members.map((member) => ({ value: member.id, label: member.displayName || member.username })),
@@ -670,7 +670,7 @@ export function DeliveryRequirementSessionModal({
         // 简易模式的起始阶段由服务端按模式定死，这里传的是专业模式下用户的选择。
         startPhase,
         splitTasks,
-        generateTaskOutline,
+        preGenerateTaskDocuments,
         generatePrototype,
         stageKey,
         moduleKey,
@@ -727,7 +727,7 @@ export function DeliveryRequirementSessionModal({
         requirementAssistants: (current.assistants ?? []).map((member) => member.name).join("、"),
         requirementStartPhase: current.startPhase,
         requirementSplitTasks: current.splitTasks,
-        requirementGenerateTaskOutline: current.generateTaskOutline,
+        requirementPreGenerateTaskDocuments: current.preGenerateTaskDocuments,
         requirementGeneratePrototype: current.generatePrototype,
         attachmentIds: uploaded.map((attachment) => attachment.id),
         confirmWrite,
@@ -1301,17 +1301,16 @@ export function DeliveryRequirementSessionModal({
                             onChange={setSplitTasks}
                           />
                         </div>
-                        {/* 任务级需求大纲默认不生成：需要逐条留文档时才打开，避免每条任务都多一份要维护的文件。 */}
-                        <div className={`delivery-planning-context__toggle${generateTaskOutline ? " is-on" : ""}`}>
-                          <div role="presentation" onClick={() => setGenerateTaskOutline((current) => !current)}>
-                            <b>{t("delivery.requirement.generateTaskOutline")}</b>
-                            <small>{t("delivery.requirement.generateTaskOutlineHint")}</small>
+                        <div className={`delivery-planning-context__toggle${preGenerateTaskDocuments ? " is-on" : ""}`}>
+                          <div role="presentation" onClick={() => setPreGenerateTaskDocuments((current) => !current)}>
+                            <b>{t("delivery.requirement.preGenerateTaskDocuments")}</b>
+                            <small>{t("delivery.requirement.preGenerateTaskDocumentsHint")}</small>
                           </div>
                           <Switch
                             size="small"
-                            checked={generateTaskOutline}
-                            aria-label={t("delivery.requirement.generateTaskOutline")}
-                            onChange={setGenerateTaskOutline}
+                            checked={preGenerateTaskDocuments}
+                            aria-label={t("delivery.requirement.preGenerateTaskDocuments")}
+                            onChange={setPreGenerateTaskDocuments}
                           />
                         </div>
                         {mode === "professional" ? (

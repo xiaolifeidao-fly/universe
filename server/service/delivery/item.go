@@ -765,7 +765,11 @@ func requirementDocumentPath(value, moduleKey, itemKey string) string {
 	// Requirement documents always live under the execution workspace. The path
 	// is derived from the task identity so every new Codex conversation reads the
 	// same source of truth instead of accepting a caller-controlled filesystem path.
-	return fmt.Sprintf("doc/%s/%s/文档.md", moduleKey, itemKey)
+	module := strings.TrimSpace(moduleKey)
+	if module == "" {
+		module = "module"
+	}
+	return fmt.Sprintf("doc/%s/%s/文档.md", module, itemKey)
 }
 
 func storedRequirementDocumentPath(value, moduleKey, itemKey string) string {

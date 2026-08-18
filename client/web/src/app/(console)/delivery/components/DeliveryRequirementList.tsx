@@ -63,7 +63,7 @@ interface DeliveryRequirementListProps {
   onCreate: () => void;
   onEdit: (requirement: DeliveryRequirementRecord) => void;
   onTest: (requirement: DeliveryRequirementRecord) => void;
-  /** 需求大纲弹窗：和任务需求大纲一样可以直接改并保存回工作区。 */
+  /** 需求级大纲弹窗，可直接改并保存回工作区。 */
   onOutline: (requirement: DeliveryRequirementRecord) => void;
 	/** 需求时间线包含需求本身及其下所有任务的变动。 */
   onTimeline: (requirement: DeliveryRequirementRecord) => void;

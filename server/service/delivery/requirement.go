@@ -115,10 +115,13 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.SplitTasks != nil {
 		splitTasks = *req.SplitTasks
 	}
-	// 每条任务单独出一份需求大纲默认关闭：多数需求只需要需求级那一份。
-	generateTaskOutline := false
+	// 预生成任务需求文档默认关闭；任务需求梳理阶段仍可在同一文件上继续完善。
+	preGenerateTaskDocuments := false
 	if req.GenerateTaskOutline != nil {
-		generateTaskOutline = *req.GenerateTaskOutline
+		preGenerateTaskDocuments = *req.GenerateTaskOutline
+	}
+	if req.PreGenerateTaskDocuments != nil {
+		preGenerateTaskDocuments = *req.PreGenerateTaskDocuments
 	}
 	ownerIDs, ownerNames, err := normalizeRequirementMembers(req.Owners, "主负责人")
 	if err != nil {
@@ -143,7 +146,7 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 			Mode:                mode,
 			StartPhase:          startPhase,
 			SplitTasks:          splitTasks,
-			GenerateTaskOutline: generateTaskOutline,
+			GenerateTaskOutline: preGenerateTaskDocuments,
 			GeneratePrototype:   generatePrototype,
 			StageKey:            strings.TrimSpace(req.StageKey),
 			ModuleKey:           strings.TrimSpace(req.ModuleKey),
@@ -175,8 +178,8 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.SplitTasks == nil {
 		splitTasks = current.SplitTasks
 	}
-	if req.GenerateTaskOutline == nil {
-		generateTaskOutline = current.GenerateTaskOutline
+	if req.GenerateTaskOutline == nil && req.PreGenerateTaskDocuments == nil {
+		preGenerateTaskDocuments = current.GenerateTaskOutline
 	}
 	if req.Version <= 0 {
 		return dto.RequirementView{}, errors.New("缺少版本号，请刷新后重试")
@@ -193,7 +196,7 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		"mode":                  mode,
 		"start_phase":           startPhase,
 		"split_tasks":           splitTasks,
-		"generate_task_outline": generateTaskOutline,
+		"generate_task_outline": preGenerateTaskDocuments,
 		"generate_prototype":    generatePrototype,
 		"stage_key":             strings.TrimSpace(req.StageKey),
 		"module_key":            strings.TrimSpace(req.ModuleKey),
@@ -205,7 +208,7 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		"updated_by":            actorOf(req.ActorID, req.ActorName),
 	}
 	events := requirementChangeEvents(current, name, req.Detail, plannedStartAt, plannedEndAt, status, mode, startPhase,
-		splitTasks, generateTaskOutline, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
+		splitTasks, preGenerateTaskDocuments, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
 		req.ActorID, req.ActorName)
 	var affected int64
 	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
@@ -417,39 +420,40 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 	created := row.CreatedTime
 	updated := row.UpdatedTime
 	return dto.RequirementView{
-		RequirementKey:       row.RequirementKey,
-		BizLine:              contract.BizLine(row.BizLine),
-		ProgramID:            row.ProgramID,
-		Name:                 row.Name,
-		Detail:               row.Detail,
-		PlannedStartAt:       row.PlannedStartAt,
-		PlannedEndAt:         row.PlannedEndAt,
-		Status:               row.Status,
-		Mode:                 requirementModeOrDefault(row.Mode),
-		StartPhase:           requirementStartPhaseOrDefault(row.StartPhase),
-		SplitTasks:           row.SplitTasks,
-		GenerateTaskOutline:  row.GenerateTaskOutline,
-		GeneratePrototype:    row.GeneratePrototype,
-		PrototypeHTMLPath:    row.PrototypeHTMLPath,
-		PrototypeGeneratedAt: row.PrototypeGeneratedAt,
-		TestingStatus:        requirementTestingStatusOrDefault(row.TestingStatus),
-		TestingReport:        row.TestingReport,
-		TestingReportPath:    row.TestingReportPath,
-		TestingReportedAt:    row.TestingReportedAt,
-		TestingCasesStatus:   requirementTestingCasesStatusOrDefault(row.TestingCasesStatus),
-		TestingCases:         row.TestingCases,
-		TestingCasesPath:     row.TestingCasesPath,
-		StageKey:             row.StageKey,
-		ModuleKey:            row.ModuleKey,
-		Kind:                 normalizeKind(row.Kind),
-		Owners:               requirementMembersOf(row.OwnerIDs, row.OwnerNames),
-		Assistants:           requirementMembersOf(row.AssistantIDs, row.AssistantNames),
-		Version:              row.Version,
-		CreatedBy:            row.CreatedBy,
-		CreatedByName:        row.CreatedByName,
-		CreatedAt:            &created,
-		UpdatedBy:            row.UpdatedBy,
-		UpdatedAt:            &updated,
+		RequirementKey:           row.RequirementKey,
+		BizLine:                  contract.BizLine(row.BizLine),
+		ProgramID:                row.ProgramID,
+		Name:                     row.Name,
+		Detail:                   row.Detail,
+		PlannedStartAt:           row.PlannedStartAt,
+		PlannedEndAt:             row.PlannedEndAt,
+		Status:                   row.Status,
+		Mode:                     requirementModeOrDefault(row.Mode),
+		StartPhase:               requirementStartPhaseOrDefault(row.StartPhase),
+		SplitTasks:               row.SplitTasks,
+		PreGenerateTaskDocuments: row.GenerateTaskOutline,
+		GenerateTaskOutline:      row.GenerateTaskOutline,
+		GeneratePrototype:        row.GeneratePrototype,
+		PrototypeHTMLPath:        row.PrototypeHTMLPath,
+		PrototypeGeneratedAt:     row.PrototypeGeneratedAt,
+		TestingStatus:            requirementTestingStatusOrDefault(row.TestingStatus),
+		TestingReport:            row.TestingReport,
+		TestingReportPath:        row.TestingReportPath,
+		TestingReportedAt:        row.TestingReportedAt,
+		TestingCasesStatus:       requirementTestingCasesStatusOrDefault(row.TestingCasesStatus),
+		TestingCases:             row.TestingCases,
+		TestingCasesPath:         row.TestingCasesPath,
+		StageKey:                 row.StageKey,
+		ModuleKey:                row.ModuleKey,
+		Kind:                     normalizeKind(row.Kind),
+		Owners:                   requirementMembersOf(row.OwnerIDs, row.OwnerNames),
+		Assistants:               requirementMembersOf(row.AssistantIDs, row.AssistantNames),
+		Version:                  row.Version,
+		CreatedBy:                row.CreatedBy,
+		CreatedByName:            row.CreatedByName,
+		CreatedAt:                &created,
+		UpdatedBy:                row.UpdatedBy,
+		UpdatedAt:                &updated,
 	}
 }
 
@@ -465,7 +469,7 @@ func requirementChangeEvents(
 	name, detail string,
 	plannedStartAt, plannedEndAt *time.Time,
 	status, mode, startPhase string,
-	splitTasks, generateTaskOutline, generatePrototype bool,
+	splitTasks, preGenerateTaskDocuments, generatePrototype bool,
 	stageKey, moduleKey, kind, ownerNames, assistantNames,
 	actorID, actorName string,
 ) []*repository.DeliveryRequirementEvent {
@@ -488,7 +492,7 @@ func requirementChangeEvents(
 	record("mode", requirementModeOrDefault(current.Mode), mode)
 	record("startPhase", requirementStartPhaseOrDefault(current.StartPhase), startPhase)
 	record("splitTasks", strconv.FormatBool(current.SplitTasks), strconv.FormatBool(splitTasks))
-	record("generateTaskOutline", strconv.FormatBool(current.GenerateTaskOutline), strconv.FormatBool(generateTaskOutline))
+	record("preGenerateTaskDocuments", strconv.FormatBool(current.GenerateTaskOutline), strconv.FormatBool(preGenerateTaskDocuments))
 	record("generatePrototype", strconv.FormatBool(current.GeneratePrototype), strconv.FormatBool(generatePrototype))
 	record("stageKey", current.StageKey, stageKey)
 	record("moduleKey", current.ModuleKey, moduleKey)

@@ -40,7 +40,8 @@ import { useDeliveryBoard } from "../hooks/useDeliveryBoard";
 import { DeliveryItemDrawer } from "./DeliveryItemDrawer";
 import { DeliveryKanban } from "./DeliveryKanban";
 import { DeliveryTaskSessionModal } from "./DeliveryTaskSessionModal";
-import { DeliveryRequirementOutlineModal, DeliveryTaskOutlineModal } from "./DeliveryTaskOutline";
+import { DeliveryRequirementOutlineModal } from "./DeliveryTaskOutline";
+import { DeliveryTaskDocumentModal } from "./DeliveryTaskDocument";
 import { DeliveryRequirementList } from "./DeliveryRequirementList";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
@@ -163,7 +164,7 @@ export function DeliveryWorkspace() {
   const [changingOwnerItemKey, setChangingOwnerItemKey] = useState("");
   const [editing, setEditing] = useState<DeliveryItemRecord | null>(null);
   const [sessionItem, setSessionItem] = useState<DeliveryItemRecord | null>(null);
-  const [outlineItem, setOutlineItem] = useState<DeliveryItemRecord | null>(null);
+  const [documentItem, setDocumentItem] = useState<DeliveryItemRecord | null>(null);
   const [outlineRequirement, setOutlineRequirement] = useState<DeliveryRequirementRecord | null>(null);
   const [startTaskTestingCases, setStartTaskTestingCases] = useState(false);
   const [planningOpen, setPlanningOpen] = useState(false);
@@ -690,7 +691,7 @@ export function DeliveryWorkspace() {
         mode: requirement.mode,
         startPhase: requirement.startPhase,
         splitTasks: requirement.splitTasks,
-        generateTaskOutline: requirement.generateTaskOutline,
+        preGenerateTaskDocuments: requirement.preGenerateTaskDocuments,
         generatePrototype: requirement.generatePrototype,
         stageKey: requirement.stageKey,
         moduleKey: requirement.moduleKey,
@@ -1080,7 +1081,7 @@ export function DeliveryWorkspace() {
                   showDependencies={showDependencyArrows}
                   onOpen={setEditing}
       				onOpenSession={setSessionItem}
-                  onOpenOutline={setOutlineItem}
+                  onOpenDocument={setDocumentItem}
                   onExecute={(item) => void handleExecute(item)}
                   canExecute={canExecute}
                   executingItemKey={executingItemKey}
@@ -1164,12 +1165,12 @@ export function DeliveryWorkspace() {
         onChanged={handleSessionChanged}
       />
 
-      <DeliveryTaskOutlineModal
-        open={Boolean(outlineItem)}
+      <DeliveryTaskDocumentModal
+        open={Boolean(documentItem)}
         programId={programId}
-        item={outlineItem}
+        item={documentItem}
         codexBridgeReady={codexBridgeReady}
-        onClose={() => setOutlineItem(null)}
+        onClose={() => setDocumentItem(null)}
       />
 
       <DeliveryRequirementOutlineModal

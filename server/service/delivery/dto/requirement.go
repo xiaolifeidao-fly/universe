@@ -18,25 +18,28 @@ type RequirementMember struct {
 }
 
 type RequirementView struct {
-	RequirementKey       string           `json:"requirementKey"`
-	BizLine              contract.BizLine `json:"bizLine"`
-	ProgramID            int64            `json:"programId"`
-	Name                 string           `json:"name"`
-	Detail               string           `json:"detail"`
-	PlannedStartAt       *time.Time       `json:"plannedStartAt"`
-	PlannedEndAt         *time.Time       `json:"plannedEndAt"`
-	Status               string           `json:"status"`
-	Mode                 string           `json:"mode"`
-	StartPhase           string           `json:"startPhase"`
-	SplitTasks           bool             `json:"splitTasks"`
-	GenerateTaskOutline  bool             `json:"generateTaskOutline"`
-	GeneratePrototype    bool             `json:"generatePrototype"`
-	PrototypeHTMLPath    string           `json:"prototypeHtmlPath"`
-	PrototypeGeneratedAt *time.Time       `json:"prototypeGeneratedAt"`
-	TestingStatus        string           `json:"testingStatus"`
-	TestingReport        string           `json:"testingReport"`
-	TestingReportPath    string           `json:"testingReportPath"`
-	TestingReportedAt    *time.Time       `json:"testingReportedAt"`
+	RequirementKey string           `json:"requirementKey"`
+	BizLine        contract.BizLine `json:"bizLine"`
+	ProgramID      int64            `json:"programId"`
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail"`
+	PlannedStartAt *time.Time       `json:"plannedStartAt"`
+	PlannedEndAt   *time.Time       `json:"plannedEndAt"`
+	Status         string           `json:"status"`
+	Mode           string           `json:"mode"`
+	StartPhase     string           `json:"startPhase"`
+	SplitTasks     bool             `json:"splitTasks"`
+	// PreGenerateTaskDocuments 控制确认拆解后是否预生成每条任务的需求文档。
+	// GenerateTaskOutline 保留在响应中，兼容尚未升级的旧面板和本地桥接器。
+	PreGenerateTaskDocuments bool       `json:"preGenerateTaskDocuments"`
+	GenerateTaskOutline      bool       `json:"generateTaskOutline,omitempty"`
+	GeneratePrototype        bool       `json:"generatePrototype"`
+	PrototypeHTMLPath        string     `json:"prototypeHtmlPath"`
+	PrototypeGeneratedAt     *time.Time `json:"prototypeGeneratedAt"`
+	TestingStatus            string     `json:"testingStatus"`
+	TestingReport            string     `json:"testingReport"`
+	TestingReportPath        string     `json:"testingReportPath"`
+	TestingReportedAt        *time.Time `json:"testingReportedAt"`
 	// 测试用例设计与真实执行分开保存：研发进行时可以先准备，不得因此改变总体测试结论。
 	TestingCasesStatus string              `json:"testingCasesStatus"`
 	TestingCases       string              `json:"testingCases"`
@@ -96,7 +99,9 @@ type SaveRequirementRequest struct {
 	StartPhase     string           `json:"startPhase"`
 	// SplitTasks 用指针表达「本次请求没提这件事」：老客户端不传时新建按默认拆解、编辑保持原值。
 	SplitTasks *bool `json:"splitTasks"`
-	// GenerateTaskOutline 同样用指针区分「没提」：新建默认不生成任务大纲，编辑保持需求原值。
+	// PreGenerateTaskDocuments 用指针区分「没提」：新建默认不预生成，编辑保持原值。
+	PreGenerateTaskDocuments *bool `json:"preGenerateTaskDocuments"`
+	// GenerateTaskOutline 是旧字段，升级中的旧面板仍可用；新调用方必须传上面的字段。
 	GenerateTaskOutline *bool               `json:"generateTaskOutline"`
 	GeneratePrototype   bool                `json:"generatePrototype"`
 	StageKey            string              `json:"stageKey"`
