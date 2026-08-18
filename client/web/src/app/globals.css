@@ -1301,24 +1301,28 @@ select {
 }
 
 .delivery-board {
-  --delivery-task-gap: 70px;
+  --delivery-board-scale: 1;
+  --delivery-task-gap: calc(70px * var(--delivery-board-scale));
+  --delivery-column-width: calc(292px * var(--delivery-board-scale));
+  --delivery-parallel-column-width: calc(352px * var(--delivery-board-scale));
+  --delivery-column-padding: calc(12px * var(--delivery-board-scale));
   position: relative;
   display: flex;
   width: max-content;
   min-width: 100%;
   align-items: flex-start;
   /* Each 292px column leaves 13px around its 266px card on both sides. */
-  gap: calc(var(--delivery-task-gap) - 26px);
+  gap: calc(var(--delivery-task-gap) - (26px * var(--delivery-board-scale)));
 }
 
 .delivery-column {
   position: relative;
   z-index: 1;
   display: flex;
-  width: 292px;
+  width: var(--delivery-column-width);
   flex: none;
   flex-direction: column;
-  padding: 12px;
+  padding: var(--delivery-column-padding);
   border: 1px solid var(--manager-border);
   border-radius: var(--manager-r-lg);
   background: var(--manager-panel);
@@ -1337,7 +1341,7 @@ select {
   padding-bottom: 9px;
 }
 
-.delivery-column-head b { font-size: var(--manager-fs-base); }
+.delivery-column-head b { min-width: 0; overflow: hidden; font-size: var(--manager-fs-base); text-overflow: ellipsis; white-space: nowrap; }
 
 .delivery-column-head span {
   min-width: 0;
@@ -1382,7 +1386,7 @@ select {
 
 /* A shared board lane becomes a compact two-up layout so parallel work is easy to scan. */
 .delivery-column.has-parallel-items {
-  width: 352px;
+  width: var(--delivery-parallel-column-width);
 }
 
 .delivery-column.has-parallel-items .delivery-column-body {
@@ -1788,6 +1792,170 @@ select {
   max-width: 100%;
 }
 
+/* 看板缩放是二维等比变换；这里不用 transform，避免拖放坐标按比例失真。 */
+.delivery-board .delivery-column-head {
+  gap: calc(8px * var(--delivery-board-scale));
+  padding-bottom: calc(9px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-column-head b { font-size: calc(var(--manager-fs-base) * var(--delivery-board-scale)); }
+.delivery-board .delivery-column-head span,
+.delivery-board .delivery-column-head em { font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-column-rail,
+.delivery-board .delivery-card-rail { height: calc(4px * var(--delivery-board-scale)); border-radius: calc(3px * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-column-body {
+  min-height: calc(46px * var(--delivery-board-scale));
+  margin-top: calc(11px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-column.has-parallel-items .delivery-column-body {
+  column-gap: calc(12px * var(--delivery-board-scale));
+  row-gap: calc(50px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-column-empty {
+  padding: calc(10px * var(--delivery-board-scale)) calc(4px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card {
+  padding: calc(11px * var(--delivery-board-scale)) calc(12px * var(--delivery-board-scale));
+  border-width: calc(1px * var(--delivery-board-scale));
+  border-left-width: calc(3px * var(--delivery-board-scale));
+  border-radius: calc(var(--manager-r) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card:hover { transform: translateY(calc(-1px * var(--delivery-board-scale))); }
+.delivery-board .delivery-card.is-dependency-source { box-shadow: 0 0 0 calc(3px * var(--delivery-board-scale)) color-mix(in srgb, var(--manager-cyan) 18%, transparent); }
+.delivery-board .delivery-card.is-dependency-target { box-shadow: 0 0 0 calc(4px * var(--delivery-board-scale)) color-mix(in srgb, var(--manager-primary) 22%, transparent), var(--manager-shadow); transform: translateY(calc(-2px * var(--delivery-board-scale))); }
+
+.delivery-board .delivery-card-owner-highlight {
+  top: calc(-10px * var(--delivery-board-scale));
+  right: calc(10px * var(--delivery-board-scale));
+  padding: calc(2px * var(--delivery-board-scale)) calc(8px * var(--delivery-board-scale));
+  border-width: calc(1px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+  line-height: calc(16px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-dependency-target-ports > i {
+  width: calc(10px * var(--delivery-board-scale));
+  height: calc(10px * var(--delivery-board-scale));
+  border-width: calc(2px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-dependency-target-ports > i[data-side="top"] { top: calc(-5px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-target-ports > i[data-side="right"] { right: calc(-5px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-target-ports > i[data-side="bottom"] { bottom: calc(-5px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-target-ports > i[data-side="left"] { left: calc(-5px * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-dependency-handle {
+  width: calc(20px * var(--delivery-board-scale));
+  height: calc(20px * var(--delivery-board-scale));
+  border-width: calc(1px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-dependency-handle .anticon { font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-handle[data-side="top"] { top: calc(-11px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-handle[data-side="right"] { right: calc(-11px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-handle[data-side="bottom"] { bottom: calc(-11px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-handle[data-side="left"] { left: calc(-13px * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-card-top {
+  gap: calc(7px * var(--delivery-board-scale));
+  margin-bottom: calc(7px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-pill {
+  padding: calc(2px * var(--delivery-board-scale)) calc(9px * var(--delivery-board-scale));
+  border-width: calc(1px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-top em,
+.delivery-board .delivery-card > p,
+.delivery-board .delivery-card-foot { font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-card > b {
+  margin-bottom: calc(5px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-sm) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-benefit-tags { gap: calc(4px * var(--delivery-board-scale)); margin: calc(-1px * var(--delivery-board-scale)) 0 calc(7px * var(--delivery-board-scale)); }
+.delivery-board .delivery-card-benefit-tags .ant-tag {
+  padding-inline: calc(7px * var(--delivery-board-scale));
+  border-width: calc(1px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+  line-height: calc(18px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-phases {
+  gap: calc(7px * var(--delivery-board-scale));
+  margin-bottom: calc(8px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-phases > span { gap: calc(4px * var(--delivery-board-scale)); }
+.delivery-board .delivery-card-phases i { width: calc(6px * var(--delivery-board-scale)); height: calc(6px * var(--delivery-board-scale)); }
+.delivery-board .delivery-card > p { margin-bottom: calc(9px * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-card-foot {
+  gap: calc(9px * var(--delivery-board-scale));
+  margin-top: calc(8px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-owner-select {
+  flex-basis: calc(88px * var(--delivery-board-scale));
+  max-width: calc(126px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-owner-select .ant-select-selector {
+  min-height: calc(24px * var(--delivery-board-scale)) !important;
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card-owner-select .ant-select-selection-item,
+.delivery-board .delivery-card-owner-select .ant-select-selection-placeholder { line-height: calc(22px * var(--delivery-board-scale)) !important; }
+
+.delivery-board .delivery-card-session-button {
+  margin: 0 0 calc(7px * var(--delivery-board-scale)) calc(-6px * var(--delivery-board-scale));
+  padding-inline: calc(6px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card .ant-btn-sm {
+  min-width: calc(24px * var(--delivery-board-scale));
+  height: calc(24px * var(--delivery-board-scale));
+  padding-inline: calc(7px * var(--delivery-board-scale));
+  font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale));
+}
+
+.delivery-board .ant-checkbox-inner {
+  width: calc(16px * var(--delivery-board-scale));
+  height: calc(16px * var(--delivery-board-scale));
+  border-width: calc(1px * var(--delivery-board-scale));
+}
+
+.delivery-board .delivery-card.is-parallel { padding: calc(9px * var(--delivery-board-scale)) calc(9px * var(--delivery-board-scale)) calc(10px * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-top { gap: calc(5px * var(--delivery-board-scale)); margin-bottom: calc(6px * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-pill { padding: calc(2px * var(--delivery-board-scale)) calc(6px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-micro) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-top em { max-width: calc(62px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-micro) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel > b { min-height: calc(36px * var(--delivery-board-scale)); margin-bottom: calc(4px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-session-button { width: calc(26px * var(--delivery-board-scale)); min-width: calc(26px * var(--delivery-board-scale)); height: calc(26px * var(--delivery-board-scale)); margin: 0 0 calc(5px * var(--delivery-board-scale)) calc(-5px * var(--delivery-board-scale)); padding: 0; }
+.delivery-board .delivery-card.is-parallel .delivery-card-session-button .anticon { font-size: calc(var(--manager-fs-base) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-phases { margin-bottom: calc(6px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-micro) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-foot { gap: calc(5px * var(--delivery-board-scale)) calc(7px * var(--delivery-board-scale)); margin-top: calc(7px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-micro) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-owner-select { flex-basis: calc(74px * var(--delivery-board-scale)); }
+
+.delivery-board .delivery-dependency-layer > path.delivery-dependency-line { stroke-width: calc(1.6px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-layer > path.delivery-dependency-hit-area { stroke-width: calc(14px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-layer > path.delivery-dependency-hit-area:hover + path.delivery-dependency-line { stroke-width: calc(2.6px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-layer > path.delivery-dependency-line.is-preview,
+.delivery-board .delivery-dependency-layer.has-active-item > path.delivery-dependency-line.is-active { stroke-width: calc(2.4px * var(--delivery-board-scale)); }
+.delivery-board .delivery-dependency-layer > path.delivery-dependency-line.is-preview { stroke-dasharray: calc(6px * var(--delivery-board-scale)) calc(4px * var(--delivery-board-scale)); }
+
 .delivery-dependency-layer {
   position: absolute;
   z-index: 2;
@@ -2122,6 +2290,72 @@ select {
 	padding-inline: 6px;
 	color: var(--manager-primary);
 	font-size: var(--manager-fs-xs);
+}
+
+/* 会话与需求大纲两个入口并排在标题下方，卡片压缩时按钮各自收成图标。 */
+.delivery-card-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 2px;
+}
+
+/* 大纲弹窗固定 800px 高：默认高度只能看到开头几行；屏幕更矮时退回视口高度。 */
+.delivery-outline-modal {
+	top: 32px;
+	padding-bottom: 32px;
+}
+
+.delivery-outline-modal .ant-modal-content {
+	display: grid;
+	height: min(800px, calc(100vh - 64px));
+	grid-template-rows: auto minmax(0, 1fr);
+	overflow: hidden;
+}
+
+.delivery-outline-modal .ant-modal-body {
+	min-height: 0;
+	overflow: auto;
+}
+
+.delivery-outline-modal .delivery-outline-panel {
+	display: grid;
+	min-height: 100%;
+	grid-template-rows: auto minmax(0, 1fr);
+}
+
+.delivery-outline-modal .delivery-outline-panel .ant-spin-nested-loading,
+.delivery-outline-modal .delivery-outline-panel .ant-spin-container {
+	height: 100%;
+}
+
+/* 编辑态铺满剩余高度：autoSize 会写死行内 height，必须盖掉才跟得上弹窗。 */
+.delivery-outline-modal .delivery-outline-panel textarea.ant-input {
+	height: 100% !important;
+	max-height: none !important;
+	resize: none;
+}
+
+/* 大纲面板复用文档面板的外框，只在顶部多一条路径 + 操作的横条。 */
+.delivery-outline-panel__bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.delivery-outline-panel__bar .delivery-document-panel__path {
+	min-width: 0;
+	flex: 1 1 auto;
+	margin: 0;
+}
+
+.delivery-outline-panel__actions {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 8px;
 }
 
 .delivery-task-session-modal .ant-modal-content {

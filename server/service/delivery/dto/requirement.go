@@ -28,6 +28,7 @@ type RequirementView struct {
 	Status               string           `json:"status"`
 	Mode                 string           `json:"mode"`
 	StartPhase           string           `json:"startPhase"`
+	SplitTasks           bool             `json:"splitTasks"`
 	GeneratePrototype    bool             `json:"generatePrototype"`
 	PrototypeHTMLPath    string           `json:"prototypeHtmlPath"`
 	PrototypeGeneratedAt *time.Time       `json:"prototypeGeneratedAt"`
@@ -92,6 +93,8 @@ type SaveRequirementRequest struct {
 	Status            string              `json:"status"`
 	Mode              string              `json:"mode"`
 	StartPhase        string              `json:"startPhase"`
+	// SplitTasks 用指针表达「本次请求没提这件事」：老客户端不传时新建按默认拆解、编辑保持原值。
+	SplitTasks        *bool               `json:"splitTasks"`
 	GeneratePrototype bool                `json:"generatePrototype"`
 	StageKey          string              `json:"stageKey"`
 	ModuleKey         string              `json:"moduleKey"`

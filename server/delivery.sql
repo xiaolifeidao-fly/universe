@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   `status`          varchar(16)  NOT NULL DEFAULT 'open',      -- open 进行中 / done 已完成 / dropped 不做
   `mode`            varchar(16)  NOT NULL DEFAULT 'professional', -- simple 简易（直接进动作执行）/ professional 专业
   `start_phase`     varchar(16)  NOT NULL DEFAULT 'requirement',  -- 拆出的任务从哪个阶段起步
+  `split_tasks`     boolean      NOT NULL DEFAULT TRUE,           -- 是否把需求拆成多条任务；FALSE 表示只落一条任务
   `generate_prototype` boolean    NOT NULL DEFAULT FALSE,           -- 专业模式拆解确认后可生成关联 HTML 原型
   `prototype_html_path` varchar(512) NOT NULL DEFAULT '',           -- 原型目录在项目工作区 doc/ 下的相对路径，内含按模块拆分的 HTML
   `prototype_generated_at` timestamp NULL,                           -- 最近一次生成 HTML 原型的时间

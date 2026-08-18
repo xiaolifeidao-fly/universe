@@ -22,7 +22,7 @@ import {
 } from "@ant-design/icons";
 import { Button, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import dayjs from "dayjs";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type DragEvent } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   CLAUDE_EFFORTS,
@@ -42,6 +42,7 @@ import {
   DELIVERY_PHASES,
   REQUIREMENT_MODES,
   REQUIREMENT_STATUSES,
+  fetchCodexRequirementOutline,
   fetchCodexRequirementPrototype,
   fetchCodexRequirementPrototypeConversation,
   fetchCodexRequirementTestingConversation,
@@ -64,6 +65,7 @@ import {
   type DeliveryRequirementRecord,
   type DeliveryStageRecord,
   type MemberRecord,
+  type CodexRequirementOutline,
   type CodexRequirementPrototype,
   type RequirementMember,
   type RequirementMode,
@@ -77,6 +79,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   SessionAttachments,
   attachmentKey,
+  clipboardAttachments,
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
 
@@ -102,7 +105,7 @@ interface DeliveryRequirementSessionModalProps {
 }
 
 type RequirementPhaseTab = "requirement" | "testing";
-type RequirementStageTab = "requirement" | "result" | "prototype";
+type RequirementStageTab = "requirement" | "result" | "outline" | "prototype";
 type TestingStageTab = "testingCases" | "testingReport";
 
 function normalizedDateTime(value?: string | null) {
@@ -193,6 +196,7 @@ export function DeliveryRequirementSessionModal({
   const [assistantIds, setAssistantIds] = useState<string[]>([]);
   const [mode, setMode] = useState<RequirementMode>("simple");
   const [startPhase, setStartPhase] = useState<DeliveryPhase>("development");
+  const [splitTasks, setSplitTasks] = useState(true);
   const [generatePrototype, setGeneratePrototype] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -205,6 +209,8 @@ export function DeliveryRequirementSessionModal({
   const [testingConversations, setTestingConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [testingThreadId, setTestingThreadId] = useState("");
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
+  const [outline, setOutline] = useState<CodexRequirementOutline | null>(null);
+  const [outlineLoading, setOutlineLoading] = useState(false);
   const [prototype, setPrototype] = useState<CodexRequirementPrototype | null>(null);
   const [prototypeFilePath, setPrototypeFilePath] = useState("");
   const [prototypeLoading, setPrototypeLoading] = useState(false);
@@ -267,6 +273,8 @@ export function DeliveryRequirementSessionModal({
       setTestingConversations([]);
       setTestingThreadId("");
       setStartNewTestingConversation(false);
+      setOutline(null);
+      setOutlineLoading(false);
       setPrototype(null);
       setPrototypeFilePath("");
       setPrototypeLoading(false);
@@ -291,6 +299,7 @@ export function DeliveryRequirementSessionModal({
     const nextMode = requirement?.mode ?? "simple";
     setMode(nextMode);
     setStartPhase(requirement?.startPhase ?? (nextMode === "simple" ? "development" : "requirement"));
+    setSplitTasks(requirement?.splitTasks ?? true);
     setGeneratePrototype(requirement?.generatePrototype ?? false);
     setStageKey(requirement?.stageKey ?? "");
     setModuleKey(requirement?.moduleKey ?? "");
@@ -316,6 +325,25 @@ export function DeliveryRequirementSessionModal({
     if (!open || !requirementKey) return;
     void loadTestingHistory();
   }, [loadTestingHistory, open, requirementKey]);
+
+  const loadOutline = useCallback(async () => {
+    if (!open || !requirementKey || !codexBridgeReady) {
+      setOutline(null);
+      return null;
+    }
+    setOutlineLoading(true);
+    try {
+      const next = await fetchCodexRequirementOutline(programId, requirementKey);
+      setOutline(next);
+      return next;
+    } catch (error) {
+      setOutline(null);
+      message.error((error as Error).message);
+      return null;
+    } finally {
+      setOutlineLoading(false);
+    }
+  }, [codexBridgeReady, open, programId, requirementKey]);
 
   const loadPrototype = useCallback(async () => {
     if (!open || !requirementKey || !codexBridgeReady) {
@@ -458,6 +486,14 @@ export function DeliveryRequirementSessionModal({
   }, [active, load, open]);
 
   useEffect(() => {
+    // 大纲是拆解会话写在工作区里的文件，面板不会自己知道它变了：进入该页签时读一次，
+    // 本轮拆解跑完（active 落回 false）再读一次。
+    if (!open || !requirementKey || !codexBridgeReady) return;
+    if (activePhaseTab !== "requirement" || activeRequirementTab !== "outline") return;
+    void loadOutline();
+  }, [active, activePhaseTab, activeRequirementTab, codexBridgeReady, loadOutline, open, requirementKey]);
+
+  useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
   }, [active, flattenedItems.length]);
 
@@ -487,6 +523,7 @@ export function DeliveryRequirementSessionModal({
       || status !== saved.status
       || mode !== saved.mode
       || startPhase !== saved.startPhase
+      || splitTasks !== (saved.splitTasks ?? true)
       || generatePrototype !== Boolean(saved.generatePrototype)
       || stageKey !== (saved.stageKey ?? "")
       || moduleKey !== (saved.moduleKey ?? "")
@@ -494,7 +531,7 @@ export function DeliveryRequirementSessionModal({
       || !sameMembers(ownerIds, saved.owners)
       || !sameMembers(assistantIds, saved.assistants)
     );
-  }, [assistantIds, detail, generatePrototype, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, stageKey, startPhase, status]);
+  }, [assistantIds, detail, generatePrototype, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
 
   const memberOptions = useMemo(
     () => members.map((member) => ({ value: member.id, label: member.displayName || member.username })),
@@ -531,6 +568,7 @@ export function DeliveryRequirementSessionModal({
         mode,
         // 简易模式的起始阶段由服务端按模式定死，这里传的是专业模式下用户的选择。
         startPhase,
+        splitTasks,
         generatePrototype,
         stageKey,
         moduleKey,
@@ -586,6 +624,7 @@ export function DeliveryRequirementSessionModal({
         requirementOwners: (current.owners ?? []).map((member) => member.name).join("、"),
         requirementAssistants: (current.assistants ?? []).map((member) => member.name).join("、"),
         requirementStartPhase: current.startPhase,
+        requirementSplitTasks: current.splitTasks,
         requirementGeneratePrototype: current.generatePrototype,
         attachmentIds: uploaded.map((attachment) => attachment.id),
         confirmWrite,
@@ -638,7 +677,7 @@ export function DeliveryRequirementSessionModal({
     }
   };
 
-  const selectAttachments = (files: FileList | null) => {
+  const selectAttachments = (files: FileList | File[] | null) => {
     if (!files) return;
     const incoming = Array.from(files);
     if (incoming.some((file) => file.size > MAX_ATTACHMENT_BYTES)) {
@@ -681,6 +720,15 @@ export function DeliveryRequirementSessionModal({
     setDraggingAttachments(false);
     if (!codexBridgeReady || sending) return;
     selectAttachments(event.dataTransfer.files);
+  };
+
+  /** 输入框里直接 Cmd/Ctrl+V 粘贴截图或文件，和拖拽走同一条上传通道。 */
+  const handleAttachmentPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const files = clipboardAttachments(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    if (!codexBridgeReady || sending) return;
+    selectAttachments(files);
   };
 
   const startNewConversation = () => {
@@ -961,6 +1009,7 @@ export function DeliveryRequirementSessionModal({
                 disabled={!codexBridgeReady || sending}
                 placeholder={t(newConversation ? "delivery.session.newPlaceholder" : "delivery.planning.placeholder")}
                 onChange={(event) => setDraft(event.target.value)}
+                onPaste={handleAttachmentPaste}
                 onPressEnter={(event) => {
                   if (!event.shiftKey) {
                     event.preventDefault();
@@ -1118,6 +1167,19 @@ export function DeliveryRequirementSessionModal({
                           />
                           <small className="delivery-field-hint">{t(`delivery.requirement.mode.${mode}Hint`)}</small>
                         </label>
+                        {/* 是否拆解成多条任务：简易和专业模式都可能遇到「一条就够了」的小需求。 */}
+                        <div className={`delivery-planning-context__toggle${splitTasks ? " is-on" : ""}`}>
+                          <div role="presentation" onClick={() => setSplitTasks((current) => !current)}>
+                            <b>{t("delivery.requirement.splitTasks")}</b>
+                            <small>{t("delivery.requirement.splitTasksHint")}</small>
+                          </div>
+                          <Switch
+                            size="small"
+                            checked={splitTasks}
+                            aria-label={t("delivery.requirement.splitTasks")}
+                            onChange={setSplitTasks}
+                          />
+                        </div>
                         {mode === "professional" ? (
                           <>
                             <label>
@@ -1315,6 +1377,45 @@ export function DeliveryRequirementSessionModal({
                 ),
               },
               ] : [
+              {
+                key: "outline",
+                label: t("delivery.outline.tab"),
+                children: (
+                  <section className="delivery-planning-result" aria-label={t("delivery.outline.tab")}>
+                    <header>
+                      <span>{outline?.path || t("delivery.outline.pathPending")}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <Tag color={outline?.exists ? "success" : "default"}>
+                          {outline?.exists ? t("delivery.outline.ready") : t("delivery.outline.notGenerated")}
+                        </Tag>
+                        <Tooltip title={t("delivery.session.refresh")}>
+                          <Button
+                            type="text"
+                            shape="circle"
+                            icon={<ReloadOutlined />}
+                            loading={outlineLoading}
+                            onClick={() => void loadOutline()}
+                            aria-label={t("delivery.session.refresh")}
+                          />
+                        </Tooltip>
+                      </div>
+                    </header>
+                    <Spin spinning={outlineLoading}>
+                      {outline?.exists ? (
+                        <>
+                          <small style={{ display: "block", marginBottom: 8 }}>
+                            <code>{outline.path}</code>
+                            {outline.updatedAt ? ` · ${dayjs(outline.updatedAt).format("YYYY-MM-DD HH:mm")}` : ""}
+                          </small>
+                          <SessionDocumentText value={outline.markdown} fallback={t("delivery.outline.empty")} />
+                        </>
+                      ) : (
+                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.outline.notGenerated")} />
+                      )}
+                    </Spin>
+                  </section>
+                ),
+              },
               {
                 key: "prototype",
                 label: t("delivery.prototype.tab"),

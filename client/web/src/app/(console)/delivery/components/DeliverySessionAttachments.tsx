@@ -101,7 +101,7 @@ export function SessionAttachments({
   );
 }
 
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
 export const MAX_ATTACHMENTS = 5;
 
@@ -110,3 +110,20 @@ export const attachmentKey = (file: File) => `${file.name}-${file.size}-${file.l
 export const readableAttachmentSize = (size: number) => (size >= 1024 * 1024
   ? `${(size / (1024 * 1024)).toFixed(1)} MB`
   : `${Math.max(1, Math.ceil(size / 1024))} KB`);
+
+/**
+ * 从剪贴板里取出可上传的文件。截图粘贴过来统一叫 image.png，
+ * 直接入列会被 attachmentKey 判成同一份，所以补一个时间戳文件名，多次粘贴才能并存。
+ */
+export function clipboardAttachments(data: DataTransfer | null): File[] {
+  const files = Array.from(data?.files ?? []);
+  return files.map((file, index) => {
+    if (file.name && !/^image\.\w+$/i.test(file.name)) return file;
+    const extension = file.name.split(".").pop() || file.type.split("/")[1] || "png";
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    return new File([file], `pasted-${stamp}-${index + 1}.${extension}`, {
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+  });
+}

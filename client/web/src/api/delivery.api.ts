@@ -148,6 +148,9 @@ export class DeliveryRequirementRecord {
   /** 拆出的任务从哪个阶段起步；简易模式恒为 development。 */
   startPhase: DeliveryPhase = "development";
 
+  /** 关掉时这条需求只落一条任务；默认按多任务拆解。 */
+  splitTasks = true;
+
   /** 仅专业模式可设置；任务确认写入后可再次确认生成需求 HTML 原型。 */
   generatePrototype = false;
 
@@ -518,6 +521,36 @@ export class CodexRequirementDocument {
   size = 0;
 
   modifiedAt = "";
+}
+
+/** 需求拆解沉淀下来的需求大纲。正文从项目工作区经本地桥接受控读取。 */
+export class CodexRequirementOutline {
+  requirementKey = "";
+
+  path = "";
+
+  exists = false;
+
+  markdown = "";
+
+  updatedAt = "";
+
+  active = false;
+}
+
+/** 单条任务的需求大纲。文件落在需求资产目录 doc/requirements/<需求键>/<任务键>/ 下。 */
+export class CodexTaskOutline {
+  itemKey = "";
+
+  requirementKey = "";
+
+  path = "";
+
+  exists = false;
+
+  markdown = "";
+
+  updatedAt = "";
 }
 
 /** 一份按功能模块拆分的需求 HTML 原型文件。 */
@@ -1059,6 +1092,7 @@ export interface SaveRequirementPayload {
   status?: RequirementStatus;
   mode?: RequirementMode;
   startPhase?: DeliveryPhase;
+  splitTasks?: boolean;
   generatePrototype?: boolean;
   stageKey?: string;
   moduleKey?: string;
@@ -1302,6 +1336,31 @@ export async function fetchCodexRequirementDocument(programId: number, itemKey: 
     { params: bridgeWorkspaceParams(programId, { programId, itemKey }), timeout: 20000 },
   );
   return plainToInstance(CodexRequirementDocument, response.data);
+}
+
+export async function fetchCodexRequirementOutline(programId: number, requirementKey: string) {
+  const response = await instance.get<CodexRequirementOutline>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-outline`,
+    { params: bridgeWorkspaceParams(programId, { programId, requirementKey }), timeout: 20000 },
+  );
+  return plainToInstance(CodexRequirementOutline, response.data);
+}
+
+export async function fetchCodexTaskOutline(programId: number, itemKey: string) {
+  const response = await instance.get<CodexTaskOutline>(
+    `${CODEX_BRIDGE_URL}/v1/codex/task-outline`,
+    { params: bridgeWorkspaceParams(programId, { programId, itemKey }), timeout: 20000 },
+  );
+  return plainToInstance(CodexTaskOutline, response.data);
+}
+
+export async function saveCodexTaskOutline(programId: number, itemKey: string, markdown: string) {
+  const response = await instance.post<CodexTaskOutline>(
+    `${CODEX_BRIDGE_URL}/v1/codex/task-outline`,
+    bridgeWorkspaceParams(programId, { programId, itemKey, markdown }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexTaskOutline, response.data);
 }
 
 export async function fetchCodexRequirementPrototype(programId: number, requirementKey: string) {
@@ -1653,6 +1712,8 @@ export interface SendCodexPlanningMessageOptions {
   requirementAssistants?: string;
   /** 拆出的任务落在哪个阶段；简易模式下是 development。 */
   requirementStartPhase?: DeliveryPhase;
+  /** 关掉时这一轮只允许拆出一条覆盖整条需求的任务。 */
+  requirementSplitTasks?: boolean;
   /** 专业模式下确认拆解写入后，可由面板再次确认生成需求 HTML 原型。 */
   requirementGeneratePrototype?: boolean;
   /** 已上传附件的标识，与任务会话用的是同一套附件仓库。 */

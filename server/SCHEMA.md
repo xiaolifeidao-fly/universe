@@ -178,4 +178,8 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 [`migrations/20260817_delivery_requirement_planned_period.sql`](migrations/20260817_delivery_requirement_planned_period.sql)。
 该脚本可安全重复执行；它会补齐可为空的 `planned_start_at`、`planned_end_at` 两列。
 
+已有需求表升级到支持「是否拆解任务」开关时，执行
+[`migrations/20260818_delivery_requirement_split_tasks.sql`](migrations/20260818_delivery_requirement_split_tasks.sql)。
+该脚本可安全重复执行；它补齐的 `split_tasks` 默认为 `TRUE`，存量需求维持原有的多任务拆解行为。
+
 省掉 `-file` 就只建表。**DDL 不在服务启动时跑** —— 线上建表不该是进程启动的副作用。

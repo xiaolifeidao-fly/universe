@@ -27,6 +27,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ClipboardEvent as ReactClipboardEvent,
   type DragEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -67,6 +68,7 @@ import {
   MAX_ATTACHMENT_BYTES,
   SessionAttachments,
   attachmentKey,
+  clipboardAttachments,
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
 import { SessionChangeSummary, SessionDocumentText, SessionMarkdown, changesOfTurn } from "./DeliverySessionMessage";
@@ -434,7 +436,7 @@ export function DeliveryTaskSessionModal({
     setTestingWorkspaceOpen(true);
   };
 
-  const selectAttachments = (files: FileList | null) => {
+  const selectAttachments = (files: FileList | File[] | null) => {
     if (!files) return;
     const incoming = Array.from(files);
     const tooLarge = incoming.find((file) => file.size > MAX_ATTACHMENT_BYTES);
@@ -478,6 +480,15 @@ export function DeliveryTaskSessionModal({
     setDraggingAttachments(false);
     if (!codexBridgeReady || sending) return;
     selectAttachments(event.dataTransfer.files);
+  };
+
+  /** 输入框里直接 Cmd/Ctrl+V 粘贴截图或文件，和拖拽走同一条上传通道。 */
+  const handleAttachmentPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const files = clipboardAttachments(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    if (!codexBridgeReady || sending) return;
+    selectAttachments(files);
   };
 
   const handleDocumentResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -698,6 +709,7 @@ export function DeliveryTaskSessionModal({
                 disabled={!codexBridgeReady || sending || historicalConversation}
                 placeholder={t(newConversation ? "delivery.session.newPlaceholder" : "delivery.session.placeholder").replace("{tool}", toolName)}
                 onChange={(event) => setDraft(event.target.value)}
+                onPaste={handleAttachmentPaste}
                 onPressEnter={(event) => {
                   if (!event.shiftKey) {
                     event.preventDefault();

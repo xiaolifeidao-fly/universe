@@ -53,6 +53,7 @@ import {
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { sceneForPhase, toolDisplayName, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { SessionDocumentText } from "./DeliverySessionMessage";
+import { DeliveryTaskOutlinePanel } from "./DeliveryTaskOutline";
 
 const { Text } = Typography;
 
@@ -630,6 +631,13 @@ export function DeliveryItemDrawer({
                                 <SessionDocumentText value={requirementDocument || activeItem.requirementDocument} fallback={t("delivery.document.requirementEmpty")} />
                               </Spin>
                             </section>
+                          ),
+                        },
+                        {
+                          key: "outline",
+                          label: t("delivery.outline.task"),
+                          children: (
+                            <DeliveryTaskOutlinePanel programId={programId} item={activeItem} codexBridgeReady={codexBridgeReady} />
                           ),
                         },
                         {

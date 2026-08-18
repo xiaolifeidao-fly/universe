@@ -101,6 +101,8 @@ type DeliveryRequirement struct {
 	// simple 简易模式直接进动作执行，professional 专业模式由用户选，默认梳理需求。
 	Mode       string `gorm:"column:mode;type:varchar(16);default:professional" description:"simple 简易 / professional 专业"`
 	StartPhase string `gorm:"column:start_phase;type:varchar(16);default:requirement" description:"任务起始阶段：requirement/development/testing"`
+	// SplitTasks 决定这条需求要不要拆成多条任务：关掉时整条需求只落一条任务，适合改动本来就不可分的小需求。
+	SplitTasks bool `gorm:"column:split_tasks;default:true" description:"拆解会话是否把需求拆成多条任务；false 表示只建一条"`
 	// GeneratePrototype 仅专业模式可用。任务拆解确认后，由用户二次确认是否生成关联到本需求的 HTML 原型。
 	GeneratePrototype bool `gorm:"column:generate_prototype;default:false" description:"专业模式需求是否启用拆解后生成 HTML 原型"`
 	// PrototypeHTMLPath 是项目工作区 doc/ 下的原型目录；目录内按功能模块存放多个 HTML，正文不进入任务面板数据库。

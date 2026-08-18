@@ -110,6 +110,11 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	}
 	// HTML 原型只在专业模式可选；简易模式不保留该开关，避免下次切回专业模式时意外触发生成。
 	generatePrototype := mode == RequirementModeProfessional && req.GeneratePrototype
+	// 是否拆解任务默认开启：请求没带这个字段时，新建按默认拆解，编辑保持需求原有选择。
+	splitTasks := true
+	if req.SplitTasks != nil {
+		splitTasks = *req.SplitTasks
+	}
 	ownerIDs, ownerNames, err := normalizeRequirementMembers(req.Owners, "主负责人")
 	if err != nil {
 		return dto.RequirementView{}, err
@@ -132,6 +137,7 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 			Status:            status,
 			Mode:              mode,
 			StartPhase:        startPhase,
+			SplitTasks:        splitTasks,
 			GeneratePrototype: generatePrototype,
 			StageKey:          strings.TrimSpace(req.StageKey),
 			ModuleKey:         strings.TrimSpace(req.ModuleKey),
@@ -160,6 +166,9 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if err != nil {
 		return dto.RequirementView{}, translate(err)
 	}
+	if req.SplitTasks == nil {
+		splitTasks = current.SplitTasks
+	}
 	if req.Version <= 0 {
 		return dto.RequirementView{}, errors.New("缺少版本号，请刷新后重试")
 	}
@@ -174,6 +183,7 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		"status":             status,
 		"mode":               mode,
 		"start_phase":        startPhase,
+		"split_tasks":        splitTasks,
 		"generate_prototype": generatePrototype,
 		"stage_key":          strings.TrimSpace(req.StageKey),
 		"module_key":         strings.TrimSpace(req.ModuleKey),
@@ -185,7 +195,7 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		"updated_by":         actorOf(req.ActorID, req.ActorName),
 	}
 	events := requirementChangeEvents(current, name, req.Detail, plannedStartAt, plannedEndAt, status, mode, startPhase,
-		generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
+		splitTasks, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
 		req.ActorID, req.ActorName)
 	var affected int64
 	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
@@ -407,6 +417,7 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 		Status:               row.Status,
 		Mode:                 requirementModeOrDefault(row.Mode),
 		StartPhase:           requirementStartPhaseOrDefault(row.StartPhase),
+		SplitTasks:           row.SplitTasks,
 		GeneratePrototype:    row.GeneratePrototype,
 		PrototypeHTMLPath:    row.PrototypeHTMLPath,
 		PrototypeGeneratedAt: row.PrototypeGeneratedAt,
@@ -443,7 +454,7 @@ func requirementChangeEvents(
 	name, detail string,
 	plannedStartAt, plannedEndAt *time.Time,
 	status, mode, startPhase string,
-	generatePrototype bool,
+	splitTasks, generatePrototype bool,
 	stageKey, moduleKey, kind, ownerNames, assistantNames,
 	actorID, actorName string,
 ) []*repository.DeliveryRequirementEvent {
@@ -465,6 +476,7 @@ func requirementChangeEvents(
 	record("status", current.Status, status)
 	record("mode", requirementModeOrDefault(current.Mode), mode)
 	record("startPhase", requirementStartPhaseOrDefault(current.StartPhase), startPhase)
+	record("splitTasks", strconv.FormatBool(current.SplitTasks), strconv.FormatBool(splitTasks))
 	record("generatePrototype", strconv.FormatBool(current.GeneratePrototype), strconv.FormatBool(generatePrototype))
 	record("stageKey", current.StageKey, stageKey)
 	record("moduleKey", current.ModuleKey, moduleKey)

@@ -15,7 +15,7 @@ import {
 import { Badge, Button, Empty, Input, Modal, Popover, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
@@ -40,6 +40,7 @@ import { useDeliveryBoard } from "../hooks/useDeliveryBoard";
 import { DeliveryItemDrawer } from "./DeliveryItemDrawer";
 import { DeliveryKanban } from "./DeliveryKanban";
 import { DeliveryTaskSessionModal } from "./DeliveryTaskSessionModal";
+import { DeliveryTaskOutlineModal } from "./DeliveryTaskOutline";
 import { DeliveryRequirementList } from "./DeliveryRequirementList";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
@@ -52,6 +53,10 @@ type PendingGroupedExecution =
 
 type DeliveryNotificationStatus = "blocked" | "dropped" | "done";
 type DeliveryNotificationCounts = Record<DeliveryNotificationStatus, number>;
+
+const BOARD_SCALE_MIN = 35;
+const BOARD_SCALE_MAX = 100;
+const BOARD_WHEEL_SCALE_FACTOR = 0.05;
 
 interface DeliveryNotificationStorage {
   counts: DeliveryNotificationCounts;
@@ -151,12 +156,14 @@ export function DeliveryWorkspace() {
   const [view, setView] = useState<ViewMode>("board");
   const [requirementsExpanded, setRequirementsExpanded] = useState(false);
   const [showDependencyArrows, setShowDependencyArrows] = useState(true);
+  const [boardScale, setBoardScale] = useState(100);
   const [keyword, setKeyword] = useState("");
   const [highlightedOwner, setHighlightedOwner] = useState("");
   const [members, setMembers] = useState<MemberRecord[]>([]);
   const [changingOwnerItemKey, setChangingOwnerItemKey] = useState("");
   const [editing, setEditing] = useState<DeliveryItemRecord | null>(null);
   const [sessionItem, setSessionItem] = useState<DeliveryItemRecord | null>(null);
+  const [outlineItem, setOutlineItem] = useState<DeliveryItemRecord | null>(null);
   const [startTaskTestingCases, setStartTaskTestingCases] = useState(false);
   const [planningOpen, setPlanningOpen] = useState(false);
   // 新增需求时为 null，编辑需求时是那条需求；两种情况共用同一个弹窗。
@@ -177,6 +184,70 @@ export function DeliveryWorkspace() {
     scope: "",
     counts: EMPTY_DELIVERY_NOTIFICATION_COUNTS,
   });
+  const taskPanelScrollRef = useRef<HTMLDivElement>(null);
+  const boardScaleRef = useRef(boardScale);
+
+  useEffect(() => {
+    boardScaleRef.current = boardScale;
+  }, [boardScale]);
+
+  const setBoardScaleAtPointer = useCallback((nextScale: number, pointerX: number) => {
+    const scroller = taskPanelScrollRef.current;
+    const currentScale = boardScaleRef.current;
+    const clampedScale = Math.round(Math.min(BOARD_SCALE_MAX, Math.max(BOARD_SCALE_MIN, nextScale)) * 10) / 10;
+    if (!scroller || clampedScale === currentScale) return;
+
+    // Keep the board position below the pointer stable while its real layout dimensions change.
+    const logicalOffset = (scroller.scrollLeft + pointerX) / currentScale;
+    boardScaleRef.current = clampedScale;
+    setBoardScale(clampedScale);
+    window.requestAnimationFrame(() => {
+      scroller.scrollLeft = Math.max(0, logicalOffset * clampedScale - pointerX);
+    });
+  }, []);
+
+  useEffect(() => {
+    const scroller = taskPanelScrollRef.current;
+    if (!scroller || view !== "board") return undefined;
+    let previousGestureScale = 1;
+
+    const handleWheel = (event: WheelEvent) => {
+      // Chrome reports a trackpad pinch as ctrl+wheel; macOS mice use cmd+wheel.
+      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.deltaY === 0) return;
+
+      event.preventDefault();
+      const rect = scroller.getBoundingClientRect();
+      const pointerX = Math.min(rect.width, Math.max(0, event.clientX - rect.left));
+      const delta = event.deltaMode === 1 ? event.deltaY * 12 : event.deltaMode === 2 ? event.deltaY * rect.height : event.deltaY;
+      setBoardScaleAtPointer(boardScaleRef.current - delta * BOARD_WHEEL_SCALE_FACTOR, pointerX);
+    };
+
+    const handleGestureStart = (event: Event) => {
+      event.preventDefault();
+      previousGestureScale = (event as Event & { scale?: number }).scale ?? 1;
+    };
+
+    const handleGestureChange = (event: Event) => {
+      const gesture = event as Event & { scale?: number; clientX?: number };
+      if (!gesture.scale || gesture.scale <= 0) return;
+
+      event.preventDefault();
+      const rect = scroller.getBoundingClientRect();
+      const pointerX = Math.min(rect.width, Math.max(0, (gesture.clientX ?? rect.left + rect.width / 2) - rect.left));
+      setBoardScaleAtPointer(boardScaleRef.current * (gesture.scale / previousGestureScale), pointerX);
+      previousGestureScale = gesture.scale;
+    };
+
+    scroller.addEventListener("wheel", handleWheel, { passive: false });
+    scroller.addEventListener("gesturestart", handleGestureStart, { passive: false });
+    scroller.addEventListener("gesturechange", handleGestureChange, { passive: false });
+    return () => {
+      scroller.removeEventListener("wheel", handleWheel);
+      scroller.removeEventListener("gesturestart", handleGestureStart);
+      scroller.removeEventListener("gesturechange", handleGestureChange);
+    };
+  }, [setBoardScaleAtPointer, view]);
 
   // 分享页先选中链接中的需求；切到全量列表后保留用户自行选择的需求。
   useEffect(() => {
@@ -617,6 +688,7 @@ export function DeliveryWorkspace() {
         status,
         mode: requirement.mode,
         startPhase: requirement.startPhase,
+        splitTasks: requirement.splitTasks,
         generatePrototype: requirement.generatePrototype,
         stageKey: requirement.stageKey,
         moduleKey: requirement.moduleKey,
@@ -989,7 +1061,7 @@ export function DeliveryWorkspace() {
               onBlur={() => setFilters({ ...filters, keyword })}
             />
           </div>
-          <div className="delivery-task-panel-scroll">
+          <div className="delivery-task-panel-scroll" ref={taskPanelScrollRef}>
             <Spin spinning={loading}>
               {!programId ? (
                 <Empty description={t("delivery.noProgram")} />
@@ -999,11 +1071,13 @@ export function DeliveryWorkspace() {
                 <DeliveryKanban
                   groupBy={filters.groupBy}
                   columns={board.columns}
+                  boardScale={boardScale}
                   moduleName={moduleName}
                   stageName={stageName}
                   showDependencies={showDependencyArrows}
                   onOpen={setEditing}
       				onOpenSession={setSessionItem}
+                  onOpenOutline={setOutlineItem}
                   onExecute={(item) => void handleExecute(item)}
                   canExecute={canExecute}
                   executingItemKey={executingItemKey}
@@ -1085,6 +1159,14 @@ export function DeliveryWorkspace() {
           setEditing(next);
         }}
         onChanged={handleSessionChanged}
+      />
+
+      <DeliveryTaskOutlineModal
+        open={Boolean(outlineItem)}
+        programId={programId}
+        item={outlineItem}
+        codexBridgeReady={codexBridgeReady}
+        onClose={() => setOutlineItem(null)}
       />
 
       <DeliveryRequirementSessionModal

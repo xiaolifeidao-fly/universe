@@ -6,6 +6,7 @@ import type { DeliveryBoardColumn } from "@/api/delivery.api";
 interface DeliveryDependencyLayerProps {
   boardRef: RefObject<HTMLDivElement>;
   columns: DeliveryBoardColumn[];
+	scale: number;
   activeItemKey?: string;
   draftPath?: string;
   onDeleteDependency: (predecessorItemKey: string, successorItemKey: string) => void;
@@ -25,7 +26,7 @@ interface LayerSize {
 
 type TargetSide = "top" | "right" | "bottom" | "left";
 
-function pathBetween(source: DOMRect, target: DOMRect, board: DOMRect, savedSourceSide?: string, savedTargetSide?: string) {
+function pathBetween(source: DOMRect, target: DOMRect, board: DOMRect, scale: number, savedSourceSide?: string, savedTargetSide?: string) {
   const sourceCenterX = source.left - board.left + source.width / 2;
   const targetCenterX = target.left - board.left + target.width / 2;
   const sourceCenterY = source.top - board.top + source.height / 2;
@@ -58,7 +59,7 @@ function pathBetween(source: DOMRect, target: DOMRect, board: DOMRect, savedSour
     left: [target.left - board.left, targetCenterY],
   }[targetSide];
   const [endX, endY] = targetAnchor;
-  const bend = Math.max(36, Math.max(Math.abs(endX - startX), Math.abs(endY - startY)) * 0.35);
+  const bend = Math.max(36 * scale, Math.max(Math.abs(endX - startX), Math.abs(endY - startY)) * 0.35);
   const targetControl = {
     top: [endX, endY - bend],
     right: [endX + bend, endY],
@@ -77,6 +78,7 @@ function pathBetween(source: DOMRect, target: DOMRect, board: DOMRect, savedSour
 export function DeliveryDependencyLayer({
   boardRef,
   columns,
+	scale,
   activeItemKey,
   draftPath,
   onDeleteDependency,
@@ -115,6 +117,7 @@ export function DeliveryDependencyLayer({
 					source,
 					target,
 					boardRect,
+					scale,
 					item.dependencySourceSides?.[predecessorItemKey],
 					item.dependencyTargetSides?.[predecessorItemKey],
 				),
@@ -138,7 +141,7 @@ export function DeliveryDependencyLayer({
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [boardRef, columns]);
+	}, [boardRef, columns, scale]);
 
   return (
     <svg
@@ -149,7 +152,7 @@ export function DeliveryDependencyLayer({
       viewBox={`0 0 ${size.width} ${size.height}`}
     >
       <defs>
-        <marker id="delivery-dependency-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+				<marker id="delivery-dependency-arrow" markerUnits="userSpaceOnUse" markerWidth={7 * scale} markerHeight={7 * scale} refX="6" refY="3.5" viewBox="0 0 7 7" orient="auto">
           <path d="M 0 0 L 7 3.5 L 0 7 z" />
         </marker>
       </defs>

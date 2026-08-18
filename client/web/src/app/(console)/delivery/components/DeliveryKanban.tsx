@@ -1,6 +1,6 @@
 "use client";
 
-import { LinkOutlined, MessageOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { FileTextOutlined, LinkOutlined, MessageOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { DragDropContext, Draggable, Droppable, type DropResult } from "@hello-pangea/dnd";
 import { Button, Checkbox, Select, Tag, Tooltip } from "antd";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -17,11 +17,15 @@ import { DeliveryDependencyLayer } from "./DeliveryDependencyLayer";
 interface DeliveryKanbanProps {
   groupBy: BoardGroupBy;
   columns: DeliveryBoardColumn[];
+  /** 缩放使用真实布局尺寸，避免 transform 影响拖放坐标。 */
+  boardScale: number;
   moduleName: (moduleKey: string) => string;
   stageName: (stageKey: string) => string;
   showDependencies: boolean;
   onOpen: (item: DeliveryItemRecord) => void;
   onOpenSession: (item: DeliveryItemRecord) => void;
+  /** 卡片上的独立入口：直接打开这条任务的需求大纲进行修改。 */
+  onOpenOutline: (item: DeliveryItemRecord) => void;
   onExecute: (item: DeliveryItemRecord) => void;
   canExecute: (item: DeliveryItemRecord) => boolean;
   executingItemKey: string;
@@ -47,8 +51,8 @@ interface DependencyDrag {
 
 type TargetSide = "top" | "right" | "bottom" | "left";
 
-function dependencyPath(startX: number, startY: number, endX: number, endY: number, sourceSide: TargetSide, targetSide?: TargetSide) {
-	const bend = Math.max(54, Math.max(Math.abs(endX - startX), Math.abs(endY - startY)) * 0.45);
+function dependencyPath(startX: number, startY: number, endX: number, endY: number, sourceSide: TargetSide, targetSide: TargetSide | undefined, scale: number) {
+	const bend = Math.max(54 * scale, Math.max(Math.abs(endX - startX), Math.abs(endY - startY)) * 0.45);
 	const sourceControl = {
 		top: [startX, startY - bend],
 		right: [startX + bend, startY],
@@ -123,11 +127,13 @@ function parallelItemKeys(items: DeliveryItemRecord[]) {
 export function DeliveryKanban({
   groupBy,
   columns,
+  boardScale,
   moduleName,
   stageName,
   showDependencies,
   onOpen,
   onOpenSession,
+  onOpenOutline,
   onExecute,
 	canExecute,
 	executingItemKey,
@@ -196,7 +202,7 @@ export function DeliveryKanban({
 			sourceSide,
         targetItemKey: target?.card.dataset.deliveryItemKey,
         targetSide: target?.side,
-			path: dependencyPath(start.x, start.y, endX, endY, sourceSide, target?.side),
+			path: dependencyPath(start.x, start.y, endX, endY, sourceSide, target?.side, boardScale),
       });
 
       const scroller = board.closest<HTMLElement>(".delivery-task-panel-scroll");
@@ -231,7 +237,7 @@ export function DeliveryKanban({
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("keydown", cancelWithEscape);
     };
-	}, [dependencyDrag?.sourceItemKey, dependencyDrag?.sourceSide, onCreateDependency]);
+	}, [boardScale, dependencyDrag?.sourceItemKey, dependencyDrag?.sourceSide, onCreateDependency]);
 
 	const startDependencyDrag = (itemKey: string, side: TargetSide, event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -248,20 +254,25 @@ export function DeliveryKanban({
 	setDependencyDrag({
 		sourceItemKey: itemKey,
 		sourceSide: side,
-		path: dependencyPath(start.x, start.y, event.clientX - boardRect.left, event.clientY - boardRect.top, side),
+		path: dependencyPath(start.x, start.y, event.clientX - boardRect.left, event.clientY - boardRect.top, side, undefined, boardScale),
 	});
   };
 
   return (
     <DragDropContext onDragStart={() => setIsReordering(true)} onDragEnd={handleDragEnd}>
       <div className="delivery-board-scroll">
-        <div className={`delivery-board${isReordering ? " is-reordering" : ""}`} ref={boardRef}>
+        <div
+          className={`delivery-board${isReordering ? " is-reordering" : ""}`}
+          ref={boardRef}
+          style={{ ["--delivery-board-scale" as string]: boardScale / 100 }}
+        >
           {showDependencies || dependencyDrag ? (
             <DeliveryDependencyLayer
               boardRef={boardRef}
               columns={showDependencies ? columns : []}
               activeItemKey={activeItemKey}
               draftPath={dependencyDrag?.path}
+								scale={boardScale / 100}
               onDeleteDependency={onDeleteDependency}
             />
           ) : null}
@@ -377,22 +388,40 @@ export function DeliveryKanban({
                             </div>
 							<b>{item.title}</b>
 							{item.benefitTags.length ? <div className="delivery-card-benefit-tags">{item.benefitTags.map((tag) => <Tag color="gold" key={tag}>{tag}</Tag>)}</div> : null}
-							<Tooltip title={t("delivery.session.viewTask")}>
-												<Button
-													className="delivery-card-session-button"
-												type="text"
-												size="small"
-												icon={<MessageOutlined />}
-												aria-label={t("delivery.session.viewTask")}
-													onPointerDown={(event) => event.stopPropagation()}
-													onClick={(event) => {
-														event.stopPropagation();
-														onOpenSession(item);
-													}}
-												>
-													{t("delivery.session.viewTask")}
-												</Button>
-											</Tooltip>
+							<div className="delivery-card-actions">
+												<Tooltip title={t("delivery.session.viewTask")}>
+													<Button
+														className="delivery-card-session-button"
+														type="text"
+														size="small"
+														icon={<MessageOutlined />}
+														aria-label={t("delivery.session.viewTask")}
+														onPointerDown={(event) => event.stopPropagation()}
+														onClick={(event) => {
+															event.stopPropagation();
+															onOpenSession(item);
+														}}
+													>
+														{t("delivery.session.viewTask")}
+													</Button>
+												</Tooltip>
+												<Tooltip title={t("delivery.outline.taskHint")}>
+													<Button
+														className="delivery-card-session-button"
+														type="text"
+														size="small"
+														icon={<FileTextOutlined />}
+														aria-label={t("delivery.outline.task")}
+														onPointerDown={(event) => event.stopPropagation()}
+														onClick={(event) => {
+															event.stopPropagation();
+															onOpenOutline(item);
+														}}
+													>
+														{t("delivery.outline.task")}
+													</Button>
+												</Tooltip>
+											</div>
 									<div className="delivery-card-phases">
 										<span className="is-current" title={t(`delivery.phase.${item.phase}`)}><i style={{ background: STATUS_COLORS[item.status] }} />{t(`delivery.phase.short.${item.phase}`)}</span>
 									</div>
