@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   `requirement_key` varchar(64)  NOT NULL,                     -- 需求业务键 如 req-1760000000000
   `name`            varchar(255) NOT NULL,                     -- 需求名称
   `detail`          mediumtext   NOT NULL,                     -- 需求详细信息
+  `reference_requirement_keys` varchar(1024) NOT NULL DEFAULT '', -- 详情里 @ 引用的历史需求键，存成 ,req-a,req-b,
+  `reference_item_keys` varchar(2048) NOT NULL DEFAULT '',       -- 详情里 @ 引用的既有任务键，存成 ,task-a,task-b,
   `status`          varchar(16)  NOT NULL DEFAULT 'open',      -- open 进行中 / done 已完成 / dropped 不做
   `mode`            varchar(16)  NOT NULL DEFAULT 'professional', -- simple 简易（直接进动作执行）/ professional 专业
   `start_phase`     varchar(16)  NOT NULL DEFAULT 'requirement',  -- 拆出的任务从哪个阶段起步

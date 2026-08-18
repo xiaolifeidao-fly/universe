@@ -22,6 +22,8 @@ type ItemQuery struct {
 	Kind           string           `form:"kind"`
 	OwnerName      string           `form:"ownerName"`
 	Keyword        string           `form:"keyword"`
+	// Sort=recent 仅供按最近创建时间取候选的轻量列表使用；空值仍保持看板的手工排序。
+	Sort string `form:"sort"`
 }
 
 type ItemView struct {

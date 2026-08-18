@@ -186,4 +186,12 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 [`migrations/20260818_delivery_requirement_task_outline.sql`](migrations/20260818_delivery_requirement_task_outline.sql)。
 该脚本可安全重复执行；它补齐的 `generate_task_outline` 默认为 `FALSE`，存量需求只保留需求级大纲。
 
+已有需求表升级到支持需求详情里 @ 引用历史需求时，执行
+[`migrations/20260818_delivery_requirement_references.sql`](migrations/20260818_delivery_requirement_references.sql)。
+该脚本可安全重复执行；它补齐的 `reference_requirement_keys` 默认为空串，存量需求没有引用。
+
+已有需求表升级到支持需求详情里 @ 引用既有任务时，执行
+[`migrations/20260818_delivery_requirement_task_references.sql`](migrations/20260818_delivery_requirement_task_references.sql)。
+该脚本可安全重复执行；它补齐的 `reference_item_keys` 默认为空串，存量需求没有任务关联。
+
 省掉 `-file` 就只建表。**DDL 不在服务启动时跑** —— 线上建表不该是进程启动的副作用。

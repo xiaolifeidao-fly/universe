@@ -42,7 +42,7 @@ import {
   type RequirementTestingStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { SessionChangeSummary, SessionDocumentText, SessionMarkdown, changesOfTurn } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -79,15 +79,14 @@ const statusColor: Record<RequirementTestingStatus, "default" | "processing" | "
 function TestingTranscriptItem({ item, programId, toolName }: { item: CodexConversationItem; programId: number; toolName: string }) {
   const { t } = useLocale();
   const isUser = item.type === "userMessage";
-  const isAgentText = item.type === "agentMessage" || item.type === "plan";
   return (
     <article className={`delivery-session-message${isUser ? " is-user" : ""}`}>
       <header>
         <span className="delivery-session-message__icon">{item.type === "agentMessage" ? <FileTextOutlined /> : <MessageOutlined />}</span>
-        <b>{isUser ? t("delivery.session.you") : isAgentText ? toolName : t(`delivery.session.item.${item.type}`)}</b>
+        <b>{isUser ? t("delivery.session.you") : item.type === "agentMessage" || item.type === "plan" ? toolName : t(`delivery.session.item.${item.type}`)}</b>
         {item.status ? <small>{item.status}</small> : null}
       </header>
-      {isAgentText ? <SessionMarkdown text={item.text} /> : <div className="delivery-session-message__body">{item.text}</div>}
+      <SessionMessageContent item={item} programId={programId} />
     </article>
   );
 }

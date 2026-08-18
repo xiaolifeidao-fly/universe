@@ -47,6 +47,7 @@ import {
   fetchCodexRequirementPrototypeConversation,
   fetchCodexRequirementTestingConversation,
   fetchCodexPlanningConversation,
+  fetchDeliveryConversationMentionCatalog,
   fetchMembers,
   generateCodexRequirementPrototype,
   saveRequirement,
@@ -67,17 +68,19 @@ import {
   type MemberRecord,
   type CodexRequirementOutline,
   type CodexRequirementPrototype,
+  type DeliveryConversationReference,
   type RequirementMember,
   type RequirementMode,
   type RequirementStatus,
 } from "@/api/delivery.api";
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
-import { SessionChangeSummary, SessionDocumentText, SessionMarkdown, changesOfTurn } from "./DeliverySessionMessage";
+import { DeliveryRequirementDetailInput, requirementMentionKeys, requirementMentionReferences } from "./DeliveryRequirementDetailInput";
+import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
-  SessionAttachments,
   attachmentKey,
   clipboardAttachments,
   readableAttachmentSize,
@@ -93,6 +96,8 @@ interface DeliveryRequirementSessionModalProps {
   stages: DeliveryStageRecord[];
   modules: DeliveryModuleRecord[];
   itemCatalog: DeliveryItemRecord[];
+  /** 需求详情里 @ 引用的候选：同项目下已有的需求。 */
+  requirements: DeliveryRequirementRecord[];
   codexBridgeReady: boolean;
   /** 从需求列表直接开始测试时，仍进入同一份需求聊天历史。 */
   startTestingOnOpen?: boolean;
@@ -137,20 +142,15 @@ const itemIcon = (item: CodexConversationItem) => {
 function PlanningTranscriptItem({ item, programId, toolName }: { item: CodexConversationItem; programId: number; toolName: string }) {
   const { t } = useLocale();
   const isUser = item.type === "userMessage";
-  const isAgentText = item.type === "agentMessage" || item.type === "plan";
+  const isCommand = item.type === "commandExecution";
   return (
-    <article className={`delivery-session-message${isUser ? " is-user" : ""}`}>
+    <article className={`delivery-session-message${isUser ? " is-user" : ""}${isCommand ? " is-command" : ""}`}>
       <header>
         <span className="delivery-session-message__icon">{itemIcon(item)}</span>
         <b>{isUser ? t("delivery.session.you") : item.type === "agentMessage" ? toolName : t(`delivery.session.item.${item.type}`)}</b>
         {item.status ? <small>{item.status}</small> : null}
       </header>
-      {isAgentText ? (
-        <SessionMarkdown text={item.text} />
-      ) : (
-        <div className="delivery-session-message__body">{item.text || t("delivery.session.fileChanged")}</div>
-      )}
-      <SessionAttachments attachments={item.attachments} programId={programId} />
+      <SessionMessageContent item={item} programId={programId} fallback={t("delivery.session.fileChanged")} />
     </article>
   );
 }
@@ -164,6 +164,7 @@ export function DeliveryRequirementSessionModal({
   stages,
   modules,
   itemCatalog,
+  requirements,
   codexBridgeReady,
   startTestingOnOpen = false,
   onClose,
@@ -184,6 +185,7 @@ export function DeliveryRequirementSessionModal({
   const [selectedThreadId, setSelectedThreadId] = useState("");
   const [newConversation, setNewConversation] = useState(false);
   const [draft, setDraft] = useState("");
+  const [chatReferences, setChatReferences] = useState<DeliveryConversationReference[]>([]);
   const [stageKey, setStageKey] = useState("");
   const [moduleKey, setModuleKey] = useState("");
   const [kind, setKind] = useState<DeliveryKind | "">("");
@@ -192,6 +194,10 @@ export function DeliveryRequirementSessionModal({
   const [stopping, setStopping] = useState(false);
   const [saving, setSaving] = useState(false);
   const [members, setMembers] = useState<MemberRecord[]>([]);
+  const [mentionCatalog, setMentionCatalog] = useState<{
+    requirements: DeliveryRequirementRecord[];
+    items: DeliveryItemRecord[];
+  } | null>(null);
 
   // 需求表单。saved 是「已经落库的那份」，拆解会话的归属键从它上面取。
   const [saved, setSaved] = useState<DeliveryRequirementRecord | null>(null);
@@ -339,6 +345,7 @@ export function DeliveryRequirementSessionModal({
       setSelectedThreadId("");
       setNewConversation(false);
       setDraft("");
+      setChatReferences([]);
       setMoreOpen(false);
       setAttachments([]);
       setDraggingAttachments(false);
@@ -641,6 +648,76 @@ export function DeliveryRequirementSessionModal({
     [members],
   );
 
+  useEffect(() => {
+    if (!open || !programId) return undefined;
+    let cancelled = false;
+    void fetchDeliveryConversationMentionCatalog(programId).then((catalog) => {
+      if (!cancelled) setMentionCatalog(catalog);
+    }).catch(() => {
+      // 候选目录请求不影响编辑或聊天；失败时继续使用当前需求的已加载任务。
+      if (!cancelled) setMentionCatalog(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, programId]);
+
+  const chatRequirements = useMemo(
+    () => (mentionCatalog?.requirements ?? requirements).filter((item) => item.requirementKey !== saved?.requirementKey),
+    [mentionCatalog?.requirements, requirements, saved?.requirementKey],
+  );
+  const chatItems = useMemo(
+    () => (mentionCatalog?.items ?? itemCatalog).filter((item) => item.itemKey !== ""),
+    [itemCatalog, mentionCatalog?.items],
+  );
+  const searchMentionCandidates = useCallback(async (keyword: string) => {
+    const catalog = await fetchDeliveryConversationMentionCatalog(programId, keyword);
+    return {
+      requirements: catalog.requirements.filter((item) => item.requirementKey !== saved?.requirementKey),
+      items: catalog.items.filter((item) => item.itemKey !== ""),
+    };
+  }, [programId, saved?.requirementKey]);
+  // 正文中的 @需求键 / @任务键 是保存关联的来源。候选目录只加载最近 20 条，
+  // 所以已保存但不在这 20 条内的引用，只要正文仍保留该键也必须原样保存，不能被误删。
+  const detailReferences = useMemo(() => {
+    const references = requirementMentionReferences(detail, chatRequirements, chatItems);
+    const mentionedKeys = new Set(requirementMentionKeys(detail));
+    const seenKeys = new Set(references.map((reference) => reference.key));
+    for (const key of saved?.referenceRequirementKeys ?? []) {
+      if (mentionedKeys.has(key) && !seenKeys.has(key)) {
+        references.push({ kind: "requirement", key });
+        seenKeys.add(key);
+      }
+    }
+    for (const key of saved?.referenceItemKeys ?? []) {
+      if (mentionedKeys.has(key) && !seenKeys.has(key)) {
+        references.push({ kind: "task", key });
+        seenKeys.add(key);
+      }
+    }
+    return references;
+  }, [chatItems, chatRequirements, detail, saved?.referenceItemKeys, saved?.referenceRequirementKeys]);
+  /**
+   * 发给桥接层的是已落库的那份引用，不是表单里还没保存的草稿：send 之前一定先 save，
+   * 两者最终一致。只传键和名字 —— 插件拿到的是这些需求的大纲产物地址，由它按需读取，
+   * 面板不把大纲正文塞进提示词。
+   */
+  const requirementReferencesOf = useCallback(
+    (current: DeliveryRequirementRecord) => (current.referenceRequirementKeys ?? []).map((requirementKey) => ({
+      requirementKey,
+      name: requirements.find((item) => item.requirementKey === requirementKey)?.name ?? requirementKey,
+    })),
+    [requirements],
+  );
+
+  const requirementItemReferencesOf = useCallback(
+    (current: DeliveryRequirementRecord) => (current.referenceItemKeys ?? []).map((itemKey) => ({
+      itemKey,
+      title: chatItems.find((item) => item.itemKey === itemKey)?.title ?? itemKey,
+    })),
+    [chatItems],
+  );
+
   const membersOf = useCallback(
     (ids: string[], fallback: RequirementMember[]): RequirementMember[] =>
       ids.map((id) => ({
@@ -665,6 +742,12 @@ export function DeliveryRequirementSessionModal({
         requirementKey: saved?.requirementKey,
         name: name.trim(),
         detail,
+        referenceRequirementKeys: detailReferences
+          .filter((reference) => reference.kind === "requirement")
+          .map((reference) => reference.key),
+        referenceItemKeys: detailReferences
+          .filter((reference) => reference.kind === "task")
+          .map((reference) => reference.key),
         plannedStartAt,
         plannedEndAt,
         status,
@@ -698,7 +781,9 @@ export function DeliveryRequirementSessionModal({
    * 拆解方案先以预览回到聊天里，用户点确认之后才真正落库。
    */
   const send = async (confirmWrite = false) => {
-    const text = draft.trim() || (confirmWrite ? t("delivery.planning.confirmMessage") : "");
+    const text = draft.trim() || (confirmWrite
+      ? t("delivery.planning.confirmMessage")
+      : chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
     if (!text && !attachments.length) return;
     if (!codexBridgeReady) {
       message.warning(t("delivery.execution.bridgeOffline"));
@@ -731,10 +816,14 @@ export function DeliveryRequirementSessionModal({
         requirementSplitTasks: current.splitTasks,
         requirementPreGenerateTaskDocuments: current.preGenerateTaskDocuments,
         requirementGeneratePrototype: current.generatePrototype,
+        requirementReferences: requirementReferencesOf(current),
+        requirementItemReferences: requirementItemReferencesOf(current),
+        chatReferences,
         attachmentIds: uploaded.map((attachment) => attachment.id),
         confirmWrite,
       });
       setDraft("");
+      setChatReferences([]);
       setAttachments([]);
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
@@ -841,6 +930,7 @@ export function DeliveryRequirementSessionModal({
     setNewConversation(true);
     setSelectedThreadId("");
     setDraft("");
+    setChatReferences([]);
     setAttachments([]);
   };
 
@@ -848,6 +938,9 @@ export function DeliveryRequirementSessionModal({
     if (threadId === selectedThreadId && !newConversation) return;
     setNewConversation(false);
     setSelectedThreadId(threadId);
+    setDraft("");
+    setChatReferences([]);
+    setAttachments([]);
     void load(threadId, true);
   };
 
@@ -1112,12 +1205,16 @@ export function DeliveryRequirementSessionModal({
               </div>
             ) : null}
             <div className="delivery-session-composer__input">
-              <Input.TextArea
-                autoSize={{ minRows: 3, maxRows: 7 }}
+              <DeliveryConversationMentionInput
                 value={draft}
                 disabled={!codexBridgeReady || sending}
                 placeholder={t(newConversation ? "delivery.session.newPlaceholder" : "delivery.planning.placeholder")}
-                onChange={(event) => setDraft(event.target.value)}
+                requirements={chatRequirements}
+                items={chatItems}
+                references={chatReferences}
+                onChange={setDraft}
+                onReferencesChange={setChatReferences}
+                onSearchCandidates={searchMentionCandidates}
                 onPaste={handleAttachmentPaste}
                 onPressEnter={(event) => {
                   if (!event.shiftKey) {
@@ -1393,11 +1490,12 @@ export function DeliveryRequirementSessionModal({
                           {/* 需求详情此前只能由拆解会话读取、没有编辑入口，补一个多行输入。 */}
                           <label>
                             {t("delivery.requirement.detail")}
-                            <Input.TextArea
-                              autoSize={{ minRows: 3, maxRows: 8 }}
+                            <DeliveryRequirementDetailInput
                               value={detail}
                               placeholder={t("delivery.requirement.detailPlaceholder")}
-                              onChange={(event) => setDetail(event.target.value)}
+                              requirements={chatRequirements}
+                              items={chatItems}
+                              onChange={setDetail}
                             />
                           </label>
                         </div>

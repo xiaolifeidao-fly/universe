@@ -1,4 +1,77 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap');
+/* 本地自托管字体：避免依赖 fonts.googleapis.com / fonts.gstatic.com（国内网络会 ERR_CONNECTION_RESET，
+   并阻塞首屏 CSS 解析）。中文走系统字体栈，不再下载 Noto Sans SC。 */
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-ext-500-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin-ext-700-normal.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 /* ===== 任务宇宙 · 设计令牌 =====
    品牌色是靛蓝，不是绿色。绿色在任务系统里已经有固定含义（完成 / 成功），
@@ -96,7 +169,7 @@
   --manager-t: 0.18s var(--manager-ease);
   --manager-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --manager-serif: "Instrument Serif", Georgia, serif;
-  --manager-sans: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --manager-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif;
 }
 
 * {
@@ -1209,6 +1282,20 @@ select {
   font-size: var(--manager-fs-base);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+.delivery-requirement-kpi-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-top: 6px;
+}
+
+.delivery-requirement-kpi-line__label {
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  letter-spacing: 0;
 }
 
 .delivery-notification-button.ant-btn {
@@ -2830,6 +2917,70 @@ select {
 
 .delivery-planning-context__dirty.is-dirty { color: var(--manager-amber); }
 
+/* 需求详情的 @ 引用：交互由 antd Mentions 提供，这里只管排版。 */
+.delivery-requirement-detail {
+	display: grid;
+	gap: 6px;
+}
+
+.delivery-requirement-detail .ant-mentions {
+	width: 100%;
+}
+
+.delivery-requirement-mention-tags {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+}
+
+/* 会话 @ 引用共用 Mentions 的键盘交互，下面只补候选和已选关联对象的紧凑排版。 */
+.delivery-conversation-mention-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.delivery-conversation-mention-input .ant-mentions {
+  width: 100%;
+}
+
+.delivery-conversation-mention-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.delivery-conversation-mention-option b {
+  color: var(--manager-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.delivery-conversation-mention-option span,
+.delivery-conversation-mention-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delivery-conversation-mention-option small {
+  color: var(--manager-text-tertiary);
+}
+
+.delivery-conversation-mention-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.delivery-conversation-mention-tags__clear {
+  flex: 0 0 24px;
+}
+
 /* 需求列表：看板左侧的常驻栏，选中一条就联动右侧任务。 */
 .delivery-requirement-layout {
 	display: grid;
@@ -3661,6 +3812,26 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-session-attachment.is-image img { width: 196px; max-height: 148px; object-fit: cover; border-radius: 4px; background: var(--manager-panel); }
 .delivery-session-attachment__image-loading { display: grid; width: 196px; height: 128px; place-items: center; color: var(--manager-text-faint); background: var(--manager-panel); }
 .delivery-session-attachment.is-image span { padding: 2px 3px 0; }
+.delivery-session-attachment > .anticon:last-child { flex: none; margin-left: auto; color: var(--manager-text-faint); }
+
+/* 聊天附件统一在右侧抽屉里查看；文本和图片都在受控尺寸内，避免挤压聊天记录。 */
+.delivery-file-preview-drawer .ant-drawer-body { display: flex; min-height: 0; overflow: hidden; }
+.delivery-file-preview { display: grid; flex: 1; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 14px; }
+.delivery-file-preview__title { display: inline-flex; min-width: 0; max-width: 460px; align-items: center; gap: 8px; }
+.delivery-file-preview__title .anticon { color: var(--manager-primary); }
+.delivery-file-preview__meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.delivery-file-preview__meta span { max-width: 100%; overflow: hidden; padding: 3px 7px; border-radius: 4px; background: var(--manager-panel); color: var(--manager-text-faint); font: var(--manager-fs-xs)/1.35 var(--manager-mono); text-overflow: ellipsis; white-space: nowrap; }
+.delivery-file-preview__loading { display: grid; min-height: 300px; place-items: center; }
+.delivery-file-preview__image { display: block; width: 100%; max-height: calc(100vh - 160px); object-fit: contain; background: var(--manager-panel); }
+.delivery-file-preview__frame { width: 100%; height: calc(100vh - 170px); min-height: 460px; border: 1px solid var(--manager-border); border-radius: var(--manager-r-sm); background: var(--manager-surface); }
+.delivery-file-preview__media { width: 100%; max-height: calc(100vh - 170px); background: #15191f; }
+.delivery-file-preview__audio { width: 100%; align-self: start; }
+.delivery-file-preview__text { min-height: 300px; margin: 0; overflow: auto; padding: 14px; border: 1px solid var(--manager-border); border-radius: var(--manager-r-sm); background: #15191f; color: #e7edf4; font: var(--manager-fs-sm)/1.7 var(--manager-mono); white-space: pre-wrap; word-break: break-word; }
+
+@media (max-width: 760px) {
+	.delivery-file-preview__title { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.delivery-file-preview__frame { min-height: 360px; height: calc(100vh - 150px); }
+}
 
 .delivery-session-live-event {
 	display: grid;

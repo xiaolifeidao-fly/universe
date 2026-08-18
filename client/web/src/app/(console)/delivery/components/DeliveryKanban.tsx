@@ -388,12 +388,14 @@ export function DeliveryKanban({
                             </div>
 							<b>{item.title}</b>
 							{item.benefitTags.length ? <div className="delivery-card-benefit-tags">{item.benefitTags.map((tag) => <Tag color="gold" key={tag}>{tag}</Tag>)}</div> : null}
+							{/* 卡片只留图标：文案挪到悬浮提示里，给标题和依赖留出宽度。 */}
 							<div className="delivery-card-actions">
 												<Tooltip title={t("delivery.session.viewTask")}>
 													<Button
 														className="delivery-card-session-button"
 														type="text"
 														size="small"
+														shape="circle"
 														icon={<MessageOutlined />}
 														aria-label={t("delivery.session.viewTask")}
 														onPointerDown={(event) => event.stopPropagation()}
@@ -401,25 +403,22 @@ export function DeliveryKanban({
 															event.stopPropagation();
 															onOpenSession(item);
 														}}
-													>
-														{t("delivery.session.viewTask")}
-													</Button>
+													/>
 												</Tooltip>
-											<Tooltip title={t("delivery.document.taskHint")}>
+											<Tooltip title={t("delivery.session.viewDocument")}>
 													<Button
 														className="delivery-card-session-button"
 														type="text"
 														size="small"
+														shape="circle"
 														icon={<FileTextOutlined />}
-														aria-label={t("delivery.detail.document")}
+														aria-label={t("delivery.session.viewDocument")}
 														onPointerDown={(event) => event.stopPropagation()}
 														onClick={(event) => {
 															event.stopPropagation();
 															onOpenDocument(item);
 														}}
-													>
-														{t("delivery.detail.document")}
-													</Button>
+													/>
 												</Tooltip>
 											</div>
 									<div className="delivery-card-phases">

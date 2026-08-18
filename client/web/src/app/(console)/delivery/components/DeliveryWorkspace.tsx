@@ -30,6 +30,7 @@ import {
   type BoardGroupBy,
   type DeliveryItemRecord,
   type DeliveryKind,
+	type DeliveryOverview,
 	type DeliveryPhase,
   type DeliveryRequirementRecord,
   type MemberRecord,
@@ -363,38 +364,43 @@ export function DeliveryWorkspace() {
     }
   }, [highlightedOwner, ownerOptions]);
 
-  const kpis = useMemo(
-    () => [
-      { label: t("delivery.kpi.total"), value: overview.totalCount, tone: "var(--manager-text)" },
+  const buildKpis = useCallback(
+    (summary: DeliveryOverview) => [
+      { label: t("delivery.kpi.total"), value: summary.totalCount, tone: "var(--manager-text)" },
       {
         label: t("delivery.status.doing"),
-        value: overview.statusCounts?.doing ?? 0,
+        value: summary.statusCounts?.doing ?? 0,
         tone: STATUS_COLORS.doing,
       },
       {
         label: t("delivery.status.done"),
-        value: overview.statusCounts?.done ?? 0,
+        value: summary.statusCounts?.done ?? 0,
         tone: STATUS_COLORS.done,
       },
       {
         label: t("delivery.status.blocked"),
-        value: overview.statusCounts?.blocked ?? 0,
+        value: summary.statusCounts?.blocked ?? 0,
         tone: STATUS_COLORS.blocked,
       },
       {
         label: t("delivery.kpi.maturity"),
-        value: `${overview.maturityScore ?? 0}%`,
+        value: `${summary.maturityScore ?? 0}%`,
         tone: "var(--manager-primary)",
         hint: t("delivery.kpi.maturityHint"),
       },
       {
         label: t("delivery.kpi.plain"),
-        value: `${overview.plainProgress ?? 0}%`,
+        value: `${summary.plainProgress ?? 0}%`,
         tone: "var(--manager-text-faint)",
         hint: t("delivery.kpi.plainHint"),
       },
     ],
-    [overview, t],
+    [t],
+  );
+  const kpis = useMemo(() => buildKpis(overview), [buildKpis, overview]);
+  const requirementKpis = useMemo(
+    () => (board.requirementOverview ? buildKpis(board.requirementOverview) : []),
+    [board.requirementOverview, buildKpis],
   );
 
   const handleMove = useCallback(async (items: DeliveryItemRecord[], columnKey: string, sortOrder: number) => {
@@ -717,17 +723,19 @@ export function DeliveryWorkspace() {
             <b>{record.title}</b>
 						{record.benefitTags.length ? <div className="delivery-benefit-tags">{record.benefitTags.map((tag) => <Tag color="gold" key={tag}>{tag}</Tag>)}</div> : null}
           </div>
-          <Button
-            size="small"
-            icon={<MessageOutlined />}
-            onClick={(event) => {
-              event.stopPropagation();
-              setStartTaskTestingCases(false);
-              setSessionItem(record);
-            }}
-          >
-            {t("delivery.session.viewTask")}
-          </Button>
+          <Tooltip title={t("delivery.session.viewTask")}>
+            <Button
+              size="small"
+              shape="circle"
+              icon={<MessageOutlined />}
+              aria-label={t("delivery.session.viewTask")}
+              onClick={(event) => {
+                event.stopPropagation();
+                setStartTaskTestingCases(false);
+                setSessionItem(record);
+              }}
+            />
+          </Tooltip>
         </div>
       ),
     },
@@ -815,6 +823,21 @@ export function DeliveryWorkspace() {
               ))}
             </div>
           </div>
+          {filters.requirementKey && board.requirementOverview ? (
+            <div className="delivery-requirement-kpi-line">
+              <span className="delivery-requirement-kpi-line__label">{t("delivery.kpi.requirementProgress")}</span>
+              <div className="delivery-kpi-inline">
+                {requirementKpis.map((kpi) => (
+                  <Tooltip title={kpi.hint} key={kpi.label}>
+                    <span className="delivery-kpi-inline__item">
+                      {kpi.label}
+                      <b style={{ color: kpi.tone }}>{kpi.value}</b>
+                    </span>
+                  </Tooltip>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
         <Space>
           <Popover
@@ -1151,6 +1174,8 @@ export function DeliveryWorkspace() {
         item={sessionItem}
         programId={programId}
         bizLine={bizLine}
+        requirements={requirements}
+        itemCatalog={itemCatalog}
         codexBridgeReady={codexBridgeReady}
         startTestingCasesOnOpen={startTaskTestingCases}
         onClose={() => {
@@ -1190,6 +1215,7 @@ export function DeliveryWorkspace() {
         stages={stages}
         modules={modules}
         itemCatalog={itemCatalog}
+        requirements={requirements}
         codexBridgeReady={codexBridgeReady}
         startTestingOnOpen={startRequirementTesting}
         onClose={() => {

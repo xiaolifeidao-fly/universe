@@ -136,6 +136,12 @@ export class DeliveryRequirementRecord {
 
   detail = "";
 
+  /** 需求详情里 @ 引用的历史需求键；拆解会话据此把它们的大纲产物地址交给插件。 */
+  referenceRequirementKeys: string[] = [];
+
+  /** 需求详情里 @ 引用的既有任务键；拆解会话据此读取对应任务需求文档。 */
+  referenceItemKeys: string[] = [];
+
   /** 需求计划执行窗口；为空表示尚未安排。 */
   plannedStartAt?: string;
 
@@ -371,6 +377,9 @@ export class DeliveryBoard {
   columns: DeliveryBoardColumn[] = [];
 
   overview: DeliveryOverview = new DeliveryOverview();
+
+  /** 按需求查看任务时返回的全量汇总，不受看板临时筛选影响。 */
+  requirementOverview?: DeliveryOverview;
 }
 
 function normalizeItemPhase(item: DeliveryItemRecord) {
@@ -683,6 +692,9 @@ export class CodexConversationAttachment {
 
   isImage = false;
 
+  /** 工作区产物的相对路径，用来让最终回复里的 Markdown 链接命中同一份附件。 */
+  relativePath = "";
+
   url = "";
 }
 
@@ -756,6 +768,12 @@ export class CodexConversationActionResult {
   turnId = "";
 
   active = false;
+}
+
+/** 聊天输入中通过 @ 选中的交付对象；桥接层会按键重新读取权威详情。 */
+export interface DeliveryConversationReference {
+  kind: "requirement" | "task";
+  key: string;
 }
 
 /** 项目级需求拆解会话，与单条任务会话分开保存。 */
@@ -1069,12 +1087,31 @@ export interface RequirementPageQuery {
   pageSize?: number;
 }
 
+interface ItemPageQuery {
+  programId: number;
+  requirementKey?: string;
+  keyword?: string;
+  pageIndex?: number;
+  pageSize?: number;
+  /** recent 仅供 @ 候选按创建时间倒序加载，普通任务列表仍按看板手工顺序。 */
+  sort?: "recent" | "";
+}
+
+export interface DeliveryConversationMentionCatalog {
+  requirements: DeliveryRequirementRecord[];
+  items: DeliveryItemRecord[];
+}
+
 export interface SaveRequirementPayload {
   programId: number;
   /** 为空表示新建；带 key 表示更新，更新必须带上读到的 version。 */
   requirementKey?: string;
   name: string;
   detail?: string;
+  /** 详情里 @ 引用的历史需求键；不传表示本次请求不改动已保存的引用。 */
+  referenceRequirementKeys?: string[];
+  /** 详情里 @ 引用的既有任务键；不传表示本次请求不改动已保存的关联。 */
+  referenceItemKeys?: string[];
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
   status?: RequirementStatus;
@@ -1102,6 +1139,8 @@ export async function fetchRequirements(query: RequirementPageQuery) {
   page.data.forEach((requirement) => {
     requirement.owners = plainToInstance(RequirementMember, requirement.owners ?? []);
     requirement.assistants = plainToInstance(RequirementMember, requirement.assistants ?? []);
+    requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+    requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
   });
   return page;
 }
@@ -1110,12 +1149,17 @@ export async function fetchRequirement(programId: number, requirementKey: string
   const requirement = await getData(DeliveryRequirementRecord, "/delivery/requirement", { programId, requirementKey });
   requirement.owners = plainToInstance(RequirementMember, requirement.owners ?? []);
   requirement.assistants = plainToInstance(RequirementMember, requirement.assistants ?? []);
+  requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+  requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
   return requirement;
 }
 
 export async function saveRequirement(payload: SaveRequirementPayload) {
   const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/save", payload);
-  return plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  const requirement = plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+  requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
+  return requirement;
 }
 
 export async function deleteRequirement(programId: number, requirementKey: string) {
@@ -1155,13 +1199,14 @@ export async function fetchBoard(query: BoardQuery) {
     column.items = Array.isArray(column.items) ? column.items : [];
     column.items.forEach(normalizeItemPhase);
   }
-  board.overview = board.overview ?? new DeliveryOverview();
-  board.overview.moduleProgress = Array.isArray(board.overview.moduleProgress)
-    ? board.overview.moduleProgress
-    : [];
-  board.overview.stageProgress = Array.isArray(board.overview.stageProgress)
-    ? board.overview.stageProgress
-    : [];
+  const normalizeOverview = (overview?: DeliveryOverview) => {
+    const value = overview ?? new DeliveryOverview();
+    value.moduleProgress = Array.isArray(value.moduleProgress) ? value.moduleProgress : [];
+    value.stageProgress = Array.isArray(value.stageProgress) ? value.stageProgress : [];
+    return value;
+  };
+  board.overview = normalizeOverview(board.overview);
+  if (board.requirementOverview) board.requirementOverview = normalizeOverview(board.requirementOverview);
 
   return board;
 }
@@ -1170,15 +1215,43 @@ export async function fetchOverview(programId: number) {
   return getData(DeliveryOverview, "/delivery/overview", { programId });
 }
 
-export async function fetchItems(programId: number, requirementKey = "") {
+async function fetchItemsPage(query: ItemPageQuery) {
   const page = await getPage(DeliveryItemRecord, "/delivery/items", {
-    programId,
-    requirementKey: requirementKey || undefined,
     pageIndex: 1,
     pageSize: 200,
+    ...query,
   });
   page.data.forEach(normalizeItemPhase);
   return page;
+}
+
+export async function fetchItems(programId: number, requirementKey = "") {
+  return fetchItemsPage({ programId, requirementKey: requirementKey || undefined });
+}
+
+/**
+ * 聊天 @ 的首屏目录固定各取最近 20 条；带关键词时用于本地候选无命中后的服务端补查。
+ * 需求和任务各自分页，不能混成一页而让其中一种实体挤占候选名额。
+ */
+export async function fetchDeliveryConversationMentionCatalog(programId: number, keyword = ""): Promise<DeliveryConversationMentionCatalog> {
+  const search = keyword.trim();
+  const [requirements, items] = await Promise.all([
+    fetchRequirements({
+      programId,
+      scope: "",
+      keyword: search || undefined,
+      pageIndex: 1,
+      pageSize: 20,
+    }),
+    fetchItemsPage({
+      programId,
+      keyword: search || undefined,
+      pageIndex: 1,
+      pageSize: 20,
+      sort: "recent",
+    }),
+  ]);
+  return { requirements: requirements.data, items: items.data };
 }
 
 /** 大文本仅在用户打开详情时请求，避免任务看板重复拉取执行日志。 */
@@ -1641,6 +1714,7 @@ export interface SendCodexConversationMessageOptions {
   threadId?: string;
   newConversation?: boolean;
   attachmentIds?: string[];
+  references?: DeliveryConversationReference[];
   model?: string;
   provider?: AITool;
   reasoningEffort?: AIReasoningEffort;
@@ -1708,6 +1782,15 @@ export interface SendCodexPlanningMessageOptions {
   requirementPreGenerateTaskDocuments?: boolean;
   /** 专业模式下确认拆解写入后，可由面板再次确认生成需求 HTML 原型。 */
   requirementGeneratePrototype?: boolean;
+  /**
+   * 需求详情里 @ 引用的历史需求。只传键和名字：插件拿到的是这些需求的大纲产物地址，
+   * 由它按需读取正文，面板不把大纲内容塞进提示词。
+   */
+  requirementReferences?: Array<{ requirementKey: string; name: string }>;
+  /** 需求详情里 @ 引用的既有任务；插件按任务键读取对应需求文档。 */
+  requirementItemReferences?: Array<{ itemKey: string; title: string }>;
+  /** 本轮聊天中 @ 选中的需求或任务；与需求详情的持久化引用分开处理。 */
+  chatReferences?: DeliveryConversationReference[];
   /** 已上传附件的标识，与任务会话用的是同一套附件仓库。 */
   attachmentIds?: string[];
   /**

@@ -25,6 +25,7 @@ type ItemQuery struct {
 	Kind           string
 	OwnerName      string
 	Keyword        string
+	RecentFirst    bool
 	Offset         int
 	Limit          int
 }
@@ -74,7 +75,11 @@ func (r *DeliveryRepository) ListItems(ctx context.Context, q ItemQuery) ([]*Del
 
 	var rows []*DeliveryItem
 	// 大文本只在详情接口中读取，避免任务面板、全景和插件上下文反复传输执行记录。
-	err := tx.Omit("requirement_document", "execution_output", "testing_cases").Order("sort_order asc, id asc").Find(&rows).Error
+	order := "sort_order asc, id asc"
+	if q.RecentFirst {
+		order = "created_time desc, id desc"
+	}
+	err := tx.Omit("requirement_document", "execution_output", "testing_cases").Order(order).Find(&rows).Error
 	return rows, total, err
 }
 

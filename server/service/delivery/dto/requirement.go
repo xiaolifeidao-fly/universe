@@ -23,12 +23,16 @@ type RequirementView struct {
 	ProgramID      int64            `json:"programId"`
 	Name           string           `json:"name"`
 	Detail         string           `json:"detail"`
-	PlannedStartAt *time.Time       `json:"plannedStartAt"`
-	PlannedEndAt   *time.Time       `json:"plannedEndAt"`
-	Status         string           `json:"status"`
-	Mode           string           `json:"mode"`
-	StartPhase     string           `json:"startPhase"`
-	SplitTasks     bool             `json:"splitTasks"`
+	// ReferenceRequirementKeys 是需求详情里 @ 引用的历史需求；插件按这些键取各自的大纲产物地址。
+	ReferenceRequirementKeys []string `json:"referenceRequirementKeys"`
+	// ReferenceItemKeys 是需求详情里 @ 引用的既有任务；插件按这些键读取任务需求文档。
+	ReferenceItemKeys []string   `json:"referenceItemKeys"`
+	PlannedStartAt    *time.Time `json:"plannedStartAt"`
+	PlannedEndAt      *time.Time `json:"plannedEndAt"`
+	Status            string     `json:"status"`
+	Mode              string     `json:"mode"`
+	StartPhase        string     `json:"startPhase"`
+	SplitTasks        bool       `json:"splitTasks"`
 	// PreGenerateTaskDocuments 控制确认拆解后是否预生成每条任务的需求文档。
 	// GenerateTaskOutline 保留在响应中，兼容尚未升级的旧面板和本地桥接器。
 	PreGenerateTaskDocuments bool       `json:"preGenerateTaskDocuments"`
@@ -92,11 +96,15 @@ type SaveRequirementRequest struct {
 	RequirementKey string           `json:"requirementKey"`
 	Name           string           `json:"name"`
 	Detail         string           `json:"detail"`
-	PlannedStartAt *time.Time       `json:"plannedStartAt"`
-	PlannedEndAt   *time.Time       `json:"plannedEndAt"`
-	Status         string           `json:"status"`
-	Mode           string           `json:"mode"`
-	StartPhase     string           `json:"startPhase"`
+	// ReferenceRequirementKeys 用指针表达「本次请求没提这件事」：老客户端不传时保持原有引用。
+	ReferenceRequirementKeys *[]string `json:"referenceRequirementKeys"`
+	// ReferenceItemKeys 用指针表达「本次请求没提这件事」：老客户端不传时保持原有关联。
+	ReferenceItemKeys *[]string  `json:"referenceItemKeys"`
+	PlannedStartAt    *time.Time `json:"plannedStartAt"`
+	PlannedEndAt      *time.Time `json:"plannedEndAt"`
+	Status            string     `json:"status"`
+	Mode              string     `json:"mode"`
+	StartPhase        string     `json:"startPhase"`
 	// SplitTasks 用指针表达「本次请求没提这件事」：老客户端不传时新建按默认拆解、编辑保持原值。
 	SplitTasks *bool `json:"splitTasks"`
 	// PreGenerateTaskDocuments 用指针区分「没提」：新建默认不预生成，编辑保持原值。

@@ -124,6 +124,10 @@ func (s *service) ListItems(ctx context.Context, query dto.ItemQuery) (dto.ItemP
 	if query.ProgramID <= 0 {
 		return dto.ItemPage{}, errors.New("缺少项目标识")
 	}
+	recentFirst, err := itemListRecentFirst(query.Sort)
+	if err != nil {
+		return dto.ItemPage{}, err
+	}
 	rows, total, err := s.repo.ListItems(ctx, repository.ItemQuery{
 		BizLine:        query.BizLine.String(),
 		ProgramID:      query.ProgramID,
@@ -135,6 +139,7 @@ func (s *service) ListItems(ctx context.Context, query dto.ItemQuery) (dto.ItemP
 		Kind:           normalizeKind(query.Kind),
 		OwnerName:      query.OwnerName,
 		Keyword:        query.Keyword,
+		RecentFirst:    recentFirst,
 		Offset:         query.Offset(),
 		Limit:          query.Limit(),
 	})
@@ -146,6 +151,18 @@ func (s *service) ListItems(ctx context.Context, query dto.ItemQuery) (dto.ItemP
 		return dto.ItemPage{}, err
 	}
 	return dto.ItemPage{Total: total, Data: toItemViews(rows, dependencyKeysBySuccessor(dependencies), dependencySourceSidesBySuccessor(dependencies), dependencyTargetSidesBySuccessor(dependencies))}, nil
+}
+
+// itemListRecentFirst 只允许声明过的排序，不能把浏览器传入的字符串拼进 SQL 的 ORDER BY。
+func itemListRecentFirst(sort string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "":
+		return false, nil
+	case "recent":
+		return true, nil
+	default:
+		return false, errors.New("未知的任务排序方式")
+	}
 }
 
 func (s *service) GetItem(ctx context.Context, bizLine contract.BizLine, programID int64, itemKey string) (dto.ItemView, error) {

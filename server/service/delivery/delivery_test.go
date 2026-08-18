@@ -49,6 +49,25 @@ func TestAverageProgressEmpty(t *testing.T) {
 	}
 }
 
+func TestBuildProgramOverviewUsesRequirementItemsAndModuleWeights(t *testing.T) {
+	overview := buildProgramOverview(7, "测试项目", nil, []*repository.DeliveryModule{
+		{ModuleKey: "core", Name: "核心", Weight: 80},
+		{ModuleKey: "edge", Name: "边缘", Weight: 20},
+	}, []*repository.DeliveryItem{
+		{ModuleKey: "core", Status: StatusDone, Progress: 20},
+		{ModuleKey: "core", Status: StatusDoing, Progress: 40},
+		{ModuleKey: "edge", Status: StatusBlocked, Progress: 20},
+		{ModuleKey: "edge", Status: StatusDropped, Progress: 90},
+	})
+
+	if overview.TotalCount != 4 || overview.StatusCounts[StatusDoing] != 1 || overview.StatusCounts[StatusDone] != 1 || overview.StatusCounts[StatusBlocked] != 1 {
+		t.Fatalf("需求汇总的任务数或状态数不正确：%#v", overview)
+	}
+	if overview.PlainProgress != 53.33 || overview.MaturityScore != 60 {
+		t.Fatalf("需求汇总进度口径不正确：plain=%v, maturity=%v", overview.PlainProgress, overview.MaturityScore)
+	}
+}
+
 func TestNormalizeProgress(t *testing.T) {
 	cases := []struct {
 		status string
@@ -64,6 +83,18 @@ func TestNormalizeProgress(t *testing.T) {
 		if got := normalizeProgress(c.status, c.input); got != c.want {
 			t.Fatalf("normalizeProgress(%s,%d) 期望 %d，实际 %d", c.status, c.input, c.want, got)
 		}
+	}
+}
+
+func TestItemListRecentFirstAcceptsOnlyKnownSorts(t *testing.T) {
+	if recent, err := itemListRecentFirst("recent"); err != nil || !recent {
+		t.Fatalf("recent 应按创建时间倒序：%v, %v", recent, err)
+	}
+	if recent, err := itemListRecentFirst(""); err != nil || recent {
+		t.Fatalf("空排序应保留看板手工顺序：%v, %v", recent, err)
+	}
+	if _, err := itemListRecentFirst("created_time desc"); err == nil {
+		t.Fatal("未声明排序不得传入 repository")
 	}
 }
 
@@ -187,6 +218,52 @@ func TestRequirementViewIncludesPlanningContext(t *testing.T) {
 	})
 	if view.StageKey != "s2" || view.ModuleKey != "billing" || view.Kind != KindCapability || !view.GeneratePrototype || view.PlannedStartAt == nil || view.PlannedEndAt == nil {
 		t.Fatalf("需求拆解上下文未完整回显：%#v", view)
+	}
+}
+
+func TestNormalizeRequirementReferencesKeepsValidUniqueKeys(t *testing.T) {
+	stored, err := normalizeRequirementReferences([]string{" req-a ", "req-a", "req-b", "", "req-self"}, "req-self")
+	if err != nil || stored != ",req-a,req-b," {
+		t.Fatalf("引用需求键未按 ,key, 形式归一：%q, %v", stored, err)
+	}
+	if _, err := normalizeRequirementReferences([]string{"../etc"}, ""); err == nil {
+		t.Fatal("非法需求键必须拒绝保存")
+	}
+	if stored, err := normalizeRequirementReferences(nil, ""); err != nil || stored != "" {
+		t.Fatalf("空引用应存成空串：%q, %v", stored, err)
+	}
+}
+
+func TestRequirementViewReadsBackReferencedRequirements(t *testing.T) {
+	view := toRequirementView(&repository.DeliveryRequirement{
+		ReferenceRequirementKeys: ",req-a,req-b,",
+		ReferenceItemKeys:        ",task-a,task.v1,",
+	})
+	if len(view.ReferenceRequirementKeys) != 2 || view.ReferenceRequirementKeys[0] != "req-a" {
+		t.Fatalf("引用需求未完整回显：%#v", view.ReferenceRequirementKeys)
+	}
+	if len(view.ReferenceItemKeys) != 2 || view.ReferenceItemKeys[1] != "task.v1" {
+		t.Fatalf("引用任务未完整回显：%#v", view.ReferenceItemKeys)
+	}
+	empty := toRequirementView(&repository.DeliveryRequirement{})
+	if empty.ReferenceRequirementKeys == nil || len(empty.ReferenceRequirementKeys) != 0 {
+		t.Fatalf("没有引用时应回显空数组而不是 null：%#v", empty.ReferenceRequirementKeys)
+	}
+	if empty.ReferenceItemKeys == nil || len(empty.ReferenceItemKeys) != 0 {
+		t.Fatalf("没有任务关联时应回显空数组而不是 null：%#v", empty.ReferenceItemKeys)
+	}
+}
+
+func TestNormalizeRequirementItemReferencesKeepsValidUniqueKeys(t *testing.T) {
+	stored, err := normalizeRequirementItemReferences([]string{" task-a ", "task-a", "task.v1", ""})
+	if err != nil || stored != ",task-a,task.v1," {
+		t.Fatalf("引用任务键未按 ,key, 形式归一：%q, %v", stored, err)
+	}
+	if _, err := normalizeRequirementItemReferences([]string{"../etc"}); err == nil {
+		t.Fatal("非法任务键必须拒绝保存")
+	}
+	if stored, err := normalizeRequirementItemReferences(nil); err != nil || stored != "" {
+		t.Fatalf("空任务关联应存成空串：%q, %v", stored, err)
 	}
 }
 

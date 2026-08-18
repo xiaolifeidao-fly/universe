@@ -92,6 +92,12 @@ type DeliveryRequirement struct {
 
 	Name   string `gorm:"column:name;type:varchar(255)" description:"需求名称"`
 	Detail string `gorm:"column:detail;type:mediumtext" description:"需求详细信息"`
+	// ReferenceRequirementKeys 是需求详情里 @ 引用的历史需求键，形如 ,req-a,req-b,。
+	// 拆解会话据此把被引用需求的大纲产物地址交给插件，正文由插件按需读取。
+	ReferenceRequirementKeys string `gorm:"column:reference_requirement_keys;type:varchar(1024)" description:"@ 引用的历史需求键，形如 ,req-a,req-b,"`
+	// ReferenceItemKeys 是需求详情里 @ 引用的既有任务键，形如 ,task-a,task-b,。
+	// 拆解会话据此把被引用任务的需求文档地址交给插件，正文由插件按需读取。
+	ReferenceItemKeys string `gorm:"column:reference_item_keys;type:varchar(2048)" description:"@ 引用的既有任务键，形如 ,task-a,task-b,"`
 	// PlannedStartAt / PlannedEndAt 是需求的计划时间窗口；为空表示尚未排期。
 	PlannedStartAt *time.Time `gorm:"column:planned_start_at;type:timestamp;null" description:"需求计划开始时间"`
 	PlannedEndAt   *time.Time `gorm:"column:planned_end_at;type:timestamp;null" description:"需求计划结束时间"`

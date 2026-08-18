@@ -39,6 +39,8 @@ type BoardView struct {
 	GroupBy   string          `json:"groupBy"`
 	Columns   []BoardColumn   `json:"columns"`
 	Overview  ProgramOverview `json:"overview"`
+	// RequirementOverview 只在按需求查看任务时返回，口径不受状态、阶段等看板筛选影响。
+	RequirementOverview *ProgramOverview `json:"requirementOverview,omitempty"`
 }
 
 // ---------- 概览 ----------

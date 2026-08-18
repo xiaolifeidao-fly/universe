@@ -37,7 +37,7 @@ import {
   type TestingCasesStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { SessionDocumentText, SessionMarkdown, changesOfTurn, SessionChangeSummary } from "./DeliverySessionMessage";
+import { SessionDocumentText, SessionMessageContent, changesOfTurn, SessionChangeSummary } from "./DeliverySessionMessage";
 
 interface DeliveryTaskTestingCasesModalProps {
   open: boolean;
@@ -55,18 +55,17 @@ interface DeliveryTaskTestingCasesModalProps {
   onChanged: () => Promise<void> | void;
 }
 
-function TranscriptItem({ item, toolName }: { item: CodexConversationItem; toolName: string }) {
+function TranscriptItem({ item, programId, toolName }: { item: CodexConversationItem; programId: number; toolName: string }) {
   const { t } = useLocale();
   const isUser = item.type === "userMessage";
-  const isAgentText = item.type === "agentMessage" || item.type === "plan";
   return (
     <article className={`delivery-session-message${isUser ? " is-user" : ""}`}>
       <header>
         <span className="delivery-session-message__icon">{isUser ? <MessageOutlined /> : <FileTextOutlined />}</span>
-        <b>{isUser ? t("delivery.session.you") : isAgentText ? toolName : t(`delivery.session.item.${item.type}`)}</b>
+        <b>{isUser ? t("delivery.session.you") : item.type === "agentMessage" || item.type === "plan" ? toolName : t(`delivery.session.item.${item.type}`)}</b>
         {item.status ? <small>{item.status}</small> : null}
       </header>
-      {isAgentText ? <SessionMarkdown text={item.text} /> : <div className="delivery-session-message__body">{item.text}</div>}
+      <SessionMessageContent item={item} programId={programId} />
     </article>
   );
 }
@@ -262,7 +261,7 @@ export function DeliveryTaskTestingCasesModal({
                 key: "chat", label: t("delivery.taskTestingCases.chat"),
                 children: <div className="delivery-session-transcript" ref={transcriptRef}>
                   <Alert className="delivery-testing-cases-chat-hint" type="info" showIcon message={t("delivery.testingCases.chatHint.title")} description={t("delivery.testingCases.chatHint.description")} />
-                  {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{turn.items.map((entry) => <TranscriptItem item={entry} toolName={toolName} key={`${turn.id}-${entry.id}-${entry.type}`} />)}<SessionChangeSummary changes={changesOfTurn(turn.items)} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.taskTestingCases.empty").replace("{tool}", toolName)} />}
+                  {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{turn.items.map((entry) => <TranscriptItem item={entry} programId={programId} toolName={toolName} key={`${turn.id}-${entry.id}-${entry.type}`} />)}<SessionChangeSummary changes={changesOfTurn(turn.items)} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.taskTestingCases.empty").replace("{tool}", toolName)} />}
                   {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
                 </div>,
               },

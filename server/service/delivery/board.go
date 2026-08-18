@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"contract"
@@ -69,6 +70,7 @@ func (s *service) Board(ctx context.Context, query dto.BoardQuery) (dto.BoardVie
 		return dto.BoardView{}, err
 	}
 	dependsOn := dependencyKeysBySuccessor(dependencies)
+	linked := dependencyLinkedKeys(dependencies)
 	dependencySourceSides := dependencySourceSidesBySuccessor(dependencies)
 	dependencyTargetSides := dependencyTargetSidesBySuccessor(dependencies)
 
@@ -79,18 +81,18 @@ func (s *service) Board(ctx context.Context, query dto.BoardQuery) (dto.BoardVie
 		for _, stage := range stages {
 			columns = append(columns, buildColumn(stage.StageKey, stage.Tag,
 				strings.TrimSpace(stage.TimeWindow+" · "+stage.MaturityLevel),
-				pick(filtered, func(item *repository.DeliveryItem) bool { return item.StageKey == stage.StageKey }), dependsOn, dependencySourceSides, dependencyTargetSides))
+				pick(filtered, func(item *repository.DeliveryItem) bool { return item.StageKey == stage.StageKey }), linked, dependsOn, dependencySourceSides, dependencyTargetSides))
 		}
 	case "module":
 		for _, module := range modules {
 			columns = append(columns, buildColumn(module.ModuleKey, module.Name,
 				fmt.Sprintf("权重 %d%%", module.Weight),
-				pick(filtered, func(item *repository.DeliveryItem) bool { return item.ModuleKey == module.ModuleKey }), dependsOn, dependencySourceSides, dependencyTargetSides))
+				pick(filtered, func(item *repository.DeliveryItem) bool { return item.ModuleKey == module.ModuleKey }), linked, dependsOn, dependencySourceSides, dependencyTargetSides))
 		}
 	case "status":
 		for _, status := range statusOrder {
 			items := pick(filtered, func(item *repository.DeliveryItem) bool { return item.Status == status })
-			column := buildColumn(status, statusNames[status], "", items, dependsOn, dependencySourceSides, dependencyTargetSides)
+			column := buildColumn(status, statusNames[status], "", items, linked, dependsOn, dependencySourceSides, dependencyTargetSides)
 			column.DoneCount = countStatus(items, StatusDone)
 			columns = append(columns, column)
 		}
@@ -101,15 +103,30 @@ func (s *service) Board(ctx context.Context, query dto.BoardQuery) (dto.BoardVie
 	if err != nil {
 		return dto.BoardView{}, err
 	}
+	var requirementOverview *dto.ProgramOverview
+	if query.RequirementKey != "" {
+		summary, err := s.overview(ctx, query.BizLine, query.ProgramID, query.RequirementKey)
+		if err != nil {
+			return dto.BoardView{}, err
+		}
+		requirementOverview = &summary
+	}
 	return dto.BoardView{
-		ProgramID: query.ProgramID,
-		GroupBy:   groupBy,
-		Columns:   columns,
-		Overview:  overview,
+		ProgramID:           query.ProgramID,
+		GroupBy:             groupBy,
+		Columns:             columns,
+		Overview:            overview,
+		RequirementOverview: requirementOverview,
 	}, nil
 }
 
 func (s *service) Overview(ctx context.Context, bizLine contract.BizLine, programID int64) (dto.ProgramOverview, error) {
+	return s.overview(ctx, bizLine, programID, "")
+}
+
+// overview 的 requirementKey 为空时统计项目全量；非空时统计单个需求的全量任务。
+// 两者共用同一套口径，避免前端依赖当前看板筛选自行拼装统计结果。
+func (s *service) overview(ctx context.Context, bizLine contract.BizLine, programID int64, requirementKey string) (dto.ProgramOverview, error) {
 	if !bizLine.Valid() {
 		return dto.ProgramOverview{}, contract.ErrBizLineRequired
 	}
@@ -130,16 +147,27 @@ func (s *service) Overview(ctx context.Context, bizLine contract.BizLine, progra
 		return dto.ProgramOverview{}, err
 	}
 	items, err := s.repo.ListAllItems(ctx, repository.ItemQuery{
-		BizLine:   bizLine.String(),
-		ProgramID: programID,
+		BizLine:        bizLine.String(),
+		ProgramID:      programID,
+		RequirementKey: requirementKey,
 	})
 	if err != nil {
 		return dto.ProgramOverview{}, err
 	}
 
+	return buildProgramOverview(programID, program.Name, stages, modules, items), nil
+}
+
+func buildProgramOverview(
+	programID int64,
+	programName string,
+	stages []*repository.DeliveryStage,
+	modules []*repository.DeliveryModule,
+	items []*repository.DeliveryItem,
+) dto.ProgramOverview {
 	overview := dto.ProgramOverview{
 		ProgramID:      programID,
-		Name:           program.Name,
+		Name:           programName,
 		TotalCount:     len(items),
 		StatusCounts:   map[string]int{},
 		ModuleProgress: make([]dto.ModuleProgressView, 0, len(modules)),
@@ -191,25 +219,67 @@ func (s *service) Overview(ctx context.Context, bizLine contract.BizLine, progra
 			Progress:      averageProgress(scoped),
 		})
 	}
-	return overview, nil
+	return overview
 }
 
 func buildColumn(
 	key, name, subtitle string,
 	items []*repository.DeliveryItem,
+	linked map[string]bool,
 	dependsOn map[string][]string,
 	dependencySourceSides map[string]map[string]string,
 	dependencyTargetSides map[string]map[string]string,
 ) dto.BoardColumn {
+	ordered := orderByCreationWhenUnlinked(items, linked)
 	return dto.BoardColumn{
 		Key:       key,
 		Name:      name,
 		Subtitle:  strings.Trim(subtitle, " ·"),
-		Total:     len(items),
-		DoneCount: countStatus(items, StatusDone),
-		Progress:  averageProgress(items),
-		Items:     toItemViews(items, dependsOn, dependencySourceSides, dependencyTargetSides),
+		Total:     len(ordered),
+		DoneCount: countStatus(ordered, StatusDone),
+		Progress:  averageProgress(ordered),
+		Items:     toItemViews(ordered, dependsOn, dependencySourceSides, dependencyTargetSides),
 	}
+}
+
+// dependencyLinkedKeys 收集所有参与依赖的任务键：无论它是前置还是后继。
+func dependencyLinkedKeys(rows []*repository.DeliveryItemDependency) map[string]bool {
+	linked := make(map[string]bool, len(rows)*2)
+	for _, row := range rows {
+		linked[row.PredecessorItemKey] = true
+		linked[row.SuccessorItemKey] = true
+	}
+	return linked
+}
+
+// orderByCreationWhenUnlinked 让没有依赖关系的任务按创建时间先后排。
+// 有依赖的任务位置不动：它们的先后是依赖图的事实，手工排序也围着它排；
+// 只把剩下那些互不相干的任务填回原来的空位，按创建时间由早到晚。
+func orderByCreationWhenUnlinked(items []*repository.DeliveryItem, linked map[string]bool) []*repository.DeliveryItem {
+	slots := make([]int, 0, len(items))
+	unlinked := make([]*repository.DeliveryItem, 0, len(items))
+	for index, item := range items {
+		if linked[item.ItemKey] {
+			continue
+		}
+		slots = append(slots, index)
+		unlinked = append(unlinked, item)
+	}
+	if len(unlinked) < 2 {
+		return items
+	}
+	sort.SliceStable(unlinked, func(left, right int) bool {
+		if unlinked[left].CreatedTime.Equal(unlinked[right].CreatedTime) {
+			return unlinked[left].Id < unlinked[right].Id
+		}
+		return unlinked[left].CreatedTime.Before(unlinked[right].CreatedTime)
+	})
+	ordered := make([]*repository.DeliveryItem, len(items))
+	copy(ordered, items)
+	for position, index := range slots {
+		ordered[index] = unlinked[position]
+	}
+	return ordered
 }
 
 func pick(items []*repository.DeliveryItem, match func(*repository.DeliveryItem) bool) []*repository.DeliveryItem {

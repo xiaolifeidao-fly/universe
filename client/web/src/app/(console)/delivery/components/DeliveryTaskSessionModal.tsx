@@ -17,7 +17,7 @@ import {
   SendOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
-import { Button, Empty, Input, Modal, Select, Spin, Switch, Tabs, Tooltip, message } from "antd";
+import { Button, Empty, Modal, Select, Spin, Switch, Tabs, Tooltip, message } from "antd";
 import dayjs from "dayjs";
 import {
   Fragment,
@@ -51,6 +51,7 @@ import {
   fetchCodexConversation,
   fetchCodexRequirementDocument,
   fetchCodexTaskTestingCasesConversation,
+  fetchDeliveryConversationMentionCatalog,
   fetchItemDetail,
   sendCodexConversationMessage,
   stopCodexConversation,
@@ -59,26 +60,31 @@ import {
   type CodexConversation,
   type CodexConversationItem,
   type CodexConversationSummary,
+  type DeliveryConversationReference,
   type DeliveryItemRecord,
+  type DeliveryRequirementRecord,
   type ExecutionProgressEvent,
 } from "@/api/delivery.api";
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
-  SessionAttachments,
   attachmentKey,
   clipboardAttachments,
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
-import { SessionChangeSummary, SessionDocumentText, SessionMarkdown, changesOfTurn } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
+import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
 
 interface DeliveryTaskSessionModalProps {
   open: boolean;
   item: DeliveryItemRecord | null;
   programId: number;
   bizLine: BusinessLineId;
+  /** 与任务详情同项目的候选数据，避免打开会话时再请求一遍列表。 */
+  requirements: DeliveryRequirementRecord[];
+  itemCatalog: DeliveryItemRecord[];
   codexBridgeReady: boolean;
   /** 从任务详情的“预先生成测试用例”直接进入测试用例聊天草稿。 */
   startTestingCasesOnOpen?: boolean;
@@ -123,14 +129,7 @@ function TranscriptItem({ item, programId, toolName }: { item: CodexConversation
         <b>{label}</b>
         {item.status ? <small>{item.status}</small> : null}
       </header>
-      {isCommand ? (
-        <pre>{item.text}</pre>
-      ) : item.type === "agentMessage" || item.type === "plan" ? (
-        <SessionMarkdown text={item.text} />
-      ) : (
-        <div className="delivery-session-message__body">{item.text || t("delivery.session.fileChanged")}</div>
-      )}
-      <SessionAttachments attachments={item.attachments} programId={programId} />
+      <SessionMessageContent item={item} programId={programId} fallback={t("delivery.session.fileChanged")} />
     </article>
   );
 }
@@ -156,6 +155,8 @@ export function DeliveryTaskSessionModal({
   item,
   programId,
   bizLine,
+  requirements,
+  itemCatalog,
   codexBridgeReady,
   startTestingCasesOnOpen = false,
   onClose,
@@ -181,6 +182,7 @@ export function DeliveryTaskSessionModal({
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [draft, setDraft] = useState("");
+  const [chatReferences, setChatReferences] = useState<DeliveryConversationReference[]>([]);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingAttachments, setDraggingAttachments] = useState(false);
   const [liveEvents, setLiveEvents] = useState<ExecutionProgressEvent[]>([]);
@@ -190,6 +192,10 @@ export function DeliveryTaskSessionModal({
   const [testingWorkspaceOpen, setTestingWorkspaceOpen] = useState(false);
   const [testingThreadId, setTestingThreadId] = useState("");
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
+  const [mentionCatalog, setMentionCatalog] = useState<{
+    requirements: DeliveryRequirementRecord[];
+    items: DeliveryItemRecord[];
+  } | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const sessionShellRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -218,7 +224,34 @@ export function DeliveryTaskSessionModal({
     && selectedTaskConversation
     && selectedTaskConversation.phase !== activeItem?.phase,
   );
-
+  useEffect(() => {
+    if (!open || !programId) return undefined;
+    let cancelled = false;
+    void fetchDeliveryConversationMentionCatalog(programId).then((catalog) => {
+      if (!cancelled) setMentionCatalog(catalog);
+    }).catch(() => {
+      // 候选目录是补充能力；请求失败时仍可使用当前需求已经加载的任务列表。
+      if (!cancelled) setMentionCatalog(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, programId]);
+  const mentionableRequirements = useMemo(
+    () => (mentionCatalog?.requirements ?? requirements).filter((requirement) => requirement.requirementKey !== activeItem?.requirementKey),
+    [activeItem?.requirementKey, mentionCatalog?.requirements, requirements],
+  );
+  const mentionableItems = useMemo(
+    () => (mentionCatalog?.items ?? itemCatalog).filter((candidate) => candidate.itemKey !== activeItem?.itemKey),
+    [activeItem?.itemKey, itemCatalog, mentionCatalog?.items],
+  );
+  const searchMentionCandidates = useCallback(async (keyword: string) => {
+    const catalog = await fetchDeliveryConversationMentionCatalog(programId, keyword);
+    return {
+      requirements: catalog.requirements.filter((requirement) => requirement.requirementKey !== activeItem?.requirementKey),
+      items: catalog.items.filter((candidate) => candidate.itemKey !== activeItem?.itemKey),
+    };
+  }, [activeItem?.itemKey, activeItem?.requirementKey, programId]);
   const load = useCallback(async (threadId = selectedThreadId) => {
     if (!item || !programId) return null;
     setLoading(true);
@@ -301,6 +334,7 @@ export function DeliveryTaskSessionModal({
       setResizingDocuments(false);
       setLiveEvents([]);
       setDraft("");
+      setChatReferences([]);
       setAttachments([]);
       setDraggingAttachments(false);
       setSelectedThreadId("");
@@ -360,7 +394,8 @@ export function DeliveryTaskSessionModal({
   }, [flattenedItems.length, liveEvents.length, active]);
 
   const send = async () => {
-    if (!activeItem || (!draft.trim() && !attachments.length)) return;
+    const text = draft.trim() || (chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
+    if (!activeItem || (!text && !attachments.length)) return;
     if (historicalConversation) return;
     if (!codexBridgeReady) {
       message.warning(t("delivery.execution.bridgeOffline"));
@@ -371,16 +406,18 @@ export function DeliveryTaskSessionModal({
       const uploaded = attachments.length
         ? await uploadCodexConversationAttachments(programId, activeItem.itemKey, attachments)
         : [];
-      const action = await sendCodexConversationMessage(programId, activeItem.itemKey, draft.trim(), {
+      const action = await sendCodexConversationMessage(programId, activeItem.itemKey, text, {
         provider: activeConfig.tool,
         threadId: newConversation ? undefined : conversation?.threadId,
         newConversation,
         attachmentIds: uploaded.map((attachment) => attachment.id),
+        references: chatReferences,
         model: modelForConfig(activeConfig),
         reasoningEffort: effortForConfig(activeConfig),
         fastMode: activeProvider === "claude" && activeConfig.claudeFastMode,
       });
       setDraft("");
+      setChatReferences([]);
       setAttachments([]);
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
@@ -412,6 +449,7 @@ export function DeliveryTaskSessionModal({
     setSelectedThreadId(threadId);
     setLiveEvents([]);
     setDraft("");
+    setChatReferences([]);
     setAttachments([]);
     void load(threadId);
   };
@@ -422,6 +460,7 @@ export function DeliveryTaskSessionModal({
     setSelectedThreadId("");
     setLiveEvents([]);
     setDraft("");
+    setChatReferences([]);
     setAttachments([]);
   };
 
@@ -703,12 +742,16 @@ export function DeliveryTaskSessionModal({
                   ))}
                 </div>
               ) : null}
-              <Input.TextArea
-                autoSize={{ minRows: 3, maxRows: 7 }}
+              <DeliveryConversationMentionInput
                 value={draft}
                 disabled={!codexBridgeReady || sending || historicalConversation}
                 placeholder={t(newConversation ? "delivery.session.newPlaceholder" : "delivery.session.placeholder").replace("{tool}", toolName)}
-                onChange={(event) => setDraft(event.target.value)}
+                requirements={mentionableRequirements}
+                items={mentionableItems}
+                references={chatReferences}
+                onChange={setDraft}
+                onReferencesChange={setChatReferences}
+                onSearchCandidates={searchMentionCandidates}
                 onPaste={handleAttachmentPaste}
                 onPressEnter={(event) => {
                   if (!event.shiftKey) {

@@ -28,6 +28,7 @@ import {
   type RequirementMode,
   type RequirementStatus,
 } from "@/api/delivery.api";
+import { requirementMentionPlainText } from "./DeliveryRequirementDetailInput";
 
 type RequirementView = "board" | "list";
 type OwnerFilter = "" | "assigned" | "unassigned";
@@ -137,6 +138,12 @@ export function DeliveryRequirementList({
     });
     return Array.from(owners, ([value, label]) => ({ value, label }));
   }, [requirements]);
+
+  // 卡片摘要里把 @需求键 还原成需求名，键本身对读的人没有意义。
+  const requirementNameByKey = useMemo(
+    () => new Map(requirements.map((requirement) => [requirement.requirementKey, requirement.name])),
+    [requirements],
+  );
 
   const visibleRequirements = useMemo(
     () => requirements.filter((requirement) => {
@@ -340,7 +347,7 @@ export function DeliveryRequirementList({
         <small className="delivery-requirement-card__status">
           {t(`delivery.requirement.status.${requirement.status}`)}
         </small>
-        {boardCard && requirement.detail ? <p className="delivery-requirement-card__brief">{requirement.detail}</p> : null}
+        {boardCard && requirement.detail ? <p className="delivery-requirement-card__brief">{requirementMentionPlainText(requirement.detail, requirementNameByKey)}</p> : null}
       </div>
     );
   };

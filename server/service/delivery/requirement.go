@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -133,32 +134,49 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	}
 
 	requirementKey := strings.TrimSpace(req.RequirementKey)
+	// 引用列表没传表示「本次请求没提这件事」：新建按空处理，编辑保持原有关联。
+	references := ""
+	if req.ReferenceRequirementKeys != nil {
+		references, err = normalizeRequirementReferences(*req.ReferenceRequirementKeys, requirementKey)
+		if err != nil {
+			return dto.RequirementView{}, err
+		}
+	}
+	itemReferences := ""
+	if req.ReferenceItemKeys != nil {
+		itemReferences, err = normalizeRequirementItemReferences(*req.ReferenceItemKeys)
+		if err != nil {
+			return dto.RequirementView{}, err
+		}
+	}
 	if requirementKey == "" {
 		row := &repository.DeliveryRequirement{
-			BizLine:             req.BizLine.String(),
-			ProgramID:           req.ProgramID,
-			RequirementKey:      generateRequirementKey(),
-			Name:                name,
-			Detail:              req.Detail,
-			PlannedStartAt:      plannedStartAt,
-			PlannedEndAt:        plannedEndAt,
-			Status:              status,
-			Mode:                mode,
-			StartPhase:          startPhase,
-			SplitTasks:          splitTasks,
-			GenerateTaskOutline: preGenerateTaskDocuments,
-			GeneratePrototype:   generatePrototype,
-			StageKey:            strings.TrimSpace(req.StageKey),
-			ModuleKey:           strings.TrimSpace(req.ModuleKey),
-			Kind:                normalizeKind(req.Kind),
-			OwnerIDs:            ownerIDs,
-			OwnerNames:          ownerNames,
-			AssistantIDs:        assistantIDs,
-			AssistantNames:      assistantNames,
-			Version:             1,
-			CreatedBy:           req.ActorID,
-			CreatedByName:       actorOf(req.ActorID, req.ActorName),
-			UpdatedBy:           actorOf(req.ActorID, req.ActorName),
+			BizLine:                  req.BizLine.String(),
+			ProgramID:                req.ProgramID,
+			RequirementKey:           generateRequirementKey(),
+			Name:                     name,
+			Detail:                   req.Detail,
+			ReferenceRequirementKeys: references,
+			ReferenceItemKeys:        itemReferences,
+			PlannedStartAt:           plannedStartAt,
+			PlannedEndAt:             plannedEndAt,
+			Status:                   status,
+			Mode:                     mode,
+			StartPhase:               startPhase,
+			SplitTasks:               splitTasks,
+			GenerateTaskOutline:      preGenerateTaskDocuments,
+			GeneratePrototype:        generatePrototype,
+			StageKey:                 strings.TrimSpace(req.StageKey),
+			ModuleKey:                strings.TrimSpace(req.ModuleKey),
+			Kind:                     normalizeKind(req.Kind),
+			OwnerIDs:                 ownerIDs,
+			OwnerNames:               ownerNames,
+			AssistantIDs:             assistantIDs,
+			AssistantNames:           assistantNames,
+			Version:                  1,
+			CreatedBy:                req.ActorID,
+			CreatedByName:            actorOf(req.ActorID, req.ActorName),
+			UpdatedBy:                actorOf(req.ActorID, req.ActorName),
 		}
 		if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
 			if err := tx.CreateRequirement(ctx, row); err != nil {
@@ -206,6 +224,12 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		"assistant_ids":         assistantIDs,
 		"assistant_names":       assistantNames,
 		"updated_by":            actorOf(req.ActorID, req.ActorName),
+	}
+	if req.ReferenceRequirementKeys != nil {
+		values["reference_requirement_keys"] = references
+	}
+	if req.ReferenceItemKeys != nil {
+		values["reference_item_keys"] = itemReferences
 	}
 	events := requirementChangeEvents(current, name, req.Detail, plannedStartAt, plannedEndAt, status, mode, startPhase,
 		splitTasks, preGenerateTaskDocuments, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
@@ -387,6 +411,107 @@ func normalizeRequirementMembers(members []dto.RequirementMember, label string) 
 	return joinedIDs, joinedNames, nil
 }
 
+// maxRequirementReferences 限制一条需求能 @ 多少条历史需求：
+// 引用是给拆解会话找背景用的，列一屏读不完的清单只会稀释上下文。
+const maxRequirementReferences = 20
+
+const maxRequirementItemReferences = 20
+
+var requirementKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+var requirementItemKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// normalizeRequirementReferences 把 @ 引用的需求键存成 ,req-a,req-b, 的形式：
+// 和 owner_ids 一样，将来要查「谁引用了这条需求」用 LIKE 就够，不必再开一张关联表。
+// selfKey 是当前这条需求自己的键，引用自己没有意义，直接剔除。
+func normalizeRequirementReferences(keys []string, selfKey string) (string, error) {
+	stored := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" || key == selfKey {
+			continue
+		}
+		if !requirementKeyPattern.MatchString(key) {
+			return "", fmt.Errorf("引用的需求标识无效：%s", key)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		stored = append(stored, key)
+	}
+	if len(stored) == 0 {
+		return "", nil
+	}
+	if len(stored) > maxRequirementReferences {
+		return "", fmt.Errorf("引用的需求不能超过 %d 条", maxRequirementReferences)
+	}
+	joined := "," + strings.Join(stored, ",") + ","
+	if len(joined) > 1024 {
+		return "", errors.New("引用的需求过多，请减少选择")
+	}
+	return joined, nil
+}
+
+// requirementReferencesOf 读回 @ 引用列表；历史异常值回显为空，不能让需求列表读取失败。
+func requirementReferencesOf(stored string) []string {
+	keys := make([]string, 0, 4)
+	for _, key := range strings.Split(stored, ",") {
+		key = strings.TrimSpace(key)
+		if key == "" || !requirementKeyPattern.MatchString(key) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// normalizeRequirementItemReferences 把 @ 引用的任务键存成 ,task-a,task-b, 的形式。
+// 任务键允许点号，兼容已有的导入任务键；限制和需求关联保持一致，防止详情被长清单淹没。
+func normalizeRequirementItemReferences(keys []string) (string, error) {
+	stored := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if !requirementItemKeyPattern.MatchString(key) {
+			return "", fmt.Errorf("引用的任务标识无效：%s", key)
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		stored = append(stored, key)
+	}
+	if len(stored) == 0 {
+		return "", nil
+	}
+	if len(stored) > maxRequirementItemReferences {
+		return "", fmt.Errorf("引用的任务不能超过 %d 条", maxRequirementItemReferences)
+	}
+	joined := "," + strings.Join(stored, ",") + ","
+	if len(joined) > 2048 {
+		return "", errors.New("引用的任务过多，请减少选择")
+	}
+	return joined, nil
+}
+
+// requirementItemReferencesOf 读回任务关联；历史异常值不能让需求列表读取失败。
+func requirementItemReferencesOf(stored string) []string {
+	keys := make([]string, 0, 4)
+	for _, key := range strings.Split(stored, ",") {
+		key = strings.TrimSpace(key)
+		if key == "" || !requirementItemKeyPattern.MatchString(key) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func requirementMembersOf(ids, names string) []dto.RequirementMember {
 	idList := splitMemberIDs(ids)
 	nameList := strings.Split(names, ",")
@@ -425,6 +550,8 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 		ProgramID:                row.ProgramID,
 		Name:                     row.Name,
 		Detail:                   row.Detail,
+		ReferenceRequirementKeys: requirementReferencesOf(row.ReferenceRequirementKeys),
+		ReferenceItemKeys:        requirementItemReferencesOf(row.ReferenceItemKeys),
 		PlannedStartAt:           row.PlannedStartAt,
 		PlannedEndAt:             row.PlannedEndAt,
 		Status:                   row.Status,
