@@ -1944,3 +1944,98 @@ export async function stopCodexPlanningConversation(
   );
   return plainToInstance(CodexPlanningActionResult, response.data);
 }
+
+/** 预设环境会话：装的是本机全局环境，会话按执行器落在插件的运行时目录里。 */
+export class CodexEnvironmentSetupConversation {
+  programId = 0;
+
+  threadId = "";
+
+  turns: CodexConversationTurn[] = [];
+
+  conversations: CodexPlanningSessionSummary[] = [];
+
+  active = false;
+
+  activeTurnId = "";
+
+  environmentStatuses: CodexEnvironmentStatus[] = [];
+}
+
+export class CodexEnvironmentStatus {
+  id = "";
+
+  installed = false;
+
+  version = "";
+}
+
+export class CodexEnvironmentSetupActionResult {
+  accepted = false;
+
+  programId = 0;
+
+  threadId = "";
+
+  turnId = "";
+
+  active = false;
+}
+
+export interface StartCodexEnvironmentSetupOptions {
+  useGit: boolean;
+  environments: string[];
+  message?: string;
+  threadId?: string;
+  newConversation?: boolean;
+  provider?: AITool;
+  model?: string;
+  reasoningEffort?: string;
+  fastMode?: boolean;
+}
+
+export async function fetchCodexEnvironmentSetupConversation(
+  threadId = "",
+  provider: AITool = "codex",
+  selection: { useGit: boolean; environments: string[] } = { useGit: false, environments: [] },
+) {
+  const response = await instance.get<CodexEnvironmentSetupConversation>(`${CODEX_BRIDGE_URL}/v1/codex/environment-setup`, {
+    params: {
+      provider,
+      useGit: selection.useGit,
+      environments: JSON.stringify(selection.environments),
+      ...(threadId ? { threadId } : {}),
+    },
+    timeout: 20000,
+  });
+  const conversation = plainToInstance(CodexEnvironmentSetupConversation, response.data);
+  conversation.turns = plainToInstance(CodexConversationTurn, response.data.turns ?? []).map((turn) => {
+    turn.items = plainToInstance(CodexConversationItem, turn.items ?? []).map((item) => {
+      item.attachments = plainToInstance(CodexConversationAttachment, item.attachments ?? []);
+      item.changes = plainToInstance(CodexConversationChange, item.changes ?? []);
+      return item;
+    });
+    return turn;
+  });
+  conversation.conversations = plainToInstance(CodexPlanningSessionSummary, response.data.conversations ?? []);
+  conversation.environmentStatuses = plainToInstance(CodexEnvironmentStatus, response.data.environmentStatuses ?? []);
+  return conversation;
+}
+
+export async function startCodexEnvironmentSetup(options: StartCodexEnvironmentSetupOptions) {
+  const response = await instance.post<CodexEnvironmentSetupActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/environment-setup`,
+    options,
+    { timeout: 30000 },
+  );
+  return plainToInstance(CodexEnvironmentSetupActionResult, response.data);
+}
+
+export async function stopCodexEnvironmentSetup(threadId = "", provider: AITool = "codex") {
+  const response = await instance.post<CodexEnvironmentSetupActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/environment-setup/stop`,
+    { provider, ...(threadId ? { threadId } : {}) },
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexEnvironmentSetupActionResult, response.data);
+}

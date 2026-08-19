@@ -9,6 +9,7 @@ import {
 	PlusOutlined,
 	ReloadOutlined,
 	SettingOutlined,
+	ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
@@ -22,6 +23,7 @@ import {
 	Popconfirm,
 	Select,
 	Space,
+	Switch,
 	Table,
 	Tag,
 	Tooltip,
@@ -61,6 +63,12 @@ import {
 	getProjectWorkspacePreference,
 	saveProjectWorkspacePreference,
 } from "@/project-workspaces/projectWorkspacePreferences";
+import {
+	getLocalEnvironmentPreference,
+	saveLocalEnvironmentPreference,
+} from "@/project-workspaces/environmentPreferences";
+import { ENVIRONMENT_PRESETS } from "@/project-workspaces/environmentPresets";
+import { ProgramEnvironmentSetupModal } from "./ProgramEnvironmentSetupModal";
 
 interface ProgramFormValues {
 	programId: number;
@@ -132,6 +140,10 @@ export function ProgramManagementWorkspace() {
 	const [workspaceLoading, setWorkspaceLoading] = useState(false);
 	const [workspaceSaving, setWorkspaceSaving] = useState(false);
 	const [workspaceSource, setWorkspaceSource] = useState<"saved" | "matched" | "manual" | "unmatched">("unmatched");
+	const [environmentPreferencesOpen, setEnvironmentPreferencesOpen] = useState(false);
+	const [environmentUseGit, setEnvironmentUseGit] = useState(false);
+	const [environmentSelections, setEnvironmentSelections] = useState<string[]>([]);
+	const [environmentSetupOpen, setEnvironmentSetupOpen] = useState(false);
 	const authUser = getAuthUser();
 	const isSuperAdmin = authUser?.role === "admin";
 	const managedBizLines = authUser?.managedBizLines ?? [];
@@ -521,6 +533,25 @@ export function ProgramManagementWorkspace() {
 		}
 	};
 
+	const openEnvironmentPreferences = () => {
+		const saved = getLocalEnvironmentPreference();
+		setEnvironmentUseGit(saved.useGit);
+		setEnvironmentSelections(saved.environments);
+		setEnvironmentPreferencesOpen(true);
+	};
+
+	const saveEnvironmentPreferences = () => {
+		saveLocalEnvironmentPreference(environmentUseGit, environmentSelections);
+		message.success(t("programs.environment.preferencesSaved"));
+		setEnvironmentPreferencesOpen(false);
+	};
+
+	const openEnvironmentSetup = () => {
+		saveLocalEnvironmentPreference(environmentUseGit, environmentSelections);
+		setEnvironmentPreferencesOpen(false);
+		setEnvironmentSetupOpen(true);
+	};
+
 	const workspaceOptions = useMemo(
 		() => workspaceProjects.flatMap((project) => project.rootPaths.map((rootPath) => ({
 			value: rootPath,
@@ -728,6 +759,9 @@ export function ProgramManagementWorkspace() {
 						<span>{activeBusinessLine.label}</span>
 					</div>
 					<Space>
+						<Button icon={<ThunderboltOutlined />} onClick={openEnvironmentPreferences}>
+							{t("programs.environment.manage")}
+						</Button>
 						<Tooltip title={t("programs.refresh")}>
 							<Button icon={<ReloadOutlined />} aria-label={t("programs.refresh")} loading={loading} onClick={() => void refresh()} />
 						</Tooltip>
@@ -806,6 +840,57 @@ export function ProgramManagementWorkspace() {
 					</Form>
 				</Space>
 			</Modal>
+
+			<Modal
+				wrapClassName="manager-form-skin"
+				open={environmentPreferencesOpen}
+				destroyOnClose
+				title={t("programs.environment.preferencesTitle")}
+				okText={t("programs.environment.save")}
+				cancelText={t("common.cancel")}
+				onCancel={() => setEnvironmentPreferencesOpen(false)}
+				onOk={saveEnvironmentPreferences}
+			>
+				<Space direction="vertical" size={16} style={{ width: "100%" }}>
+					<Alert showIcon type="info" message={t("programs.environment.preferencesTitle")} description={t("programs.environment.preferencesHint")} />
+					<Form layout="vertical" style={{ width: "100%" }}>
+						<Form.Item label={t("programs.environment.useGit")} extra={t("programs.environment.useGitHint")}>
+							<Switch checked={environmentUseGit} onChange={setEnvironmentUseGit} />
+						</Form.Item>
+						<Form.Item label={t("programs.environment.selection")} extra={t("programs.environment.selectionHint")}>
+							<Select
+								mode="tags"
+								allowClear
+								value={environmentSelections}
+								placeholder={t("programs.environment.selectionPlaceholder")}
+								onChange={(value: string[]) => setEnvironmentSelections(value.map((item) => item.trim()).filter(Boolean))}
+								options={ENVIRONMENT_PRESETS.map((preset) => ({
+									value: preset.id,
+									label: `${preset.label} · ${preset.requirement}`,
+								}))}
+							/>
+						</Form.Item>
+					</Form>
+					<Button
+						icon={<ThunderboltOutlined />}
+						disabled={!environmentUseGit && !environmentSelections.length}
+						onClick={openEnvironmentSetup}
+					>
+						{t("programs.environment.setup")}
+					</Button>
+				</Space>
+			</Modal>
+
+			<ProgramEnvironmentSetupModal
+				open={environmentSetupOpen}
+				useGit={environmentUseGit}
+				environments={environmentSelections}
+				onClose={() => setEnvironmentSetupOpen(false)}
+				onBack={() => {
+					setEnvironmentSetupOpen(false);
+					setEnvironmentPreferencesOpen(true);
+				}}
+			/>
 
 			<Modal
 				wrapClassName="manager-form-skin"

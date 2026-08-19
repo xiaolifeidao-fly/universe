@@ -3723,6 +3723,19 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 .delivery-session-transcript__loading { display: grid; place-items: center; min-height: 220px; }
 
+/* 预设明细一格里放检测和安装两条命令，安装命令弱化一档。 */
+.program-environment-command { display: grid; gap: 4px; justify-items: start; }
+.program-environment-command__install { opacity: 0.72; }
+
+/* 预设环境是弹窗里的一段会话，套用会话样式但把高度收在弹窗内。 */
+.program-environment-setup-transcript {
+	max-height: 40vh;
+	padding: 12px 4px;
+	border: 1px solid var(--manager-border);
+	border-radius: 10px;
+	background: var(--manager-surface-muted, transparent);
+}
+
 /* 空状态的说明文案不要横铺满整栏，收在中间一段易读的宽度里。 */
 .delivery-session-transcript > .ant-empty { margin: clamp(48px, 14vh, 132px) auto; max-width: 380px; }
 .delivery-session-transcript > .ant-empty .ant-empty-description { color: var(--manager-text-faint); font-size: var(--manager-fs-sm); line-height: 1.7; }
