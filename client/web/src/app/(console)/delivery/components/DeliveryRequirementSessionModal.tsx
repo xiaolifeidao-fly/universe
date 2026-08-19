@@ -1051,7 +1051,7 @@ export function DeliveryRequirementSessionModal({
                 onClick={() => kind === "planning" ? selectConversation(entry.threadId) : openTestingConversation(entry.threadId)}
               >
                 <MessageOutlined />
-                <div><b>{entry.title || t("delivery.session.untitled")}</b><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>
+                <div><Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>
                 {entry.active ? <i /> : null}
               </button>
             ))}

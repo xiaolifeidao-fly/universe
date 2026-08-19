@@ -70,7 +70,6 @@ func (s *service) Board(ctx context.Context, query dto.BoardQuery) (dto.BoardVie
 		return dto.BoardView{}, err
 	}
 	dependsOn := dependencyKeysBySuccessor(dependencies)
-	linked := dependencyLinkedKeys(dependencies)
 	dependencySourceSides := dependencySourceSidesBySuccessor(dependencies)
 	dependencyTargetSides := dependencyTargetSidesBySuccessor(dependencies)
 
@@ -81,18 +80,18 @@ func (s *service) Board(ctx context.Context, query dto.BoardQuery) (dto.BoardVie
 		for _, stage := range stages {
 			columns = append(columns, buildColumn(stage.StageKey, stage.Tag,
 				strings.TrimSpace(stage.TimeWindow+" · "+stage.MaturityLevel),
-				pick(filtered, func(item *repository.DeliveryItem) bool { return item.StageKey == stage.StageKey }), linked, dependsOn, dependencySourceSides, dependencyTargetSides))
+				pick(filtered, func(item *repository.DeliveryItem) bool { return item.StageKey == stage.StageKey }), dependsOn, dependencySourceSides, dependencyTargetSides))
 		}
 	case "module":
 		for _, module := range modules {
 			columns = append(columns, buildColumn(module.ModuleKey, module.Name,
 				fmt.Sprintf("权重 %d%%", module.Weight),
-				pick(filtered, func(item *repository.DeliveryItem) bool { return item.ModuleKey == module.ModuleKey }), linked, dependsOn, dependencySourceSides, dependencyTargetSides))
+				pick(filtered, func(item *repository.DeliveryItem) bool { return item.ModuleKey == module.ModuleKey }), dependsOn, dependencySourceSides, dependencyTargetSides))
 		}
 	case "status":
 		for _, status := range statusOrder {
 			items := pick(filtered, func(item *repository.DeliveryItem) bool { return item.Status == status })
-			column := buildColumn(status, statusNames[status], "", items, linked, dependsOn, dependencySourceSides, dependencyTargetSides)
+			column := buildColumn(status, statusNames[status], "", items, dependsOn, dependencySourceSides, dependencyTargetSides)
 			column.DoneCount = countStatus(items, StatusDone)
 			columns = append(columns, column)
 		}
@@ -225,12 +224,11 @@ func buildProgramOverview(
 func buildColumn(
 	key, name, subtitle string,
 	items []*repository.DeliveryItem,
-	linked map[string]bool,
 	dependsOn map[string][]string,
 	dependencySourceSides map[string]map[string]string,
 	dependencyTargetSides map[string]map[string]string,
 ) dto.BoardColumn {
-	ordered := orderByCreationWhenUnlinked(items, linked)
+	ordered := orderByCreation(items)
 	return dto.BoardColumn{
 		Key:       key,
 		Name:      name,
@@ -242,43 +240,16 @@ func buildColumn(
 	}
 }
 
-// dependencyLinkedKeys 收集所有参与依赖的任务键：无论它是前置还是后继。
-func dependencyLinkedKeys(rows []*repository.DeliveryItemDependency) map[string]bool {
-	linked := make(map[string]bool, len(rows)*2)
-	for _, row := range rows {
-		linked[row.PredecessorItemKey] = true
-		linked[row.SuccessorItemKey] = true
-	}
-	return linked
-}
-
-// orderByCreationWhenUnlinked 让没有依赖关系的任务按创建时间先后排。
-// 有依赖的任务位置不动：它们的先后是依赖图的事实，手工排序也围着它排；
-// 只把剩下那些互不相干的任务填回原来的空位，按创建时间由早到晚。
-func orderByCreationWhenUnlinked(items []*repository.DeliveryItem, linked map[string]bool) []*repository.DeliveryItem {
-	slots := make([]int, 0, len(items))
-	unlinked := make([]*repository.DeliveryItem, 0, len(items))
-	for index, item := range items {
-		if linked[item.ItemKey] {
-			continue
+// orderByCreation 统一看板各列的卡片顺序：已完成、未完成和进行中任务均按创建时间正序。
+// 同一时刻创建时按自增 ID 打破平局，避免刷新后顺序抖动。依赖只表达执行约束，不改变展示顺序。
+func orderByCreation(items []*repository.DeliveryItem) []*repository.DeliveryItem {
+	ordered := append([]*repository.DeliveryItem(nil), items...)
+	sort.SliceStable(ordered, func(left, right int) bool {
+		if ordered[left].CreatedTime.Equal(ordered[right].CreatedTime) {
+			return ordered[left].Id < ordered[right].Id
 		}
-		slots = append(slots, index)
-		unlinked = append(unlinked, item)
-	}
-	if len(unlinked) < 2 {
-		return items
-	}
-	sort.SliceStable(unlinked, func(left, right int) bool {
-		if unlinked[left].CreatedTime.Equal(unlinked[right].CreatedTime) {
-			return unlinked[left].Id < unlinked[right].Id
-		}
-		return unlinked[left].CreatedTime.Before(unlinked[right].CreatedTime)
+		return ordered[left].CreatedTime.Before(ordered[right].CreatedTime)
 	})
-	ordered := make([]*repository.DeliveryItem, len(items))
-	copy(ordered, items)
-	for position, index := range slots {
-		ordered[index] = unlinked[position]
-	}
 	return ordered
 }
 

@@ -68,6 +68,27 @@ func TestBuildProgramOverviewUsesRequirementItemsAndModuleWeights(t *testing.T) 
 	}
 }
 
+func TestOrderByCreationUsesAscendingOrderForEveryTask(t *testing.T) {
+	first := time.Date(2026, time.August, 18, 9, 0, 0, 0, time.UTC)
+	second := first.Add(time.Minute)
+	items := []*repository.DeliveryItem{
+		{Id: 4, ItemKey: "done-late", Status: StatusDone, CreatedTime: second},
+		{Id: 3, ItemKey: "doing-early", Status: StatusDoing, CreatedTime: first},
+		{Id: 2, ItemKey: "todo-early-low-id", Status: StatusTodo, CreatedTime: first},
+		{Id: 5, ItemKey: "done-early", Status: StatusDone, CreatedTime: first},
+	}
+
+	ordered := orderByCreation(items)
+	got := []string{ordered[0].ItemKey, ordered[1].ItemKey, ordered[2].ItemKey, ordered[3].ItemKey}
+	want := []string{"todo-early-low-id", "doing-early", "done-early", "done-late"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("看板任务未按创建时间正序排列：got=%v want=%v", got, want)
+	}
+	if items[0].ItemKey != "done-late" {
+		t.Fatalf("排序不应修改调用方传入的任务切片：%v", items)
+	}
+}
+
 func TestNormalizeProgress(t *testing.T) {
 	cases := []struct {
 		status string
