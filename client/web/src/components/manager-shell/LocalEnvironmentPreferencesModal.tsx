@@ -11,6 +11,7 @@ import {
 import { ENVIRONMENT_PRESETS } from "@/project-workspaces/environmentPresets";
 import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
 import { ProgramEnvironmentSetupModal } from "@/app/(console)/programs/components/ProgramEnvironmentSetupModal";
+import { copyTextToClipboard } from "@/utils/clipboard";
 
 interface LocalEnvironmentPreferencesModalProps {
   open: boolean;
@@ -123,7 +124,7 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                       icon={<CopyOutlined />}
                       aria-label={t("programs.environment.pluginCopy")}
                       onClick={() => {
-                        void navigator.clipboard.writeText(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+                        void copyTextToClipboard(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
                           .then(() => message.success(t("programs.environment.pluginCopied")))
                           .catch(() => message.error(t("programs.environment.pluginCopyFailed")));
                       }}

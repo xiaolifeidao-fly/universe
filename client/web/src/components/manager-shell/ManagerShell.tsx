@@ -29,6 +29,7 @@ import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
 import { clearAuthToken, getAuthUser, isAuthTokenRemembered, isPasswordChangeRequired, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   CLAUDE_EFFORTS,
   CLAUDE_MODEL_OPTIONS,
@@ -381,13 +382,13 @@ export function ManagerShell({ children }: ManagerShellProps) {
 			.replace("{remoteVersion}", taskPlannerUpdate?.remoteVersion || "-");
 
 	const copyTaskPlannerInstallPrompt = () => {
-		void navigator.clipboard.writeText(taskPlannerInstallPrompt)
+		void copyTextToClipboard(taskPlannerInstallPrompt)
 			.then(() => message.success(t("delivery.plugin.installCopied")))
 			.catch(() => message.error(t("delivery.plugin.installCopyFailed")));
 	};
 
 	const copyTaskPlannerUpdatePrompt = () => {
-		void navigator.clipboard.writeText(taskPlannerUpdatePrompt)
+		void copyTextToClipboard(taskPlannerUpdatePrompt)
 			.then(() => message.success(t("delivery.plugin.updateCopied")))
 			.catch(() => message.error(t("delivery.plugin.updateCopyFailed")));
 	};
@@ -894,7 +895,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 					icon={<CopyOutlined />}
 					aria-label={t("delivery.plugin.copyRepository")}
 					onClick={() => {
-					  void navigator.clipboard.writeText(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+					  void copyTextToClipboard(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
 						.then(() => message.success(t("delivery.plugin.repositoryCopied")))
 						.catch(() => message.error(t("delivery.plugin.repositoryCopyFailed")));
 					}}
@@ -955,7 +956,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 					icon={<CopyOutlined />}
 					aria-label={t("delivery.plugin.copyRepository")}
 					onClick={() => {
-					  void navigator.clipboard.writeText(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+					  void copyTextToClipboard(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
 						.then(() => message.success(t("delivery.plugin.repositoryCopied")))
 						.catch(() => message.error(t("delivery.plugin.repositoryCopyFailed")));
 					}}

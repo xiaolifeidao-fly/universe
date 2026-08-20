@@ -47,6 +47,7 @@ import {
 import { refreshAuthUser } from "@/api/auth.api";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { getAuthUser } from "@/utils/auth";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import { useLocale } from "@/i18n/LocaleProvider";
 
 interface BizLineFormValues {
@@ -241,11 +242,10 @@ export function BusinessLineWorkspace() {
 	const copyShareUrl = async () => {
 		if (!shareUrl) return;
 		try {
-			await navigator.clipboard.writeText(shareUrl);
+			await copyTextToClipboard(shareUrl);
 			message.success(t("businessLines.shareCopied"));
 		} catch {
-			// 剪贴板在非安全上下文里不可用，输入框里的链接仍可手动复制。
-			message.warning(shareUrl);
+			message.error(t("businessLines.shareCopyFailed"));
 		}
 	};
 

@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { fetchCodexConversationAttachment, type CodexConversationAttachment } from "@/api/delivery.api";
+import { copyTextToClipboard } from "@/utils/clipboard";
 
 interface SessionAttachmentProps {
   attachment: CodexConversationAttachment;
@@ -84,21 +85,7 @@ export async function downloadConversationAttachment(
 }
 
 async function copyPreviewText(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    return;
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copied = document.execCommand("copy");
-    textarea.remove();
-    if (!copied) throw new Error("copy failed");
-  }
+	await copyTextToClipboard(value);
 }
 
 function ConversationImage({ attachment, programId, onPreview }: SessionAttachmentProps) {

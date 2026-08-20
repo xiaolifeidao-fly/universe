@@ -18,6 +18,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { getAuthUser } from "@/utils/auth";
 import {
@@ -671,7 +672,7 @@ export function DeliveryWorkspace() {
     link.searchParams.set("programId", String(requirement.programId));
     link.searchParams.set("requirementKey", requirement.requirementKey);
     try {
-      await navigator.clipboard.writeText(link.toString());
+			await copyTextToClipboard(link.toString());
       message.success(t("delivery.requirement.shareLinkCopied"));
     } catch {
       message.error(t("delivery.requirement.shareLinkCopyFailed"));

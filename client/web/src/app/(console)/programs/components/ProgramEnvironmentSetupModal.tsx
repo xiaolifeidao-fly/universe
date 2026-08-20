@@ -12,6 +12,7 @@ import {
   type CodexEnvironmentSetupConversation,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { copyTextToClipboard } from "@/utils/clipboard";
 import { GIT_PRESET, describeEnvironment, type EnvironmentCommands } from "@/project-workspaces/environmentPresets";
 import { SessionMessageContent } from "../../delivery/components/DeliverySessionMessage";
 
@@ -260,7 +261,7 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
                         icon={<CopyOutlined />}
                         aria-label={t("programs.environment.githubSshCopy")}
                         onClick={() => {
-                          void navigator.clipboard.writeText(githubSshPublicKey)
+                          void copyTextToClipboard(githubSshPublicKey)
                             .then(() => message.success(t("programs.environment.githubSshCopied")))
                             .catch(() => message.error(t("programs.environment.githubSshCopyFailed")));
                         }}
