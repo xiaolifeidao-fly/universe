@@ -47,12 +47,11 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	group.GET("/delivery/modules/page", httpx.RequireUserOrService(), h.listModulesPage)
 }
 
+// listPrograms 逐条按项目可见性过滤，不在入口按空间一刀切：
+// 只被拉进某个项目、不是空间成员的人，也该在这个空间下看到那一个项目。
+// 完全没有权限的空间自然过滤成空列表。
 func (h *Handler) listPrograms(context *gin.Context) {
 	bizLine := bizLineOf(context)
-	if err := httpx.AuthorizeBizLine(context, bizLine.String()); err != nil {
-		httpx.JSON(context, nil, err)
-		return
-	}
 	views, err := h.service.ListPrograms(context.Request.Context(), bizLine)
 	if err == nil {
 		filtered := views[:0]
@@ -318,10 +317,9 @@ func (h *Handler) resolveProgramBizLine(context *gin.Context, programID int64, t
 		httpx.JSON(context, nil, err)
 		return false
 	}
-	if err := httpx.AuthorizeBizLine(context, bizLine.String()); err != nil {
-		httpx.JSON(context, nil, err)
-		return false
-	}
+	// 只判 AuthorizeProgramInBizLine：它已经包含「空间成员放行，否则回落到项目级授权」的完整规则。
+	// 前面再加一道空间闸门会把回落路径打死 —— 不是空间成员、但被单独拉进这个项目的人
+	// 会拿到「无权访问该空间」，而项目级授权本来就是为这种人准备的。
 	if err := httpx.AuthorizeProgramInBizLine(context, bizLine.String(), programID); err != nil {
 		httpx.JSON(context, nil, err)
 		return false
