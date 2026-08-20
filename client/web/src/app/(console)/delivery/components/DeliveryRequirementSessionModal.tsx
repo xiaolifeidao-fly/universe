@@ -1819,6 +1819,7 @@ export function DeliveryRequirementSessionModal({
                     emptyText={t("delivery.outline.requirementEmpty")}
                     onExpand={() => setOutlineFullscreen(true)}
                     refreshToken={active ? "running" : "idle"}
+                    scroll="fill"
                   />
                 ),
               },

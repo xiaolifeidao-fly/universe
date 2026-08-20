@@ -35,6 +35,11 @@ export interface DeliveryDocumentSetProps {
   onExpand?: () => void;
   /** 值变了就重新拉一次目录：文档是会话写进工作区的，面板自己不会知道它变了。 */
   refreshToken?: string | number;
+  /**
+   * 正文区自己滚动，页头的下拉框和按钮不跟着走。
+   * fill 用于父级已经限死高度的页签（占满剩余高度），cap 用于跟随外层滚动的页面（超出后面板内部滚）。
+   */
+  scroll?: "fill" | "cap";
 }
 
 function useDocumentSet(
@@ -134,6 +139,7 @@ function DocumentSetView({
   editable = true,
   onExpand,
   refreshToken,
+  scroll,
   layout = "panel",
 }: DocumentSetViewProps) {
   const { t } = useLocale();
@@ -152,6 +158,14 @@ function DocumentSetView({
     setEditing(false);
     setDraft(document?.content ?? "");
   }, [document]);
+
+  const panelClassName = [
+    "delivery-document-panel",
+    "delivery-outline-panel",
+    title ? "has-title" : "",
+    scroll ? "is-scrollable" : "",
+    scroll === "fill" ? "is-fill" : scroll === "cap" ? "is-capped" : "",
+  ].filter(Boolean).join(" ");
 
   const options = useMemo(
     () => files.map((file) => ({ value: file.path, label: file.name })),
@@ -176,7 +190,7 @@ function DocumentSetView({
 
   if (!codexBridgeReady) {
     return (
-      <section className={`delivery-document-panel delivery-outline-panel${title ? " has-title" : ""}`}>
+      <section className={panelClassName}>
         {title ? (
           <header className="delivery-outline-panel__bar">
             <b className="delivery-outline-panel__title">{title}</b>
@@ -294,7 +308,7 @@ function DocumentSetView({
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.docset.empty")} />
           )}
         </aside>
-        <section className={`delivery-document-panel delivery-outline-panel${title ? " has-title" : ""}`}>
+        <section className={panelClassName}>
           <header className="delivery-outline-panel__bar">
             {title ? <b className="delivery-outline-panel__title">{title}</b> : null}
             {actions}
@@ -307,7 +321,7 @@ function DocumentSetView({
   }
 
   return (
-    <section className={`delivery-document-panel delivery-outline-panel${title ? " has-title" : ""}`}>
+    <section className={panelClassName}>
       <header className="delivery-outline-panel__bar">
         {title ? <b className="delivery-outline-panel__title">{title}</b> : null}
         {actions}

@@ -10,13 +10,15 @@ interface DeliveryTaskDocumentProps {
   item: DeliveryItemRecord | null;
   codexBridgeReady: boolean;
   title?: ReactNode;
+  /** 正文区自己滚动的方式，透传给文档集面板。 */
+  scroll?: "fill" | "cap";
 }
 
 /**
  * 任务文档栏目。文档目录是任务需求文档所在的目录，里面可以放多份文档；
  * 面板顶部下拉框选择看哪一份，「全屏预览」打开左侧文件列表、右侧预览与编辑的视图。
  */
-export function DeliveryTaskDocumentPanel({ programId, item, codexBridgeReady, title }: DeliveryTaskDocumentProps) {
+export function DeliveryTaskDocumentPanel({ programId, item, codexBridgeReady, title, scroll }: DeliveryTaskDocumentProps) {
   const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
   const subjectKey = item?.itemKey ?? "";
@@ -28,6 +30,7 @@ export function DeliveryTaskDocumentPanel({ programId, item, codexBridgeReady, t
         subjectKey={subjectKey}
         codexBridgeReady={codexBridgeReady}
         title={title}
+        scroll={scroll}
         emptyText={t("delivery.document.requirementEmpty")}
         onExpand={() => setExpanded(true)}
       />

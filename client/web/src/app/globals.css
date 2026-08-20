@@ -2487,6 +2487,53 @@ select {
 	gap: 8px;
 }
 
+/* 正文可能比面板高：让正文区自己滚，页头的文档下拉框和按钮固定在上面不跟着走。 */
+.delivery-document-panel.is-scrollable {
+	display: flex;
+	min-height: 0;
+	flex-direction: column;
+}
+
+.delivery-document-panel.is-scrollable > .ant-spin-nested-loading {
+	min-height: 0;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.delivery-document-panel.is-scrollable > .ant-spin-nested-loading > .ant-spin-container {
+	min-height: 100%;
+}
+
+/* 页签已经限死高度（需求编辑右侧），面板占满剩余高度，并跟同组的拆解结果、原型页签一样铺满页签区。 */
+.delivery-document-panel.is-fill {
+	height: 100%;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: var(--manager-panel);
+}
+
+.delivery-document-panel.is-fill > .delivery-outline-panel__bar {
+	min-height: 40px;
+	margin: 0;
+	padding: 8px 14px;
+	border-bottom: 1px solid var(--manager-border);
+}
+
+.delivery-document-panel.is-fill > .delivery-document-panel__path {
+	margin: 12px 14px 0;
+}
+
+.delivery-document-panel.is-fill > .ant-spin-nested-loading {
+	padding: 12px 14px;
+}
+
+/* 跟随外层滚动的页面（任务详情），面板超过这个高度后自己滚，别把整页越撑越长。 */
+.delivery-document-panel.is-capped {
+	max-height: var(--delivery-document-max-height, min(58vh, 620px));
+}
+
 /* 栏目里有多份文档时，横条上的下拉框负责切换看哪一份。 */
 .delivery-document-panel__picker {
 	min-width: 160px;

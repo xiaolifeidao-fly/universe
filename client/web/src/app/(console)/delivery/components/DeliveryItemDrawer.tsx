@@ -607,7 +607,7 @@ export function DeliveryItemDrawer({
                           key: "requirement",
                           label: t("delivery.session.document.requirement"),
                           children: (
-                            <DeliveryTaskDocumentPanel programId={programId} item={activeItem} codexBridgeReady={codexBridgeReady} />
+                            <DeliveryTaskDocumentPanel programId={programId} item={activeItem} codexBridgeReady={codexBridgeReady} scroll="cap" />
                           ),
                         },
                         {
@@ -619,6 +619,7 @@ export function DeliveryItemDrawer({
                               scope="task-design"
                               subjectKey={activeItem.itemKey}
                               codexBridgeReady={codexBridgeReady}
+                              scroll="cap"
                               emptyText={t("delivery.document.designEmpty")}
                               fallback={(
                                 <ExecutionResultText value={activeItem.actionOutput} fallback={t("delivery.document.designEmpty")} />
@@ -635,6 +636,7 @@ export function DeliveryItemDrawer({
 									scope="task-testing"
 									subjectKey={activeItem.itemKey}
 									codexBridgeReady={codexBridgeReady}
+									scroll="cap"
 									emptyText={t("delivery.document.testingCasesEmpty")}
 									fallback={(
 										<>

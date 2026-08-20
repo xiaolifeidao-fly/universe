@@ -10,6 +10,8 @@ interface DeliveryRequirementOutlineProps {
   requirement: DeliveryRequirementRecord | null;
   codexBridgeReady: boolean;
   title?: ReactNode;
+  /** 正文区自己滚动的方式，透传给文档集面板。 */
+  scroll?: "fill" | "cap";
 }
 
 function outlineTitle(requirement: DeliveryRequirementRecord | null, tab: string) {
@@ -27,6 +29,7 @@ export function DeliveryRequirementOutlinePanel({
   requirement,
   codexBridgeReady,
   title,
+  scroll,
 }: DeliveryRequirementOutlineProps) {
   const { t } = useLocale();
   const [expanded, setExpanded] = useState(false);
@@ -39,6 +42,7 @@ export function DeliveryRequirementOutlinePanel({
         subjectKey={subjectKey}
         codexBridgeReady={codexBridgeReady}
         title={title}
+        scroll={scroll}
         emptyText={t("delivery.outline.requirementEmpty")}
         onExpand={() => setExpanded(true)}
       />
