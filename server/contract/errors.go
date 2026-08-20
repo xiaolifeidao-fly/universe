@@ -5,7 +5,7 @@ import "errors"
 // 哨兵错误。这些文案会经 httpx.JSON 直接显示给用户，写成人能看懂的中文短句，
 // 不要暴露 SQL 或内部字段名。
 var (
-	ErrBizLineRequired = errors.New("缺少业务线")
+	ErrBizLineRequired = errors.New("缺少空间")
 	ErrNotFound        = errors.New("记录不存在")
 
 	// ErrVersionConflict 乐观锁冲突：读到的版本已经被别人改过。

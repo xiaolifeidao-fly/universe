@@ -22,10 +22,13 @@ func (u *IdentityUser) Init()             {}
 // IdentityUserBizLine expresses a user's visible business-line scope. It has
 // no foreign key so the identity domain stays independently deployable.
 type IdentityUserBizLine struct {
-	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	UserID    int64     `gorm:"column:user_id;uniqueIndex:uk_identity_user_bizline,priority:1;index:idx_identity_user_bizline,priority:1"`
-	BizLine   string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_identity_user_bizline,priority:2;index:idx_identity_user_bizline,priority:2"`
-	IsManager bool      `gorm:"column:is_manager;default:false;index:idx_identity_user_bizline,priority:3"`
+	ID        int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	UserID    int64  `gorm:"column:user_id;uniqueIndex:uk_identity_user_bizline,priority:1;index:idx_identity_user_bizline,priority:1"`
+	BizLine   string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_identity_user_bizline,priority:2;index:idx_identity_user_bizline,priority:2"`
+	IsManager bool   `gorm:"column:is_manager;default:false;index:idx_identity_user_bizline,priority:3"`
+	// CanWrite 是空间成员的读写权。只读成员看得到空间和项目但一律不能写；
+	// 管理员行始终带上这一位，判权时不必再做 is_manager 兜底。
+	CanWrite  bool      `gorm:"column:can_write;default:false"`
 	CreatedAt time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP"`
 }
 

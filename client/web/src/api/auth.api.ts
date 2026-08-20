@@ -1,6 +1,7 @@
 "use client";
 
 import { getData, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
+import { isAuthTokenRemembered, setAuthUser } from "@/utils/auth";
 import type { LoginResponse } from "@/app/login/api/login.api";
 
 export class CurrentUserProgramScope {
@@ -26,6 +27,8 @@ export class CurrentUserProfile {
 
   bizLines: string[] = [];
 
+	writableBizLines: string[] = [];
+
 	managedBizLines: string[] = [];
 
   programs: CurrentUserProgramScope[] = [];
@@ -41,6 +44,29 @@ export class CurrentUserProfile {
 
 export async function fetchCurrentUser() {
   return getData(CurrentUserProfile, "/auth/me");
+}
+
+// 授权范围一变（建空间、加入空间），浏览器里缓存的那份 authUser 就过时了。
+// 界面上的「我是不是这个空间的管理员」全看它，不同步就得等到下次登录才正确。
+export async function refreshAuthUser() {
+  try {
+    const profile = await fetchCurrentUser();
+    setAuthUser(
+      {
+        id: profile.id,
+        username: profile.username,
+        displayName: profile.displayName,
+        role: profile.role,
+        mustChangePassword: profile.mustChangePassword,
+        writableBizLines: profile.writableBizLines,
+        managedBizLines: profile.managedBizLines,
+        managedPrograms: profile.managedPrograms,
+      },
+      isAuthTokenRemembered(),
+    );
+  } catch {
+    // 同步失败不该阻断刚完成的操作，刷新页面就会补上。
+  }
 }
 
 export async function changeOwnPassword(currentPassword: string, newPassword: string) {

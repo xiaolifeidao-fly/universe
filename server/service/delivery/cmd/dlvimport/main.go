@@ -16,6 +16,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"strings"
 
 	"common/middleware/db"
 	"common/middleware/httpx"
@@ -30,7 +31,7 @@ func main() {
 	file := flag.String("file", "", "原型 assets/tasks.json 路径，留空则只建表")
 	programID := flag.Int64("program-id", 0, "已存在项目的数值主键")
 	programName := flag.String("name", "", "项目名称，留空取 tasks.json 的 meta.name")
-	bizLine := flag.String("bizline", "whatsapp", "业务线")
+	bizLine := flag.String("bizline", "", "空间，导入时必填")
 	actor := flag.String("actor", "dlvimport", "操作人，写进流水")
 	flag.Parse()
 
@@ -47,6 +48,9 @@ func main() {
 	}
 	if *programID <= 0 {
 		log.Fatal("导入必须提供已存在项目的 -program-id")
+	}
+	if strings.TrimSpace(*bizLine) == "" {
+		log.Fatal("导入必须提供 -bizline")
 	}
 
 	raw, err := os.ReadFile(*file)

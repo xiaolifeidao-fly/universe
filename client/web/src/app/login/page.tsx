@@ -1,7 +1,8 @@
 "use client";
 
+import { Suspense } from "react";
 import { LoginFormCard } from "./components/LoginFormCard";
-import { Select } from "antd";
+import { Select, Spin } from "antd";
 import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 
 export default function LoginPage() {
@@ -35,7 +36,10 @@ export default function LoginPage() {
           }}
         >
           <div style={{ width: "100%", maxWidth: 440 }}>
-            <LoginFormCard />
+            {/* LoginFormCard 读 ?redirect=，静态预渲染时必须有 Suspense 边界。 */}
+            <Suspense fallback={<div style={{ display: "grid", placeItems: "center", minHeight: 320 }}><Spin size="large" /></div>}>
+              <LoginFormCard />
+            </Suspense>
           </div>
         </div>
       </section>

@@ -17,7 +17,8 @@ const target = process.env.SERVER_TARGET;
 // 添加这个配置来禁用默认的 body 解析
 export const config = {
   api: {
-    bodyParser: false
+    bodyParser: false,
+    externalResolver: true,
   }
 }
 

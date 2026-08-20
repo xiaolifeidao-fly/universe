@@ -35,15 +35,21 @@ type RequirementView struct {
 	SplitTasks        bool       `json:"splitTasks"`
 	// PreGenerateTaskDocuments 控制确认拆解后是否预生成每条任务的需求文档。
 	// GenerateTaskOutline 保留在响应中，兼容尚未升级的旧面板和本地桥接器。
-	PreGenerateTaskDocuments bool       `json:"preGenerateTaskDocuments"`
-	GenerateTaskOutline      bool       `json:"generateTaskOutline,omitempty"`
-	GeneratePrototype        bool       `json:"generatePrototype"`
-	PrototypeHTMLPath        string     `json:"prototypeHtmlPath"`
-	PrototypeGeneratedAt     *time.Time `json:"prototypeGeneratedAt"`
-	TestingStatus            string     `json:"testingStatus"`
-	TestingReport            string     `json:"testingReport"`
-	TestingReportPath        string     `json:"testingReportPath"`
-	TestingReportedAt        *time.Time `json:"testingReportedAt"`
+	PreGenerateTaskDocuments bool `json:"preGenerateTaskDocuments"`
+	GenerateTaskOutline      bool `json:"generateTaskOutline,omitempty"`
+	GeneratePrototype        bool `json:"generatePrototype"`
+	// GitEnabled 表示该需求是否关联一个独立 Git 分支；分支实际创建由本机桥接完成。
+	// 为 null 表示这条需求没有单独设置过，调用方应回落到自己的默认偏好。
+	GitEnabled           *bool      `json:"gitEnabled"`
+	GitBaseBranch        string     `json:"gitBaseBranch"`
+	GitBranch            string     `json:"gitBranch"`
+	GitBranchCreatedAt   *time.Time `json:"gitBranchCreatedAt"`
+	PrototypeHTMLPath    string     `json:"prototypeHtmlPath"`
+	PrototypeGeneratedAt *time.Time `json:"prototypeGeneratedAt"`
+	TestingStatus        string     `json:"testingStatus"`
+	TestingReport        string     `json:"testingReport"`
+	TestingReportPath    string     `json:"testingReportPath"`
+	TestingReportedAt    *time.Time `json:"testingReportedAt"`
 	// 测试用例设计与真实执行分开保存：研发进行时可以先准备，不得因此改变总体测试结论。
 	TestingCasesStatus string              `json:"testingCasesStatus"`
 	TestingCases       string              `json:"testingCases"`
@@ -110,16 +116,32 @@ type SaveRequirementRequest struct {
 	// PreGenerateTaskDocuments 用指针区分「没提」：新建默认不预生成，编辑保持原值。
 	PreGenerateTaskDocuments *bool `json:"preGenerateTaskDocuments"`
 	// GenerateTaskOutline 是旧字段，升级中的旧面板仍可用；新调用方必须传上面的字段。
-	GenerateTaskOutline *bool               `json:"generateTaskOutline"`
-	GeneratePrototype   bool                `json:"generatePrototype"`
-	StageKey            string              `json:"stageKey"`
-	ModuleKey           string              `json:"moduleKey"`
-	Kind                string              `json:"kind"`
-	Owners              []RequirementMember `json:"owners"`
-	Assistants          []RequirementMember `json:"assistants"`
-	Version             int                 `json:"version"`
-	ActorID             string              `json:"-"`
-	ActorName           string              `json:"actorName"`
+	GenerateTaskOutline *bool `json:"generateTaskOutline"`
+	GeneratePrototype   bool  `json:"generatePrototype"`
+	// GitEnabled 用指针区分旧客户端未传和明确关闭；分支字段同理，防止旧客户端覆盖关联信息。
+	GitEnabled    *bool               `json:"gitEnabled"`
+	GitBaseBranch *string             `json:"gitBaseBranch"`
+	GitBranch     *string             `json:"gitBranch"`
+	StageKey      string              `json:"stageKey"`
+	ModuleKey     string              `json:"moduleKey"`
+	Kind          string              `json:"kind"`
+	Owners        []RequirementMember `json:"owners"`
+	Assistants    []RequirementMember `json:"assistants"`
+	Version       int                 `json:"version"`
+	ActorID       string              `json:"-"`
+	ActorName     string              `json:"actorName"`
+}
+
+// BindRequirementGitBranch 在本机成功创建分支后记录关联；不复用编辑版号，
+// 以免分支创建的异步确认和用户编辑需求正文互相造成版本冲突。
+type BindRequirementGitBranchRequest struct {
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	GitBaseBranch  string           `json:"gitBaseBranch"`
+	GitBranch      string           `json:"gitBranch"`
+	ActorID        string           `json:"-"`
+	ActorName      string           `json:"actorName"`
 }
 
 type DeleteRequirementRequest struct {

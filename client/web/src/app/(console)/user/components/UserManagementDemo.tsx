@@ -88,7 +88,7 @@ export function UserManagementDemo() {
     { title: "显示名称", dataIndex: "displayName", width: 150 },
     { title: "角色", dataIndex: "role", width: 100, render: (value: string) => <Tag color={value === "admin" ? "gold" : "blue"}>{value === "admin" ? "管理员" : "成员"}</Tag> },
     { title: "状态", dataIndex: "status", width: 100, render: (value: string) => <Tag color={value === "active" ? "success" : "default"}>{value === "active" ? "启用" : "停用"}</Tag> },
-    { title: "业务线", dataIndex: "bizLines", width: 220, render: (values: string[]) => values.length ? values.map((value) => <Tag key={value}>{value}</Tag>) : "-" },
+    { title: "空间", dataIndex: "bizLines", width: 220, render: (values: string[]) => values.length ? values.map((value) => <Tag key={value}>{value}</Tag>) : "-" },
     { title: "项目", dataIndex: "programs", width: 220, render: (values: UserRecord["programs"]) => values.length ? values.map((value) => <Tag key={`${value.bizLine}:${value.programId}`}>{value.programId}</Tag>) : "-" },
     { title: "最近登录", dataIndex: "lastLoginAt", width: 175, render: (value?: string) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "-" },
     {

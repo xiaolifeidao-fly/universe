@@ -2,8 +2,9 @@
 
 import { plainToInstance } from "class-transformer";
 import { instance } from "@/utils/axios";
+import { DELIVERY_TASK_PLANNER_BRIDGE_URL } from "@/project-workspaces/deliveryTaskPlanner";
 
-const AI_BRIDGE_URL = "https://127.0.0.1:8765";
+const AI_BRIDGE_URL = DELIVERY_TASK_PLANNER_BRIDGE_URL;
 
 export class AIEnvironmentHealth {
   ready = false;

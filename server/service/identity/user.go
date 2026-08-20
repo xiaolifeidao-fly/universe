@@ -115,8 +115,15 @@ func (s *service) SaveUser(ctx context.Context, req dto.SaveUserRequest) (dto.Us
 			return dto.UserView{}, findErr
 		}
 	}
-	if strconv.FormatInt(user.ID, 10) == req.ActorID && (req.Status != StatusActive || req.Role != RoleAdmin) {
-		return dto.UserView{}, errors.New("不能停用或降级当前登录管理员")
+	// 允许管理员停用或降级自己，但整个系统必须至少还留一个启用的管理员。
+	if user.Role == RoleAdmin && user.Status == StatusActive && (req.Role != RoleAdmin || req.Status != StatusActive) {
+		admins, countErr := s.repo.CountActiveAdmins(ctx)
+		if countErr != nil {
+			return dto.UserView{}, countErr
+		}
+		if admins <= 1 {
+			return dto.UserView{}, errors.New("至少保留一个启用的管理员")
+		}
 	}
 	user.Username, user.DisplayName, user.Role, user.Status = username, displayName, req.Role, req.Status
 	if strings.TrimSpace(req.Password) != "" {
@@ -182,9 +189,13 @@ func (s *service) toUserView(ctx context.Context, user *repository.IdentityUser)
 		return dto.UserView{}, err
 	}
 	bizLines := make([]string, 0, len(bizLineRows))
+	writableBizLines := make([]string, 0, len(bizLineRows))
 	managedBizLines := make([]string, 0, len(bizLineRows))
 	for _, row := range bizLineRows {
 		bizLines = append(bizLines, row.BizLine)
+		if row.CanWrite || row.IsManager {
+			writableBizLines = append(writableBizLines, row.BizLine)
+		}
 		if row.IsManager {
 			managedBizLines = append(managedBizLines, row.BizLine)
 		}
@@ -198,5 +209,5 @@ func (s *service) toUserView(ctx context.Context, user *repository.IdentityUser)
 			managedPrograms = append(managedPrograms, scope)
 		}
 	}
-	return dto.UserView{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: user.Role, Status: user.Status, MustChangePassword: user.MustChangePassword, BizLines: bizLines, ManagedBizLines: managedBizLines, Programs: programs, ManagedPrograms: managedPrograms, LastLoginAt: user.LastLoginAt, UpdatedAt: timePtr(user.UpdatedTime), CreatedAt: timePtr(user.CreatedTime)}, nil
+	return dto.UserView{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: user.Role, Status: user.Status, MustChangePassword: user.MustChangePassword, BizLines: bizLines, WritableBizLines: writableBizLines, ManagedBizLines: managedBizLines, Programs: programs, ManagedPrograms: managedPrograms, LastLoginAt: user.LastLoginAt, UpdatedAt: timePtr(user.UpdatedTime), CreatedAt: timePtr(user.CreatedTime)}, nil
 }

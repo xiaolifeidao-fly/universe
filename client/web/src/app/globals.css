@@ -383,6 +383,17 @@ select {
   font-weight: 600;
 }
 
+.manager-local-environment-trigger.ant-btn {
+  border-color: color-mix(in srgb, var(--manager-primary) 58%, var(--manager-border));
+  color: var(--manager-primary);
+}
+
+.manager-local-environment-trigger.ant-btn:hover {
+  border-color: var(--manager-primary) !important;
+  background: var(--manager-primary-light) !important;
+  color: var(--manager-primary-hover) !important;
+}
+
 .manager-prototype-clock {
   min-width: 58px;
   text-align: right;
@@ -2597,6 +2608,15 @@ select {
 .delivery-session-toolbar > span i,
 .delivery-planning-session-toolbar__state i { width: 7px; height: 7px; border-radius: 50%; background: var(--manager-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--manager-green) 16%, transparent); }
 
+.delivery-planning-session-toolbar__state--save-required {
+	padding: 4px 8px;
+	border: 1px solid color-mix(in srgb, var(--manager-orange) 34%, var(--manager-border));
+	border-radius: var(--manager-r-sm);
+	background: color-mix(in srgb, var(--manager-orange) 10%, var(--manager-surface));
+	color: var(--manager-orange);
+	font-weight: 600;
+}
+
 .delivery-planning-session-modal .delivery-session-history__header { min-height: 64px; }
 
 .delivery-session-shell {
@@ -3726,14 +3746,118 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 /* 预设明细一格里放检测和安装两条命令，安装命令弱化一档。 */
 .program-environment-command { display: grid; gap: 4px; justify-items: start; }
 .program-environment-command__install { opacity: 0.72; }
+.program-environment-setup-modal { top: 24px; padding-bottom: 24px; }
+.program-environment-setup-modal .ant-modal-content { display: grid; height: min(800px, calc(100dvh - 48px)); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding: 0; }
+.program-environment-setup-modal .ant-modal-header { margin: 0; padding: 20px 56px 16px 24px; }
+.program-environment-setup-modal .ant-modal-body { min-height: 0; overflow: hidden; padding: 0; }
+.program-environment-setup { display: flex; height: 100%; min-height: 0; flex-direction: column; }
+.program-environment-setup__title { display: flex; min-width: 0; align-items: flex-start; gap: 10px; }
+.program-environment-setup__title > span:last-child { display: grid; min-width: 0; gap: 3px; }
+.program-environment-setup__title b { color: var(--manager-text); font-size: var(--manager-fs-lg); font-weight: 700; line-height: var(--manager-lh-tight); }
+.program-environment-setup__title small { color: var(--manager-text-faint); font-family: var(--manager-mono); font-size: var(--manager-fs-xs); font-weight: 400; line-height: var(--manager-lh-snug); }
+.program-environment-setup__title-icon,
+.program-environment-setup__overview-icon,
+.program-environment-setup__ssh-icon { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; border-radius: var(--manager-r-sm); }
+.program-environment-setup__title-icon { border: 1px solid color-mix(in srgb, var(--manager-primary) 22%, var(--manager-border)); background: color-mix(in srgb, var(--manager-primary) 8%, var(--manager-surface)); color: var(--manager-primary); }
+.program-environment-setup__summary { display: grid; flex: 0 1 auto; gap: 14px; max-height: calc(100% - 238px); overflow: auto; padding: 18px 24px 16px; }
+.program-environment-setup__overview { display: flex; align-items: flex-start; gap: 10px; }
+.program-environment-setup__overview-icon { margin-top: 1px; background: color-mix(in srgb, var(--manager-cyan) 10%, var(--manager-surface)); color: var(--manager-cyan); }
+.program-environment-setup__overview > div { min-width: 0; }
+.program-environment-setup__overview b { display: block; color: var(--manager-text); font-size: var(--manager-fs-base); font-weight: 650; line-height: var(--manager-lh-snug); }
+.program-environment-setup__overview p,
+.program-environment-setup__platform-hint { margin: 3px 0 0; color: var(--manager-text-faint); font-size: var(--manager-fs-sm); line-height: var(--manager-lh-base); }
+.program-environment-setup__platform-hint { margin: 0; padding-left: 38px; }
+.program-environment-setup__table { overflow-x: auto; border: 1px solid var(--manager-border); border-radius: var(--manager-r); }
+.program-environment-setup__table .ant-table { min-width: 840px; }
+.program-environment-setup__table .ant-table-thead > tr > th { padding-block: 9px; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 650; }
+.program-environment-setup__table .ant-table-tbody > tr > td { padding-block: 12px; vertical-align: top; }
+.program-environment-setup__table .ant-space { flex-wrap: wrap; }
+.program-environment-command { gap: 3px; font-size: var(--manager-fs-sm); line-height: var(--manager-lh-snug); }
+.program-environment-setup__ssh { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0 0; border-top: 1px solid var(--manager-border); }
+.program-environment-setup__ssh-icon { margin-top: 1px; background: color-mix(in srgb, var(--manager-green) 12%, var(--manager-surface)); color: var(--manager-green); }
+.program-environment-setup__ssh.is-warning .program-environment-setup__ssh-icon { background: color-mix(in srgb, var(--manager-warning) 10%, var(--manager-surface)); color: var(--manager-warning); }
+.program-environment-setup__ssh-copy { display: grid; min-width: 0; flex: 1; gap: 4px; }
+.program-environment-setup__ssh-copy b { color: var(--manager-text); font-size: var(--manager-fs-base); font-weight: 650; line-height: var(--manager-lh-snug); }
+.program-environment-setup__ssh-copy > span { color: var(--manager-text-faint); font-size: var(--manager-fs-sm); line-height: var(--manager-lh-base); }
+.program-environment-github-key__value { display: flex; align-items: flex-start; gap: 4px; min-width: 0; margin-top: 4px; }
+.program-environment-github-key__value code { min-width: 0; flex: 1; overflow-x: auto; white-space: nowrap; padding: 5px 7px; border: 1px solid var(--manager-border); background: var(--manager-panel); font-size: var(--manager-fs-xs); }
+.program-environment-github-key__value .ant-btn { flex: 0 0 auto; }
+.program-environment-setup__actions { flex: 0 0 auto; padding: 12px 24px; border-top: 1px solid var(--manager-border); border-bottom: 1px solid var(--manager-border); background: var(--manager-surface); }
+.local-environment-preferences-modal .ant-modal-content { overflow: hidden; padding: 0; }
+.local-environment-preferences-modal .ant-modal-header { margin: 0; padding: 22px 56px 18px 24px; }
+.local-environment-preferences-modal .ant-modal-body { padding: 20px 24px 24px; }
+.local-environment-preferences-modal .ant-modal-footer { margin: 0; padding: 16px 24px 20px; border-top: 1px solid var(--manager-border); }
+.local-environment-preferences__title { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
+.local-environment-preferences__title > span:last-child { display: grid; min-width: 0; gap: 4px; }
+.local-environment-preferences__title b { color: var(--manager-text); font-size: var(--manager-fs-xl); font-weight: 700; line-height: 1.3; }
+.local-environment-preferences__title small { color: var(--manager-text-faint); font-size: var(--manager-fs-sm); font-weight: 400; line-height: var(--manager-lh-base); }
+.local-environment-preferences__title-icon,
+.local-environment-preferences__plugin-icon { display: grid; flex: 0 0 auto; place-items: center; width: 32px; height: 32px; border: 1px solid color-mix(in srgb, var(--manager-primary) 22%, var(--manager-border)); border-radius: var(--manager-r-sm); background: color-mix(in srgb, var(--manager-primary) 8%, var(--manager-surface)); color: var(--manager-primary); }
+.local-environment-preferences { display: grid; gap: 18px; }
+.local-environment-preferences__settings { border-block: 1px solid var(--manager-border); }
+.local-environment-preferences__setting-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding: 16px 0; }
+.local-environment-preferences__setting-row + .local-environment-preferences__setting-row { border-top: 1px solid var(--manager-border); }
+.local-environment-preferences__setting-row > .ant-switch { flex: 0 0 auto; margin-top: 4px; }
+.local-environment-preferences__setting-row.is-selection { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 0.92fr); }
+.local-environment-preferences__copy { min-width: 0; }
+.local-environment-preferences__copy b,
+.local-environment-preferences__plugin-content > b { display: block; color: var(--manager-text); font-size: var(--manager-fs-base); font-weight: 650; line-height: var(--manager-lh-snug); }
+.local-environment-preferences__copy p { margin: 4px 0 0; color: var(--manager-text-faint); font-size: var(--manager-fs-sm); line-height: var(--manager-lh-base); }
+.local-environment-preferences__select { align-self: start; width: 100%; }
+.local-environment-preferences__plugin { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.local-environment-preferences__plugin-icon { width: 28px; height: 28px; color: var(--manager-text-faint); background: var(--manager-panel); border-color: var(--manager-border); }
+.local-environment-preferences__plugin-content { display: grid; min-width: 0; flex: 1; gap: 5px; padding-top: 1px; }
+.local-environment-preferences__plugin-content > b { font-size: var(--manager-fs-sm); }
+.local-environment-plugin-link,
+.delivery-plugin-install__repository { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.local-environment-plugin-link > a,
+.delivery-plugin-install__repository > a { min-width: 0; overflow-wrap: anywhere; }
+.local-environment-plugin-link > a { color: var(--manager-primary); font-family: var(--manager-mono); font-size: var(--manager-fs-xs); line-height: 1.55; }
+.local-environment-plugin-link .ant-space { flex: 0 0 auto; }
+.local-environment-preferences__footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.local-environment-preferences__setup.ant-btn { padding-inline: 8px; color: var(--manager-primary); }
+@media (max-width: 576px) {
+  .local-environment-preferences-modal .ant-modal-header { padding: 18px 48px 16px 18px; }
+  .local-environment-preferences-modal .ant-modal-body { padding: 16px 18px 20px; }
+  .local-environment-preferences-modal .ant-modal-footer { padding: 14px 18px 18px; }
+  .local-environment-preferences__title b { font-size: var(--manager-fs-lg); }
+  .local-environment-preferences__setting-row.is-selection { grid-template-columns: 1fr; gap: 12px; }
+  .local-environment-preferences__footer { align-items: stretch; flex-direction: column; }
+  .local-environment-preferences__footer > .ant-space { justify-content: flex-end; }
+  .local-environment-preferences__setup.ant-btn { align-self: flex-start; }
+}
+.delivery-plugin-install { display: grid; gap: 12px; }
+.delivery-plugin-install p { margin: 0; color: var(--manager-text-soft); line-height: 1.6; }
+.delivery-plugin-install__prompt { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+.delivery-plugin-install__prompt code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--manager-border); background: var(--manager-surface-muted, transparent); color: var(--manager-text-soft); line-height: 1.6; }
+.delivery-plugin-install__prompt .ant-btn { flex: 0 0 auto; }
 
-/* 预设环境是弹窗里的一段会话，套用会话样式但把高度收在弹窗内。 */
+/* 需求窗口的 Git 分支状态和推送确认。 */
+.delivery-requirement-git-status { color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: 1.6; }
+.delivery-requirement-git-push { display: grid; gap: 12px; }
+.delivery-requirement-git-push p { margin: 0; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: 1.6; }
+.delivery-requirement-git-push label { display: grid; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); }
+.delivery-requirement-git-push small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: 1.6; }
+
+/* 预设环境的会话记录占据剩余空间，环境概览和操作条不会被持续输出顶走。 */
 .program-environment-setup-transcript {
-	max-height: 40vh;
-	padding: 12px 4px;
-	border: 1px solid var(--manager-border);
-	border-radius: 10px;
-	background: var(--manager-surface-muted, transparent);
+	min-height: 0;
+	flex: 1 1 220px;
+	max-height: none;
+	padding: 18px 24px;
+	border: 0;
+	border-radius: 0;
+	background: var(--manager-bg-soft);
+}
+
+@media (max-width: 760px) {
+  .program-environment-setup-modal { top: 16px; padding-bottom: 16px; }
+  .program-environment-setup-modal .ant-modal-content { height: calc(100dvh - 32px); }
+  .program-environment-setup-modal .ant-modal-header { padding: 18px 48px 14px 18px; }
+  .program-environment-setup__summary { max-height: calc(100% - 212px); padding: 16px 18px 14px; }
+  .program-environment-setup__platform-hint { padding-left: 0; }
+  .program-environment-setup__actions { padding: 10px 18px; }
+  .program-environment-setup-transcript { flex-basis: 180px; padding: 16px 18px; }
 }
 
 /* 空状态的说明文案不要横铺满整栏，收在中间一段易读的宽度里。 */

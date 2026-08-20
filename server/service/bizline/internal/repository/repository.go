@@ -16,7 +16,7 @@ type BizLineRepository struct {
 
 // AutoMigrate 由显式初始化命令调用；服务启动不执行 DDL。
 func (r *BizLineRepository) AutoMigrate() error {
-	return r.Db.AutoMigrate(&BizLineDef{}, &BizLineCapability{})
+	return r.Db.AutoMigrate(&BizLineDef{}, &BizLineCapability{}, &BizLineShareLink{})
 }
 
 func (r *BizLineRepository) ListEnabled(ctx context.Context) ([]*BizLineDef, error) {
@@ -52,9 +52,23 @@ func (r *BizLineRepository) Upsert(ctx context.Context, def *BizLineDef) error {
 	}
 	return r.Db.WithContext(ctx).Model(&existing).Updates(map[string]any{
 		"name":         def.Name,
+		"description":  def.Description,
 		"enabled":      def.Enabled,
+		"visible":      def.Visible,
 		"updated_time": time.Now(),
 	}).Error
+}
+
+// CountEnabledByCodes 统计给定编码里仍处于启用状态的条数。
+// 配额只算启用项：停用一个空间就该立刻腾出一个名额。
+func (r *BizLineRepository) CountEnabledByCodes(ctx context.Context, codes []string) (int64, error) {
+	if len(codes) == 0 {
+		return 0, nil
+	}
+	var total int64
+	err := r.Db.WithContext(ctx).Model(&BizLineDef{}).
+		Where("code IN ? AND enabled = ?", codes, true).Count(&total).Error
+	return total, err
 }
 
 func (r *BizLineRepository) CountEnabled(ctx context.Context) (int64, error) {
@@ -69,6 +83,9 @@ func (r *BizLineRepository) Delete(ctx context.Context, code string) (int64, err
 	var rows int64
 	err := r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("biz_line = ?", code).Delete(&BizLineCapability{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("biz_line = ?", code).Delete(&BizLineShareLink{}).Error; err != nil {
 			return err
 		}
 		result := tx.Where("code = ?", code).Delete(&BizLineDef{})
@@ -119,4 +136,26 @@ func (r *BizLineRepository) SupportedKeys(ctx context.Context, bizLine, agentVer
 		keys[row.CapabilityKey] = true
 	}
 	return keys, nil
+}
+
+// ---------- 分享链接 ----------
+
+func (r *BizLineRepository) CreateShareLink(ctx context.Context, link *BizLineShareLink) error {
+	link.CreatedTime = time.Now()
+	return r.Db.WithContext(ctx).Create(link).Error
+}
+
+// FindShareLink 只按令牌取记录，过期判定留给 Service：
+// 过期与不存在要给出不同的提示，仓储层不该替它做这个决定。
+func (r *BizLineRepository) FindShareLink(ctx context.Context, token string) (*BizLineShareLink, error) {
+	var row BizLineShareLink
+	if err := r.Db.WithContext(ctx).Where("token = ?", token).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// PurgeExpiredShareLinks 在签发新链接时顺手清理，省一个定时任务。
+func (r *BizLineRepository) PurgeExpiredShareLinks(ctx context.Context) error {
+	return r.Db.WithContext(ctx).Where("expires_at < ?", time.Now()).Delete(&BizLineShareLink{}).Error
 }

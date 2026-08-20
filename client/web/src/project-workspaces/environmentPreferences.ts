@@ -1,12 +1,14 @@
 "use client";
 
+import { getUserScopedStorageKey } from "@/utils/auth";
+
 export interface LocalEnvironmentPreference {
   useGit: boolean;
   environments: string[];
 }
 
-const STORAGE_KEY = "zb.local-environment.v1";
-const LEGACY_STORAGE_KEY = "zb.project-workspaces.v1";
+const STORAGE_KEY = "zb.local-environment.v2";
+const LEGACY_STORAGE_KEY = "zb.local-environment.v1";
 
 function normalize(value: Partial<LocalEnvironmentPreference> | undefined): LocalEnvironmentPreference {
   const environments = Array.isArray(value?.environments) ? value.environments : [];
@@ -16,30 +18,40 @@ function normalize(value: Partial<LocalEnvironmentPreference> | undefined): Loca
   };
 }
 
-function loadLegacyPreference(): LocalEnvironmentPreference | null {
+function readPreference(storageKey: string): LocalEnvironmentPreference | null {
   try {
-    const preferences = JSON.parse(window.localStorage.getItem(LEGACY_STORAGE_KEY) || "{}") as Record<string, Partial<LocalEnvironmentPreference>>;
-    const legacy = Object.values(preferences).find((preference) => Boolean(preference.useGit) || Boolean(preference.environments?.length));
-    return legacy ? normalize(legacy) : null;
+    const raw = window.localStorage.getItem(storageKey);
+    return raw ? normalize(JSON.parse(raw) as Partial<LocalEnvironmentPreference>) : null;
   } catch {
     return null;
   }
 }
 
-/** 旧版曾错误地按项目保存环境偏好；首次读取时兼容迁移已有选择。 */
+function userStorageKey() {
+  return getUserScopedStorageKey(STORAGE_KEY);
+}
+
+/** 首次读取时，将旧的浏览器全局偏好归属给当前登录用户。 */
 export function getLocalEnvironmentPreference(): LocalEnvironmentPreference {
   if (typeof window === "undefined") return normalize(undefined);
-  try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved) return normalize(JSON.parse(saved) as Partial<LocalEnvironmentPreference>);
-  } catch {
-    // Fall through to the legacy value or defaults.
+  const storageKey = userStorageKey();
+  if (!storageKey) return normalize(undefined);
+
+  const saved = readPreference(storageKey);
+  if (saved) return saved;
+
+  const legacy = readPreference(LEGACY_STORAGE_KEY);
+  if (legacy) {
+    window.localStorage.setItem(storageKey, JSON.stringify(legacy));
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    return legacy;
   }
-  return loadLegacyPreference() ?? normalize(undefined);
+  return normalize(undefined);
 }
 
 export function saveLocalEnvironmentPreference(useGit: boolean, environments: string[]) {
   const preference = normalize({ useGit, environments });
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preference));
+  const storageKey = userStorageKey();
+  if (storageKey) window.localStorage.setItem(storageKey, JSON.stringify(preference));
   return preference;
 }

@@ -10,6 +10,7 @@ import { Button, Empty, Segmented, Select, Spin, message } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { getUserScopedStorageKey } from "@/utils/auth";
 import {
   fetchBoard,
   fetchPrograms,
@@ -70,6 +71,7 @@ export function PanoramaWorkspace() {
   const { t } = useLocale();
   const { activeBusinessLine } = useBusinessLine();
   const bizLine = activeBusinessLine.id;
+  const programStorageKey = getUserScopedStorageKey(PROGRAM_KEY);
   const [programs, setPrograms] = useState<DeliveryProgramRecord[]>([]);
   const [programId, setProgramId] = useState<number>(0);
   const [board, setBoard] = useState<DeliveryBoard | null>(null);
@@ -115,7 +117,7 @@ export function PanoramaWorkspace() {
       .then((list) => {
         if (cancelled) return;
         setPrograms(list);
-        const remembered = Number(window.sessionStorage.getItem(PROGRAM_KEY));
+        const remembered = Number(programStorageKey ? window.sessionStorage.getItem(programStorageKey) : "");
         setProgramId(list.find((item) => item.programId === remembered)?.programId ?? list[0]?.programId ?? 0);
       })
       .catch((error: Error) => {
@@ -124,7 +126,7 @@ export function PanoramaWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [bizLine]);
+  }, [bizLine, programStorageKey]);
 
   const refresh = useCallback(async () => {
     if (!programId) {
@@ -132,7 +134,7 @@ export function PanoramaWorkspace() {
       setRequirements([]);
       return;
     }
-    window.sessionStorage.setItem(PROGRAM_KEY, String(programId));
+    if (programStorageKey) window.sessionStorage.setItem(programStorageKey, String(programId));
     setLoading(true);
     try {
       // 看板提供模块进度；需求列表提供小球的权威归属与状态。
@@ -147,7 +149,7 @@ export function PanoramaWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, [bizLine, programId]);
+  }, [bizLine, programId, programStorageKey]);
 
   useEffect(() => {
     void refresh();

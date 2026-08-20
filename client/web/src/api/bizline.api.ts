@@ -1,5 +1,6 @@
 "use client";
 
+import { plainToInstance } from "class-transformer";
 import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
 
 export class BizLineRecord {
@@ -7,13 +8,59 @@ export class BizLineRecord {
 
 	name = "";
 
+	description = "";
+
 	enabled = true;
+
+	/** 置否后除本空间管理员外任何人都看不到这个空间，成员也不例外。 */
+	visible = true;
+
+	/** 当前登录用户对这条业务线的权限，由服务端按调用者身份返回。 */
+	canManage = false;
+
+	canWrite = false;
 }
 
-export class BizLineAssignment {
-	userIds: number[] = [];
+export type BizLinePermission = "read" | "write" | "manager";
 
-	managerIds: number[] = [];
+export class BizLineMemberRecord {
+	id = 0;
+
+	username = "";
+
+	displayName = "";
+
+	isManager = false;
+
+	canWrite = false;
+
+	permission: BizLinePermission = "read";
+
+	joinedAt?: string;
+}
+
+export class BizLineShareLink {
+	token = "";
+
+	bizLine = "";
+
+	permission: Exclude<BizLinePermission, "manager"> = "read";
+
+	expiresAt = "";
+}
+
+export class BizLineShareTarget {
+	bizLine = "";
+
+	name = "";
+
+	description = "";
+
+	permission: Exclude<BizLinePermission, "manager"> = "read";
+
+	expiresAt = "";
+
+	joined = false;
 }
 
 export async function fetchBizLines() {
@@ -23,7 +70,9 @@ export async function fetchBizLines() {
 export interface SaveBizLinePayload {
 	code: string;
 	name: string;
+	description: string;
 	enabled: boolean;
+	visible: boolean;
 }
 
 export async function fetchAllBizLines() {
@@ -40,11 +89,33 @@ export async function deleteBizLine(code: string) {
 	return unwrapApiResponse(response.data);
 }
 
-export async function fetchBizLineAssignment(bizLine: string) {
-	return getData(BizLineAssignment, "/bizline/line/assignment", { bizLine });
+/**
+ * 空间成员名单。项目成员的候选也走这个接口：项目成员只能从所属空间的成员里挑。
+ */
+export async function fetchBizLineMembers(bizLine: string) {
+	return getDataList(BizLineMemberRecord, "/bizline/line/members", { bizLine });
 }
 
-export async function saveBizLineAssignment(bizLine: string, assignment: BizLineAssignment) {
-	const response = await instance.post<ApiResponse<null>>("/bizline/line/assignment", { bizLine, ...assignment });
+export async function saveBizLineMemberPermission(bizLine: string, userId: number, canWrite: boolean) {
+	const response = await instance.post<ApiResponse<null>>("/bizline/line/member/permission", { bizLine, userId, canWrite });
+	return unwrapApiResponse(response.data);
+}
+
+export async function removeBizLineMember(bizLine: string, userId: number) {
+	const response = await instance.post<ApiResponse<null>>("/bizline/line/member/remove", { bizLine, userId });
+	return unwrapApiResponse(response.data);
+}
+
+export async function createBizLineShareLink(bizLine: string, permission: "read" | "write", ttlMinutes: number) {
+	const response = await instance.post<ApiResponse<BizLineShareLink>>("/bizline/line/share", { bizLine, permission, ttlMinutes });
+	return plainToInstance(BizLineShareLink, unwrapApiResponse(response.data));
+}
+
+export async function fetchBizLineShareTarget(token: string) {
+	return getData(BizLineShareTarget, "/bizline/share", { token });
+}
+
+export async function joinBizLineByShareLink(token: string) {
+	const response = await instance.post<ApiResponse<null>>("/bizline/share/join", { token });
 	return unwrapApiResponse(response.data);
 }

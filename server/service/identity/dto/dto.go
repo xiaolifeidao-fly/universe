@@ -38,6 +38,7 @@ type UserView struct {
 	Status             string         `json:"status"`
 	MustChangePassword bool           `json:"mustChangePassword"`
 	BizLines           []string       `json:"bizLines"`
+	WritableBizLines   []string       `json:"writableBizLines"`
 	ManagedBizLines    []string       `json:"managedBizLines"`
 	Programs           []ProgramScope `json:"programs"`
 	ManagedPrograms    []ProgramScope `json:"managedPrograms"`
@@ -69,7 +70,29 @@ type MemberQuery struct {
 // manager that has no visibility of the corresponding resource.
 type ScopeAssignment struct {
 	UserIDs    []int64 `json:"userIds"`
+	WriterIDs  []int64 `json:"writerIds"`
 	ManagerIDs []int64 `json:"managerIds"`
+}
+
+// BizLineMemberView 是「查看成员」面板一行。空间管理员要据此决定
+// 谁该被剔除、谁该从只读升到写入，所以比 MemberView 多带权限位。
+type BizLineMemberView struct {
+	ID          int64      `json:"id"`
+	Username    string     `json:"username"`
+	DisplayName string     `json:"displayName"`
+	IsManager   bool       `json:"isManager"`
+	CanWrite    bool       `json:"canWrite"`
+	Permission  string     `json:"permission"`
+	JoinedAt    *time.Time `json:"joinedAt"`
+}
+
+// BizLineMemberRequest 单个成员的加入或权限调整。
+// 加入走分享链接，权限调整走「查看成员」面板，两者共用这一个入参。
+type BizLineMemberRequest struct {
+	BizLine   string `json:"bizLine"`
+	UserID    int64  `json:"userId"`
+	CanWrite  bool   `json:"canWrite"`
+	AsManager bool   `json:"asManager"`
 }
 
 type UserQuery struct {
@@ -110,4 +133,12 @@ type LoginResult struct {
 type ChangeOwnPasswordRequest struct {
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
+}
+
+// RegisterRequest 是登录页自助注册的入参。
+// 用户名同时会成为该用户专属空间的编码，所以约束比后台建号更严。
+type RegisterRequest struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Password    string `json:"password"`
 }

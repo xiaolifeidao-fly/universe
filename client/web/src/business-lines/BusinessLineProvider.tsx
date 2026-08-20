@@ -2,12 +2,9 @@
 
 import { PropsWithChildren, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { fetchBizLines } from "@/api/bizline.api";
+import { isAuthenticated } from "@/utils/auth";
 
 const STORAGE_KEY = "zhangtian-bottle-business-line";
-
-const DEFAULT_BUSINESS_LINES = [
-  { id: "whatsapp", code: "WHATSAPP", label: "WhatsApp", status: "active" },
-] as const;
 
 export type BusinessLineId = string;
 
@@ -16,11 +13,24 @@ export interface BusinessLine {
 	code: string;
 	label: string;
 	status: "active";
+	/** 当前登录用户对这条业务线的权限，由服务端随列表返回，不是本地推断的。 */
+	canWrite: boolean;
+	canManage: boolean;
 }
+
+const EMPTY_BUSINESS_LINE: BusinessLine = {
+	id: "",
+	code: "",
+	label: "",
+	status: "active",
+	canWrite: false,
+	canManage: false,
+};
 
 interface BusinessLineContextValue {
   activeBusinessLine: BusinessLine;
   businessLines: readonly BusinessLine[];
+  businessLinesLoaded: boolean;
   setActiveBusinessLine: (businessLineId: BusinessLineId) => void;
   refreshBusinessLines: () => Promise<void>;
 }
@@ -28,47 +38,64 @@ interface BusinessLineContextValue {
 const BusinessLineContext = createContext<BusinessLineContextValue | null>(null);
 
 function getInitialBusinessLine(): BusinessLineId {
-	if (typeof window === "undefined") return DEFAULT_BUSINESS_LINES[0].id;
+	if (typeof window === "undefined") return "";
 	const saved = window.localStorage.getItem(STORAGE_KEY);
-	return saved || DEFAULT_BUSINESS_LINES[0].id;
+	return saved || "";
 }
 
 export function BusinessLineProvider({ children }: PropsWithChildren) {
   const [activeBusinessLineId, setActiveBusinessLine] = useState<BusinessLineId>(getInitialBusinessLine);
-	const [businessLines, setBusinessLines] = useState<readonly BusinessLine[]>(DEFAULT_BUSINESS_LINES);
+  const [businessLines, setBusinessLines] = useState<readonly BusinessLine[]>([]);
+	const [businessLinesLoaded, setBusinessLinesLoaded] = useState(false);
 
   useEffect(() => {
+		if (!businessLinesLoaded || !activeBusinessLineId) return;
     window.localStorage.setItem(STORAGE_KEY, activeBusinessLineId);
-  }, [activeBusinessLineId]);
+	}, [activeBusinessLineId, businessLinesLoaded]);
 
 	const refreshBusinessLines = useCallback(async () => {
-		const rows = await fetchBizLines();
-		if (rows.length === 0) {
-			setBusinessLines([]);
-			return;
+		try {
+			const rows = await fetchBizLines();
+			const lines: BusinessLine[] = rows.map((row) => ({
+				id: row.code,
+				code: row.code.toUpperCase(),
+				label: row.name || row.code,
+				status: "active",
+				canWrite: row.canWrite,
+				canManage: row.canManage,
+			}));
+			setBusinessLines(lines);
+			setActiveBusinessLine((current) => lines.some((line) => line.id === current) ? current : (lines[0]?.id ?? ""));
+		} finally {
+			setBusinessLinesLoaded(true);
 		}
-		const lines: BusinessLine[] = rows.map((row) => ({
-			id: row.code,
-			code: row.code.toUpperCase(),
-			label: row.name || row.code,
-			status: "active",
-		}));
-		setBusinessLines(lines);
-		setActiveBusinessLine((current) => lines.some((line) => line.id === current) ? current : lines[0].id);
 	}, []);
 
 	useEffect(() => {
+		if (!isAuthenticated()) {
+			setBusinessLines([]);
+			setActiveBusinessLine("");
+			setBusinessLinesLoaded(true);
+			return;
+		}
 		void refreshBusinessLines().catch(() => {
-			// 业务线表还未初始化时，保持 WhatsApp 默认线，控制台仍能读取交付数据。
+			// 请求失败时不猜测业务线，避免把用户带到无权访问的数据域。
 		});
 	}, [refreshBusinessLines]);
 
+	const selectBusinessLine = useCallback((businessLineId: BusinessLineId) => {
+		setActiveBusinessLine((current) => (
+			businessLines.some((line) => line.id === businessLineId) ? businessLineId : current
+		));
+	}, [businessLines]);
+
   const value = useMemo<BusinessLineContextValue>(() => ({
-		activeBusinessLine: businessLines.find((line) => line.id === activeBusinessLineId) ?? businessLines[0] ?? DEFAULT_BUSINESS_LINES[0],
+		activeBusinessLine: businessLines.find((line) => line.id === activeBusinessLineId) ?? EMPTY_BUSINESS_LINE,
     businessLines,
-    setActiveBusinessLine,
+		businessLinesLoaded,
+    setActiveBusinessLine: selectBusinessLine,
     refreshBusinessLines,
-  }), [activeBusinessLineId, businessLines, refreshBusinessLines]);
+  }), [activeBusinessLineId, businessLines, businessLinesLoaded, refreshBusinessLines, selectBusinessLine]);
 
   return <BusinessLineContext.Provider value={value}>{children}</BusinessLineContext.Provider>;
 }

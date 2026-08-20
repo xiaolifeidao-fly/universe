@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"contract"
+	"gorm.io/gorm"
 	"service/delivery/dto"
 	"service/delivery/internal/repository"
 )
@@ -85,6 +86,15 @@ func (s *service) SaveProgram(ctx context.Context, req dto.SaveProgramRequest) e
 		}
 		programCode = existing.ProgramCode
 	}
+	// 先自己查一次重码，好过把 MySQL 的 1062 原样抛到界面上。
+	// 唯一键仍然是最终的并发保障，这里只负责给出能看懂的提示。
+	if duplicate, err := s.repo.FindProgramByCode(ctx, req.BizLine.String(), programCode); err == nil {
+		if duplicate.Id != req.ProgramID {
+			return errors.New("该空间下已存在相同编码的项目")
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 	return s.repo.SaveProgram(ctx, &repository.DeliveryProgram{
 		Id:          req.ProgramID,
 		BizLine:     req.BizLine.String(),
@@ -125,7 +135,19 @@ func (s *service) MigrateProgram(ctx context.Context, req dto.MigrateProgramRequ
 		if err := tx.LockProgram(ctx, req.SourceBizLine.String(), req.ProgramID); err != nil {
 			return translate(err)
 		}
-		rows, err := tx.MoveProgramBizLine(ctx, req.SourceBizLine.String(), req.TargetBizLine.String(), req.ProgramID, map[string]any{
+		// 项目编码只在空间内唯一，迁到别的空间可能撞上同名项目。
+		// 唯一键会让整个事务回滚，但那给出的是 1062，先自己判一次好让提示能看懂。
+		current, err := tx.FindProgram(ctx, req.SourceBizLine.String(), req.ProgramID)
+		if err != nil {
+			return translate(err)
+		}
+		if _, err := tx.FindProgramByCode(ctx, req.TargetBizLine.String(), current.ProgramCode); err == nil {
+			return errors.New("目标空间下已存在相同编码的项目")
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var rows int64
+		rows, err = tx.MoveProgramBizLine(ctx, req.SourceBizLine.String(), req.TargetBizLine.String(), req.ProgramID, map[string]any{
 			"name": req.Name, "summary": req.Summary, "status": status,
 			"updated_by": actor, "updated_time": time.Now(),
 		})

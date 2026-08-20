@@ -4,6 +4,7 @@ import { message } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { effortForConfig, modelForConfig, sceneForPhase, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
+import { getUserScopedStorageKey } from "@/utils/auth";
 import {
   advanceDeliveryPhase,
   createItem,
@@ -78,6 +79,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
   const { activeBusinessLine } = useBusinessLine();
   const { preferences, configFor } = useAIPreferences();
   const bizLine = activeBusinessLine.id;
+  const programStorageKey = getUserScopedStorageKey(PROGRAM_KEY);
 
   const [programs, setPrograms] = useState<DeliveryProgramRecord[]>([]);
   const [programId, setProgramId] = useState<number>(0);
@@ -152,7 +154,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
       .then((list) => {
         if (cancelled) return;
         setPrograms(list);
-        const remembered = Number(window.sessionStorage.getItem(PROGRAM_KEY));
+        const remembered = Number(programStorageKey ? window.sessionStorage.getItem(programStorageKey) : "");
         const next = list.find((item) => item.programId === sharedProgramId)?.programId
           ?? list.find((item) => item.programId === remembered)?.programId
           ?? list[0]?.programId
@@ -165,11 +167,11 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     return () => {
       cancelled = true;
     };
-  }, [bizLine, sharedProgramId]);
+  }, [bizLine, programStorageKey, sharedProgramId]);
 
   useEffect(() => {
     if (!programId) return;
-    window.sessionStorage.setItem(PROGRAM_KEY, String(programId));
+    if (programStorageKey) window.sessionStorage.setItem(programStorageKey, String(programId));
     setItemCatalog([]);
     Promise.all([fetchStages(programId), fetchModules(programId)])
       .then(([stageList, moduleList]) => {
@@ -177,7 +179,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
         setModules(moduleList);
       })
       .catch((error: Error) => message.error(error.message));
-  }, [bizLine, programId]);
+  }, [bizLine, programId, programStorageKey]);
 
   // 同页切换到另一条分享链接时，重新进入单需求视图。
   useEffect(() => {

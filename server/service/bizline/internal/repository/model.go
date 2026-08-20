@@ -8,7 +8,9 @@ type BizLineDef struct {
 	Id          int64     `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
 	Code        string    `gorm:"column:code;type:varchar(32);uniqueIndex" description:"业务线编码 whatsapp/tiktok"`
 	Name        string    `gorm:"column:name;type:varchar(64)" description:"业务线名称"`
+	Description string    `gorm:"column:description;type:varchar(512)" description:"业务线描述，分享链接上展示给受邀人"`
 	Enabled     bool      `gorm:"column:enabled;default:1" description:"是否启用"`
+	Visible     bool      `gorm:"column:visible;default:1" description:"是否可见：置否后只有本空间管理员能看到它"`
 	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
 	UpdatedTime time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
 }
@@ -28,3 +30,18 @@ type BizLineCapability struct {
 
 func (b *BizLineCapability) TableName() string { return "zt_bizline_capability" }
 func (b *BizLineCapability) Init()             {}
+
+// BizLineShareLink 是空间的加入邀请。成员不再由管理员直接勾选，
+// 只能拿着链接自助加入，链接本身决定加入后是只读还是写入。
+type BizLineShareLink struct {
+	Id          int64     `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	Token       string    `gorm:"column:token;type:varchar(64);uniqueIndex" description:"链接令牌"`
+	BizLine     string    `gorm:"column:biz_line;type:varchar(32);index:idx_bizline_share_line" description:"业务线编码"`
+	Permission  string    `gorm:"column:permission;type:varchar(16)" description:"加入后的权限 read/write"`
+	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人用户标识"`
+	ExpiresAt   time.Time `gorm:"column:expires_at;type:timestamp" description:"过期时间，默认签发后 1 小时"`
+	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+}
+
+func (b *BizLineShareLink) TableName() string { return "zt_bizline_share_link" }
+func (b *BizLineShareLink) Init()             {}

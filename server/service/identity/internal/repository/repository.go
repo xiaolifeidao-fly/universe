@@ -162,8 +162,10 @@ func (r *IdentityRepository) ReplaceAssignments(ctx context.Context, userID int6
 			return err
 		}
 		bizLineManagers := make(map[string]bool, len(existingBizLines))
+		bizLineWriters := make(map[string]bool, len(existingBizLines))
 		for _, assignment := range existingBizLines {
 			bizLineManagers[assignment.BizLine] = assignment.IsManager
+			bizLineWriters[assignment.BizLine] = assignment.CanWrite
 		}
 		var existingPrograms []*IdentityUserProgram
 		if err := tx.Where("user_id = ?", userID).Find(&existingPrograms).Error; err != nil {
@@ -180,7 +182,7 @@ func (r *IdentityRepository) ReplaceAssignments(ctx context.Context, userID int6
 			return err
 		}
 		for _, bizLine := range bizLines {
-			if err := tx.Create(&IdentityUserBizLine{UserID: userID, BizLine: bizLine, IsManager: bizLineManagers[bizLine]}).Error; err != nil {
+			if err := tx.Create(&IdentityUserBizLine{UserID: userID, BizLine: bizLine, IsManager: bizLineManagers[bizLine], CanWrite: bizLineManagers[bizLine] || bizLineWriters[bizLine]}).Error; err != nil {
 				return err
 			}
 		}
@@ -227,6 +229,64 @@ func (r *IdentityRepository) ReplaceProgramAssignments(ctx context.Context, prog
 		}
 		return nil
 	})
+}
+
+// FindBizLineAssignment 取一条成员关系，用于加入前的重复判断和权限调整。
+func (r *IdentityRepository) FindBizLineAssignment(ctx context.Context, bizLine string, userID int64) (*IdentityUserBizLine, error) {
+	var row IdentityUserBizLine
+	if err := r.Db.WithContext(ctx).Where("biz_line = ? AND user_id = ?", bizLine, userID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// UpsertBizLineMember 单条写入成员关系。分享链接加入和踢人都只动一条记录，
+// 不能走 ReplaceBizLineAssignments 那种整表重建的路径。
+func (r *IdentityRepository) UpsertBizLineMember(ctx context.Context, row *IdentityUserBizLine) error {
+	var existing IdentityUserBizLine
+	err := r.Db.WithContext(ctx).Where("biz_line = ? AND user_id = ?", row.BizLine, row.UserID).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		row.ID = 0
+		return r.Db.WithContext(ctx).Create(row).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.Db.WithContext(ctx).Model(&existing).Updates(map[string]any{
+		"is_manager": row.IsManager,
+		"can_write":  row.CanWrite,
+	}).Error
+}
+
+// DeleteBizLineMember 同时清掉该成员在这条业务线下的项目授权，
+// 否则被移出空间的人还留着项目级可见性。
+func (r *IdentityRepository) DeleteBizLineMember(ctx context.Context, bizLine string, userID int64) (int64, error) {
+	var rows int64
+	err := r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("biz_line = ? AND user_id = ?", bizLine, userID).Delete(&IdentityUserProgram{}).Error; err != nil {
+			return err
+		}
+		result := tx.Where("biz_line = ? AND user_id = ?", bizLine, userID).Delete(&IdentityUserBizLine{})
+		rows = result.RowsAffected
+		return result.Error
+	})
+	return rows, err
+}
+
+func (r *IdentityRepository) CountBizLineManagers(ctx context.Context, bizLine string) (int64, error) {
+	var total int64
+	err := r.Db.WithContext(ctx).Model(&IdentityUserBizLine{}).
+		Where("biz_line = ? AND is_manager = ?", bizLine, true).Count(&total).Error
+	return total, err
+}
+
+func (r *IdentityRepository) ListUsersByIDs(ctx context.Context, ids []int64) ([]*IdentityUser, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []*IdentityUser
+	err := r.Db.WithContext(ctx).Where("id IN ?", ids).Order("id asc").Find(&rows).Error
+	return rows, err
 }
 
 func IsNotFound(err error) bool { return errors.Is(err, gorm.ErrRecordNotFound) }

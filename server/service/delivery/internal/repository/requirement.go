@@ -109,6 +109,26 @@ func (r *DeliveryRepository) UpdateRequirementPrototype(
 	return tx.RowsAffected, tx.Error
 }
 
+// BindRequirementGitBranch 只在本机已经成功创建分支后写入关联结果。
+// 不递增编辑 version，避免异步的 Git 操作和需求正文编辑互相冲突。
+func (r *DeliveryRepository) BindRequirementGitBranch(
+	ctx context.Context,
+	bizLine string, programID int64, requirementKey, baseBranch, branch, updatedBy string,
+	createdAt time.Time,
+) (int64, error) {
+	tx := r.Db.WithContext(ctx).Model(&DeliveryRequirement{}).
+		Where("biz_line = ? AND program_id = ? AND requirement_key = ?", bizLine, programID, requirementKey).
+		Updates(map[string]any{
+			"git_enabled":           true,
+			"git_base_branch":       baseBranch,
+			"git_branch":            branch,
+			"git_branch_created_at": createdAt,
+			"updated_by":            updatedBy,
+			"updated_time":          createdAt,
+		})
+	return tx.RowsAffected, tx.Error
+}
+
 // UpdateRequirementTesting 需求总体测试由桥接异步回写，不与用户编辑需求共用版本锁。
 // 报告与测试用例都是独立测试产物，避免后台测试覆盖用户正在编辑的需求正文。
 func (r *DeliveryRepository) UpdateRequirementTesting(

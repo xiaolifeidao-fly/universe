@@ -25,6 +25,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 需求是人维护的，写一律 RequireUser；读放开到服务凭证，拆解插件要拿需求上下文。
 	api := group.Group("/delivery", httpx.RequireUser())
 	api.POST("/requirement/save", h.save)
+	api.POST("/requirement/git-branch/bind", h.bindGitBranch)
 	api.POST("/requirement/delete", h.delete)
 	api.POST("/requirement/prototype/save", h.savePrototype)
 	api.POST("/requirement/testing/save", h.saveTesting)
@@ -38,6 +39,23 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	group.GET("/delivery/requirement/prototype", httpx.RequireUserOrService(), h.getPrototype)
 	group.GET("/delivery/requirement/planning-sessions", httpx.RequireUserOrService(), h.listPlanningSessions)
 	group.GET("/delivery/requirement/testing-sessions", httpx.RequireUserOrService(), h.listTestingSessions)
+}
+
+func (h *Handler) bindGitBranch(context *gin.Context) {
+	var req deliverydto.BindRequirementGitBranchRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.BindRequirementGitBranch(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) timeline(context *gin.Context) {
@@ -250,7 +268,7 @@ func (h *Handler) resolveProgramBizLine(context *gin.Context, programID int64, t
 }
 
 func (h *Handler) requireProgramManager(context *gin.Context, bizLine contract.BizLine, programID int64) bool {
-	if httpx.CanManageProgram(context, bizLine.String(), programID) {
+	if httpx.CanWriteProgram(context, bizLine.String(), programID) {
 		return true
 	}
 	httpx.Fail(context, "无权管理该项目")

@@ -30,7 +30,7 @@ func (s *service) validatePrograms(ctx context.Context, programs []repository.Id
 			return err
 		}
 		if bizLine.String() != program.BizLine {
-			return errors.New("项目不属于所选业务线")
+			return errors.New("项目不属于所选空间")
 		}
 	}
 	return nil
@@ -49,7 +49,7 @@ func normalizeAssignments(rawBizLines []string, rawPrograms []dto.ProgramScope) 
 	for _, scope := range rawPrograms {
 		scope.BizLine = strings.TrimSpace(scope.BizLine)
 		if scope.BizLine == "" || scope.ProgramID <= 0 {
-			return nil, nil, errors.New("项目分配缺少业务线或项目标识")
+			return nil, nil, errors.New("项目分配缺少空间或项目标识")
 		}
 		set[scope.BizLine] = struct{}{}
 		key := scope.BizLine + "\x00" + strconv.FormatInt(scope.ProgramID, 10)
@@ -116,7 +116,7 @@ func (s *service) ReplaceProgramAssignment(ctx context.Context, bizLine string, 
 		return err
 	}
 	if actualBizLine.String() != strings.TrimSpace(bizLine) {
-		return errors.New("项目不属于所选业务线")
+		return errors.New("项目不属于所选空间")
 	}
 	rows, err := s.normalizeScopeAssignment(ctx, assignment)
 	if err != nil {
@@ -132,15 +132,23 @@ type normalizedScopeAssignment struct {
 
 func (s *service) normalizeScopeAssignment(ctx context.Context, assignment dto.ScopeAssignment) (normalizedScopeAssignment, error) {
 	userIDs := map[int64]struct{}{}
+	writerIDs := map[int64]struct{}{}
 	managerIDs := map[int64]struct{}{}
 	for _, id := range assignment.UserIDs {
 		if id > 0 {
 			userIDs[id] = struct{}{}
 		}
 	}
+	for _, id := range assignment.WriterIDs {
+		if id > 0 {
+			userIDs[id] = struct{}{}
+			writerIDs[id] = struct{}{}
+		}
+	}
 	for _, id := range assignment.ManagerIDs {
 		if id > 0 {
 			userIDs[id] = struct{}{}
+			writerIDs[id] = struct{}{}
 			managerIDs[id] = struct{}{}
 		}
 	}
@@ -165,16 +173,20 @@ func (s *service) normalizeScopeAssignment(ctx context.Context, assignment dto.S
 	}
 	for _, id := range ids {
 		_, isManager := managerIDs[id]
-		result.bizLines = append(result.bizLines, repository.IdentityUserBizLine{UserID: id, IsManager: isManager})
+		_, canWrite := writerIDs[id]
+		result.bizLines = append(result.bizLines, repository.IdentityUserBizLine{UserID: id, IsManager: isManager, CanWrite: canWrite || isManager})
 		result.programs = append(result.programs, repository.IdentityUserProgram{UserID: id, IsManager: isManager})
 	}
 	return result, nil
 }
 
 func toScopeAssignment(bizLines []*repository.IdentityUserBizLine, programs []*repository.IdentityUserProgram) dto.ScopeAssignment {
-	assignment := dto.ScopeAssignment{UserIDs: []int64{}, ManagerIDs: []int64{}}
+	assignment := dto.ScopeAssignment{UserIDs: []int64{}, WriterIDs: []int64{}, ManagerIDs: []int64{}}
 	for _, row := range bizLines {
 		assignment.UserIDs = append(assignment.UserIDs, row.UserID)
+		if row.CanWrite || row.IsManager {
+			assignment.WriterIDs = append(assignment.WriterIDs, row.UserID)
+		}
 		if row.IsManager {
 			assignment.ManagerIDs = append(assignment.ManagerIDs, row.UserID)
 		}
@@ -186,4 +198,141 @@ func toScopeAssignment(bizLines []*repository.IdentityUserBizLine, programs []*r
 		}
 	}
 	return assignment
+}
+
+// ---------- 空间成员：单条增删改 ----------
+//
+// 成员不再由空间编辑表单整体覆盖：加入只能走分享链接，退出只能由空间管理员剔除。
+// 这几个方法因此都只动一条记录，替换式的 ReplaceBizLineAssignment 留给用户管理页。
+
+func (s *service) ListBizLineMembers(ctx context.Context, bizLine string) ([]dto.BizLineMemberView, error) {
+	bizLine = strings.TrimSpace(bizLine)
+	if bizLine == "" {
+		return nil, contract.ErrBizLineRequired
+	}
+	rows, err := s.repo.ListBizLineAssignmentsByBizLine(ctx, bizLine)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.UserID)
+	}
+	users, err := s.repo.ListUsersByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int64]*repository.IdentityUser, len(users))
+	for _, user := range users {
+		byID[user.ID] = user
+	}
+	views := make([]dto.BizLineMemberView, 0, len(rows))
+	for _, row := range rows {
+		user, ok := byID[row.UserID]
+		if !ok {
+			// 账号已被删除但授权行还在：跳过而不是报错，剔除入口仍能清掉它。
+			continue
+		}
+		views = append(views, dto.BizLineMemberView{
+			ID:          user.ID,
+			Username:    user.Username,
+			DisplayName: user.DisplayName,
+			IsManager:   row.IsManager,
+			CanWrite:    row.CanWrite || row.IsManager,
+			Permission:  permissionOf(row),
+			JoinedAt:    timePtr(row.CreatedAt),
+		})
+	}
+	sort.Slice(views, func(i, j int) bool {
+		if views[i].IsManager != views[j].IsManager {
+			return views[i].IsManager
+		}
+		return views[i].ID < views[j].ID
+	})
+	return views, nil
+}
+
+// SaveBizLineMember 加入或调权。管理员行始终带写入位，判权时不用再兜底。
+func (s *service) SaveBizLineMember(ctx context.Context, req dto.BizLineMemberRequest) error {
+	bizLine := strings.TrimSpace(req.BizLine)
+	if bizLine == "" {
+		return contract.ErrBizLineRequired
+	}
+	if req.UserID <= 0 {
+		return errors.New("缺少用户标识")
+	}
+	user, err := s.repo.FindUser(ctx, req.UserID)
+	if err != nil {
+		if repository.IsNotFound(err) {
+			return errors.New("用户不存在")
+		}
+		return err
+	}
+	if user.Status != StatusActive {
+		return errors.New("不能为停用用户分配权限")
+	}
+	return s.repo.UpsertBizLineMember(ctx, &repository.IdentityUserBizLine{
+		UserID:    req.UserID,
+		BizLine:   bizLine,
+		IsManager: req.AsManager,
+		CanWrite:  req.CanWrite || req.AsManager,
+	})
+}
+
+// RemoveBizLineMember 剔除成员。最后一个管理员不能被剔除，
+// 否则这个空间会没有任何人能维护它 —— 系统管理员也不再隐式可见。
+func (s *service) RemoveBizLineMember(ctx context.Context, bizLine string, userID int64) error {
+	bizLine = strings.TrimSpace(bizLine)
+	if bizLine == "" {
+		return contract.ErrBizLineRequired
+	}
+	if userID <= 0 {
+		return errors.New("缺少用户标识")
+	}
+	current, err := s.repo.FindBizLineAssignment(ctx, bizLine, userID)
+	if err != nil {
+		if repository.IsNotFound(err) {
+			return contract.ErrNotFound
+		}
+		return err
+	}
+	if current.IsManager {
+		managers, countErr := s.repo.CountBizLineManagers(ctx, bizLine)
+		if countErr != nil {
+			return countErr
+		}
+		if managers <= 1 {
+			return errors.New("至少保留一个空间管理员")
+		}
+	}
+	rows, err := s.repo.DeleteBizLineMember(ctx, bizLine, userID)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return contract.ErrNotFound
+	}
+	return nil
+}
+
+func (s *service) IsBizLineMember(ctx context.Context, bizLine string, userID int64) (bool, error) {
+	if strings.TrimSpace(bizLine) == "" || userID <= 0 {
+		return false, nil
+	}
+	_, err := s.repo.FindBizLineAssignment(ctx, strings.TrimSpace(bizLine), userID)
+	if repository.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func permissionOf(row *repository.IdentityUserBizLine) string {
+	switch {
+	case row.IsManager:
+		return "manager"
+	case row.CanWrite:
+		return "write"
+	default:
+		return "read"
+	}
 }

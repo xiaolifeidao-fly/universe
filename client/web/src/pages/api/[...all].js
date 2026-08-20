@@ -14,33 +14,9 @@ const target = process.env.SERVER_TARGET;
 
 
 export default async function handler(req, res) {
-  // 创建代理中间件
-  if(req.method == 'GET'){
-    const proxy = createProxyMiddleware({
-      target: target, // 设置代理目标地址
-      changeOrigin: true, // 设置请求头中的 Host 为目标地址的 Host
-      pathRewrite: (path) => {
-        if (path === "/api/healthz") {
-          return "/healthz";
-        }
-        return path.replace(/^\/api/, prefix);
-      },
-      headers: req.headers,
-      onProxyReq: (proxyReq, req, res) => {
-        // Add debug logs
-        // console.log('Proxy Request Headers:', proxyReq.getHeaders());
-      },
-      onProxyRes: (proxyRes, req, res) => {
-        // Add debug logs
-        // console.log('Proxy Response Headers:', proxyRes.headers);
-      },
-      onError: (err, req, res) => {
-        // Handle errors
-        console.error('Proxy error:', err);
-        res.status(500).send('Proxy error');
-      },
-    });
-    return proxy(req, res);
+  if (req.method === "GET") {
+    await proxyGet(req, res);
+    return;
   }
   try {
     const url = getTargetUrl(req.url);
@@ -51,8 +27,57 @@ export default async function handler(req, res) {
     res.status(response.status).json(data);
   } catch (error) {
       console.error('Error forwarding request:', error);
-      res.status(500).json({ error: 'Internal Server Error' });
+      // axios 对任何非 2xx 都抛异常。以前这里一律回 500，后端的 404、401、
+      // 业务错误在浏览器里全长成「Request failed with status code 500」，
+      // 排查时看不出到底是哪一层出的问题，所以原样透传上游状态码和响应体。
+      const upstream = error.response;
+      if (upstream) {
+        res.status(upstream.status).json(
+          typeof upstream.data === "object" && upstream.data !== null
+            ? upstream.data
+            : { error: String(upstream.data || upstream.statusText || "Upstream error") },
+        );
+        return;
+      }
+      res.status(502).json({ error: `Upstream unreachable: ${error.message}` });
   }
+}
+
+function proxyGet(req, res) {
+  return new Promise((resolve) => {
+    let completed = false;
+    const complete = () => {
+      if (completed) return;
+      completed = true;
+      resolve();
+    };
+    const fail = (error) => {
+      console.error('Proxy error:', error);
+      if (!res.headersSent) {
+        res.status(502).send('Proxy error');
+      }
+      complete();
+    };
+
+    const proxy = createProxyMiddleware({
+      target: target, // 设置代理目标地址
+      changeOrigin: true, // 设置请求头中的 Host 为目标地址的 Host
+      pathRewrite: (path) => {
+        if (path === "/api/healthz") {
+          return "/healthz";
+        }
+        return path.replace(/^\/api/, prefix);
+      },
+      headers: req.headers,
+      on: {
+        error: fail,
+      },
+    });
+
+    res.once('finish', complete);
+    res.once('close', complete);
+    void proxy(req, res, fail);
+  });
 }
 
 async function request(url, req){

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS `zt_identity_user_biz_line` (
   `user_id` bigint NOT NULL,
   `biz_line` varchar(32) NOT NULL,
   `is_manager` tinyint(1) NOT NULL DEFAULT 0,
+  `can_write` tinyint(1) NOT NULL DEFAULT 0,
   `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_identity_user_bizline` (`user_id`, `biz_line`),

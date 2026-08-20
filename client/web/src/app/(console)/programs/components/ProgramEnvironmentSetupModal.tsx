@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowLeftOutlined, CheckCircleOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Alert, Button, Empty, Modal, Space, Table, Tag, message } from "antd";
+import { ArrowLeftOutlined, CheckCircleOutlined, CopyOutlined, InfoCircleOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, ToolOutlined } from "@ant-design/icons";
+import { Button, Empty, Modal, Space, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { effortForConfig, modelForConfig, toolDisplayName, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
@@ -123,6 +123,8 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
     () => new Map((conversation?.environmentStatuses ?? []).map((status) => [status.id.toLocaleLowerCase(), status])),
     [conversation?.environmentStatuses],
   );
+  const githubSshStatus = statusesById.get(GIT_PRESET.id);
+  const githubSshPublicKey = githubSshStatus?.githubSshPublicKey || "";
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
@@ -172,6 +174,11 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
           <Space size={6}>
             <b data-locale-static="false">{value}</b>
             {status?.installed ? <Tag color="success" icon={<CheckCircleOutlined />} title={status.version}>{t("programs.environment.installed")}</Tag> : null}
+            {record.id === GIT_PRESET.id ? (
+              <Tag color={status?.githubSshConfigured ? "success" : "warning"}>
+                {t(status?.githubSshConfigured ? "programs.environment.githubSshReady" : "programs.environment.githubSshMissing")}
+              </Tag>
+            ) : null}
             {record.custom ? <Tag>{t("programs.environment.custom")}</Tag> : null}
           </Space>
         );
@@ -202,24 +209,71 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
       open={open}
       destroyOnClose
       width={960}
-      title={t("programs.environment.title")}
+      title={(
+        <div className="program-environment-setup__title">
+          <span className="program-environment-setup__title-icon"><ToolOutlined /></span>
+          <span>
+            <b>{t("programs.environment.title")}</b>
+            <small>{t("programs.environment.executor")} · {toolName} · {modelForConfig(setupConfig)}</small>
+          </span>
+        </div>
+      )}
       footer={null}
       onCancel={onClose}
     >
-      <Space direction="vertical" size={16} style={{ width: "100%" }}>
-        <div className="manager-table-subline">
-          {t("programs.environment.executor")} · {toolName} · {modelForConfig(setupConfig)}
-        </div>
-        <Alert showIcon type="info" message={t("programs.environment.detail")} description={t("programs.environment.hint")} />
-        <div className="manager-table-subline">{t("programs.environment.platformHint")}</div>
-        {rows.length ? (
-          <div className="manager-table">
-            <Table<EnvironmentRow> rowKey="key" size="small" columns={columns} dataSource={rows} pagination={false} />
+      <div className="program-environment-setup">
+        <section className="program-environment-setup__summary">
+          <div className="program-environment-setup__overview">
+            <span className="program-environment-setup__overview-icon"><InfoCircleOutlined /></span>
+            <div>
+              <b>{t("programs.environment.detail")}</b>
+              <p>{t("programs.environment.hint")}</p>
+            </div>
           </div>
-        ) : (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("programs.environment.emptySelection")} />
-        )}
-        <Space>
+          <p className="program-environment-setup__platform-hint">{t("programs.environment.platformHint")}</p>
+          {rows.length ? (
+            <div className="manager-table program-environment-setup__table">
+              <Table<EnvironmentRow> rowKey="key" size="small" columns={columns} dataSource={rows} pagination={false} />
+            </div>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("programs.environment.emptySelection")} />
+          )}
+          {useGit ? (
+            <section className={`program-environment-setup__ssh${githubSshStatus?.githubSshConfigured ? " is-ready" : " is-warning"}`}>
+              <span className="program-environment-setup__ssh-icon"><CheckCircleOutlined /></span>
+              <div className="program-environment-setup__ssh-copy">
+                <b>{t("programs.environment.githubSshTitle")}</b>
+                <span>
+                  {githubSshPublicKey
+                    ? t("programs.environment.githubSshReadyHint")
+                    : githubSshStatus?.githubSshError
+                      ? t("programs.environment.githubSshError").replace("{error}", githubSshStatus.githubSshError)
+                      : t("programs.environment.githubSshMissingHint")}
+                </span>
+                {githubSshPublicKey ? (
+                  <div className="program-environment-github-key__value">
+                    <code className="manager-mono">{githubSshPublicKey}</code>
+                    <Tooltip title={t("programs.environment.githubSshCopy")}>
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        aria-label={t("programs.environment.githubSshCopy")}
+                        onClick={() => {
+                          void navigator.clipboard.writeText(githubSshPublicKey)
+                            .then(() => message.success(t("programs.environment.githubSshCopied")))
+                            .catch(() => message.error(t("programs.environment.githubSshCopyFailed")));
+                        }}
+                      />
+                    </Tooltip>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+        </section>
+        <div className="program-environment-setup__actions">
+          <Space size={8} wrap>
           {!active ? (
             <Button icon={<ArrowLeftOutlined />} onClick={onBack}>
               {t("programs.environment.backToSelection")}
@@ -244,7 +298,8 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
           </Button>
           {active ? <Tag color="processing" icon={<LoadingOutlined spin />}>{t("programs.environment.running")}</Tag> : null}
           {!active && items.length ? <Tag color="success" icon={<CheckCircleOutlined />}>{t("programs.environment.finished")}</Tag> : null}
-        </Space>
+          </Space>
+        </div>
         <div className="delivery-session-transcript program-environment-setup-transcript" ref={transcriptRef}>
           {loading && !conversation ? (
             <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div>
@@ -267,7 +322,7 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
           )}
           {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
         </div>
-      </Space>
+      </div>
     </Modal>
   );
 }

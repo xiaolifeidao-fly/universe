@@ -13,9 +13,12 @@ import "time"
 // biz_line 是项目的归属属性，仍保留在每张交付表上以支持按业务线浏览与统计。
 type DeliveryProgram struct {
 	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);index:idx_dlv_program_biz_line" description:"业务线"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);index:idx_dlv_program_biz_line;uniqueIndex:uk_dlv_program_code,priority:1" description:"业务线"`
 
-	ProgramCode string `gorm:"column:program_code;type:varchar(64);uniqueIndex:uk_dlv_program_code" description:"项目业务编码，如 indonesia；仅展示与导入幂等使用"`
+	// 项目编码按空间唯一，不是全局唯一：空间归各自的用户所有，
+	// 甲空间用过 test，乙空间不该因此建不了同名项目。
+	// 所有关联仍然走数值主键 id，编码只承担展示与导入幂等。
+	ProgramCode string `gorm:"column:program_code;type:varchar(64);uniqueIndex:uk_dlv_program_code,priority:2" description:"项目业务编码，如 indonesia；仅展示与导入幂等使用"`
 	Name        string `gorm:"column:name;type:varchar(128)" description:"项目名称"`
 	Summary     string `gorm:"column:summary;type:varchar(512)" description:"一句话说明"`
 	Status      string `gorm:"column:status;type:varchar(16);default:'active'" description:"active 进行中 / archived 已归档"`
@@ -113,6 +116,12 @@ type DeliveryRequirement struct {
 	GenerateTaskOutline bool `gorm:"column:generate_task_outline;default:false" description:"拆解会话是否预生成每条任务的需求文档；默认否"`
 	// GeneratePrototype 仅专业模式可用。任务拆解确认后，由用户二次确认是否生成关联到本需求的 HTML 原型。
 	GeneratePrototype bool `gorm:"column:generate_prototype;default:false" description:"专业模式需求是否启用拆解后生成 HTML 原型"`
+	// Git 关联保留需求分支的基准和创建状态；Git 命令仍只在本机桥接的项目工作目录中执行。
+	// GitEnabled 为 NULL 表示这条需求还没做过选择，由前端回落到用户偏好里的默认值。
+	GitEnabled         *bool      `gorm:"column:git_enabled" description:"需求是否启用 Git 分支关联；NULL 表示未设置"`
+	GitBaseBranch      string     `gorm:"column:git_base_branch;type:varchar(255)" description:"创建需求分支时使用的基准分支"`
+	GitBranch          string     `gorm:"column:git_branch;type:varchar(255)" description:"关联的需求分支"`
+	GitBranchCreatedAt *time.Time `gorm:"column:git_branch_created_at;type:timestamp NULL" description:"需求分支最近创建并关联的时间"`
 	// PrototypeHTMLPath 是项目工作区 doc/ 下的原型目录；目录内按功能模块存放多个 HTML，正文不进入任务面板数据库。
 	PrototypeHTMLPath    string     `gorm:"column:prototype_html_path;type:varchar(512)" description:"需求 HTML 原型目录在项目工作区中的相对路径"`
 	PrototypeGeneratedAt *time.Time `gorm:"column:prototype_generated_at;type:timestamp NULL" description:"需求 HTML 原型最近生成时间"`

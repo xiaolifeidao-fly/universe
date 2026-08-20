@@ -54,12 +54,15 @@ func (h *Handler) listPrograms(context *gin.Context) {
 		return
 	}
 	views, err := h.service.ListPrograms(context.Request.Context(), bizLine)
-	if err == nil && !httpx.IsAdmin(context) {
+	if err == nil {
 		filtered := views[:0]
 		for _, view := range views {
-			if httpx.AuthorizeProgramInBizLine(context, bizLine.String(), view.ProgramID) == nil {
-				filtered = append(filtered, view)
+			if httpx.AuthorizeProgramInBizLine(context, bizLine.String(), view.ProgramID) != nil {
+				continue
 			}
+			view.CanAdminister = httpx.CanAdministerProgram(context, bizLine.String(), view.ProgramID)
+			view.CanWrite = httpx.CanWriteProgram(context, bizLine.String(), view.ProgramID)
+			filtered = append(filtered, view)
 		}
 		views = filtered
 	}
@@ -76,6 +79,10 @@ func (h *Handler) getProgram(context *gin.Context) {
 		return
 	}
 	view, err := h.service.GetProgram(context.Request.Context(), bizLine, programID)
+	if err == nil {
+		view.CanAdminister = httpx.CanAdministerProgram(context, bizLine.String(), programID)
+		view.CanWrite = httpx.CanWriteProgram(context, bizLine.String(), programID)
+	}
 	httpx.JSON(context, view, err)
 }
 
@@ -91,8 +98,9 @@ func (h *Handler) saveProgram(context *gin.Context) {
 		}
 	} else {
 		req.BizLine = bizLineOf(context)
-		if !httpx.CanManageBizLine(context, req.BizLine.String()) {
-			httpx.Fail(context, "无权新建该业务线项目")
+		// 只读成员进得来但建不了项目，写入成员和空间管理员才可以。
+		if !httpx.CanWriteBizLine(context, req.BizLine.String()) {
+			httpx.Fail(context, "无权新建该空间项目")
 			return
 		}
 	}
@@ -112,8 +120,8 @@ func (h *Handler) migrateProgram(context *gin.Context) {
 	if !req.TargetBizLine.Valid() {
 		req.TargetBizLine = req.SourceBizLine
 	}
-	if req.TargetBizLine != req.SourceBizLine && !httpx.CanManageBizLine(context, req.TargetBizLine.String()) {
-		httpx.Fail(context, "无权迁移到目标业务线")
+	if req.TargetBizLine != req.SourceBizLine && !httpx.CanWriteBizLine(context, req.TargetBizLine.String()) {
+		httpx.Fail(context, "无权迁移到目标空间")
 		return
 	}
 	req.ActorID = httpx.CallerID(context)
@@ -157,7 +165,7 @@ func (h *Handler) deleteStage(context *gin.Context) {
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
 		return
 	}
-	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+	if !h.requireProgramWriter(context, req.BizLine, req.ProgramID) {
 		return
 	}
 	httpx.JSON(context, nil, h.service.DeleteStage(context.Request.Context(), req))
@@ -213,7 +221,7 @@ func (h *Handler) deleteModule(context *gin.Context) {
 	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
 		return
 	}
-	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+	if !h.requireProgramWriter(context, req.BizLine, req.ProgramID) {
 		return
 	}
 	httpx.JSON(context, nil, h.service.DeleteModule(context.Request.Context(), req))
@@ -245,6 +253,9 @@ func (h *Handler) saveAssignment(context *gin.Context) {
 	if !h.resolveManagedProgramBizLine(context, req.ProgramID, &bizLine) {
 		return
 	}
+	if !h.requireBizLineMembers(context, bizLine.String(), req.ScopeAssignment) {
+		return
+	}
 	httpx.JSON(context, nil, h.identities.ReplaceProgramAssignment(context.Request.Context(), bizLine.String(), req.ProgramID, req.ScopeAssignment))
 }
 
@@ -263,6 +274,29 @@ func (h *Handler) importItems(context *gin.Context) {
 	req.ActorID = httpx.CallerID(context)
 	result, err := h.service.ImportItems(context.Request.Context(), req)
 	httpx.JSON(context, result, err)
+}
+
+// requireBizLineMembers 把项目成员的候选范围钉死在所属空间的成员名单上。
+// 前端的候选下拉已经这么取数了，但授权不能只靠前端过滤。
+func (h *Handler) requireBizLineMembers(context *gin.Context, bizLine string, assignment identitydto.ScopeAssignment) bool {
+	members, err := h.identities.ListBizLineMembers(context.Request.Context(), bizLine)
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return false
+	}
+	allowed := make(map[int64]struct{}, len(members))
+	for _, member := range members {
+		allowed[member.ID] = struct{}{}
+	}
+	for _, ids := range [][]int64{assignment.UserIDs, assignment.WriterIDs, assignment.ManagerIDs} {
+		for _, id := range ids {
+			if _, ok := allowed[id]; !ok {
+				httpx.Fail(context, "项目成员只能从该空间的成员中选择")
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func bizLineOf(context *gin.Context) contract.BizLine {
@@ -300,19 +334,31 @@ func (h *Handler) resolveManagedProgramBizLine(context *gin.Context, programID i
 	if !h.resolveProgramBizLine(context, programID, target) {
 		return false
 	}
-	return h.requireProgramManager(context, *target, programID)
+	return h.requireProgramAdmin(context, *target, programID)
 }
 
-func (h *Handler) requireProgramManager(context *gin.Context, bizLine contract.BizLine, programID int64) bool {
-	if httpx.CanManageProgram(context, bizLine.String(), programID) {
+// requireProgramAdmin 守着项目本身：改项目、迁移项目、分配人员。
+// 空间的写入成员能在项目里干活，但动不了这些 —— 那是项目管理员和空间管理员的事。
+func (h *Handler) requireProgramAdmin(context *gin.Context, bizLine contract.BizLine, programID int64) bool {
+	if httpx.CanAdministerProgram(context, bizLine.String(), programID) {
 		return true
 	}
-	httpx.Fail(context, "无权管理该项目")
+	httpx.Fail(context, "只有项目管理员或空间管理员能管理该项目")
+	return false
+}
+
+// requireProgramWriter 守着项目里的内容：里程碑与模块跟任务、需求同级，
+// 空间的写入成员要能维护，否则拆解需求这条链路就断了。
+func (h *Handler) requireProgramWriter(context *gin.Context, bizLine contract.BizLine, programID int64) bool {
+	if httpx.CanWriteProgram(context, bizLine.String(), programID) {
+		return true
+	}
+	httpx.Fail(context, "无权修改该项目内容")
 	return false
 }
 
 func (h *Handler) canSaveStage(context *gin.Context, bizLine contract.BizLine, programID int64, stageKey string) bool {
-	if httpx.CanManageProgram(context, bizLine.String(), programID) {
+	if httpx.CanWriteProgram(context, bizLine.String(), programID) {
 		return true
 	}
 	stages, err := h.service.ListStages(context.Request.Context(), bizLine, programID)
@@ -330,7 +376,7 @@ func (h *Handler) canSaveStage(context *gin.Context, bizLine contract.BizLine, p
 }
 
 func (h *Handler) canSaveModule(context *gin.Context, bizLine contract.BizLine, programID int64, moduleKey string) bool {
-	if httpx.CanManageProgram(context, bizLine.String(), programID) {
+	if httpx.CanWriteProgram(context, bizLine.String(), programID) {
 		return true
 	}
 	modules, err := h.service.ListModules(context.Request.Context(), bizLine, programID)

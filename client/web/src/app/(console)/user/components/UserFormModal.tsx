@@ -135,7 +135,7 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
         >
           <Input.Password autoComplete="new-password" />
         </Form.Item>
-        <Form.Item label="可见业务线" name="bizLines" extra="未分配业务线的成员无法访问对应数据。">
+        <Form.Item label="可见空间" name="bizLines" extra="未分配空间的成员无法访问对应数据。">
           <Select mode="multiple" options={bizLines.filter((line) => line.enabled).map((line) => ({ value: line.code, label: line.name || line.code }))} />
         </Form.Item>
         <Form.Item label="可见项目" name="programKeys" extra="成员还需被分配具体项目才能查看项目内容。">

@@ -7,9 +7,12 @@ package bizline
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	"contract"
 	"gorm.io/gorm"
@@ -28,10 +31,17 @@ type Service interface {
 	ListAll(ctx context.Context) ([]dto.BizLineView, error)
 	Get(ctx context.Context, code string) (dto.BizLineView, error)
 	Save(ctx context.Context, req dto.SaveBizLineRequest) error
+	// CountEnabledOwned 统计这些编码里仍启用的条数，用于校验建空间配额。
+	CountEnabledOwned(ctx context.Context, codes []string) (int64, error)
 	Delete(ctx context.Context, req dto.DeleteBizLineRequest) error
 
 	// Register 保留给后续服务端初始化调用，等价于保存一条启用项。
 	Register(ctx context.Context, req dto.RegisterRequest) error
+
+	// CreateShareLink 签发一条加入邀请，默认 1 小时后失效。
+	CreateShareLink(ctx context.Context, req dto.CreateShareLinkRequest) (dto.ShareLinkView, error)
+	// ResolveShareLink 校验令牌并返回受邀人该看到的空间信息与权限。
+	ResolveShareLink(ctx context.Context, token string) (dto.ShareLinkTarget, error)
 
 	// Capabilities 该业务线声明支持的能力集，task 层用它过滤指令，
 	// 端侧 App 上报的 caps_version 与之比对。
@@ -78,7 +88,7 @@ func (s *service) ListAll(ctx context.Context) ([]dto.BizLineView, error) {
 
 func (s *service) Get(ctx context.Context, code string) (dto.BizLineView, error) {
 	if code == "" {
-		return dto.BizLineView{}, errors.New("biz line required")
+		return dto.BizLineView{}, errors.New("缺少空间")
 	}
 	row, err := s.repo.FindByCode(ctx, code)
 	if err != nil {
@@ -88,26 +98,30 @@ func (s *service) Get(ctx context.Context, code string) (dto.BizLineView, error)
 }
 
 func (s *service) Register(ctx context.Context, req dto.RegisterRequest) error {
-	return s.Save(ctx, dto.SaveBizLineRequest{Code: req.Code, Name: req.Name, Enabled: true})
+	return s.Save(ctx, dto.SaveBizLineRequest{Code: req.Code, Name: req.Name, Enabled: true, Visible: true})
 }
 
 func (s *service) Save(ctx context.Context, req dto.SaveBizLineRequest) error {
 	code := strings.ToLower(strings.TrimSpace(req.Code))
 	name := strings.TrimSpace(req.Name)
 	if code == "" {
-		return errors.New("缺少业务线编码")
+		return errors.New("缺少空间编码")
 	}
 	if len(code) > 32 {
-		return errors.New("业务线编码不能超过 32 个字符")
+		return errors.New("空间编码不能超过 32 个字符")
 	}
 	if !bizLineCodePattern.MatchString(code) {
-		return errors.New("业务线编码仅支持字母、数字、下划线和连字符")
+		return errors.New("空间编码仅支持字母、数字、下划线和连字符")
 	}
 	if name == "" {
-		return errors.New("缺少业务线名称")
+		return errors.New("缺少空间名称")
 	}
 	if len(name) > 64 {
-		return errors.New("业务线名称不能超过 64 个字符")
+		return errors.New("空间名称不能超过 64 个字符")
+	}
+	description := strings.TrimSpace(req.Description)
+	if len([]rune(description)) > 200 {
+		return errors.New("空间描述不能超过 200 个字符")
 	}
 
 	current, err := s.repo.FindByCode(ctx, code)
@@ -120,17 +134,21 @@ func (s *service) Save(ctx context.Context, req dto.SaveBizLineRequest) error {
 			return countErr
 		}
 		if total <= 1 {
-			return errors.New("至少保留一个启用的业务线")
+			return errors.New("至少保留一个启用的空间")
 		}
 	}
 
-	return s.repo.Upsert(ctx, &repository.BizLineDef{Code: code, Name: name, Enabled: req.Enabled})
+	return s.repo.Upsert(ctx, &repository.BizLineDef{Code: code, Name: name, Description: description, Enabled: req.Enabled, Visible: req.Visible})
+}
+
+func (s *service) CountEnabledOwned(ctx context.Context, codes []string) (int64, error) {
+	return s.repo.CountEnabledByCodes(ctx, codes)
 }
 
 func (s *service) Delete(ctx context.Context, req dto.DeleteBizLineRequest) error {
 	code := strings.ToLower(strings.TrimSpace(req.Code))
 	if code == "" {
-		return errors.New("缺少业务线编码")
+		return errors.New("缺少空间编码")
 	}
 	current, err := s.repo.FindByCode(ctx, code)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -145,7 +163,7 @@ func (s *service) Delete(ctx context.Context, req dto.DeleteBizLineRequest) erro
 			return countErr
 		}
 		if total <= 1 {
-			return errors.New("至少保留一个启用的业务线")
+			return errors.New("至少保留一个启用的空间")
 		}
 	}
 	if s.programCounter == nil {
@@ -156,7 +174,7 @@ func (s *service) Delete(ctx context.Context, req dto.DeleteBizLineRequest) erro
 		return err
 	}
 	if programs > 0 {
-		return errors.New("该业务线仍有关联项目，不能删除")
+		return errors.New("该空间仍有关联项目，不能删除")
 	}
 	rows, err := s.repo.Delete(ctx, code)
 	if err != nil {
@@ -170,7 +188,7 @@ func (s *service) Delete(ctx context.Context, req dto.DeleteBizLineRequest) erro
 
 func (s *service) Capabilities(ctx context.Context, code string) ([]dto.Capability, error) {
 	if code == "" {
-		return nil, errors.New("biz line required")
+		return nil, errors.New("缺少空间")
 	}
 	rows, err := s.repo.ListCapabilities(ctx, code)
 	if err != nil {
@@ -206,10 +224,101 @@ func (s *service) SupportedKeys(ctx context.Context, code string, agentVersion s
 	return s.repo.SupportedKeys(ctx, code, agentVersion)
 }
 
+// ---------- 分享链接 ----------
+
+func (s *service) CreateShareLink(ctx context.Context, req dto.CreateShareLinkRequest) (dto.ShareLinkView, error) {
+	code := strings.ToLower(strings.TrimSpace(req.BizLine))
+	if code == "" {
+		return dto.ShareLinkView{}, errors.New("缺少空间编码")
+	}
+	if _, err := s.repo.FindByCode(ctx, code); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.ShareLinkView{}, contract.ErrNotFound
+		}
+		return dto.ShareLinkView{}, err
+	}
+	permission := strings.TrimSpace(req.Permission)
+	if permission != dto.PermissionRead && permission != dto.PermissionWrite {
+		return dto.ShareLinkView{}, errors.New("分享权限只能是只读或写入")
+	}
+	ttl := req.TTLMinutes
+	if ttl <= 0 {
+		ttl = dto.DefaultShareTTLMinutes
+	}
+	if ttl > dto.MaxShareTTLMinutes {
+		return dto.ShareLinkView{}, errors.New("分享链接有效期不能超过 7 天")
+	}
+	token, err := newShareToken()
+	if err != nil {
+		return dto.ShareLinkView{}, err
+	}
+	// 过期记录没人会再用，签发新链接时顺手清掉，省一个定时任务。
+	if err := s.repo.PurgeExpiredShareLinks(ctx); err != nil {
+		return dto.ShareLinkView{}, err
+	}
+	link := &repository.BizLineShareLink{
+		Token:      token,
+		BizLine:    code,
+		Permission: permission,
+		CreatedBy:  req.CreatedBy,
+		ExpiresAt:  time.Now().Add(time.Duration(ttl) * time.Minute),
+	}
+	if err := s.repo.CreateShareLink(ctx, link); err != nil {
+		return dto.ShareLinkView{}, err
+	}
+	return dto.ShareLinkView{Token: link.Token, BizLine: link.BizLine, Permission: link.Permission, ExpiresAt: link.ExpiresAt}, nil
+}
+
+func (s *service) ResolveShareLink(ctx context.Context, token string) (dto.ShareLinkTarget, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return dto.ShareLinkTarget{}, errors.New("缺少邀请令牌")
+	}
+	link, err := s.repo.FindShareLink(ctx, token)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.ShareLinkTarget{}, errors.New("邀请链接无效")
+		}
+		return dto.ShareLinkTarget{}, err
+	}
+	if time.Now().After(link.ExpiresAt) {
+		return dto.ShareLinkTarget{}, errors.New("邀请链接已过期")
+	}
+	row, err := s.repo.FindByCode(ctx, link.BizLine)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.ShareLinkTarget{}, errors.New("邀请链接指向的空间已不存在")
+		}
+		return dto.ShareLinkTarget{}, err
+	}
+	if !row.Enabled {
+		return dto.ShareLinkTarget{}, errors.New("该空间已停用，无法加入")
+	}
+	return dto.ShareLinkTarget{
+		BizLine:     row.Code,
+		Name:        row.Name,
+		Description: row.Description,
+		Permission:  link.Permission,
+		ExpiresAt:   link.ExpiresAt,
+	}, nil
+}
+
+// newShareToken 用 URL 安全的随机串做令牌：链接本身就是凭证，
+// 必须不可枚举，不能拿业务线编码之类的可猜内容拼。
+func newShareToken() (string, error) {
+	buffer := make([]byte, 24)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buffer), nil
+}
+
 func toView(row *repository.BizLineDef) dto.BizLineView {
 	return dto.BizLineView{
-		Code:    row.Code,
-		Name:    row.Name,
-		Enabled: row.Enabled,
+		Code:        row.Code,
+		Name:        row.Name,
+		Description: row.Description,
+		Enabled:     row.Enabled,
+		Visible:     row.Visible,
 	}
 }

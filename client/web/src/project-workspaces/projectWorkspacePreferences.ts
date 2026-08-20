@@ -1,5 +1,7 @@
 "use client";
 
+import { getUserScopedStorageKey } from "@/utils/auth";
+
 export interface ProjectWorkspacePreference {
   workspace: string;
   confirmedAt: string;
@@ -9,7 +11,8 @@ export interface ProjectWorkspacePreference {
   environments: string[];
 }
 
-const STORAGE_KEY = "zb.project-workspaces.v1";
+const STORAGE_KEY = "zb.project-workspaces.v2";
+const LEGACY_STORAGE_KEY = "zb.project-workspaces.v1";
 
 function normalize(value: Partial<ProjectWorkspacePreference> | undefined): ProjectWorkspacePreference {
   const environments = Array.isArray(value?.environments) ? value.environments : [];
@@ -21,10 +24,10 @@ function normalize(value: Partial<ProjectWorkspacePreference> | undefined): Proj
   };
 }
 
-function loadPreferences(): Record<string, ProjectWorkspacePreference> {
-  if (typeof window === "undefined") return {};
+function normalizePreferences(raw: string | null): Record<string, ProjectWorkspacePreference> {
+  if (!raw) return {};
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "{}") as Record<string, Partial<ProjectWorkspacePreference>>;
+    const parsed = JSON.parse(raw) as Record<string, Partial<ProjectWorkspacePreference>>;
     return Object.fromEntries(
       Object.entries(parsed).flatMap(([programId, value]) => {
         const preference = normalize(value);
@@ -38,10 +41,33 @@ function loadPreferences(): Record<string, ProjectWorkspacePreference> {
   }
 }
 
+function userStorageKey() {
+  return getUserScopedStorageKey(STORAGE_KEY);
+}
+
+function loadPreferences(): Record<string, ProjectWorkspacePreference> {
+  if (typeof window === "undefined") return {};
+  const storageKey = userStorageKey();
+  if (!storageKey) return {};
+
+  const saved = window.localStorage.getItem(storageKey);
+  if (saved !== null) return normalizePreferences(saved);
+
+  // Legacy paths were shared by every account in this browser. Attribute them
+  // to the current user once, then remove the global value to prevent reuse.
+  const legacy = normalizePreferences(window.localStorage.getItem(LEGACY_STORAGE_KEY));
+  if (Object.keys(legacy).length) {
+    window.localStorage.setItem(storageKey, JSON.stringify(legacy));
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  }
+  return legacy;
+}
+
 function writePreference(programId: number, preference: ProjectWorkspacePreference) {
   const preferences = loadPreferences();
   preferences[String(programId)] = preference;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+  const storageKey = userStorageKey();
+  if (storageKey) window.localStorage.setItem(storageKey, JSON.stringify(preferences));
   return preference;
 }
 
@@ -77,5 +103,6 @@ export function saveProjectAdvancedPreference(programId: number, useGit: boolean
 export function clearProjectWorkspacePreference(programId: number) {
   const preferences = loadPreferences();
   delete preferences[String(programId)];
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+  const storageKey = userStorageKey();
+  if (storageKey) window.localStorage.setItem(storageKey, JSON.stringify(preferences));
 }

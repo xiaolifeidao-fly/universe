@@ -10,6 +10,7 @@ export interface AuthUser {
   displayName: string;
   role: string;
   mustChangePassword: boolean;
+	writableBizLines?: string[];
 	managedBizLines?: string[];
 	managedPrograms?: Array<{ bizLine: string; programId: number }>;
 }
@@ -71,6 +72,12 @@ export function getAuthUser(): AuthUser | null {
   } catch {
     return null;
   }
+}
+
+/** Browser preferences belong to the signed-in person, not the browser session. */
+export function getUserScopedStorageKey(baseKey: string) {
+  const user = getAuthUser();
+  return user && baseKey ? `${baseKey}:${user.id}` : "";
 }
 
 export function setPasswordChangeRequired(required: boolean) {

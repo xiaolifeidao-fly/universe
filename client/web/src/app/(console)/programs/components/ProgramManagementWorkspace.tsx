@@ -9,7 +9,7 @@ import {
 	PlusOutlined,
 	ReloadOutlined,
 	SettingOutlined,
-	ThunderboltOutlined,
+	TeamOutlined,
 } from "@ant-design/icons";
 import {
 	Alert,
@@ -23,7 +23,6 @@ import {
 	Popconfirm,
 	Select,
 	Space,
-	Switch,
 	Table,
 	Tag,
 	Tooltip,
@@ -31,6 +30,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchBizLineMembers } from "@/api/bizline.api";
 import { type BusinessLineId, useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import {
 	deleteModule,
@@ -38,7 +38,6 @@ import {
 	fetchModules,
 	fetchModulesPage,
 	fetchCodexLocalProjects,
-	fetchMembers,
 	fetchProgramAssignment,
 	fetchPrograms,
 	fetchStages,
@@ -58,25 +57,20 @@ import {
 	type SaveStagePayload,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { getAuthUser } from "@/utils/auth";
 import {
 	getProjectWorkspacePreference,
 	saveProjectWorkspacePreference,
 } from "@/project-workspaces/projectWorkspacePreferences";
-import {
-	getLocalEnvironmentPreference,
-	saveLocalEnvironmentPreference,
-} from "@/project-workspaces/environmentPreferences";
-import { ENVIRONMENT_PRESETS } from "@/project-workspaces/environmentPresets";
-import { ProgramEnvironmentSetupModal } from "./ProgramEnvironmentSetupModal";
 
 interface ProgramFormValues {
-	programId: number;
 	programCode: string;
 	bizLine: BusinessLineId;
 	name: string;
 	summary?: string;
 	status: string;
+}
+
+interface ProgramAssignFormValues {
 	userIds: number[];
 	managerIds: number[];
 }
@@ -107,12 +101,16 @@ export function ProgramManagementWorkspace() {
 	const [form] = Form.useForm<ProgramFormValues>();
 	const [moduleForm] = Form.useForm<ModuleFormValues>();
 	const [stageForm] = Form.useForm<StageFormValues>();
+	const [assignForm] = Form.useForm<ProgramAssignFormValues>();
 	const [programs, setPrograms] = useState<DeliveryProgramRecord[]>([]);
 	const [members, setMembers] = useState<MemberRecord[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [editorOpen, setEditorOpen] = useState(false);
 	const [editing, setEditing] = useState<DeliveryProgramRecord | null>(null);
+	const [assignProgram, setAssignProgram] = useState<DeliveryProgramRecord | null>(null);
+	const [assignLoading, setAssignLoading] = useState(false);
+	const [assignSaving, setAssignSaving] = useState(false);
 	const [stageProgram, setStageProgram] = useState<DeliveryProgramRecord | null>(null);
 	const [stages, setStages] = useState<DeliveryStageRecord[]>([]);
 	const [stagesLoading, setStagesLoading] = useState(false);
@@ -140,16 +138,16 @@ export function ProgramManagementWorkspace() {
 	const [workspaceLoading, setWorkspaceLoading] = useState(false);
 	const [workspaceSaving, setWorkspaceSaving] = useState(false);
 	const [workspaceSource, setWorkspaceSource] = useState<"saved" | "matched" | "manual" | "unmatched">("unmatched");
-	const [environmentPreferencesOpen, setEnvironmentPreferencesOpen] = useState(false);
-	const [environmentUseGit, setEnvironmentUseGit] = useState(false);
-	const [environmentSelections, setEnvironmentSelections] = useState<string[]>([]);
-	const [environmentSetupOpen, setEnvironmentSetupOpen] = useState(false);
-	const authUser = getAuthUser();
-	const isSuperAdmin = authUser?.role === "admin";
-	const managedBizLines = authUser?.managedBizLines ?? [];
-	const managedProgramIDs = new Set((authUser?.managedPrograms ?? []).map((scope) => scope.programId));
-	const canCreateProgram = isSuperAdmin || managedBizLines.includes(activeBusinessLine.id);
-	const canManageProgram = (program: DeliveryProgramRecord) => isSuperAdmin || managedBizLines.includes(program.bizLine) || managedProgramIDs.has(program.programId);
+	// 只读成员建不了项目也编辑不了项目；系统管理员在空间维度不再有隐式权限。
+	// 空间维度的权限跟着业务线列表从服务端下来，不查本地缓存的授权范围 ——
+	// 那份缓存在刚建完空间、或别人调整过你的权限之后就不准了。
+	const canWriteBizLine = (bizLine: string) => businessLines.some((line) => line.id === bizLine && line.canWrite);
+	const canManageBizLine = (bizLine: string) => businessLines.some((line) => line.id === bizLine && line.canManage);
+	const canCreateProgram = canWriteBizLine(activeBusinessLine.id);
+	// 改项目、分配人员这些动的是项目本身，只有项目管理员和空间管理员能做；
+	// 里程碑、模块跟任务同级，空间的写入成员也要能维护。两者都由服务端逐行返回。
+	const canAdministerProgram = (program: DeliveryProgramRecord) => program.canAdminister;
+	const canWriteProgram = (program: DeliveryProgramRecord) => program.canWrite;
 
 	const refresh = useCallback(async () => {
 		setLoading(true);
@@ -199,9 +197,13 @@ export function ProgramManagementWorkspace() {
 		void refresh();
 	}, [refresh]);
 
+	// 项目成员的候选只能来自当前空间已有的成员，不再列出全站账号。
 	useEffect(() => {
-		void fetchMembers().then(setMembers).catch((error: Error) => message.error(error.message));
-	}, []);
+		if (!activeBusinessLine.id) return;
+		void fetchBizLineMembers(activeBusinessLine.id)
+			.then((rows) => setMembers(rows.map((row) => ({ id: String(row.id), username: row.username, displayName: row.displayName }))))
+			.catch((error: Error) => message.error(error.message));
+	}, [activeBusinessLine.id]);
 
 	useEffect(() => {
 		if (moduleProgram) void refreshModules(modulePageIndex);
@@ -234,36 +236,60 @@ export function ProgramManagementWorkspace() {
 		setEditing(null);
 		form.resetFields();
 		form.setFieldsValue({
-			programId: 0,
 			programCode: "",
 			bizLine: activeBusinessLine.id,
 			name: "",
 			summary: "",
 			status: "active",
-			userIds: [],
-			managerIds: [],
 		});
 		setEditorOpen(true);
 	};
 
-	const openEdit = async (program: DeliveryProgramRecord) => {
-		try {
-			const assignment = await fetchProgramAssignment(program.programId);
+	const openEdit = (program: DeliveryProgramRecord) => {
 		setEditing(program);
 		form.resetFields();
 		form.setFieldsValue({
-			programId: program.programId,
 			programCode: program.programCode,
 			bizLine: program.bizLine as BusinessLineId,
 			name: program.name,
 			summary: program.summary,
 			status: program.status || "active",
-			userIds: assignment.userIds,
-			managerIds: assignment.managerIds,
 		});
 		setEditorOpen(true);
+	};
+
+	// 人员分配从项目新建/编辑里拆出来单独入口，保存项目时不再连带改动成员。
+	const openAssign = useCallback(async (program: DeliveryProgramRecord) => {
+		setAssignProgram(program);
+		setAssignLoading(true);
+		assignForm.resetFields();
+		try {
+			const assignment = await fetchProgramAssignment(program.programId);
+			assignForm.setFieldsValue({ userIds: assignment.userIds, managerIds: assignment.managerIds });
 		} catch (error) {
 			message.error((error as Error).message);
+		} finally {
+			setAssignLoading(false);
+		}
+	}, [assignForm]);
+
+	const closeAssign = () => {
+		setAssignProgram(null);
+		assignForm.resetFields();
+	};
+
+	const saveAssign = async () => {
+		if (!assignProgram) return;
+		try {
+			const values = await assignForm.validateFields();
+			setAssignSaving(true);
+			await saveProgramAssignment(assignProgram.programId, { userIds: values.userIds ?? [], managerIds: values.managerIds ?? [] });
+			message.success(t("programs.assign.saved"));
+			closeAssign();
+		} catch (error) {
+			if (error instanceof Error && error.message) message.error(error.message);
+		} finally {
+			setAssignSaving(false);
 		}
 	};
 
@@ -272,7 +298,7 @@ export function ProgramManagementWorkspace() {
 			const values = await form.validateFields();
 			setSaving(true);
 			const payload: SaveProgramPayload = {
-				programId: values.programId,
+				programId: editing?.programId ?? 0,
 				programCode: values.programCode.trim() || undefined,
 				name: values.name.trim(),
 				summary: values.summary?.trim(),
@@ -285,9 +311,6 @@ export function ProgramManagementWorkspace() {
 			} else {
 				await saveProgram(targetBizLine, payload);
 				message.success(t(editing ? "programs.saved" : "programs.created"));
-			}
-			if (editing) {
-				await saveProgramAssignment(editing.programId, { userIds: values.userIds ?? [], managerIds: values.managerIds ?? [] });
 			}
 			closeProgramEditor();
 			if (targetBizLine === activeBusinessLine.id) {
@@ -533,25 +556,6 @@ export function ProgramManagementWorkspace() {
 		}
 	};
 
-	const openEnvironmentPreferences = () => {
-		const saved = getLocalEnvironmentPreference();
-		setEnvironmentUseGit(saved.useGit);
-		setEnvironmentSelections(saved.environments);
-		setEnvironmentPreferencesOpen(true);
-	};
-
-	const saveEnvironmentPreferences = () => {
-		saveLocalEnvironmentPreference(environmentUseGit, environmentSelections);
-		message.success(t("programs.environment.preferencesSaved"));
-		setEnvironmentPreferencesOpen(false);
-	};
-
-	const openEnvironmentSetup = () => {
-		saveLocalEnvironmentPreference(environmentUseGit, environmentSelections);
-		setEnvironmentPreferencesOpen(false);
-		setEnvironmentSetupOpen(true);
-	};
-
 	const workspaceOptions = useMemo(
 		() => workspaceProjects.flatMap((project) => project.rootPaths.map((rootPath) => ({
 			value: rootPath,
@@ -573,12 +577,6 @@ export function ProgramManagementWorkspace() {
 				),
 			},
 			{
-				title: t("programs.id"),
-				dataIndex: "programId",
-				width: 200,
-				render: (value: number) => <span className="manager-mono">{value}</span>,
-			},
-			{
 				title: t("programs.status"),
 				dataIndex: "status",
 				width: 120,
@@ -597,7 +595,7 @@ export function ProgramManagementWorkspace() {
 			{
 				title: "",
 				key: "actions",
-				width: 366,
+				width: 408,
 				align: "right",
 				render: (_, record) => (
 					<Space size={2}>
@@ -615,14 +613,17 @@ export function ProgramManagementWorkspace() {
 								onClick={() => void openWorkspacePreference(record)}
 							/>
 						</Tooltip>
-						{canManageProgram(record) ? <Tooltip title={t("programs.edit")}>
-							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.edit")} onClick={() => void openEdit(record)} />
+						{canAdministerProgram(record) ? <Tooltip title={t("programs.assign")}>
+							<Button type="text" icon={<TeamOutlined />} aria-label={t("programs.assign")} onClick={() => void openAssign(record)} />
+						</Tooltip> : null}
+						{canAdministerProgram(record) ? <Tooltip title={t("programs.edit")}>
+							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.edit")} onClick={() => openEdit(record)} />
 						</Tooltip> : null}
 					</Space>
 				),
 			},
 		],
-		[locale, managedBizLines, managedProgramIDs, openWorkspacePreference, t],
+		[businessLines, locale, openAssign, openWorkspacePreference, t],
 	);
 
 	const moduleColumns = useMemo<ColumnsType<DeliveryModuleRecord>>(
@@ -671,17 +672,17 @@ export function ProgramManagementWorkspace() {
 				align: "right",
 				render: (_, record) => (
 					<Space size={0}>
-						{moduleProgram && canManageProgram(moduleProgram) ? <Tooltip title={t("programs.modules.edit")}>
+						{moduleProgram && canWriteProgram(moduleProgram) ? <Tooltip title={t("programs.modules.edit")}>
 							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.modules.edit")} onClick={() => openEditModule(record)} />
 						</Tooltip> : null}
-						{moduleProgram && canManageProgram(moduleProgram) ? <Tooltip title={t("programs.modules.delete")}>
+						{moduleProgram && canWriteProgram(moduleProgram) ? <Tooltip title={t("programs.modules.delete")}>
 							<Button danger type="text" icon={<DeleteOutlined />} aria-label={t("programs.modules.delete")} loading={deletingModuleKey === record.moduleKey} onClick={() => void openModuleDeletion(record)} />
 						</Tooltip> : null}
 					</Space>
 				),
 			},
 		],
-		[activeBusinessLine.id, deletingModuleKey, managedBizLines, managedProgramIDs, moduleProgram, t],
+		[activeBusinessLine.id, businessLines, deletingModuleKey, moduleProgram, t],
 	);
 
 	const stageColumns = useMemo<ColumnsType<DeliveryStageRecord>>(
@@ -722,10 +723,10 @@ export function ProgramManagementWorkspace() {
 				align: "right",
 				render: (_, record) => (
 					<Space size={0}>
-						{stageProgram && canManageProgram(stageProgram) ? <Tooltip title={t("programs.stages.edit")}>
+						{stageProgram && canWriteProgram(stageProgram) ? <Tooltip title={t("programs.stages.edit")}>
 							<Button type="text" icon={<EditOutlined />} aria-label={t("programs.stages.edit")} onClick={() => openEditStage(record)} />
 						</Tooltip> : null}
-						{stageProgram && canManageProgram(stageProgram) ? <Popconfirm
+						{stageProgram && canWriteProgram(stageProgram) ? <Popconfirm
 							title={t("programs.stages.deleteConfirm")}
 							okButtonProps={{ danger: true, loading: deletingStageKey === record.stageKey }}
 							onConfirm={() => removeStage(record)}
@@ -738,7 +739,7 @@ export function ProgramManagementWorkspace() {
 				),
 			},
 		],
-		[deletingStageKey, managedBizLines, managedProgramIDs, stageProgram, t],
+		[businessLines, deletingStageKey, stageProgram, t],
 	);
 
 	return (
@@ -759,9 +760,6 @@ export function ProgramManagementWorkspace() {
 						<span>{activeBusinessLine.label}</span>
 					</div>
 					<Space>
-						<Button icon={<ThunderboltOutlined />} onClick={openEnvironmentPreferences}>
-							{t("programs.environment.manage")}
-						</Button>
 						<Tooltip title={t("programs.refresh")}>
 							<Button icon={<ReloadOutlined />} aria-label={t("programs.refresh")} loading={loading} onClick={() => void refresh()} />
 						</Tooltip>
@@ -843,57 +841,6 @@ export function ProgramManagementWorkspace() {
 
 			<Modal
 				wrapClassName="manager-form-skin"
-				open={environmentPreferencesOpen}
-				destroyOnClose
-				title={t("programs.environment.preferencesTitle")}
-				okText={t("programs.environment.save")}
-				cancelText={t("common.cancel")}
-				onCancel={() => setEnvironmentPreferencesOpen(false)}
-				onOk={saveEnvironmentPreferences}
-			>
-				<Space direction="vertical" size={16} style={{ width: "100%" }}>
-					<Alert showIcon type="info" message={t("programs.environment.preferencesTitle")} description={t("programs.environment.preferencesHint")} />
-					<Form layout="vertical" style={{ width: "100%" }}>
-						<Form.Item label={t("programs.environment.useGit")} extra={t("programs.environment.useGitHint")}>
-							<Switch checked={environmentUseGit} onChange={setEnvironmentUseGit} />
-						</Form.Item>
-						<Form.Item label={t("programs.environment.selection")} extra={t("programs.environment.selectionHint")}>
-							<Select
-								mode="tags"
-								allowClear
-								value={environmentSelections}
-								placeholder={t("programs.environment.selectionPlaceholder")}
-								onChange={(value: string[]) => setEnvironmentSelections(value.map((item) => item.trim()).filter(Boolean))}
-								options={ENVIRONMENT_PRESETS.map((preset) => ({
-									value: preset.id,
-									label: `${preset.label} · ${preset.requirement}`,
-								}))}
-							/>
-						</Form.Item>
-					</Form>
-					<Button
-						icon={<ThunderboltOutlined />}
-						disabled={!environmentUseGit && !environmentSelections.length}
-						onClick={openEnvironmentSetup}
-					>
-						{t("programs.environment.setup")}
-					</Button>
-				</Space>
-			</Modal>
-
-			<ProgramEnvironmentSetupModal
-				open={environmentSetupOpen}
-				useGit={environmentUseGit}
-				environments={environmentSelections}
-				onClose={() => setEnvironmentSetupOpen(false)}
-				onBack={() => {
-					setEnvironmentSetupOpen(false);
-					setEnvironmentPreferencesOpen(true);
-				}}
-			/>
-
-			<Modal
-				wrapClassName="manager-form-skin"
 				open={editorOpen}
 				destroyOnClose
 				title={t(editing ? "programs.edit" : "programs.new")}
@@ -905,13 +852,8 @@ export function ProgramManagementWorkspace() {
 			>
 					<Form form={form} layout="vertical">
 						<Form.Item label={t("programs.businessLine")} name="bizLine" rules={[{ required: true, message: t("programs.businessLine.required") }]}>
-							<Select disabled={Boolean(editing) && !isSuperAdmin && !managedBizLines.includes(editing?.bizLine ?? "")} options={businessLines.map((line) => ({ value: line.id, label: `${line.label} · ${line.code}` }))} />
+							<Select disabled={Boolean(editing) && !canManageBizLine(editing?.bizLine ?? "")} options={businessLines.map((line) => ({ value: line.id, label: `${line.label} · ${line.code}` }))} />
 						</Form.Item>
-					{editing ? (
-						<Form.Item label={t("programs.id")} name="programId">
-							<InputNumber disabled style={{ width: "100%" }} />
-						</Form.Item>
-					) : null}
 					<Form.Item
 						label="项目编码"
 						name="programCode"
@@ -934,14 +876,31 @@ export function ProgramManagementWorkspace() {
 							]}
 						/>
 					</Form.Item>
-					{editing ? <>
-						<Form.Item label={t("programs.members")} name="userIds">
-							<Select mode="multiple" options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
-						</Form.Item>
-						<Form.Item label={t("programs.managers")} name="managerIds" extra={t("programs.managersHint")}>
-							<Select mode="multiple" options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
-						</Form.Item>
-					</> : null}
+				</Form>
+			</Modal>
+
+			<Modal
+				wrapClassName="manager-form-skin"
+				open={Boolean(assignProgram)}
+				destroyOnClose
+				title={t("programs.assign.title")}
+				okText={t("programs.save")}
+				cancelText={t("common.cancel")}
+				confirmLoading={assignSaving}
+				okButtonProps={{ disabled: assignLoading }}
+				onCancel={closeAssign}
+				onOk={() => void saveAssign()}
+			>
+				<div className="manager-drawer-intro">
+					<strong data-locale-static="false">{assignProgram?.name || assignProgram?.programId}</strong>
+				</div>
+				<Form form={assignForm} layout="vertical">
+					<Form.Item label={t("programs.members")} name="userIds">
+						<Select mode="multiple" loading={assignLoading} options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
+					</Form.Item>
+					<Form.Item label={t("programs.managers")} name="managerIds" extra={t("programs.managersHint")}>
+						<Select mode="multiple" loading={assignLoading} options={members.map((member) => ({ value: Number(member.id), label: member.displayName || member.username }))} />
+					</Form.Item>
 				</Form>
 			</Modal>
 
@@ -963,7 +922,6 @@ export function ProgramManagementWorkspace() {
 						<div className="manager-drawer-intro">
 							<span>{t("programs.stages.program")}</span>
 							<strong data-locale-static="false">{stageProgram.name || stageProgram.programId}</strong>
-							<span className="manager-mono">{stageProgram.programId}</span>
 						</div>
 						<div className="manager-module-toolbar">
 							<span className="manager-table-subline">{t("programs.stages.title")}</span>
@@ -1008,7 +966,6 @@ export function ProgramManagementWorkspace() {
 						<div className="manager-drawer-intro">
 							<span>{t("programs.modules.program")}</span>
 							<strong data-locale-static="false">{moduleProgram.name || moduleProgram.programId}</strong>
-							<span className="manager-mono">{moduleProgram.programId}</span>
 						</div>
 						<div className="manager-module-toolbar">
 							<span className="manager-table-subline">{t("programs.modules.title")}</span>

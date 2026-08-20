@@ -124,6 +124,20 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.PreGenerateTaskDocuments != nil {
 		preGenerateTaskDocuments = *req.PreGenerateTaskDocuments
 	}
+	// 请求没带 gitEnabled 时保持未设置（NULL）：需求维度没做过选择，由调用方回落到自己的默认偏好。
+	gitEnabled := req.GitEnabled
+	gitBaseBranch, err := normalizeRequirementGitRef(derefString(req.GitBaseBranch))
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	gitBranch, err := normalizeRequirementGitRef(derefString(req.GitBranch))
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	if !boolValue(gitEnabled) {
+		gitBaseBranch = ""
+		gitBranch = ""
+	}
 	ownerIDs, ownerNames, err := normalizeRequirementMembers(req.Owners, "主负责人")
 	if err != nil {
 		return dto.RequirementView{}, err
@@ -166,6 +180,9 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 			SplitTasks:               splitTasks,
 			GenerateTaskOutline:      preGenerateTaskDocuments,
 			GeneratePrototype:        generatePrototype,
+			GitEnabled:               gitEnabled,
+			GitBaseBranch:            gitBaseBranch,
+			GitBranch:                gitBranch,
 			StageKey:                 strings.TrimSpace(req.StageKey),
 			ModuleKey:                strings.TrimSpace(req.ModuleKey),
 			Kind:                     normalizeKind(req.Kind),
@@ -199,6 +216,19 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.GenerateTaskOutline == nil && req.PreGenerateTaskDocuments == nil {
 		preGenerateTaskDocuments = current.GenerateTaskOutline
 	}
+	if req.GitEnabled == nil {
+		gitEnabled = current.GitEnabled
+	}
+	if req.GitBaseBranch == nil {
+		gitBaseBranch = current.GitBaseBranch
+	}
+	if req.GitBranch == nil {
+		gitBranch = current.GitBranch
+	}
+	if !boolValue(gitEnabled) {
+		gitBaseBranch = ""
+		gitBranch = ""
+	}
 	if req.Version <= 0 {
 		return dto.RequirementView{}, errors.New("缺少版本号，请刷新后重试")
 	}
@@ -216,6 +246,9 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		"split_tasks":           splitTasks,
 		"generate_task_outline": preGenerateTaskDocuments,
 		"generate_prototype":    generatePrototype,
+		"git_enabled":           gitEnabled,
+		"git_base_branch":       gitBaseBranch,
+		"git_branch":            gitBranch,
 		"stage_key":             strings.TrimSpace(req.StageKey),
 		"module_key":            strings.TrimSpace(req.ModuleKey),
 		"kind":                  normalizeKind(req.Kind),
@@ -231,9 +264,13 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.ReferenceItemKeys != nil {
 		values["reference_item_keys"] = itemReferences
 	}
+	if !boolValue(gitEnabled) || gitBaseBranch != current.GitBaseBranch || gitBranch != current.GitBranch {
+		values["git_branch_created_at"] = nil
+	}
 	events := requirementChangeEvents(current, name, req.Detail, plannedStartAt, plannedEndAt, status, mode, startPhase,
 		splitTasks, preGenerateTaskDocuments, generatePrototype, strings.TrimSpace(req.StageKey), strings.TrimSpace(req.ModuleKey), normalizeKind(req.Kind), ownerNames, assistantNames,
 		req.ActorID, req.ActorName)
+	events = append(events, requirementGitChangeEvents(current, gitEnabled, gitBaseBranch, gitBranch, req.ActorID, req.ActorName)...)
 	var affected int64
 	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
 		var updateErr error
@@ -249,6 +286,45 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		return dto.RequirementView{}, err
 	}
 	return s.GetRequirement(ctx, req.BizLine, req.ProgramID, requirementKey)
+}
+
+// BindRequirementGitBranch 由浏览器在本机桥接确认创建成功后调用；服务端只记录关联结果。
+func (s *service) BindRequirementGitBranch(ctx context.Context, req dto.BindRequirementGitBranchRequest) (dto.RequirementView, error) {
+	if !req.BizLine.Valid() {
+		return dto.RequirementView{}, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 || strings.TrimSpace(req.RequirementKey) == "" {
+		return dto.RequirementView{}, errors.New("缺少项目或需求标识")
+	}
+	baseBranch, err := normalizeRequirementGitRef(req.GitBaseBranch)
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	branch, err := normalizeRequirementGitRef(req.GitBranch)
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	if baseBranch == "" || branch == "" {
+		return dto.RequirementView{}, errors.New("缺少 Git 基准分支或需求分支")
+	}
+	current, err := s.repo.FindRequirement(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey)
+	if err != nil {
+		return dto.RequirementView{}, translate(err)
+	}
+	now := time.Now()
+	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
+		affected, updateErr := tx.BindRequirementGitBranch(ctx, current.BizLine, current.ProgramID, current.RequirementKey, baseBranch, branch, actorOf(req.ActorID, req.ActorName), now)
+		if updateErr != nil {
+			return updateErr
+		}
+		if affected == 0 {
+			return errors.New("需求不存在")
+		}
+		return tx.AppendRequirementEvents(ctx, requirementGitChangeEvents(current, boolPointer(true), baseBranch, branch, req.ActorID, req.ActorName))
+	}); err != nil {
+		return dto.RequirementView{}, err
+	}
+	return s.GetRequirement(ctx, req.BizLine, req.ProgramID, req.RequirementKey)
 }
 
 // DeleteRequirement 只删需求本身：拆出来的任务已经在推进，解绑后仍留在看板上。
@@ -421,6 +497,42 @@ var requirementKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 var requirementItemKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
+// Git 引用允许常用分支层级和 remote/name 形式；本机桥接仍会用 Git 自己的
+// check-ref-format / rev-parse 做最终校验，避免服务端复制 Git 的完整语法规则。
+func normalizeRequirementGitRef(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if len(value) > 255 {
+		return "", errors.New("Git 分支名不能超过 255 个字符")
+	}
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", errors.New("Git 分支名不能包含控制字符")
+	}
+	return value, nil
+}
+
+// git_enabled 是可空布尔：nil 表示需求没单独设置过，取值和展示都要和 false 区分开。
+func boolValue(value *bool) bool {
+	return value != nil && *value
+}
+
+func boolPointer(value bool) *bool {
+	return &value
+}
+
+func boolText(value *bool) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatBool(*value)
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 // normalizeRequirementReferences 把 @ 引用的需求键存成 ,req-a,req-b, 的形式：
 // 和 owner_ids 一样，将来要查「谁引用了这条需求」用 LIKE 就够，不必再开一张关联表。
 // selfKey 是当前这条需求自己的键，引用自己没有意义，直接剔除。
@@ -561,6 +673,10 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 		PreGenerateTaskDocuments: row.GenerateTaskOutline,
 		GenerateTaskOutline:      row.GenerateTaskOutline,
 		GeneratePrototype:        row.GeneratePrototype,
+		GitEnabled:               row.GitEnabled,
+		GitBaseBranch:            row.GitBaseBranch,
+		GitBranch:                row.GitBranch,
+		GitBranchCreatedAt:       row.GitBranchCreatedAt,
 		PrototypeHTMLPath:        row.PrototypeHTMLPath,
 		PrototypeGeneratedAt:     row.PrototypeGeneratedAt,
 		TestingStatus:            requirementTestingStatusOrDefault(row.TestingStatus),
@@ -626,6 +742,24 @@ func requirementChangeEvents(
 	record("kind", normalizeKind(current.Kind), kind)
 	record("owners", current.OwnerNames, ownerNames)
 	record("assistants", current.AssistantNames, assistantNames)
+	return events
+}
+
+func requirementGitChangeEvents(current *repository.DeliveryRequirement, enabled *bool, baseBranch, branch, actorID, actorName string) []*repository.DeliveryRequirementEvent {
+	events := make([]*repository.DeliveryRequirementEvent, 0, 3)
+	record := func(field, from, to string) {
+		if from == to {
+			return
+		}
+		events = append(events, &repository.DeliveryRequirementEvent{
+			BizLine: current.BizLine, ProgramID: current.ProgramID, RequirementKey: current.RequirementKey,
+			Kind: "field", Field: field, FromValue: from, ToValue: to,
+			ActorID: actorID, ActorName: actorOf(actorID, actorName),
+		})
+	}
+	record("gitEnabled", boolText(current.GitEnabled), boolText(enabled))
+	record("gitBaseBranch", current.GitBaseBranch, baseBranch)
+	record("gitBranch", current.GitBranch, branch)
 	return events
 }
 

@@ -34,6 +34,7 @@ type UserPrincipal struct {
 	Role               string
 	MustChangePassword bool
 	BizLines           []string
+	WritableBizLines   []string
 	ManagedBizLines    []string
 	ProgramIDs         []int64
 	ManagedProgramIDs  []int64
@@ -56,8 +57,6 @@ func SetUserAuthenticator(value UserAuthenticator) {
 	defer authenticatorMu.Unlock()
 	authenticator = value
 }
-
-const DefaultBizLine = "whatsapp"
 
 // Property 读取 application.properties 里的一项配置。必须在 Boot 之后调用。
 //
@@ -224,15 +223,17 @@ func IsAdmin(ginContext *gin.Context) bool {
 	return ok && principal.Role == "admin"
 }
 
+// AuthorizeBizLine 只认成员关系。系统管理员（role=admin）不再隐式看到全部空间：
+// 它保留的是账号管理这类全局能力，空间数据一律按分配来。
 func AuthorizeBizLine(ginContext *gin.Context, bizLine string) error {
 	principal, ok := CurrentUser(ginContext)
 	if !ok {
 		return errors.New("not login")
 	}
-	if principal.Service || principal.Role == "admin" || contains(principal.BizLines, bizLine) || contains(principal.ManagedBizLines, bizLine) {
+	if principal.Service || contains(principal.BizLines, bizLine) || contains(principal.ManagedBizLines, bizLine) {
 		return nil
 	}
-	return errors.New("无权访问该业务线")
+	return errors.New("无权访问该空间")
 }
 
 func AuthorizeProgram(ginContext *gin.Context, programID int64) error {
@@ -240,34 +241,61 @@ func AuthorizeProgram(ginContext *gin.Context, programID int64) error {
 	if !ok {
 		return errors.New("not login")
 	}
-	if principal.Service || principal.Role == "admin" || containsProgramID(principal.ProgramIDs, programID) || containsProgramID(principal.ManagedProgramIDs, programID) {
+	if principal.Service || containsProgramID(principal.ProgramIDs, programID) || containsProgramID(principal.ManagedProgramIDs, programID) {
 		return nil
 	}
 	return errors.New("无权访问该项目")
 }
 
 // AuthorizeProgramInBizLine applies the complete project visibility rule.
-// Business-line administrators see every project under their line, while
-// project members and project administrators only see their assigned project.
+//
+// 空间成员看得到该空间下的全部项目 —— 读写权是空间维度的授权，
+// 「只读成员能查看这个空间的项目、写入成员能写这个空间的项目」都以此为前提。
+// 项目级授权补的是另一种情形：不是空间成员，但被单独拉进某个项目。
 func AuthorizeProgramInBizLine(ginContext *gin.Context, bizLine string, programID int64) error {
 	principal, ok := CurrentUser(ginContext)
 	if !ok {
 		return errors.New("not login")
 	}
-	if principal.Service || principal.Role == "admin" || contains(principal.ManagedBizLines, bizLine) {
+	if principal.Service || contains(principal.BizLines, bizLine) || contains(principal.ManagedBizLines, bizLine) {
 		return nil
 	}
 	return AuthorizeProgram(ginContext, programID)
 }
 
+// CanManageBizLine 是空间管理员判定：改空间本身、分享、踢人、调成员权限。
 func CanManageBizLine(ginContext *gin.Context, bizLine string) bool {
 	principal, ok := CurrentUser(ginContext)
-	return ok && (principal.Service || principal.Role == "admin" || contains(principal.ManagedBizLines, bizLine))
+	return ok && (principal.Service || contains(principal.ManagedBizLines, bizLine))
 }
 
-func CanManageProgram(ginContext *gin.Context, bizLine string, programID int64) bool {
+// CanWriteBizLine 是空间写入权判定：只读成员拿不到，写入成员和空间管理员拿得到。
+// 建项目、改项目以及项目内的一切写操作都过这一关。
+func CanWriteBizLine(ginContext *gin.Context, bizLine string) bool {
 	principal, ok := CurrentUser(ginContext)
-	return ok && (principal.Service || principal.Role == "admin" || contains(principal.ManagedBizLines, bizLine) || containsProgramID(principal.ManagedProgramIDs, programID))
+	return ok && (principal.Service || contains(principal.WritableBizLines, bizLine) || contains(principal.ManagedBizLines, bizLine))
+}
+
+// CanWriteProgram 是项目内容的写入判定：任务、需求、里程碑、模块。
+// 在空间写入权之外额外认项目级管理员；空间里的只读成员即使被列为项目成员也写不了，
+// 读写是空间维度的授权。
+func CanWriteProgram(ginContext *gin.Context, bizLine string, programID int64) bool {
+	if CanWriteBizLine(ginContext, bizLine) {
+		return true
+	}
+	principal, ok := CurrentUser(ginContext)
+	return ok && containsProgramID(principal.ManagedProgramIDs, programID)
+}
+
+// CanAdministerProgram 是项目本身的管理判定：改项目、分配人员、删除项目。
+// 比写入权更严 —— 空间的写入成员能在项目里干活，但动不了项目的归属与人员，
+// 那是项目管理员和空间管理员的事。
+func CanAdministerProgram(ginContext *gin.Context, bizLine string, programID int64) bool {
+	principal, ok := CurrentUser(ginContext)
+	if !ok {
+		return false
+	}
+	return principal.Service || contains(principal.ManagedBizLines, bizLine) || containsProgramID(principal.ManagedProgramIDs, programID)
 }
 
 func CanAccessBizLine(ginContext *gin.Context, bizLine string) bool {
@@ -299,7 +327,7 @@ func BizLine(context *gin.Context) string {
 	if value := strings.TrimSpace(context.GetHeader("X-Biz-Line")); value != "" {
 		return value
 	}
-	return DefaultBizLine
+	return ""
 }
 
 func CallerID(context *gin.Context) string {

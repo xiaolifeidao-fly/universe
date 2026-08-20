@@ -24,6 +24,8 @@ export class LoggedInUser {
 
   mustChangePassword = false;
 
+	writableBizLines: string[] = [];
+
 	managedBizLines: string[] = [];
 
 	managedPrograms: Array<{ bizLine: string; programId: number }> = [];

@@ -19,6 +19,11 @@ type ProgramView struct {
 	Status      string           `json:"status"`
 	UpdatedBy   string           `json:"updatedBy"`
 	UpdatedAt   *time.Time       `json:"updatedAt"`
+
+	// CanAdminister / CanWrite 是「当前调用者对这个项目的权限」，由 API 层按调用者身份填充。
+	// 前端据此决定按钮的显隐 —— 权限判定只有服务端说了算。
+	CanAdminister bool `json:"canAdminister"`
+	CanWrite      bool `json:"canWrite"`
 }
 
 type SaveProgramRequest struct {

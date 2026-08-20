@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
+import { getAuthUser } from "@/utils/auth";
 import {
   DELIVERY_KINDS,
 	DELIVERY_PHASES,
@@ -46,6 +47,7 @@ import { DeliveryTaskDocumentModal } from "./DeliveryTaskDocument";
 import { DeliveryRequirementList } from "./DeliveryRequirementList";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
+import { DeliveryOnboardingGuide } from "./DeliveryOnboardingGuide";
 
 // 全景视角已经独立成「全景视图」菜单（/panorama），这里只留看板和列表。
 type ViewMode = "board" | "list";
@@ -101,6 +103,7 @@ export function DeliveryWorkspace() {
   const { activeBusinessLine, setActiveBusinessLine } = useBusinessLine();
   const { preferences } = useAIPreferences();
   const { t } = useLocale();
+  const userId = getAuthUser()?.id ?? 0;
   const sharedRequirementKey = (searchParams?.get("requirementKey") ?? "").trim();
   const sharedProgramId = Number(searchParams?.get("programId")) || 0;
   const sharedBizLine = (searchParams?.get("bizLine") ?? "").trim();
@@ -183,6 +186,8 @@ export function DeliveryWorkspace() {
 	const [selectedItemKeys, setSelectedItemKeys] = useState<string[]>([]);
   const [pendingGroupedExecution, setPendingGroupedExecution] = useState<PendingGroupedExecution | null>(null);
   const [executionConstraints, setExecutionConstraints] = useState("");
+  const [onboardingWrittenRequirementKey, setOnboardingWrittenRequirementKey] = useState("");
+  const [onboardingExecutionStartedVersion, setOnboardingExecutionStartedVersion] = useState(0);
   const [notificationReadState, setNotificationReadState] = useState<DeliveryNotificationReadState>({
     scope: "",
     counts: EMPTY_DELIVERY_NOTIFICATION_COUNTS,
@@ -269,9 +274,9 @@ export function DeliveryWorkspace() {
 
   const overview = board.overview;
   const notificationStorageKey = useMemo(() => {
-    if (!bizLine || !programId || !filters.requirementKey) return "";
-    return `zb.delivery.notification-center.v1:${bizLine}:${programId}:${filters.requirementKey}`;
-  }, [bizLine, filters.requirementKey, programId]);
+    if (!userId || !bizLine || !programId || !filters.requirementKey) return "";
+    return `zb.delivery.notification-center.v2:${userId}:${bizLine}:${programId}:${filters.requirementKey}`;
+  }, [bizLine, filters.requirementKey, programId, userId]);
   const notificationCounts = useMemo<DeliveryNotificationCounts>(() => (
     itemCatalog.reduce<DeliveryNotificationCounts>((counts, item) => {
       if (item.status === "blocked" || item.status === "dropped" || item.status === "done") {
@@ -546,6 +551,7 @@ export function DeliveryWorkspace() {
       try {
         const result = await executeWithCodex(item);
         message.success(t("delivery.execution.started").replace("{id}", result.threadId));
+        setOnboardingExecutionStartedVersion((current) => current + 1);
         return true;
       } catch (error) {
         message.error((error as Error).message);
@@ -563,6 +569,7 @@ export function DeliveryWorkspace() {
       const result = await executeSequenceWithCodex({ ...options, executionConstraints: constraints });
       setSelectedItemKeys([]);
       message.success(t("delivery.execution.sequenceStarted").replace("{count}", String(result.itemKeys.length)));
+      setOnboardingExecutionStartedVersion((current) => current + 1);
       return true;
     } catch (error) {
       message.error((error as Error).message);
@@ -592,6 +599,7 @@ export function DeliveryWorkspace() {
 			const result = await executeBatchWithCodex(itemKeys, constraints);
 			setSelectedItemKeys((current) => current.filter((itemKey) => !result.itemKeys.includes(itemKey)));
 			message.success(t("delivery.execution.batchStarted").replace("{count}", String(result.itemKeys.length)));
+			setOnboardingExecutionStartedVersion((current) => current + 1);
 			return true;
 		} catch (error) {
 			message.error((error as Error).message);
@@ -840,6 +848,25 @@ export function DeliveryWorkspace() {
           ) : null}
         </div>
         <Space>
+          <DeliveryOnboardingGuide
+            enabled={Boolean(userId) && !sharedRequirementKey}
+            userId={userId}
+            programId={programId}
+            activeRequirementKey={editingRequirement?.requirementKey ?? ""}
+            writtenRequirementKey={onboardingWrittenRequirementKey}
+            executionStartedVersion={onboardingExecutionStartedVersion}
+            onOpenRequirement={(requirementKey) => {
+              if (!programId) return;
+              setRequirementsExpanded(true);
+              setEditingRequirement(requirementKey ? requirements.find((item) => item.requirementKey === requirementKey) ?? null : null);
+              setPlanningOpen(true);
+            }}
+            onShowTasks={(requirementKey) => {
+              if (!requirementKey) return;
+              setRequirementsExpanded(false);
+              handleRequirementSelect(requirementKey);
+            }}
+          />
           <Popover
             placement="bottomRight"
             trigger="click"
@@ -1233,6 +1260,15 @@ export function DeliveryWorkspace() {
           setEditingRequirement(requirement);
           setStartRequirementTesting(false);
           void refreshRequirements();
+        }}
+        onTasksWritten={(requirement) => {
+          setEditingRequirement(requirement);
+          setOnboardingWrittenRequirementKey(requirement.requirementKey);
+          setFilters((current) => ({
+            ...current,
+            requirementKey: requirement.requirementKey,
+            phase: requirement.startPhase,
+          }));
         }}
         onChanged={handleSessionChanged}
       />

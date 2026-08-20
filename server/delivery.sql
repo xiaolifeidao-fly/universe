@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
   `created_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_dlv_program_code` (`program_code`),
+  UNIQUE KEY `uk_dlv_program_code` (`biz_line`, `program_code`),
   KEY `idx_dlv_program_biz_line` (`biz_line`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -99,6 +99,10 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   `split_tasks`     boolean      NOT NULL DEFAULT TRUE,           -- 是否把需求拆成多条任务；FALSE 表示只落一条任务
   `generate_task_outline` boolean NOT NULL DEFAULT FALSE,          -- 拆解时是否为每条任务单独写一份需求大纲；默认只留需求级大纲
   `generate_prototype` boolean    NOT NULL DEFAULT FALSE,           -- 专业模式拆解确认后可生成关联 HTML 原型
+  `git_enabled` boolean NULL DEFAULT NULL,                            -- 是否为该需求关联独立 Git 分支；NULL 表示未设置，由前端回落到用户偏好
+  `git_base_branch` varchar(255) NOT NULL DEFAULT '',                -- 创建需求分支时使用的基准分支
+  `git_branch` varchar(255) NOT NULL DEFAULT '',                     -- 关联的需求分支
+  `git_branch_created_at` timestamp NULL,                            -- 最近一次确认创建并关联需求分支的时间
   `prototype_html_path` varchar(512) NOT NULL DEFAULT '',           -- 原型目录在项目工作区 doc/ 下的相对路径，内含按模块拆分的 HTML
   `prototype_generated_at` timestamp NULL,                           -- 最近一次生成 HTML 原型的时间
   `testing_status`  varchar(16)  NOT NULL DEFAULT 'todo',            -- 需求总体测试：todo/doing/passed/failed/blocked

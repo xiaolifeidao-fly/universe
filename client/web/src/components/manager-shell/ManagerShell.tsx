@@ -5,7 +5,9 @@ import {
   BranchesOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+	CopyOutlined,
   DownOutlined,
+	ExportOutlined,
   FolderOutlined,
   GlobalOutlined,
   IdcardOutlined,
@@ -15,12 +17,14 @@ import {
   ReloadOutlined,
   SettingOutlined,
   StarFilled,
+  ThunderboltOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Alert, Avatar, Badge, Button, Descriptions, Divider, Drawer, Dropdown, Form, Input, Layout, Menu, Modal, Segmented, Select, Slider, Space, Spin, Switch, Tag, Tooltip, message } from "antd";
+import { Alert, Avatar, Badge, Button, Descriptions, Divider, Drawer, Dropdown, Form, Input, Layout, Menu, Modal, Segmented, Select, Slider, Space, Spin, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import type { MenuProps } from "antd";
 import { usePathname, useRouter } from "next/navigation";
-import { PropsWithChildren, type CSSProperties, type ReactNode, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { PropsWithChildren, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
@@ -44,6 +48,13 @@ import {
   useAIPreferences,
 } from "@/ai-preferences/AIPreferencesProvider";
 import { AIEnvironmentHealth, fetchAIEnvironmentHealth } from "@/ai-preferences/aiEnvironment.api";
+import { DeliveryTaskPlannerUpdateStatus, fetchDeliveryTaskPlannerHealth, fetchDeliveryTaskPlannerUpdate } from "@/api/delivery.api";
+import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
+
+const LocalEnvironmentPreferencesModal = dynamic(
+  () => import("./LocalEnvironmentPreferencesModal").then((module) => module.LocalEnvironmentPreferencesModal),
+  { ssr: false },
+);
 
 const { Content, Header, Sider } = Layout;
 
@@ -96,6 +107,8 @@ interface NavGroup {
   children: NavLeaf[];
 }
 
+type NavEntry = NavGroup | NavLeaf;
+
 // 只挂真实存在的页面。工作台 / 资源 / 风控 / 平台管理那几组指向的页面目录
 // 不在这个仓库里（src/app/(console)/ 下只有 delivery 和 user），点进去全是 404。
 // 页面补回来的时候，照下面这个形状把组加回来即可。
@@ -111,6 +124,7 @@ const DELIVERY_NAV_GROUP: NavGroup = {
   ],
 };
 
+// 用户管理是系统管理员独占的入口：其余人连这一组都看不到。
 const SYSTEM_NAV_GROUP: NavGroup = {
   key: "grp-system",
   label: "nav.systemSettings",
@@ -119,40 +133,28 @@ const SYSTEM_NAV_GROUP: NavGroup = {
   icon: <SettingOutlined />,
   children: [
     { key: "/user", label: "nav.users", icon: <KeyOutlined /> },
-    { key: "/business-lines", label: "nav.businessLines", icon: <BranchesOutlined /> },
-    { key: "/programs", label: "nav.programs", icon: <FolderOutlined /> },
   ],
 };
 
-const PROGRAM_NAV_GROUP: NavGroup = {
-  key: "grp-programs",
-  label: "nav.programs",
-  caption: "PROJECTS",
-  tone: "amber",
-  icon: <FolderOutlined />,
-  children: [
-    { key: "/programs", label: "programs.title", icon: <FolderOutlined /> },
-  ],
-};
+// 交付项目和空间管理都是单页入口，直接作为一级菜单呈现。
+const PRIMARY_NAV_ITEMS: NavLeaf[] = [
+  { key: "/programs", label: "programs.title", icon: <FolderOutlined /> },
+  { key: "/business-lines", label: "nav.businessLines", icon: <BranchesOutlined /> },
+];
 
-const BIZ_LINE_NAV_GROUP: NavGroup = {
-	key: "grp-bizline",
-	label: "nav.businessLines",
-	caption: "BUSINESS LINES",
-	tone: "amber",
-	icon: <BranchesOutlined />,
-	children: [
-		{ key: "/business-lines", label: "nav.businessLines", icon: <BranchesOutlined /> },
-	],
-};
-
-function navGroupsFor(isAdmin: boolean, canManageBizLines: boolean): NavGroup[] {
-	if (isAdmin) return [DELIVERY_NAV_GROUP, SYSTEM_NAV_GROUP];
+// 空间管理对所有人常开：新建空间不再是管理员特权，
+// 名下一个空间都没有的人也得有地方建第一个。
+// 系统管理员的空间可见范围和普通用户一致，多出来的只有用户管理。
+function navEntriesFor(isAdmin: boolean): NavEntry[] {
 	return [
 		DELIVERY_NAV_GROUP,
-		PROGRAM_NAV_GROUP,
-		...(canManageBizLines ? [BIZ_LINE_NAV_GROUP] : []),
+		...PRIMARY_NAV_ITEMS,
+		...(isAdmin ? [SYSTEM_NAV_GROUP] : []),
 	];
+}
+
+function isNavGroup(entry: NavEntry): entry is NavGroup {
+	return "children" in entry;
 }
 
 function findGroupKey(path: string, groups: NavGroup[]): string | undefined {
@@ -163,12 +165,12 @@ export function ManagerShell({ children }: ManagerShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { locale, setLocale, t } = useLocale();
-  const { activeBusinessLine, businessLines, setActiveBusinessLine } = useBusinessLine();
+	const { activeBusinessLine, businessLines, businessLinesLoaded, setActiveBusinessLine } = useBusinessLine();
 	const { preferences, setPreferences } = useAIPreferences();
 	const authUser = getAuthUser();
 	const isAdmin = authUser?.role === "admin";
-	const canManageBizLines = isAdmin || (authUser?.managedBizLines?.length ?? 0) > 0;
-	const navGroups = useMemo(() => navGroupsFor(isAdmin, canManageBizLines), [canManageBizLines, isAdmin]);
+	const navEntries = useMemo(() => navEntriesFor(isAdmin), [isAdmin]);
+	const navGroups = useMemo(() => navEntries.filter(isNavGroup), [navEntries]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -180,38 +182,60 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	const [profileLoading, setProfileLoading] = useState(false);
 	const [passwordSubmitting, setPasswordSubmitting] = useState(false);
 	const [preferencesOpen, setPreferencesOpen] = useState(false);
+	const [localEnvironmentOpen, setLocalEnvironmentOpen] = useState(false);
 	const [preferencesDraft, setPreferencesDraft] = useState<AIPreferences>(preferences);
 	const [aiEnvironmentHealth, setAIEnvironmentHealth] = useState<AIEnvironmentHealth | null>(null);
 	const [aiEnvironmentLoading, setAIEnvironmentLoading] = useState(false);
+	const [taskPlannerInstallOpen, setTaskPlannerInstallOpen] = useState(false);
+	const [taskPlannerUpdateOpen, setTaskPlannerUpdateOpen] = useState(false);
+	const [taskPlannerUpdate, setTaskPlannerUpdate] = useState<DeliveryTaskPlannerUpdateStatus | null>(null);
+	const [taskPlannerHealthLoading, setTaskPlannerHealthLoading] = useState(false);
 	const [passwordForm] = Form.useForm<{ currentPassword: string; newPassword: string; confirmPassword: string }>();
 
   const items = useMemo<MenuItem[]>(
-    () =>
-      navGroups.map((group) => ({
-        key: group.key,
-        label: (
-          <span className={`manager-nav-group-heading manager-nav-group-heading--${group.tone}`}>
-            <span className="manager-nav-group-icon">{group.icon}</span>
-            <span className="manager-nav-group-copy">
-              <b>{t(group.label)}</b>
-              <small>{group.caption}</small>
-            </span>
-          </span>
-        ),
-        children: group.children.map((leaf) => ({
-          key: leaf.key,
-          label: (
-            <span
-              className={`manager-nav-item-content manager-nav-item-content--${group.tone}`}
-              style={{ "--manager-nav-accent": `var(--manager-${group.tone})` } as CSSProperties}
-            >
-              <span className="manager-nav-item-icon">{leaf.icon}</span>
-              <span className="manager-nav-item-label">{t(leaf.label)}</span>
-            </span>
-          ),
-        })),
-      })),
-    [navGroups, t],
+	    () =>
+	      navEntries.map((entry) => {
+	        if (isNavGroup(entry)) {
+	          return {
+	            key: entry.key,
+	            label: (
+	              <span className={`manager-nav-group-heading manager-nav-group-heading--${entry.tone}`}>
+	                <span className="manager-nav-group-icon">{entry.icon}</span>
+	                <span className="manager-nav-group-copy">
+	                  <b>{t(entry.label)}</b>
+	                  <small>{entry.caption}</small>
+	                </span>
+	              </span>
+	            ),
+	            children: entry.children.map((leaf) => ({
+	              key: leaf.key,
+	              label: (
+	                <span
+	                  className={`manager-nav-item-content manager-nav-item-content--${entry.tone}`}
+	                  style={{ "--manager-nav-accent": `var(--manager-${entry.tone})` } as CSSProperties}
+	                >
+	                  <span className="manager-nav-item-icon">{leaf.icon}</span>
+	                  <span className="manager-nav-item-label">{t(leaf.label)}</span>
+	                </span>
+	              ),
+	            })),
+	          };
+	        }
+
+	        return {
+	          key: entry.key,
+	          label: (
+	            <span
+	              className="manager-nav-item-content manager-nav-item-content--amber"
+	              style={{ "--manager-nav-accent": "var(--manager-amber)" } as CSSProperties}
+	            >
+	              <span className="manager-nav-item-icon">{entry.icon}</span>
+	              <span className="manager-nav-item-label">{t(entry.label)}</span>
+	            </span>
+	          ),
+	        };
+	      }),
+	    [navEntries, t],
   );
 
   const activePath = pathname ?? "/delivery";
@@ -308,6 +332,65 @@ export function ManagerShell({ children }: ManagerShellProps) {
       setAIEnvironmentLoading(false);
     }
   };
+
+	const checkTaskPlannerHealth = useCallback(async () => {
+		setTaskPlannerHealthLoading(true);
+		try {
+			await fetchDeliveryTaskPlannerHealth();
+			setTaskPlannerInstallOpen(false);
+			try {
+				const update = await fetchDeliveryTaskPlannerUpdate();
+				setTaskPlannerUpdate(update);
+				setTaskPlannerUpdateOpen(update.updateAvailable);
+			} catch (error) {
+				// A healthy bridge with no version endpoint is an older plugin release.
+				const missingVersionEndpoint = (error as { response?: { status?: number } }).response?.status === 404;
+				const update = Object.assign(new DeliveryTaskPlannerUpdateStatus(), {
+					updateAvailable: missingVersionEndpoint,
+					message: missingVersionEndpoint ? "unsupported-version-check" : "",
+				});
+				setTaskPlannerUpdate(update);
+				setTaskPlannerUpdateOpen(missingVersionEndpoint);
+			}
+			return true;
+		} catch {
+			setTaskPlannerUpdate(null);
+			setTaskPlannerUpdateOpen(false);
+			setTaskPlannerInstallOpen(true);
+			return false;
+		} finally {
+			setTaskPlannerHealthLoading(false);
+		}
+	}, []);
+
+	// The shell remains mounted during in-console navigation, so include pathname
+	// to recheck whenever someone enters the task board or another console page.
+	useEffect(() => {
+		void checkTaskPlannerHealth();
+	}, [checkTaskPlannerHealth, pathname]);
+
+	const taskPlannerInstallPrompt = t("delivery.plugin.installPrompt")
+		.replace("{url}", DELIVERY_TASK_PLANNER_REPOSITORY_URL);
+	const taskPlannerUpdatePrompt = t("delivery.plugin.updatePrompt")
+		.replace("{url}", DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+		.replace("{remoteVersion}", taskPlannerUpdate?.remoteVersion || t("delivery.plugin.latestVersion"));
+	const taskPlannerUpdateDescription = taskPlannerUpdate?.message === "unsupported-version-check"
+		? t("delivery.plugin.updateLegacyDescription")
+		: t("delivery.plugin.updateDescription")
+			.replace("{localVersion}", taskPlannerUpdate?.localVersion || "-")
+			.replace("{remoteVersion}", taskPlannerUpdate?.remoteVersion || "-");
+
+	const copyTaskPlannerInstallPrompt = () => {
+		void navigator.clipboard.writeText(taskPlannerInstallPrompt)
+			.then(() => message.success(t("delivery.plugin.installCopied")))
+			.catch(() => message.error(t("delivery.plugin.installCopyFailed")));
+	};
+
+	const copyTaskPlannerUpdatePrompt = () => {
+		void navigator.clipboard.writeText(taskPlannerUpdatePrompt)
+			.then(() => message.success(t("delivery.plugin.updateCopied")))
+			.catch(() => message.error(t("delivery.plugin.updateCopyFailed")));
+	};
 
   const openPreferences = () => {
     setPreferencesDraft(preferences);
@@ -509,14 +592,24 @@ export function ManagerShell({ children }: ManagerShellProps) {
               </div>
               <span style={{ flex: 1 }} />
               <Space className="manager-prototype-top-actions" size={8}>
+                <Button
+                  className="manager-local-environment-trigger"
+                  icon={<ThunderboltOutlined />}
+                  onClick={() => setLocalEnvironmentOpen(true)}
+                >
+                  {t("programs.environment.manage")}
+                </Button>
                 <Tooltip title={t("aiPreferences.title")}>
                   <Button aria-label={t("aiPreferences.title")} icon={<SettingOutlined />} onClick={openPreferences} />
                 </Tooltip>
                 <Select
                   aria-label={t("businessLine.current")}
                   className="manager-business-line-select"
-                  value={activeBusinessLine.id}
+				  value={activeBusinessLine.id || undefined}
                   prefix={<AppstoreOutlined />}
+				  placeholder={t("businessLine.current")}
+				  loading={!businessLinesLoaded}
+				  disabled={!businessLinesLoaded || businessLines.length === 0}
                   onChange={(value) => setActiveBusinessLine(value as typeof activeBusinessLine.id)}
                   options={businessLines.map((line) => ({
                     value: line.id,
@@ -561,7 +654,13 @@ export function ManagerShell({ children }: ManagerShellProps) {
             </Header>
 
             <Content className={`manager-console-content${activePath === "/delivery" ? " manager-console-content--delivery" : ""}`} style={{ padding: 20 }}>
-              <div className={`manager-stagger-3${activePath === "/delivery" ? " manager-stagger-3--delivery" : ""}`} data-business-line={activeBusinessLine.id} key={activeBusinessLine.id}>{children}</div>
+			  {!businessLinesLoaded ? (
+				  <div className="manager-stagger-3" style={{ display: "grid", minHeight: 240, placeItems: "center" }}><Spin /></div>
+			  ) : activeBusinessLine.id || activePath === "/business-lines" ? (
+				  <div className={`manager-stagger-3${activePath === "/delivery" ? " manager-stagger-3--delivery" : ""}`} data-business-line={activeBusinessLine.id} key={activeBusinessLine.id}>{children}</div>
+			  ) : (
+				  <Alert className="manager-stagger-3" type="info" showIcon message={t("businessLine.unavailable")} />
+			  )}
             </Content>
           </Layout>
         </Layout>
@@ -640,6 +739,10 @@ export function ManagerShell({ children }: ManagerShellProps) {
 		  onClose={() => setPreferencesOpen(false)}
 		  extra={<Button type="primary" onClick={savePreferences}>{t("delivery.save")}</Button>}
 		>
+		  <Tabs
+			defaultActiveKey="ai"
+			items={[
+			  { key: "ai", label: t("aiPreferences.tabAI"), children: (<>
 		  <div className="manager-ai-preferences__environment">
 			<div className="manager-ai-preferences__environment-heading">
 			  <div className="manager-ai-preferences__section">
@@ -733,7 +836,158 @@ export function ManagerShell({ children }: ManagerShellProps) {
 				  );
 				})}
 			  </div>
+			  </>) },
+			  { key: "git", label: t("aiPreferences.tabGit"), children: (<>
+			  <div className="manager-ai-preferences__section">
+				<strong>{t("aiPreferences.requirementGit")}</strong>
+				<div className="manager-ai-preferences__switch-row">
+				  <small>{t("aiPreferences.requirementGitHint")}</small>
+				  <Switch
+					checked={preferencesDraft.gitEnabledByDefault}
+					aria-label={t("aiPreferences.requirementGit")}
+					onChange={(gitEnabledByDefault) => setPreferencesDraft((current) => ({ ...current, gitEnabledByDefault }))}
+				  />
+				</div>
+			  </div>
+			  <Divider />
+			  <div className="manager-ai-preferences__section">
+				<strong>{t("aiPreferences.gitEnvironment")}</strong>
+				<small>{t("aiPreferences.gitEnvironmentHint")}</small>
+				<Button
+				  icon={<ThunderboltOutlined />}
+				  style={{ justifySelf: "start" }}
+				  onClick={() => setLocalEnvironmentOpen(true)}
+				>
+				  {t("programs.environment.manage")}
+				</Button>
+			  </div>
+			  </>) },
+			]}
+		  />
 		</Drawer>
+		<Modal
+		  open={taskPlannerInstallOpen}
+		  title={t("delivery.plugin.title")}
+		  closable
+		  maskClosable
+		  onCancel={() => setTaskPlannerInstallOpen(false)}
+		  footer={(
+			<Space>
+			  <Button onClick={() => setTaskPlannerInstallOpen(false)}>{t("common.cancel")}</Button>
+			  <Button type="primary" icon={<ReloadOutlined />} loading={taskPlannerHealthLoading} onClick={() => void checkTaskPlannerHealth()}>
+				{t("delivery.plugin.retry")}
+			  </Button>
+			</Space>
+		  )}
+		>
+		  <div className="delivery-plugin-install">
+			<p>{t("delivery.plugin.description")}</p>
+			<div className="delivery-plugin-install__repository">
+			  <a href={DELIVERY_TASK_PLANNER_REPOSITORY_URL} target="_blank" rel="noreferrer">
+				{DELIVERY_TASK_PLANNER_REPOSITORY_URL}
+			  </a>
+			  <Space size={2}>
+				<Tooltip title={t("delivery.plugin.copyRepository")}>
+				  <Button
+					type="text"
+					size="small"
+					icon={<CopyOutlined />}
+					aria-label={t("delivery.plugin.copyRepository")}
+					onClick={() => {
+					  void navigator.clipboard.writeText(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+						.then(() => message.success(t("delivery.plugin.repositoryCopied")))
+						.catch(() => message.error(t("delivery.plugin.repositoryCopyFailed")));
+					}}
+				  />
+				</Tooltip>
+				<Tooltip title={t("delivery.plugin.openRepository")}>
+				  <Button
+					type="text"
+					size="small"
+					icon={<ExportOutlined />}
+					aria-label={t("delivery.plugin.openRepository")}
+					href={DELIVERY_TASK_PLANNER_REPOSITORY_URL}
+					target="_blank"
+				  />
+				</Tooltip>
+			  </Space>
+			</div>
+			<div className="delivery-plugin-install__prompt">
+			  <code>{taskPlannerInstallPrompt}</code>
+			  <Tooltip title={t("delivery.plugin.copyInstall")}>
+				<Button
+				  type="text"
+				  size="small"
+				  icon={<CopyOutlined />}
+				  aria-label={t("delivery.plugin.copyInstall")}
+				  onClick={copyTaskPlannerInstallPrompt}
+				/>
+			  </Tooltip>
+			</div>
+		  </div>
+		</Modal>
+		<Modal
+		  open={taskPlannerUpdateOpen}
+		  title={t("delivery.plugin.updateTitle")}
+		  closable
+		  maskClosable
+		  onCancel={() => setTaskPlannerUpdateOpen(false)}
+		  footer={(
+			<Space>
+			  <Button onClick={() => setTaskPlannerUpdateOpen(false)}>{t("common.cancel")}</Button>
+			  <Button type="primary" icon={<ReloadOutlined />} loading={taskPlannerHealthLoading} onClick={() => void checkTaskPlannerHealth()}>
+				{t("delivery.plugin.retry")}
+			  </Button>
+			</Space>
+		  )}
+		>
+		  <div className="delivery-plugin-install">
+			<p>{taskPlannerUpdateDescription}</p>
+			<div className="delivery-plugin-install__repository">
+			  <a href={DELIVERY_TASK_PLANNER_REPOSITORY_URL} target="_blank" rel="noreferrer">
+				{DELIVERY_TASK_PLANNER_REPOSITORY_URL}
+			  </a>
+			  <Space size={2}>
+				<Tooltip title={t("delivery.plugin.copyRepository")}>
+				  <Button
+					type="text"
+					size="small"
+					icon={<CopyOutlined />}
+					aria-label={t("delivery.plugin.copyRepository")}
+					onClick={() => {
+					  void navigator.clipboard.writeText(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+						.then(() => message.success(t("delivery.plugin.repositoryCopied")))
+						.catch(() => message.error(t("delivery.plugin.repositoryCopyFailed")));
+					}}
+				  />
+				</Tooltip>
+				<Tooltip title={t("delivery.plugin.openRepository")}>
+				  <Button
+					type="text"
+					size="small"
+					icon={<ExportOutlined />}
+					aria-label={t("delivery.plugin.openRepository")}
+					href={DELIVERY_TASK_PLANNER_REPOSITORY_URL}
+					target="_blank"
+				  />
+				</Tooltip>
+			  </Space>
+			</div>
+			<div className="delivery-plugin-install__prompt">
+			  <code>{taskPlannerUpdatePrompt}</code>
+			  <Tooltip title={t("delivery.plugin.copyUpdate")}>
+				<Button
+				  type="text"
+				  size="small"
+				  icon={<CopyOutlined />}
+				  aria-label={t("delivery.plugin.copyUpdate")}
+				  onClick={copyTaskPlannerUpdatePrompt}
+				/>
+			  </Tooltip>
+			</div>
+		  </div>
+		</Modal>
+      <LocalEnvironmentPreferencesModal open={localEnvironmentOpen} onClose={() => setLocalEnvironmentOpen(false)} />
     </div>
   );
 }

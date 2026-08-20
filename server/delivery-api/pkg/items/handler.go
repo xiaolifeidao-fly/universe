@@ -253,7 +253,7 @@ func (h *Handler) resolveProgramBizLine(context *gin.Context, programID int64, t
 }
 
 func (h *Handler) requireProgramManager(context *gin.Context, bizLine contract.BizLine, programID int64) bool {
-	if httpx.CanManageProgram(context, bizLine.String(), programID) {
+	if httpx.CanWriteProgram(context, bizLine.String(), programID) {
 		return true
 	}
 	httpx.Fail(context, "无权管理该项目")

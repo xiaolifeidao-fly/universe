@@ -20,12 +20,12 @@ func (a testAuthenticator) AuthenticateToken(context.Context, string) (UserPrinc
 	return a.principal, nil
 }
 
-func TestBizLineDefaultsWhenRequestOmitsIt(t *testing.T) {
+func TestBizLineIsEmptyWhenRequestOmitsIt(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest(http.MethodGet, "/delivery/programs", nil)
 
-	if got := BizLine(context); got != DefaultBizLine {
-		t.Fatalf("BizLine() = %q, want %q", got, DefaultBizLine)
+	if got := BizLine(context); got != "" {
+		t.Fatalf("BizLine() = %q, want empty", got)
 	}
 }
 
@@ -128,8 +128,8 @@ func TestProjectScopePermissions(t *testing.T) {
 			if got := CanManageBizLine(ginContext, "whatsapp"); got != test.wantManageBiz {
 				t.Fatalf("CanManageBizLine() = %t, want %t", got, test.wantManageBiz)
 			}
-			if got := CanManageProgram(ginContext, "whatsapp", 42); got != test.wantManageProgram {
-				t.Fatalf("CanManageProgram() = %t, want %t", got, test.wantManageProgram)
+			if got := CanAdministerProgram(ginContext, "whatsapp", 42); got != test.wantManageProgram {
+				t.Fatalf("CanAdministerProgram() = %t, want %t", got, test.wantManageProgram)
 			}
 		})
 	}

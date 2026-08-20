@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +69,7 @@ func (s *service) AuthenticateToken(ctx context.Context, rawToken string) (httpx
 	}
 	return httpx.UserPrincipal{
 		ID: strconv.FormatInt(user.ID, 10), Username: user.Username, DisplayName: user.DisplayName,
-		Role: user.Role, MustChangePassword: user.MustChangePassword, BizLines: view.BizLines, ManagedBizLines: view.ManagedBizLines, ProgramIDs: programIDs, ManagedProgramIDs: managedProgramIDs,
+		Role: user.Role, MustChangePassword: user.MustChangePassword, BizLines: view.BizLines, WritableBizLines: view.WritableBizLines, ManagedBizLines: view.ManagedBizLines, ProgramIDs: programIDs, ManagedProgramIDs: managedProgramIDs,
 	}, nil
 }
 
@@ -133,4 +134,60 @@ func loginError(err error) error {
 		return errors.New("账号或密码错误")
 	}
 	return fmt.Errorf("认证服务不可用: %w", err)
+}
+
+// registerUsernamePattern 与 bizline 的空间编码规则保持一致：
+// 注册成功后用户名会直接作为该用户专属空间的编码。
+var registerUsernamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// Register 是登录页自助注册：只创建账号本身。
+// 专属空间的创建与授权由 API 层编排，identity 不反向依赖 bizline。
+func (s *service) Register(ctx context.Context, req dto.RegisterRequest) (dto.LoginResult, error) {
+	username := strings.ToLower(strings.TrimSpace(req.Username))
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		displayName = username
+	}
+	if username == "" {
+		return dto.LoginResult{}, errors.New("请输入用户名")
+	}
+	if len(username) < 2 || len(username) > 32 {
+		return dto.LoginResult{}, errors.New("用户名长度需要在 2 到 32 个字符之间")
+	}
+	if !registerUsernamePattern.MatchString(username) {
+		return dto.LoginResult{}, errors.New("用户名仅支持小写字母、数字、下划线和连字符，且需以字母或数字开头")
+	}
+	if len(displayName) > 64 {
+		return dto.LoginResult{}, errors.New("显示名不能超过 64 个字符")
+	}
+	if _, err := s.repo.FindUserByUsername(ctx, username); err == nil {
+		return dto.LoginResult{}, errors.New("用户名已存在")
+	} else if !repository.IsNotFound(err) {
+		return dto.LoginResult{}, err
+	}
+	hash, err := hashPassword(req.Password)
+	if err != nil {
+		return dto.LoginResult{}, err
+	}
+	user := &repository.IdentityUser{
+		Username:           username,
+		DisplayName:        displayName,
+		PasswordHash:       hash,
+		Role:               RoleMember,
+		Status:             StatusActive,
+		MustChangePassword: false,
+		TokenVersion:       1,
+	}
+	if err := s.repo.CreateUser(ctx, user); err != nil {
+		return dto.LoginResult{}, err
+	}
+	token, err := issueToken(s.tokenSecret, user.ID, user.TokenVersion, time.Now().Add(s.tokenTTL))
+	if err != nil {
+		return dto.LoginResult{}, err
+	}
+	view, err := s.toUserView(ctx, user)
+	if err != nil {
+		return dto.LoginResult{}, err
+	}
+	return dto.LoginResult{Token: token, User: view}, nil
 }

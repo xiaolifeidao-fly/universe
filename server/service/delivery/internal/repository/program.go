@@ -47,6 +47,15 @@ func (r *DeliveryRepository) FindProgramByID(ctx context.Context, programID int6
 	return &row, nil
 }
 
+// FindProgramByCode 按空间加编码定位项目，用于保存前的重码校验。
+func (r *DeliveryRepository) FindProgramByCode(ctx context.Context, bizLine, programCode string) (*DeliveryProgram, error) {
+	var row DeliveryProgram
+	if err := r.Db.WithContext(ctx).Where("biz_line = ? AND program_code = ?", bizLine, programCode).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 // LockProgram 把一个项目作为依赖图修改的事务锁，避免两条并发改边请求各自校验通过后合成环。
 func (r *DeliveryRepository) LockProgram(ctx context.Context, bizLine string, programID int64) error {
 	var row DeliveryProgram
@@ -69,7 +78,7 @@ func (r *DeliveryRepository) SaveProgram(ctx context.Context, row *DeliveryProgr
 		return err
 	}
 	if existing.BizLine != row.BizLine {
-		return errors.New("项目不属于当前业务线")
+		return errors.New("项目不属于当前空间")
 	}
 	return r.Db.WithContext(ctx).Model(&DeliveryProgram{}).Where("id = ?", existing.Id).
 		Updates(map[string]any{

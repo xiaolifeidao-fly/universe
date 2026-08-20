@@ -14,6 +14,7 @@ import {
   type ApiResponse,
 } from "@/utils/axios";
 import { withBizLine } from "@/utils/bizLine";
+import { DELIVERY_TASK_PLANNER_BRIDGE_URL } from "@/project-workspaces/deliveryTaskPlanner";
 import { getProjectWorkspace } from "@/project-workspaces/projectWorkspacePreferences";
 
 /** 任务状态，与服务端 service/delivery 的常量一一对应。 */
@@ -58,6 +59,11 @@ export class DeliveryProgramRecord {
   updatedBy = "";
 
   updatedAt?: string;
+
+  /** 当前登录用户对这个项目的权限，由服务端按调用者身份返回。 */
+  canAdminister = false;
+
+  canWrite = false;
 }
 
 export class ProgramAssignment {
@@ -162,6 +168,18 @@ export class DeliveryRequirementRecord {
 
   /** 仅专业模式可设置；任务确认写入后可再次确认生成需求 HTML 原型。 */
   generatePrototype = false;
+
+  /**
+   * 本条需求是否需要一个专属 Git 分支；分支由本机桥接在项目工作目录中创建。
+   * undefined 表示这条需求没单独设置过，调用方回落到偏好设置里的默认值。
+   */
+  gitEnabled?: boolean;
+
+  gitBaseBranch = "";
+
+  gitBranch = "";
+
+  gitBranchCreatedAt?: string;
 
   /** 原型权威副本位于项目工作区 doc/ 下，任务面板仅保存相对路径和生成时间。 */
   prototypeHtmlPath = "";
@@ -479,6 +497,18 @@ export class CodexBridgeHealth {
   checkedAt = 0;
 }
 
+export class DeliveryTaskPlannerUpdateStatus {
+  localVersion = "";
+
+  remoteVersion = "";
+
+  updateAvailable = false;
+
+  checkedAt = 0;
+
+  message = "";
+}
+
 export class CodexLocalProjectRecord {
   id = "";
 
@@ -497,6 +527,42 @@ export class CodexWorkspaceValidation {
   workspace = "";
 
   name = "";
+}
+
+export class CodexGitBranchCatalog {
+  branches: string[] = [];
+
+  defaultBranch = "";
+}
+
+export class CodexGitBranchResult {
+  created = false;
+
+  baseBranch = "";
+
+  branch = "";
+}
+
+export class CodexGitPushResult {
+  pushed = false;
+
+  branch = "";
+
+  remote = "";
+
+  /** 本次推送前是否有工作区改动被提交上去。 */
+  committed = false;
+
+  commitMessage = "";
+
+  upToDate = false;
+
+  /** 直接推送失败后交给 AI 处理过一轮；处理说明放在 repairSummary 里。 */
+  repaired = false;
+
+  repairStatus = "";
+
+  repairSummary = "";
 }
 
 export class CodexExecutionResult {
@@ -1120,6 +1186,9 @@ export interface SaveRequirementPayload {
   splitTasks?: boolean;
   preGenerateTaskDocuments?: boolean;
   generatePrototype?: boolean;
+  gitEnabled?: boolean;
+  gitBaseBranch?: string;
+  gitBranch?: string;
   stageKey?: string;
   moduleKey?: string;
   kind?: DeliveryKind | "";
@@ -1160,6 +1229,16 @@ export async function saveRequirement(payload: SaveRequirementPayload) {
   requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
   requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
   return requirement;
+}
+
+export async function bindRequirementGitBranch(programId: number, requirementKey: string, gitBaseBranch: string, gitBranch: string) {
+  const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/git-branch/bind", {
+    programId,
+    requirementKey,
+    gitBaseBranch,
+    gitBranch,
+  });
+  return plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
 }
 
 export async function deleteRequirement(programId: number, requirementKey: string) {
@@ -1329,7 +1408,7 @@ export async function rebuildSnapshot(programId: number, statDate?: string) {
   return unwrapApiResponse(response.data);
 }
 
-const CODEX_BRIDGE_URL = "https://127.0.0.1:8765";
+const CODEX_BRIDGE_URL = DELIVERY_TASK_PLANNER_BRIDGE_URL;
 
 function requiredProjectWorkspace(programId: number) {
   const workspace = getProjectWorkspace(programId);
@@ -1361,6 +1440,49 @@ export async function validateCodexWorkspace(programId: number, workspace: strin
   return plainToInstance(CodexWorkspaceValidation, response.data);
 }
 
+export async function fetchCodexGitBranches(programId: number) {
+  const response = await instance.get<CodexGitBranchCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/git/branches`, {
+    params: bridgeWorkspaceParams(programId, { programId }),
+    timeout: 15000,
+  });
+  const catalog = plainToInstance(CodexGitBranchCatalog, response.data);
+  catalog.branches = (response.data.branches ?? []).map((branch) => String(branch || "")).filter(Boolean);
+  return catalog;
+}
+
+export async function createCodexGitBranch(programId: number, baseBranch: string, branch: string) {
+  const response = await instance.post<CodexGitBranchResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/git/branch`,
+    bridgeWorkspaceParams(programId, { programId, baseBranch, branch }),
+    { timeout: 30000 },
+  );
+  return plainToInstance(CodexGitBranchResult, response.data);
+}
+
+/** 推送可能要等 AI 处理冲突，超时按一轮会话的量级给，不按普通接口给。 */
+export async function pushCodexGitBranch(
+  programId: number,
+  branch: string,
+  message: string,
+  options: { provider?: AITool; model?: string; reasoningEffort?: AIReasoningEffort; fastMode?: boolean } = {},
+) {
+  const provider = options.provider ?? "codex";
+  const response = await instance.post<CodexGitPushResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/git/push`,
+    bridgeWorkspaceParams(programId, {
+      programId,
+      branch,
+      message,
+      provider,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+      ...(provider === "claude" && options.fastMode ? { fastMode: true } : {}),
+    }),
+    { timeout: 20 * 60 * 1000 },
+  );
+  return plainToInstance(CodexGitPushResult, response.data);
+}
+
 export function codexConversationAttachmentUrl(path: string) {
   return path ? `${CODEX_BRIDGE_URL}${path}` : "";
 }
@@ -1380,6 +1502,24 @@ export async function fetchCodexBridgeHealth(programId: number, provider: AITool
     timeout: 10000,
   });
   return response.data;
+}
+
+/**
+ * This check deliberately does not require a project workspace. It answers the
+ * only question needed when entering the board: is the local plugin bridge up?
+ */
+export async function fetchDeliveryTaskPlannerHealth() {
+  const response = await instance.get<CodexBridgeHealth>(`${CODEX_BRIDGE_URL}/healthz`, {
+    timeout: 3000,
+  });
+  return plainToInstance(CodexBridgeHealth, response.data);
+}
+
+export async function fetchDeliveryTaskPlannerUpdate() {
+  const response = await instance.get<DeliveryTaskPlannerUpdateStatus>(`${CODEX_BRIDGE_URL}/v1/plugin/update`, {
+    timeout: 8000,
+  });
+  return plainToInstance(DeliveryTaskPlannerUpdateStatus, response.data);
 }
 
 export async function fetchCodexModels(programId: number, provider: AITool = "codex") {
@@ -1968,6 +2108,12 @@ export class CodexEnvironmentStatus {
   installed = false;
 
   version = "";
+
+  githubSshConfigured = false;
+
+  githubSshPublicKey = "";
+
+  githubSshError = "";
 }
 
 export class CodexEnvironmentSetupActionResult {

@@ -2,22 +2,33 @@
 package identity
 
 import (
+	"errors"
 	"strconv"
+	"strings"
 
 	"common/middleware/httpx"
 	"common/middleware/routers"
+	"service/bizline"
+	bizlinedto "service/bizline/dto"
 	"service/identity"
 	identitydto "service/identity/dto"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
-type Handler struct{ service identity.Service }
+type Handler struct {
+	service  identity.Service
+	bizLines bizline.Service
+}
 
-func NewHandler(service identity.Service) *Handler { return &Handler{service: service} }
+func NewHandler(service identity.Service, bizLines bizline.Service) *Handler {
+	return &Handler{service: service, bizLines: bizLines}
+}
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	group.POST("/auth/login", h.login)
+	group.POST("/auth/register", h.register)
 	user := group.Group("/auth", httpx.RequireUser())
 	user.GET("/me", h.me)
 	user.GET("/members", h.members)
@@ -40,6 +51,52 @@ func (h *Handler) login(context *gin.Context) {
 	}
 	result, err := h.service.Login(context.Request.Context(), req)
 	httpx.JSON(context, result, err)
+}
+
+// register 自助注册：先建账号；同名空间不存在时再建专属空间，并将注册人设为管理员。
+// 已有同名空间不改变其成员或管理权限。创建空间或授权失败时回收刚建出来的账号。
+func (h *Handler) register(context *gin.Context) {
+	var req identitydto.RegisterRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	result, err := h.service.Register(context.Request.Context(), req)
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return
+	}
+	code := result.User.Username
+	if _, err := h.bizLines.Get(context.Request.Context(), code); err == nil {
+		httpx.JSON(context, result, nil)
+		return
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		_ = h.service.DeleteUser(context.Request.Context(), result.User.ID, "")
+		httpx.JSON(context, nil, err)
+		return
+	}
+	spaceName := strings.TrimSpace(result.User.DisplayName)
+	if spaceName == "" {
+		spaceName = code
+	}
+	if err := h.bizLines.Register(context.Request.Context(), bizlinedto.RegisterRequest{Code: code, Name: spaceName}); err != nil {
+		_ = h.service.DeleteUser(context.Request.Context(), result.User.ID, "")
+		httpx.JSON(context, nil, err)
+		return
+	}
+	assignment := identitydto.ScopeAssignment{UserIDs: []int64{result.User.ID}, ManagerIDs: []int64{result.User.ID}}
+	if err := h.service.ReplaceBizLineAssignment(context.Request.Context(), code, assignment); err != nil {
+		_ = h.service.DeleteUser(context.Request.Context(), result.User.ID, "")
+		httpx.JSON(context, nil, err)
+		return
+	}
+	view, err := h.service.CurrentUser(context.Request.Context(), result.User.ID)
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return
+	}
+	result.User = view
+	httpx.JSON(context, result, nil)
 }
 
 func (h *Handler) me(context *gin.Context) {
