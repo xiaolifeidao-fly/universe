@@ -4936,10 +4936,13 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .board-story__footer { margin: 14px 0 0; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-snug); }
 
 /* 通用节点 / 连线 */
-.board-story-node { display: grid; justify-items: center; gap: 4px; flex: 0 0 auto; width: 74px; }
+.board-story-node { position: relative; display: grid; justify-items: center; gap: 4px; flex: 0 0 auto; width: 84px; }
+/* 相邻两个节点（人 + 他手里的 AI）之间补一小段连线，表示是同一侧的人机组合。 */
+.board-story-node + .board-story-node::before { content: ""; position: absolute; inset-inline-start: -7px; top: 19px; width: 14px; height: 2px; border-radius: 2px; background: var(--manager-border-strong); }
 .board-story-node__icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--manager-border-strong); background: var(--manager-surface); font-size: 19px; box-shadow: var(--manager-shadow-sm); }
-.board-story-node__label { color: var(--manager-text-soft); font-size: var(--manager-fs-xs); text-align: center; }
+.board-story-node__label { color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: 1.35; text-align: center; }
 .board-story-node--primary .board-story-node__icon { border-color: color-mix(in srgb, var(--manager-primary) 55%, transparent); background: var(--manager-primary-light); }
+.board-story-node--warn .board-story-node__icon { border-color: color-mix(in srgb, var(--manager-amber) 55%, transparent); background: color-mix(in srgb, var(--manager-amber) 12%, var(--manager-surface)); }
 .board-story-node--good .board-story-node__icon { border-color: color-mix(in srgb, var(--manager-green) 55%, transparent); background: color-mix(in srgb, var(--manager-green) 12%, var(--manager-surface)); }
 .board-story-wire { position: relative; flex: 1 1 auto; min-width: 48px; height: 2px; margin-bottom: 18px; border-radius: 2px; }
 .board-story-wire--bad { background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--manager-amber) 55%, transparent) 0 6px, transparent 6px 12px); }
@@ -4947,12 +4950,12 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 /* 场景一：信息保真 */
 .board-story-collab { display: grid; gap: 22px; }
-.board-story-lane { display: grid; grid-template-columns: 82px minmax(0, 1fr) 96px; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--manager-r); border: 1px solid transparent; }
+.board-story-lane { display: grid; grid-template-columns: 82px minmax(0, 1fr) 128px; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--manager-r); border: 1px solid transparent; }
 .board-story-lane--bad { border-color: color-mix(in srgb, var(--manager-amber) 26%, transparent); background: color-mix(in srgb, var(--manager-amber) 7%, var(--manager-surface)); }
 .board-story-lane--good { border-color: color-mix(in srgb, var(--manager-primary) 26%, transparent); background: color-mix(in srgb, var(--manager-primary) 7%, var(--manager-surface)); }
 .board-story-lane__tag { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 600; }
 .board-story-lane__flow { display: flex; align-items: center; }
-.board-story-lane__score { justify-self: end; font-size: var(--manager-fs-sm); font-weight: 700; }
+.board-story-lane__score { justify-self: end; font-size: var(--manager-fs-xs); font-weight: 700; line-height: 1.4; text-align: right; }
 .board-story-lane__score--bad { color: var(--manager-amber); }
 .board-story-lane__score--good { color: var(--manager-green); }
 
@@ -5016,7 +5019,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .board-story-member__meter { height: 5px; border-radius: 3px; background: var(--manager-panel-muted); overflow: hidden; }
 .board-story-member__meter i { display: block; height: 100%; border-radius: 3px; background: var(--manager-green); transform-origin: left center; animation: storyFill 2.6s ease-in-out infinite; }
 .board-story-throughput { grid-column: 1 / -1; display: grid; gap: 6px; }
-.board-story-throughput__row { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px; }
+.board-story-throughput__row { display: grid; grid-template-columns: 124px minmax(0, 1fr); align-items: center; gap: 12px; }
 .board-story-throughput__row em { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-style: normal; }
 .board-story-throughput__bar { height: 10px; border-radius: 5px; transform-origin: left center; }
 .board-story-throughput__bar--serial { background: color-mix(in srgb, var(--manager-amber) 55%, transparent); animation: storyBarSerial 3.4s ease-out infinite; }

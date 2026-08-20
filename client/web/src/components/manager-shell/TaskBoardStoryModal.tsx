@@ -114,7 +114,7 @@ export function TaskBoardStoryModal({ open, onClose }: TaskBoardStoryModalProps)
   );
 }
 
-function Node({ icon, label, tone }: { icon: string; label: string; tone?: "primary" | "muted" | "good" }) {
+function Node({ icon, label, tone }: { icon: string; label: string; tone?: "primary" | "muted" | "good" | "warn" }) {
   return (
     <div className={`board-story-node board-story-node--${tone ?? "muted"}`}>
       <span className="board-story-node__icon">{icon}</span>
@@ -127,7 +127,7 @@ function Wire({ children, tone }: { children?: ReactNode; tone: "bad" | "good" }
   return <div className={`board-story-wire board-story-wire--${tone}`}>{children}</div>;
 }
 
-/** 场景一：口述传递会掉信息，文档 + AI 传递不会。 */
+/** 场景一：两边各自用 AI 按自己的理解做，结果会分叉；同一份文档才让两边对齐。 */
 function CollabScene() {
   const { t } = useLocale();
   return (
@@ -136,6 +136,7 @@ function CollabScene() {
         <span className="board-story-lane__tag">{t("story.s1.laneBad")}</span>
         <div className="board-story-lane__flow">
           <Node icon="🙋" label={t("story.s1.owner")} />
+          <Node icon="🤖" label={t("story.s1.aiOwner")} tone="warn" />
           <Wire tone="bad">
             <span className="board-story-packet board-story-packet--decay">
               <i className="board-story-shard board-story-shard--1" />
@@ -144,6 +145,7 @@ function CollabScene() {
             </span>
           </Wire>
           <Node icon="🧑‍💻" label={t("story.s1.peer")} />
+          <Node icon="🤖" label={t("story.s1.aiPeer")} tone="warn" />
         </div>
         <span className="board-story-lane__score board-story-lane__score--bad">{t("story.s1.scoreBad")}</span>
       </div>
@@ -152,18 +154,16 @@ function CollabScene() {
         <span className="board-story-lane__tag">{t("story.s1.laneGood")}</span>
         <div className="board-story-lane__flow">
           <Node icon="🙋" label={t("story.s1.owner")} />
+          <Node icon="🤖" label={t("story.s1.groom")} tone="primary" />
           <Wire tone="good">
             <span className="board-story-packet board-story-packet--intact" />
           </Wire>
-          <Node icon="🤖" label={t("story.s1.groom")} tone="primary" />
+          <Node icon="📄" label={t("story.s1.doc")} tone="good" />
           <Wire tone="good">
             <span className="board-story-packet board-story-packet--intact board-story-packet--delay" />
           </Wire>
-          <Node icon="📄" label={t("story.s1.doc")} tone="good" />
-          <Wire tone="good">
-            <span className="board-story-packet board-story-packet--intact board-story-packet--delay2" />
-          </Wire>
           <Node icon="🧑‍💻" label={t("story.s1.peer")} />
+          <Node icon="🤖" label={t("story.s1.build")} tone="primary" />
         </div>
         <span className="board-story-lane__score board-story-lane__score--good">{t("story.s1.scoreGood")}</span>
       </div>
