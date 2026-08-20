@@ -160,14 +160,14 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
 	);
 
 	const refreshGitWorkspaceStatus = useCallback(async () => {
-		if (!programId || !selectedProgram) {
+		if (!programId || !selectedProgram?.gitEnabled) {
 			setGitWorkspaceStatus(null);
 			setGitWorkspaceError("");
 			return null;
 		}
 		setGitWorkspaceLoading(true);
 		try {
-			const status = await fetchCodexGitWorkspaceStatus(programId, selectedProgram);
+			const status = await fetchCodexGitWorkspaceStatus(programId);
 			setGitWorkspaceStatus(status);
 			setGitWorkspaceError("");
 			return status;
@@ -449,8 +449,8 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
 		strategy: "switch" | "commit" | "stash",
 		commitMessage = "",
 	) => {
-		if (!selectedProgram) throw new Error("未选择项目");
-		const result = await prepareCodexGitBranch(programId, branch, selectedProgram, strategy, commitMessage);
+		if (!selectedProgram?.gitEnabled) throw new Error("当前项目未启用 Git");
+		const result = await prepareCodexGitBranch(programId, branch, strategy, commitMessage);
 		setGitWorkspaceStatus(result.status);
 		setGitWorkspaceError("");
 		return result;

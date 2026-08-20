@@ -12,8 +12,11 @@
 # Generated local application artifacts
 /client/web/node_modules/
 /client/web/.next/
+/client/web/tsconfig.tsbuildinfo
 /client/web/package/
 /server/web-api/bin/
+/server/web-api/logs/
 /server/web-api/package/
+/server/web-api/run/
 /client/web/*.tar.gz
 /server/web-api/*.tar.gz

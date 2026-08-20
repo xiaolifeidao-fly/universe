@@ -17,6 +17,7 @@ type ProgramView struct {
 	Name             string           `json:"name"`
 	Summary          string           `json:"summary"`
 	Status           string           `json:"status"`
+	GitEnabled       bool             `json:"gitEnabled"`
 	GitRepositoryURL string           `json:"gitRepositoryUrl"`
 	GitRemoteName    string           `json:"gitRemoteName"`
 	GitBaseBranch    string           `json:"gitBaseBranch"`
@@ -45,6 +46,7 @@ type SaveProgramRequest struct {
 type SaveProgramGitConfigRequest struct {
 	BizLine          contract.BizLine `json:"-"`
 	ProgramID        int64            `json:"programId"`
+	GitEnabled       bool             `json:"gitEnabled"`
 	GitRepositoryURL string           `json:"gitRepositoryUrl"`
 	GitRemoteName    string           `json:"gitRemoteName"`
 	GitBaseBranch    string           `json:"gitBaseBranch"`

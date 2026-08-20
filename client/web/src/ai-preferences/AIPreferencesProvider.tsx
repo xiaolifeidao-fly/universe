@@ -51,8 +51,6 @@ export interface AIPreferences {
   claudeModel: ClaudeModel;
   claudeEffort: ClaudeEffort;
   claudeFastMode: boolean;
-  /** 新建需求时的 Git 关联默认值，单条需求仍可覆盖。 */
-  gitEnabledByDefault: boolean;
   scenes: Partial<Record<AIToolScene, AISceneOverride>>;
 }
 
@@ -64,7 +62,6 @@ export const DEFAULT_AI_PREFERENCES: AIPreferences = {
   claudeModel: "sonnet",
   claudeEffort: "medium",
   claudeFastMode: false,
-  gitEnabledByDefault: false,
   scenes: {},
 };
 
@@ -137,9 +134,6 @@ function loadPreferences(): AIPreferences {
       claudeModel: isClaudeModel(value.claudeModel) ? value.claudeModel : DEFAULT_AI_PREFERENCES.claudeModel,
       claudeEffort: isClaudeEffort(value.claudeEffort) ? value.claudeEffort : DEFAULT_AI_PREFERENCES.claudeEffort,
       claudeFastMode: typeof value.claudeFastMode === "boolean" ? value.claudeFastMode : DEFAULT_AI_PREFERENCES.claudeFastMode,
-      gitEnabledByDefault: typeof value.gitEnabledByDefault === "boolean"
-        ? value.gitEnabledByDefault
-        : DEFAULT_AI_PREFERENCES.gitEnabledByDefault,
       scenes,
     };
   } catch {

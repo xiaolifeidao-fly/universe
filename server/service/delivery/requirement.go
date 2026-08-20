@@ -87,6 +87,15 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.ProgramID <= 0 {
 		return dto.RequirementView{}, errors.New("缺少项目标识")
 	}
+	program, err := s.repo.FindProgram(ctx, req.BizLine.String(), req.ProgramID)
+	if err != nil {
+		return dto.RequirementView{}, translate(err)
+	}
+	if !program.GitEnabled && (boolValue(req.GitEnabled) ||
+		(req.GitBaseBranch != nil && strings.TrimSpace(*req.GitBaseBranch) != "") ||
+		(req.GitBranch != nil && strings.TrimSpace(*req.GitBranch) != "")) {
+		return dto.RequirementView{}, errors.New("当前项目未启用 Git，不能设置需求分支")
+	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		return dto.RequirementView{}, errors.New("需求名称不能为空")
@@ -124,7 +133,8 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	if req.PreGenerateTaskDocuments != nil {
 		preGenerateTaskDocuments = *req.PreGenerateTaskDocuments
 	}
-	// 请求没带 gitEnabled 时保持未设置（NULL）：需求维度没做过选择，由调用方回落到自己的默认偏好。
+	// 请求没带 gitEnabled 时保持未设置（NULL）：需求维度没做过选择，
+	// 由项目 Git 能力开启后的调用方决定默认值。
 	gitEnabled := req.GitEnabled
 	gitBaseBranch, err := normalizeRequirementGitRef(derefString(req.GitBaseBranch))
 	if err != nil {
@@ -295,6 +305,13 @@ func (s *service) BindRequirementGitBranch(ctx context.Context, req dto.BindRequ
 	}
 	if req.ProgramID <= 0 || strings.TrimSpace(req.RequirementKey) == "" {
 		return dto.RequirementView{}, errors.New("缺少项目或需求标识")
+	}
+	program, err := s.repo.FindProgram(ctx, req.BizLine.String(), req.ProgramID)
+	if err != nil {
+		return dto.RequirementView{}, translate(err)
+	}
+	if !program.GitEnabled {
+		return dto.RequirementView{}, errors.New("当前项目未启用 Git，不能关联需求分支")
 	}
 	baseBranch, err := normalizeRequirementGitRef(req.GitBaseBranch)
 	if err != nil {

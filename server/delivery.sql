@@ -27,9 +27,10 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
   `name`         varchar(128) NOT NULL,                        -- 项目名称
   `summary`      varchar(512) NOT NULL,                        -- 一句话说明
   `status`       varchar(16)  NOT NULL DEFAULT 'active',       -- active 进行中 / archived 已归档
-  `git_repository_url` varchar(512) NOT NULL DEFAULT '',        -- 期望 Git 远端地址；为空表示不校验
+	`git_enabled` boolean NOT NULL DEFAULT FALSE,                 -- 是否启用项目 Git 与需求分支能力
+	`git_repository_url` varchar(512) NOT NULL DEFAULT '',        -- 可选记录的 Git 仓库地址，不校验本机远端
   `git_remote_name` varchar(64) NOT NULL DEFAULT 'origin',      -- 远端名
-  `git_base_branch` varchar(255) NOT NULL DEFAULT '',           -- 新需求默认基准分支
+	`git_base_branch` varchar(255) NOT NULL DEFAULT '',           -- 启用后新需求默认基准分支
   `created_by`   varchar(64)  NOT NULL,
   `updated_by`   varchar(64)  NOT NULL,
   `created_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -102,7 +103,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   `split_tasks`     boolean      NOT NULL DEFAULT TRUE,           -- 是否把需求拆成多条任务；FALSE 表示只落一条任务
   `generate_task_outline` boolean NOT NULL DEFAULT FALSE,          -- 拆解时是否为每条任务单独写一份需求大纲；默认只留需求级大纲
   `generate_prototype` boolean    NOT NULL DEFAULT FALSE,           -- 专业模式拆解确认后可生成关联 HTML 原型
-  `git_enabled` boolean NULL DEFAULT NULL,                            -- 是否为该需求关联独立 Git 分支；NULL 表示未设置，由前端回落到用户偏好
+  `git_enabled` boolean NULL DEFAULT NULL,                            -- 是否为该需求关联独立 Git 分支；NULL 表示未单独设置，由项目 Git 配置决定前端默认值
   `git_base_branch` varchar(255) NOT NULL DEFAULT '',                -- 创建需求分支时使用的基准分支
   `git_branch` varchar(255) NOT NULL DEFAULT '',                     -- 关联的需求分支
   `git_branch_created_at` timestamp NULL,                            -- 最近一次确认创建并关联需求分支的时间

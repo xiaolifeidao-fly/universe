@@ -25,6 +25,7 @@ import {
 import { Button, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   CLAUDE_EFFORTS,
@@ -48,7 +49,6 @@ import {
 	createCodexGitBranch,
 	fetchCodexGitBranches,
 	pushCodexGitBranch,
-  fetchCodexRequirementOutline,
   fetchCodexRequirementPrototype,
   fetchCodexRequirementPrototypeConversation,
   fetchCodexRequirementTestingConversation,
@@ -72,7 +72,6 @@ import {
   type DeliveryRequirementRecord,
   type DeliveryStageRecord,
   type MemberRecord,
-  type CodexRequirementOutline,
   type CodexRequirementPrototype,
   type DeliveryConversationReference,
   type RequirementMember,
@@ -98,6 +97,8 @@ interface DeliveryRequirementSessionModalProps {
   requirement: DeliveryRequirementRecord | null;
   programId: number;
   programName: string;
+	/** 项目级 Git 能力是总开关；关闭时需求不读取或写入任何 Git 设置。 */
+	projectGitEnabled: boolean;
 	/** 项目级默认基准分支；需求自身已配置时始终优先。 */
 	projectGitBaseBranch?: string;
   bizLine: BusinessLineId;
@@ -173,6 +174,7 @@ export function DeliveryRequirementSessionModal({
   requirement,
   programId,
   programName,
+	projectGitEnabled,
 	projectGitBaseBranch = "",
   bizLine,
   stages,
@@ -229,12 +231,9 @@ export function DeliveryRequirementSessionModal({
   // 预生成是任务需求文档的初稿，正式梳理仍会在同一文件中校正和补全。
   const [preGenerateTaskDocuments, setPreGenerateTaskDocuments] = useState(false);
   // 单任务模式下，唯一业务任务必须直接承接完整需求文档；不改写用户保存的开关值。
-  const taskDocumentPreGenerationRequired = preGenerateTaskDocuments || !splitTasks;
-  const [generatePrototype, setGeneratePrototype] = useState(false);
+	const taskDocumentPreGenerationRequired = preGenerateTaskDocuments || !splitTasks;
+	const [generatePrototype, setGeneratePrototype] = useState(false);
 	const [gitEnabled, setGitEnabled] = useState(false);
-	// 偏好里的默认值只在打开需求时读一次：编辑途中改偏好不该把当前需求的开关顶掉。
-	const gitEnabledByDefaultRef = useRef(preferences.gitEnabledByDefault);
-	gitEnabledByDefaultRef.current = preferences.gitEnabledByDefault;
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
 	const [gitBranch, setGitBranch] = useState("");
 	const [gitBranches, setGitBranches] = useState<string[]>([]);
@@ -254,8 +253,8 @@ export function DeliveryRequirementSessionModal({
   const [testingConversations, setTestingConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [testingThreadId, setTestingThreadId] = useState("");
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
-  const [outline, setOutline] = useState<CodexRequirementOutline | null>(null);
-  const [outlineLoading, setOutlineLoading] = useState(false);
+  const [outlineFullscreen, setOutlineFullscreen] = useState(false);
+  const [testingFullscreen, setTestingFullscreen] = useState(false);
   const [prototype, setPrototype] = useState<CodexRequirementPrototype | null>(null);
   const [prototypeFilePath, setPrototypeFilePath] = useState("");
   const [prototypeLoading, setPrototypeLoading] = useState(false);
@@ -383,8 +382,8 @@ export function DeliveryRequirementSessionModal({
       setTestingConversations([]);
       setTestingThreadId("");
       setStartNewTestingConversation(false);
-      setOutline(null);
-      setOutlineLoading(false);
+      setOutlineFullscreen(false);
+      setTestingFullscreen(false);
       setPrototype(null);
       setPrototypeFilePath("");
       setPrototypeLoading(false);
@@ -413,8 +412,8 @@ export function DeliveryRequirementSessionModal({
     setSplitTasks(requirement?.splitTasks ?? true);
     setPreGenerateTaskDocuments(Boolean(requirement?.preGenerateTaskDocuments));
     setGeneratePrototype(requirement?.generatePrototype ?? false);
-		// Git 开关以需求自身的设置为准；这条需求没单独设置过（新建或历史需求）才用偏好里的默认值。
-		setGitEnabled(requirement?.gitEnabled ?? gitEnabledByDefaultRef.current);
+		// 项目 Git 是总开关；项目开启后，新需求默认关联独立分支，历史需求保留自己的选择。
+		setGitEnabled(projectGitEnabled && (requirement?.gitEnabled ?? true));
 		setGitBaseBranch(requirement?.gitBaseBranch ?? projectGitBaseBranch);
 		setGitBranch(requirement?.gitBranch ?? "");
 		setGitBranches([]);
@@ -423,7 +422,7 @@ export function DeliveryRequirementSessionModal({
     setKind(requirement?.kind ?? "");
     setOwnerIds((requirement?.owners ?? []).map((member) => member.id));
     setAssistantIds((requirement?.assistants ?? []).map((member) => member.id));
-	}, [open, projectGitBaseBranch, requirement]);
+	}, [open, projectGitBaseBranch, projectGitEnabled, requirement]);
 
   useEffect(() => {
     if (!open) return;
@@ -433,7 +432,7 @@ export function DeliveryRequirementSessionModal({
   }, [open, t]);
 
 	useEffect(() => {
-		if (!open || !gitEnabled) return;
+		if (!open || !projectGitEnabled || !gitEnabled) return;
 		let cancelled = false;
 		setGitBranchesLoading(true);
 		void fetchCodexGitBranches(programId)
@@ -451,12 +450,12 @@ export function DeliveryRequirementSessionModal({
 		return () => {
 			cancelled = true;
 		};
-	}, [gitEnabled, open, programId, t]);
+	}, [gitEnabled, open, programId, projectGitEnabled, t]);
 
 	useEffect(() => {
-		if (!open || !gitEnabled || !saved?.requirementKey || gitBranch) return;
+		if (!open || !projectGitEnabled || !gitEnabled || !saved?.requirementKey || gitBranch) return;
 		setGitBranch(defaultRequirementGitBranch(saved.requirementKey));
-	}, [gitBranch, gitEnabled, open, saved?.requirementKey]);
+	}, [gitBranch, gitEnabled, open, projectGitEnabled, saved?.requirementKey]);
 
   useEffect(() => {
     if (!open || !requirementKey) return;
@@ -468,25 +467,6 @@ export function DeliveryRequirementSessionModal({
     if (!open || !requirementKey) return;
     void loadTestingHistory();
   }, [loadTestingHistory, open, requirementKey]);
-
-  const loadOutline = useCallback(async () => {
-    if (!open || !requirementKey || !codexBridgeReady) {
-      setOutline(null);
-      return null;
-    }
-    setOutlineLoading(true);
-    try {
-      const next = await fetchCodexRequirementOutline(programId, requirementKey);
-      setOutline(next);
-      return next;
-    } catch (error) {
-      setOutline(null);
-      message.error((error as Error).message);
-      return null;
-    } finally {
-      setOutlineLoading(false);
-    }
-  }, [codexBridgeReady, open, programId, requirementKey]);
 
   const loadPrototype = useCallback(async () => {
     if (!open || !requirementKey || !codexBridgeReady) {
@@ -629,14 +609,6 @@ export function DeliveryRequirementSessionModal({
   }, [active, load, open]);
 
   useEffect(() => {
-    // 大纲是拆解会话写在工作区里的文件，面板不会自己知道它变了：进入该页签时读一次，
-    // 本轮拆解跑完（active 落回 false）再读一次。
-    if (!open || !requirementKey || !codexBridgeReady) return;
-    if (activePhaseTab !== "requirement" || activeRequirementTab !== "outline") return;
-    void loadOutline();
-  }, [active, activePhaseTab, activeRequirementTab, codexBridgeReady, loadOutline, open, requirementKey]);
-
-  useEffect(() => {
     if (!open) return undefined;
     const handleWindowResize = () => setContextPanelWidth((width) => clampContextPanelWidth(width));
     window.addEventListener("resize", handleWindowResize);
@@ -681,7 +653,7 @@ export function DeliveryRequirementSessionModal({
   const dirty = useMemo(() => {
     const sameMembers = (ids: string[], list: RequirementMember[] | undefined) =>
       ids.join(",") === (list ?? []).map((member) => member.id).join(",");
-    if (!saved) return Boolean(name.trim() || detail.trim() || gitEnabled || ownerIds.length || assistantIds.length);
+		if (!saved) return Boolean(name.trim() || detail.trim() || (projectGitEnabled && gitEnabled) || ownerIds.length || assistantIds.length);
     return (
       name !== (saved.name ?? "")
       || detail !== (saved.detail ?? "")
@@ -693,16 +665,18 @@ export function DeliveryRequirementSessionModal({
       || splitTasks !== (saved.splitTasks ?? true)
       || preGenerateTaskDocuments !== Boolean(saved.preGenerateTaskDocuments)
       || generatePrototype !== Boolean(saved.generatePrototype)
-			|| gitEnabled !== (saved.gitEnabled ?? preferences.gitEnabledByDefault)
-			|| gitBaseBranch !== (saved.gitBaseBranch ?? "")
-			|| gitBranch !== (saved.gitBranch ?? "")
+			|| (projectGitEnabled && (
+				gitEnabled !== (saved.gitEnabled ?? true)
+				|| gitBaseBranch !== (saved.gitBaseBranch ?? "")
+				|| gitBranch !== (saved.gitBranch ?? "")
+			))
       || stageKey !== (saved.stageKey ?? "")
       || moduleKey !== (saved.moduleKey ?? "")
       || kind !== (saved.kind ?? "")
       || !sameMembers(ownerIds, saved.owners)
       || !sameMembers(assistantIds, saved.assistants)
     );
-  }, [assistantIds, detail, generatePrototype, gitBaseBranch, gitBranch, gitEnabled, preferences.gitEnabledByDefault, preGenerateTaskDocuments, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
+  }, [assistantIds, detail, generatePrototype, gitBaseBranch, gitBranch, gitEnabled, preGenerateTaskDocuments, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, projectGitEnabled, saved, splitTasks, stageKey, startPhase, status]);
 
   const memberOptions = useMemo(
     () => members.map((member) => ({ value: member.id, label: member.displayName || member.username })),
@@ -818,9 +792,11 @@ export function DeliveryRequirementSessionModal({
         splitTasks,
         preGenerateTaskDocuments,
         generatePrototype,
-			gitEnabled,
-			gitBaseBranch: gitEnabled ? gitBaseBranch : "",
-			gitBranch: gitEnabled ? gitBranch.trim() : "",
+			...(projectGitEnabled ? {
+				gitEnabled,
+				gitBaseBranch: gitEnabled ? gitBaseBranch : "",
+				gitBranch: gitEnabled ? gitBranch.trim() : "",
+			} : {}),
         stageKey,
         moduleKey,
         kind,
@@ -841,6 +817,7 @@ export function DeliveryRequirementSessionModal({
   };
 
 	const createGitBranch = async () => {
+		if (!projectGitEnabled) return;
 		if (!gitBaseBranch) {
 			message.warning(t("delivery.requirement.gitBaseBranchRequired"));
 			return;
@@ -867,7 +844,7 @@ export function DeliveryRequirementSessionModal({
 	};
 
 	// 需求已经关联到本机的一条分支时才谈得上推送；只在面板上填了分支名（没真正建过）不算。
-	const gitPushReady = Boolean(saved?.gitEnabled && saved?.gitBranch && saved?.gitBranchCreatedAt);
+	const gitPushReady = Boolean(projectGitEnabled && saved?.gitEnabled && saved?.gitBranch && saved?.gitBranchCreatedAt);
 
 	const openGitPush = () => {
 		setGitPushMessage(saved ? `feat: ${saved.name || saved.requirementKey}（${saved.requirementKey}）` : "");
@@ -1579,8 +1556,8 @@ export function DeliveryRequirementSessionModal({
                         ) : null}
                       </div>
 
-						{/* Git 设置独立成组：开关控制是否关联，开启后才能选择基准并创建需求分支。 */}
-						<div className="delivery-planning-context__group">
+						{/* 项目 Git 开启后才允许为需求单独关联、创建分支。 */}
+						{projectGitEnabled ? <div className="delivery-planning-context__group">
 							<span className="delivery-planning-context__group-title">{t("delivery.requirement.groupGit")}</span>
 							<div className={`delivery-planning-context__toggle${gitEnabled ? " is-on" : ""}`}>
 								<div role="presentation" onClick={() => setGitEnabled((current) => !current)}>
@@ -1646,7 +1623,7 @@ export function DeliveryRequirementSessionModal({
 									) : null}
 								</>
 							) : null}
-						</div>
+						</div> : null}
 
                       {/* 其余字段收在「更多」里，默认不占版面。 */}
                       <Button
@@ -1796,9 +1773,20 @@ export function DeliveryRequirementSessionModal({
                         </Button>
                       </Tooltip>
                     </header>
-                    <SessionDocumentText
-                      value={saved?.testingCases || requirement?.testingCases || ""}
-                      fallback={t("delivery.requirement.testingCasesEmpty")}
+                    <DeliveryDocumentSetPanel
+                      programId={programId}
+                      scope="requirement-testing"
+                      subjectKey={requirementKey}
+                      codexBridgeReady={codexBridgeReady}
+                      emptyText={t("delivery.requirement.testingCasesEmpty")}
+                      onExpand={() => setTestingFullscreen(true)}
+                      refreshToken={active ? "running" : "idle"}
+                      fallback={(
+                        <SessionDocumentText
+                          value={saved?.testingCases || requirement?.testingCases || ""}
+                          fallback={t("delivery.requirement.testingCasesEmpty")}
+                        />
+                      )}
                     />
                   </section>
                 ),
@@ -1823,39 +1811,15 @@ export function DeliveryRequirementSessionModal({
                 key: "outline",
                 label: t("delivery.outline.tab"),
                 children: (
-                  <section className="delivery-planning-result" aria-label={t("delivery.outline.tab")}>
-                    <header>
-                      <span>{outline?.path || t("delivery.outline.pathPending")}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <Tag color={outline?.exists ? "success" : "default"}>
-                          {outline?.exists ? t("delivery.outline.ready") : t("delivery.outline.notGenerated")}
-                        </Tag>
-                        <Tooltip title={t("delivery.session.refresh")}>
-                          <Button
-                            type="text"
-                            shape="circle"
-                            icon={<ReloadOutlined />}
-                            loading={outlineLoading}
-                            onClick={() => void loadOutline()}
-                            aria-label={t("delivery.session.refresh")}
-                          />
-                        </Tooltip>
-                      </div>
-                    </header>
-                    <Spin spinning={outlineLoading}>
-                      {outline?.exists ? (
-                        <>
-                          <small style={{ display: "block", marginBottom: 8 }}>
-                            <code>{outline.path}</code>
-                            {outline.updatedAt ? ` · ${dayjs(outline.updatedAt).format("YYYY-MM-DD HH:mm")}` : ""}
-                          </small>
-                          <SessionDocumentText value={outline.markdown} fallback={t("delivery.outline.empty")} />
-                        </>
-                      ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.outline.notGenerated")} />
-                      )}
-                    </Spin>
-                  </section>
+                  <DeliveryDocumentSetPanel
+                    programId={programId}
+                    scope="requirement-outline"
+                    subjectKey={requirementKey}
+                    codexBridgeReady={codexBridgeReady}
+                    emptyText={t("delivery.outline.requirementEmpty")}
+                    onExpand={() => setOutlineFullscreen(true)}
+                    refreshToken={active ? "running" : "idle"}
+                  />
                 ),
               },
               {
@@ -1909,6 +1873,26 @@ export function DeliveryRequirementSessionModal({
           </section>
         </aside>
       </div>
+      <DeliveryDocumentSetModal
+        open={outlineFullscreen}
+        programId={programId}
+        scope="requirement-outline"
+        subjectKey={requirementKey}
+        codexBridgeReady={codexBridgeReady}
+        title={`${t("delivery.outline.tab")} · ${requirement?.name || requirementKey}`}
+        emptyText={t("delivery.outline.requirementEmpty")}
+        onClose={() => setOutlineFullscreen(false)}
+      />
+      <DeliveryDocumentSetModal
+        open={testingFullscreen}
+        programId={programId}
+        scope="requirement-testing"
+        subjectKey={requirementKey}
+        codexBridgeReady={codexBridgeReady}
+        title={`${t("delivery.requirement.testingCases")} · ${requirement?.name || requirementKey}`}
+        emptyText={t("delivery.requirement.testingCasesEmpty")}
+        onClose={() => setTestingFullscreen(false)}
+      />
       <Modal
         open={prototypeEditorOpen}
         footer={null}

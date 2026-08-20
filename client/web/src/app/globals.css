@@ -2487,6 +2487,131 @@ select {
 	gap: 8px;
 }
 
+/* 栏目里有多份文档时，横条上的下拉框负责切换看哪一份。 */
+.delivery-document-panel__picker {
+	min-width: 160px;
+	max-width: 260px;
+	flex: 0 1 auto;
+}
+
+/* 全屏预览：左侧文件列表，右侧预览与编辑。 */
+.delivery-document-set {
+	display: grid;
+	min-height: 0;
+	height: 100%;
+	gap: 16px;
+	grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+}
+
+.delivery-document-set__files {
+	display: flex;
+	min-height: 0;
+	flex-direction: column;
+	padding: 12px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r);
+	background: var(--manager-bg-soft);
+}
+
+.delivery-document-set__files > header {
+	margin-bottom: 10px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+	font-weight: 600;
+}
+
+.delivery-document-set__files ul {
+	display: grid;
+	min-height: 0;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	align-content: start;
+	gap: 4px;
+	list-style: none;
+}
+
+.delivery-document-set__files button {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 10px;
+	border: 1px solid transparent;
+	border-radius: var(--manager-r-sm);
+	background: transparent;
+	color: var(--manager-text);
+	cursor: pointer;
+	font-size: var(--manager-fs-sm);
+	text-align: left;
+}
+
+.delivery-document-set__files button:hover:not(:disabled) {
+	background: var(--manager-surface);
+}
+
+.delivery-document-set__files button.is-active {
+	border-color: var(--manager-border-strong);
+	background: var(--manager-surface);
+	font-weight: 600;
+}
+
+.delivery-document-set__files button:disabled {
+	cursor: not-allowed;
+	opacity: 0.6;
+}
+
+.delivery-document-set__name {
+	min-width: 0;
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.delivery-document-set__files small {
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+	font-family: var(--manager-mono);
+	font-size: var(--manager-fs-xs);
+}
+
+.delivery-document-set-modal .ant-modal-body {
+	min-height: 0;
+	height: min(72vh, 720px);
+	overflow: hidden;
+}
+
+.delivery-document-set-modal .delivery-document-panel {
+	display: flex;
+	min-height: 0;
+	height: 100%;
+	flex-direction: column;
+}
+
+.delivery-document-set-modal .delivery-document-panel > .ant-spin-nested-loading {
+	min-height: 0;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.delivery-document-set-modal .delivery-document-panel .ant-spin-container {
+	height: 100%;
+}
+
+/* 编辑态铺满剩余高度：autoSize 会写死行内 height，必须盖掉才跟得上弹窗。 */
+.delivery-document-set-modal textarea.ant-input {
+	height: 100% !important;
+	max-height: none !important;
+	resize: none;
+}
+
+@media (max-width: 900px) {
+	.delivery-document-set { grid-template-columns: minmax(0, 1fr); }
+	.delivery-document-set__files { max-height: 180px; }
+}
+
 .delivery-task-session-modal .ant-modal-content {
 		display: grid;
 		height: 100vh;

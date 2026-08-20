@@ -22,11 +22,12 @@ type DeliveryProgram struct {
 	Name        string `gorm:"column:name;type:varchar(128)" description:"项目名称"`
 	Summary     string `gorm:"column:summary;type:varchar(512)" description:"一句话说明"`
 	Status      string `gorm:"column:status;type:varchar(16);default:'active'" description:"active 进行中 / archived 已归档"`
-	// Git 配置是项目共享的期望值，用来校验每位成员选择的本机工作目录；
-	// 它不替本机改写 remote，实际工作区和当前分支仍由本地桥接读取。
-	GitRepositoryURL string `gorm:"column:git_repository_url;type:varchar(512)" description:"项目期望的 Git 远端地址；为空表示不校验"`
+	// Git 配置是项目共享的可选能力；它不校验或改写本机 remote，
+	// 实际工作区和当前分支仍由本地桥接读取。
+	GitEnabled       bool   `gorm:"column:git_enabled;default:false" description:"项目是否启用 Git 需求分支能力"`
+	GitRepositoryURL string `gorm:"column:git_repository_url;type:varchar(512)" description:"项目可选记录的 Git 仓库地址，仅供成员查看"`
 	GitRemoteName    string `gorm:"column:git_remote_name;type:varchar(64);default:'origin'" description:"用于校验和拉取的 Git 远端名称，默认 origin"`
-	GitBaseBranch    string `gorm:"column:git_base_branch;type:varchar(255)" description:"新需求分支默认基准分支；为空时由本机 Git 推断"`
+	GitBaseBranch    string `gorm:"column:git_base_branch;type:varchar(255)" description:"项目启用 Git 后的新需求默认基准分支"`
 
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人"`
 	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`

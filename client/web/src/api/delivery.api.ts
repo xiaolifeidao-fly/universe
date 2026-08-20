@@ -56,7 +56,10 @@ export class DeliveryProgramRecord {
 
   status = "active";
 
-  /** 项目共享的期望 Git 远端；为空表示仅展示本机状态，不校验远端。 */
+  /** 项目是否允许为需求创建、关联和切换 Git 分支。 */
+  gitEnabled = false;
+
+  /** 可选记录的仓库地址，不参与本机远端校验。 */
   gitRepositoryUrl = "";
 
   gitRemoteName = "origin";
@@ -648,6 +651,53 @@ export class CodexRequirementDocument {
   modifiedAt = "";
 }
 
+/** 文档栏目：需求大纲、任务文档、设计文档、测试用例都各自对应工作区里的一个目录。 */
+export type DeliveryDocumentScope =
+  | "requirement-outline"
+  | "requirement-testing"
+  | "task-document"
+  | "task-design"
+  | "task-testing";
+
+/** 一个栏目目录里的一份文档。 */
+export class DeliveryDocumentFile {
+  /** 工作区相对路径，读写文档都以它为准。 */
+  path = "";
+
+  /** 相对栏目目录的展示名，下拉框和文件列表显示这个。 */
+  name = "";
+
+  size = 0;
+
+  updatedAt = "";
+}
+
+/** 一个栏目下的全部文档，primaryPath 是面板默认选中的那份。 */
+export class DeliveryDocumentSet {
+  scope = "";
+
+  key = "";
+
+  directory = "";
+
+  primaryPath = "";
+
+  files: DeliveryDocumentFile[] = [];
+}
+
+/** 栏目里一份文档的正文。 */
+export class DeliveryDocumentContent {
+  path = "";
+
+  exists = false;
+
+  content = "";
+
+  size = 0;
+
+  modifiedAt = "";
+}
+
 /** 需求拆解沉淀下来的需求大纲。正文从项目工作区经本地桥接受控读取。 */
 export class CodexRequirementOutline {
   requirementKey = "";
@@ -1046,6 +1096,7 @@ export interface SaveProgramPayload {
 
 export interface SaveProgramGitConfigPayload {
   programId: number;
+  gitEnabled: boolean;
   gitRepositoryUrl?: string;
   gitRemoteName?: string;
   gitBaseBranch?: string;
@@ -1509,16 +1560,9 @@ export async function fetchCodexGitBranches(programId: number) {
   return catalog;
 }
 
-export async function fetchCodexGitWorkspaceStatus(
-  programId: number,
-  config: Pick<DeliveryProgramRecord, "gitRepositoryUrl" | "gitRemoteName">,
-) {
+export async function fetchCodexGitWorkspaceStatus(programId: number) {
   const response = await instance.get<CodexGitWorkspaceStatus>(`${CODEX_BRIDGE_URL}/v1/codex/git/status`, {
-    params: bridgeWorkspaceParams(programId, {
-      programId,
-      expectedRemoteUrl: config.gitRepositoryUrl,
-      remoteName: config.gitRemoteName || "origin",
-    }),
+    params: bridgeWorkspaceParams(programId, { programId }),
     timeout: 15000,
   });
   return plainToInstance(CodexGitWorkspaceStatus, response.data);
@@ -1527,7 +1571,6 @@ export async function fetchCodexGitWorkspaceStatus(
 export async function prepareCodexGitBranch(
   programId: number,
   branch: string,
-  config: Pick<DeliveryProgramRecord, "gitRepositoryUrl" | "gitRemoteName">,
   strategy: "switch" | "commit" | "stash" = "switch",
   commitMessage = "",
 ) {
@@ -1538,8 +1581,6 @@ export async function prepareCodexGitBranch(
       branch,
       strategy,
       commitMessage,
-      expectedRemoteUrl: config.gitRepositoryUrl,
-      remoteName: config.gitRemoteName || "origin",
     }),
     { timeout: 150000 },
   );
@@ -1645,6 +1686,44 @@ export async function saveCodexRequirementDocument(programId: number, itemKey: s
     { timeout: 20000 },
   );
   return plainToInstance(CodexRequirementDocument, response.data);
+}
+
+export async function fetchDeliveryDocumentSet(programId: number, scope: DeliveryDocumentScope, key: string) {
+  const response = await instance.get<DeliveryDocumentSet>(
+    `${CODEX_BRIDGE_URL}/v1/codex/document-set`,
+    { params: bridgeWorkspaceParams(programId, { programId, scope, key }), timeout: 20000 },
+  );
+  const documentSet = plainToInstance(DeliveryDocumentSet, response.data);
+  documentSet.files = plainToInstance(DeliveryDocumentFile, response.data.files ?? []);
+  return documentSet;
+}
+
+export async function fetchDeliveryDocumentFile(
+  programId: number,
+  scope: DeliveryDocumentScope,
+  key: string,
+  path: string,
+) {
+  const response = await instance.get<DeliveryDocumentContent>(
+    `${CODEX_BRIDGE_URL}/v1/codex/document-file`,
+    { params: bridgeWorkspaceParams(programId, { programId, scope, key, path }), timeout: 20000 },
+  );
+  return plainToInstance(DeliveryDocumentContent, response.data);
+}
+
+export async function saveDeliveryDocumentFile(
+  programId: number,
+  scope: DeliveryDocumentScope,
+  key: string,
+  path: string,
+  content: string,
+) {
+  const response = await instance.post<DeliveryDocumentContent>(
+    `${CODEX_BRIDGE_URL}/v1/codex/document-file`,
+    bridgeWorkspaceParams(programId, { programId, scope, key, path, content }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(DeliveryDocumentContent, response.data);
 }
 
 export async function fetchCodexRequirementOutline(programId: number, requirementKey: string) {

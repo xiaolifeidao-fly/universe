@@ -734,6 +734,7 @@ export function DeliveryWorkspace() {
   }, [programId, refresh, refreshRequirements, t]);
 
 	const openGitCheck = useCallback((requirement: DeliveryRequirementRecord) => {
+		if (!selectedProgram?.gitEnabled) return;
 		setGitRequirement(requirement);
 		setGitPrepareStrategy(gitWorkspaceStatus?.dirty ? "stash" : "switch");
 		setGitCommitMessage(`chore: save work before ${requirement.gitBranch}`);
@@ -741,10 +742,10 @@ export function DeliveryWorkspace() {
 			// 弹窗打开前可能还是上一次需求的快照；真正确认的状态回来后再选默认策略。
 			setGitPrepareStrategy(status?.dirty ? "stash" : "switch");
 		});
-	}, [gitWorkspaceStatus?.dirty, refreshGitWorkspaceStatus]);
+	}, [gitWorkspaceStatus?.dirty, refreshGitWorkspaceStatus, selectedProgram?.gitEnabled]);
 
 	const confirmGitPreparation = useCallback(async () => {
-		if (!gitRequirement?.gitBranch) return;
+		if (gitPreparing || !selectedProgram?.gitEnabled || !gitRequirement?.gitBranch) return;
 		setGitPreparing(true);
 		try {
 			const result = await prepareRequirementGitBranch(
@@ -773,7 +774,7 @@ export function DeliveryWorkspace() {
 		} finally {
 			setGitPreparing(false);
 		}
-	}, [gitCommitMessage, gitPrepareStrategy, gitRequirement, prepareRequirementGitBranch, programId, refreshRequirements, t]);
+	}, [gitCommitMessage, gitPrepareStrategy, gitRequirement, prepareRequirementGitBranch, programId, refreshRequirements, selectedProgram?.gitEnabled, t]);
 
   const columns: ColumnsType<DeliveryItemRecord> = [
     {
@@ -1022,8 +1023,9 @@ export function DeliveryWorkspace() {
             setStartRequirementTesting(true);
             setPlanningOpen(true);
           }}
-          onOutline={setOutlineRequirement}
+		  onOutline={setOutlineRequirement}
 		  onTimeline={setTimelineRequirement}
+		  projectGitEnabled={Boolean(selectedProgram?.gitEnabled)}
 		  onGitCheck={openGitCheck}
 		  gitWorkspaceStatus={gitWorkspaceStatus}
 		  gitWorkspaceError={gitWorkspaceError}
@@ -1305,8 +1307,9 @@ export function DeliveryWorkspace() {
       <DeliveryRequirementSessionModal
         open={planningOpen}
         requirement={editingRequirement}
-        programId={programId}
-        programName={programs.find((program) => program.programId === programId)?.name ?? ""}
+		programId={programId}
+		programName={programs.find((program) => program.programId === programId)?.name ?? ""}
+		projectGitEnabled={Boolean(selectedProgram?.gitEnabled)}
 		projectGitBaseBranch={selectedProgram?.gitBaseBranch ?? ""}
         bizLine={bizLine}
         stages={stages}
@@ -1350,7 +1353,7 @@ export function DeliveryWorkspace() {
         onClose={() => setTimelineRequirement(null)}
       />
 
-		<Modal
+		{selectedProgram?.gitEnabled ? <Modal
 			open={Boolean(gitRequirement)}
 			title={t("delivery.requirement.gitCheckTitle")}
 			okText={t("delivery.requirement.gitPrepare")}
@@ -1361,21 +1364,20 @@ export function DeliveryWorkspace() {
 				</Button>
 			) : undefined}
 			okButtonProps={{
-				disabled: Boolean(gitWorkspaceLoading || gitWorkspaceError || !gitRequirement?.gitBranch || !gitWorkspaceStatus?.remoteMatches || gitWorkspaceStatus?.detached),
+				disabled: Boolean(gitPreparing || gitWorkspaceLoading || gitWorkspaceError || !gitRequirement?.gitBranch || gitWorkspaceStatus?.detached),
 			}}
 			onCancel={() => setGitRequirement(null)}
 			onOk={() => void confirmGitPreparation()}
 		>
 			<div className="delivery-drawer">
 				{gitWorkspaceError ? <Alert type="warning" showIcon message={gitWorkspaceError} /> : null}
-				{gitWorkspaceStatus && !gitWorkspaceStatus.remoteMatches ? <Alert type="error" showIcon message={t("delivery.requirement.gitRemoteMismatch")} /> : null}
 				{gitWorkspaceStatus?.detached ? <Alert type="error" showIcon message={t("delivery.requirement.gitDetached")} /> : null}
 				{gitAlreadyOnRequirementBranch ? <Alert
 					type="success"
 					showIcon
 					message={t("delivery.requirement.gitAlreadyOnBranch")}
 				/> : null}
-				{gitWorkspaceStatus?.remoteMatches && !gitWorkspaceStatus.detached && gitWorkspaceStatus.currentBranch !== gitRequirement?.gitBranch ? <Alert
+				{gitWorkspaceStatus && !gitWorkspaceStatus.detached && gitWorkspaceStatus.currentBranch !== gitRequirement?.gitBranch ? <Alert
 					type="warning"
 					showIcon
 					message={t("delivery.requirement.gitBranchMismatch")
@@ -1427,7 +1429,7 @@ export function DeliveryWorkspace() {
 					</label> : null}
 				</> : null}
 			</div>
-		</Modal>
+		</Modal> : null}
 
       <Modal
         open={Boolean(pendingGroupedExecution)}

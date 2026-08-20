@@ -52,6 +52,7 @@ import {
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { sceneForPhase, toolDisplayName, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { SessionDocumentText } from "./DeliverySessionMessage";
+import { DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { DeliveryTaskDocumentPanel } from "./DeliveryTaskDocument";
 
 const { Text } = Typography;
@@ -613,19 +614,35 @@ export function DeliveryItemDrawer({
                           key: "design",
                           label: t("delivery.session.document.design"),
                           children: (
-                            <section className="delivery-document-panel">
-                              <ExecutionResultText value={activeItem.actionOutput} fallback={t("delivery.document.designEmpty")} />
-                            </section>
+                            <DeliveryDocumentSetPanel
+                              programId={programId}
+                              scope="task-design"
+                              subjectKey={activeItem.itemKey}
+                              codexBridgeReady={codexBridgeReady}
+                              emptyText={t("delivery.document.designEmpty")}
+                              fallback={(
+                                <ExecutionResultText value={activeItem.actionOutput} fallback={t("delivery.document.designEmpty")} />
+                              )}
+                            />
                           ),
                         },
-                        {
+						{
 							key: "testingCases",
 							label: t("delivery.session.document.testingCases"),
 							children: (
-								<section className="delivery-document-panel">
-									{activeItem.testingCasesPath ? <code className="delivery-document-panel__path">{activeItem.testingCasesPath}</code> : null}
-									<ExecutionResultText value={activeItem.testingCases} fallback={t("delivery.document.testingCasesEmpty")} />
-								</section>
+								<DeliveryDocumentSetPanel
+									programId={programId}
+									scope="task-testing"
+									subjectKey={activeItem.itemKey}
+									codexBridgeReady={codexBridgeReady}
+									emptyText={t("delivery.document.testingCasesEmpty")}
+									fallback={(
+										<>
+											{activeItem.testingCasesPath ? <code className="delivery-document-panel__path">{activeItem.testingCasesPath}</code> : null}
+											<ExecutionResultText value={activeItem.testingCases} fallback={t("delivery.document.testingCasesEmpty")} />
+										</>
+									)}
+								/>
 							),
 						},
 						{

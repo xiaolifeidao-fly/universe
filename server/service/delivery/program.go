@@ -113,8 +113,8 @@ func (s *service) SaveProgram(ctx context.Context, req dto.SaveProgramRequest) e
 	})
 }
 
-// SaveProgramGitConfig 保存项目对本机仓库的期望约束。它刻意只保存期望值：
-// 远端地址与工作目录属于开发者机器，服务端不应代替用户执行 git remote set-url。
+// SaveProgramGitConfig 保存项目的可选 Git 能力和说明信息。
+// 仓库地址与工作目录属于开发者机器，服务端不校验也不改写本机 remote。
 func (s *service) SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramGitConfigRequest) (dto.ProgramView, error) {
 	if !req.BizLine.Valid() {
 		return dto.ProgramView{}, contract.ErrBizLineRequired
@@ -137,7 +137,11 @@ func (s *service) SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramG
 	if len(baseBranch) > 255 || (baseBranch != "" && !gitReferenceRE.MatchString(baseBranch)) {
 		return dto.ProgramView{}, errors.New("Git 基准分支不合法")
 	}
+	if req.GitEnabled && baseBranch == "" {
+		return dto.ProgramView{}, errors.New("启用项目 Git 后必须填写默认基准分支")
+	}
 	row, err := s.repo.SaveProgramGitConfig(ctx, req.BizLine.String(), req.ProgramID, map[string]any{
+		"git_enabled":        req.GitEnabled,
 		"git_repository_url": repositoryURL,
 		"git_remote_name":    remoteName,
 		"git_base_branch":    baseBranch,
@@ -213,6 +217,7 @@ func toProgramView(row *repository.DeliveryProgram) dto.ProgramView {
 		Name:             row.Name,
 		Summary:          row.Summary,
 		Status:           row.Status,
+		GitEnabled:       row.GitEnabled,
 		GitRepositoryURL: row.GitRepositoryURL,
 		GitRemoteName:    row.GitRemoteName,
 		GitBaseBranch:    row.GitBaseBranch,

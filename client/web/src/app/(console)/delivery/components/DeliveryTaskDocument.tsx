@@ -1,15 +1,9 @@
 "use client";
 
-import { EditOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
-import { Button, Input, Modal, Spin, message } from "antd";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import {
-  fetchCodexRequirementDocument,
-  saveCodexRequirementDocument,
-  type DeliveryItemRecord,
-} from "@/api/delivery.api";
+import { useState, type ReactNode } from "react";
+import { type DeliveryItemRecord } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { SessionDocumentText } from "./DeliverySessionMessage";
+import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 
 interface DeliveryTaskDocumentProps {
   programId: number;
@@ -18,102 +12,58 @@ interface DeliveryTaskDocumentProps {
   title?: ReactNode;
 }
 
-/** 任务从需求梳理到动作执行都共用同一份需求文档，面板编辑直接写回该文件。 */
+/**
+ * 任务文档栏目。文档目录是任务需求文档所在的目录，里面可以放多份文档；
+ * 面板顶部下拉框选择看哪一份，「全屏预览」打开左侧文件列表、右侧预览与编辑的视图。
+ */
 export function DeliveryTaskDocumentPanel({ programId, item, codexBridgeReady, title }: DeliveryTaskDocumentProps) {
   const { t } = useLocale();
-  const itemKey = item?.itemKey ?? "";
-  const [path, setPath] = useState("");
-  const [content, setContent] = useState("");
-  const [draft, setDraft] = useState("");
-  const [editing, setEditing] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  const reload = useCallback(async () => {
-    if (!programId || !itemKey || !codexBridgeReady) return;
-    setLoading(true);
-    try {
-      const document = await fetchCodexRequirementDocument(programId, itemKey);
-      setPath(document.path);
-      setContent(document.content);
-      setDraft(document.content);
-    } catch (error) {
-      setPath("");
-      setContent("");
-      setDraft("");
-      message.error((error as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [codexBridgeReady, itemKey, programId]);
-
-  useEffect(() => {
-    setEditing(false);
-    void reload();
-  }, [reload]);
-
-  const submit = async () => {
-    if (!programId || !itemKey) return;
-    setSaving(true);
-    try {
-      const document = await saveCodexRequirementDocument(programId, itemKey, draft);
-      setPath(document.path);
-      setContent(document.content);
-      setDraft(document.content);
-      setEditing(false);
-      message.success(t("delivery.document.saved"));
-    } catch (error) {
-      message.error((error as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!codexBridgeReady) {
-    return <section className={`delivery-document-panel delivery-outline-panel${title ? " has-title" : ""}`}><SessionDocumentText value="" fallback={t("delivery.document.bridgeOffline")} /></section>;
-  }
-
+  const [expanded, setExpanded] = useState(false);
+  const subjectKey = item?.itemKey ?? "";
   return (
-    <section className={`delivery-document-panel delivery-outline-panel${title ? " has-title" : ""}`}>
-      <header className="delivery-outline-panel__bar">
-        {title ? <b className="delivery-outline-panel__title">{title}</b> : null}
-        {!title && path ? <code className="delivery-document-panel__path">{path}</code> : null}
-        <span className="delivery-outline-panel__actions">
-          <Button size="small" type="text" icon={<ReloadOutlined />} disabled={loading || saving} onClick={() => void reload()} />
-          {editing ? (
-            <>
-              <Button size="small" onClick={() => { setDraft(content); setEditing(false); }}>{t("delivery.outline.cancel")}</Button>
-              <Button size="small" type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void submit()}>{t("delivery.outline.save")}</Button>
-            </>
-          ) : (
-            <Button size="small" icon={<EditOutlined />} disabled={loading} onClick={() => setEditing(true)}>{t("delivery.outline.edit")}</Button>
-          )}
-        </span>
-      </header>
-      {title && path ? <code className="delivery-document-panel__path">{path}</code> : null}
-      <Spin spinning={loading}>
-        {editing ? (
-          <Input.TextArea autoSize={{ minRows: 12, maxRows: 28 }} value={draft} placeholder={t("delivery.outline.placeholder")} onChange={(event) => setDraft(event.target.value)} />
-        ) : (
-          <SessionDocumentText value={content} fallback={t("delivery.document.requirementEmpty")} />
-        )}
-      </Spin>
-    </section>
+    <>
+      <DeliveryDocumentSetPanel
+        programId={programId}
+        scope="task-document"
+        subjectKey={subjectKey}
+        codexBridgeReady={codexBridgeReady}
+        title={title}
+        emptyText={t("delivery.document.requirementEmpty")}
+        onExpand={() => setExpanded(true)}
+      />
+      <DeliveryDocumentSetModal
+        open={expanded}
+        programId={programId}
+        scope="task-document"
+        subjectKey={subjectKey}
+        codexBridgeReady={codexBridgeReady}
+        title={item ? <span title={item.title}>{`${t("delivery.detail.document")} · ${item.title}`}</span> : null}
+        emptyText={t("delivery.document.requirementEmpty")}
+        onClose={() => setExpanded(false)}
+      />
+    </>
   );
 }
 
-export function DeliveryTaskDocumentModal({ open, programId, item, codexBridgeReady, onClose }: DeliveryTaskDocumentProps & { open: boolean; onClose: () => void }) {
+/** 任务面板上的「任务文档」按钮打开的独立预览弹窗。 */
+export function DeliveryTaskDocumentModal({
+  open,
+  programId,
+  item,
+  codexBridgeReady,
+  onClose,
+}: DeliveryTaskDocumentProps & { open: boolean; onClose: () => void }) {
   const { t } = useLocale();
   return (
-    <Modal className="delivery-outline-modal" open={open} title={null} width={880} footer={null} destroyOnClose onCancel={onClose}>
-      {open && item ? (
-        <DeliveryTaskDocumentPanel
-          programId={programId}
-          item={item}
-          codexBridgeReady={codexBridgeReady}
-          title={<span title={item.title}>{`${t("delivery.detail.document")} · ${item.title}`}</span>}
-        />
-      ) : null}
-    </Modal>
+    <DeliveryDocumentSetModal
+      open={open}
+      programId={programId}
+      scope="task-document"
+      subjectKey={item?.itemKey ?? ""}
+      codexBridgeReady={codexBridgeReady}
+      title={item ? <span title={item.title}>{`${t("delivery.detail.document")} · ${item.title}`}</span> : null}
+      emptyText={t("delivery.document.requirementEmpty")}
+      onClose={onClose}
+    />
   );
 }

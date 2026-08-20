@@ -24,6 +24,7 @@ import {
 	Popconfirm,
 	Select,
 	Space,
+	Switch,
 	Table,
 	Tag,
 	Tooltip,
@@ -140,6 +141,7 @@ export function ProgramManagementWorkspace() {
 	const [workspaceLoading, setWorkspaceLoading] = useState(false);
 	const [workspaceSaving, setWorkspaceSaving] = useState(false);
 	const [workspaceSource, setWorkspaceSource] = useState<"saved" | "matched" | "manual" | "unmatched">("unmatched");
+	const [gitEnabled, setGitEnabled] = useState(false);
 	const [gitRepositoryUrl, setGitRepositoryUrl] = useState("");
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
 	// 只读成员建不了项目也编辑不了项目；系统管理员在空间维度不再有隐式权限。
@@ -519,6 +521,7 @@ export function ProgramManagementWorkspace() {
 		const saved = getProjectWorkspacePreference(program.programId);
 		setWorkspacePath(saved?.workspace || "");
 		setWorkspaceSource(saved ? "saved" : "unmatched");
+		setGitEnabled(program.gitEnabled);
 		setGitRepositoryUrl(program.gitRepositoryUrl || "");
 		setGitBaseBranch(program.gitBaseBranch || "");
 		try {
@@ -546,11 +549,18 @@ export function ProgramManagementWorkspace() {
 		if (!workspaceProgram) return;
 		const candidate = workspacePath.trim();
 		const gitConfigChanged = workspaceProgram.canAdminister && (
-			gitRepositoryUrl.trim() !== (workspaceProgram.gitRepositoryUrl || "")
-			|| gitBaseBranch.trim() !== (workspaceProgram.gitBaseBranch || "")
+			gitEnabled !== workspaceProgram.gitEnabled
+			|| (gitEnabled && (
+				gitRepositoryUrl.trim() !== (workspaceProgram.gitRepositoryUrl || "")
+				|| gitBaseBranch.trim() !== (workspaceProgram.gitBaseBranch || "")
+			))
 		);
 		if (!candidate && !gitConfigChanged) {
 			message.error(t("programs.workspace.required"));
+			return;
+		}
+		if (gitEnabled && !gitBaseBranch.trim()) {
+			message.error(t("programs.git.baseBranchRequired"));
 			return;
 		}
 		setWorkspaceSaving(true);
@@ -562,6 +572,7 @@ export function ProgramManagementWorkspace() {
 			if (gitConfigChanged) {
 				await saveProgramGitConfig({
 					programId: workspaceProgram.programId,
+					gitEnabled,
 					gitRepositoryUrl: gitRepositoryUrl.trim(),
 					gitRemoteName: workspaceProgram.gitRemoteName || "origin",
 					gitBaseBranch: gitBaseBranch.trim(),
@@ -857,27 +868,33 @@ export function ProgramManagementWorkspace() {
 							/>
 						</Form.Item>
 						<Divider orientation="left" plain>{t("programs.git.title")}</Divider>
-						<Alert
-							showIcon
-							type="info"
-							message={t("programs.git.hint")}
-						/>
-						<Form.Item label={t("programs.git.repositoryUrl")} extra={t("programs.git.repositoryUrlHint")} style={{ marginTop: 16 }}>
-							<Input
+						<Form.Item label={t("programs.git.enabled")} extra={t("programs.git.enabledHint")}>
+							<Switch
+								checked={gitEnabled}
 								disabled={!workspaceProgram?.canAdminister}
-								value={gitRepositoryUrl}
-								placeholder={t("programs.git.repositoryUrlPlaceholder")}
-								onChange={(event) => setGitRepositoryUrl(event.target.value)}
+								aria-label={t("programs.git.enabled")}
+								onChange={setGitEnabled}
 							/>
 						</Form.Item>
-						<Form.Item label={t("programs.git.baseBranch")} extra={t("programs.git.baseBranchHint")}>
-							<Input
-								disabled={!workspaceProgram?.canAdminister}
-								value={gitBaseBranch}
-								placeholder={t("programs.git.baseBranchPlaceholder")}
-								onChange={(event) => setGitBaseBranch(event.target.value)}
-							/>
-						</Form.Item>
+						{gitEnabled ? <>
+							<Alert showIcon type="info" message={t("programs.git.hint")} />
+							<Form.Item label={t("programs.git.repositoryUrl")} extra={t("programs.git.repositoryUrlHint")} style={{ marginTop: 16 }}>
+								<Input
+									disabled={!workspaceProgram?.canAdminister}
+									value={gitRepositoryUrl}
+									placeholder={t("programs.git.repositoryUrlPlaceholder")}
+									onChange={(event) => setGitRepositoryUrl(event.target.value)}
+								/>
+							</Form.Item>
+							<Form.Item label={t("programs.git.baseBranch")} required extra={t("programs.git.baseBranchHint")}>
+								<Input
+									disabled={!workspaceProgram?.canAdminister}
+									value={gitBaseBranch}
+									placeholder={t("programs.git.baseBranchPlaceholder")}
+									onChange={(event) => setGitBaseBranch(event.target.value)}
+								/>
+							</Form.Item>
+						</> : null}
 						{!workspaceProgram?.canAdminister ? (
 							<small className="manager-table-subline">{t("programs.git.readonly")}</small>
 						) : null}

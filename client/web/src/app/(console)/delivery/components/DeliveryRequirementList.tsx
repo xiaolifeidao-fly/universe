@@ -70,6 +70,8 @@ interface DeliveryRequirementListProps {
   onOutline: (requirement: DeliveryRequirementRecord) => void;
 	/** 需求时间线包含需求本身及其下所有任务的变动。 */
   onTimeline: (requirement: DeliveryRequirementRecord) => void;
+	/** 项目级 Git 关闭时，历史需求的分支信息也不能操作或展示。 */
+	projectGitEnabled: boolean;
   /** 用户显式确认后才会进入分支切换步骤。 */
   onGitCheck: (requirement: DeliveryRequirementRecord) => void;
   gitWorkspaceStatus: CodexGitWorkspaceStatus | null;
@@ -101,8 +103,9 @@ export function DeliveryRequirementList({
   onCreate,
   onEdit,
   onTest,
-  onOutline,
+	onOutline,
 	onTimeline,
+	projectGitEnabled,
 	onGitCheck,
 	gitWorkspaceStatus,
 	gitWorkspaceError,
@@ -208,10 +211,10 @@ export function DeliveryRequirementList({
   }, [boardGroupBy, moduleName, modules, stageName, stages, t, visibleRequirements]);
 
 	const gitStateOf = (requirement: DeliveryRequirementRecord) => {
-		if (!requirement.gitEnabled || !requirement.gitBranch) return null;
+		if (!projectGitEnabled || !requirement.gitEnabled || !requirement.gitBranch) return null;
 		if (gitWorkspaceError) return { color: "default", label: t("delivery.requirement.gitState.unavailable") };
 		if (!gitWorkspaceStatus) return { color: "default", label: t("delivery.requirement.gitState.pending") };
-		if (!gitWorkspaceStatus.remoteMatches || gitWorkspaceStatus.detached) {
+		if (gitWorkspaceStatus.detached) {
 			return { color: "error", label: t("delivery.requirement.gitState.blocked") };
 		}
 		if (gitWorkspaceStatus.currentBranch !== requirement.gitBranch) {

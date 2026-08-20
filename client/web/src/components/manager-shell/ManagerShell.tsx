@@ -840,18 +840,6 @@ export function ManagerShell({ children }: ManagerShellProps) {
 			  </>) },
 			  { key: "git", label: t("aiPreferences.tabGit"), children: (<>
 			  <div className="manager-ai-preferences__section">
-				<strong>{t("aiPreferences.requirementGit")}</strong>
-				<div className="manager-ai-preferences__switch-row">
-				  <small>{t("aiPreferences.requirementGitHint")}</small>
-				  <Switch
-					checked={preferencesDraft.gitEnabledByDefault}
-					aria-label={t("aiPreferences.requirementGit")}
-					onChange={(gitEnabledByDefault) => setPreferencesDraft((current) => ({ ...current, gitEnabledByDefault }))}
-				  />
-				</div>
-			  </div>
-			  <Divider />
-			  <div className="manager-ai-preferences__section">
 				<strong>{t("aiPreferences.gitEnvironment")}</strong>
 				<small>{t("aiPreferences.gitEnvironmentHint")}</small>
 				<Button
