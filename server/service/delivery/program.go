@@ -5,6 +5,7 @@ package delivery
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +13,11 @@ import (
 	"gorm.io/gorm"
 	"service/delivery/dto"
 	"service/delivery/internal/repository"
+)
+
+var (
+	gitRemoteNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+	gitReferenceRE  = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,255}$`)
 )
 
 // ---------- 项目 ----------
@@ -107,6 +113,43 @@ func (s *service) SaveProgram(ctx context.Context, req dto.SaveProgramRequest) e
 	})
 }
 
+// SaveProgramGitConfig 保存项目对本机仓库的期望约束。它刻意只保存期望值：
+// 远端地址与工作目录属于开发者机器，服务端不应代替用户执行 git remote set-url。
+func (s *service) SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramGitConfigRequest) (dto.ProgramView, error) {
+	if !req.BizLine.Valid() {
+		return dto.ProgramView{}, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 {
+		return dto.ProgramView{}, errors.New("缺少项目标识")
+	}
+	repositoryURL := strings.TrimSpace(req.GitRepositoryURL)
+	if len(repositoryURL) > 512 {
+		return dto.ProgramView{}, errors.New("Git 仓库地址不能超过 512 个字符")
+	}
+	remoteName := strings.TrimSpace(req.GitRemoteName)
+	if remoteName == "" {
+		remoteName = "origin"
+	}
+	if len(remoteName) > 64 || !gitRemoteNameRE.MatchString(remoteName) {
+		return dto.ProgramView{}, errors.New("Git 远端名称不合法")
+	}
+	baseBranch := strings.TrimSpace(req.GitBaseBranch)
+	if len(baseBranch) > 255 || (baseBranch != "" && !gitReferenceRE.MatchString(baseBranch)) {
+		return dto.ProgramView{}, errors.New("Git 基准分支不合法")
+	}
+	row, err := s.repo.SaveProgramGitConfig(ctx, req.BizLine.String(), req.ProgramID, map[string]any{
+		"git_repository_url": repositoryURL,
+		"git_remote_name":    remoteName,
+		"git_base_branch":    baseBranch,
+		"updated_by":         actorOf(req.ActorID, req.ActorName),
+		"updated_time":       time.Now(),
+	})
+	if err != nil {
+		return dto.ProgramView{}, translate(err)
+	}
+	return toProgramView(row), nil
+}
+
 func (s *service) MigrateProgram(ctx context.Context, req dto.MigrateProgramRequest) error {
 	if !req.SourceBizLine.Valid() || !req.TargetBizLine.Valid() {
 		return contract.ErrBizLineRequired
@@ -164,13 +207,16 @@ func (s *service) MigrateProgram(ctx context.Context, req dto.MigrateProgramRequ
 func toProgramView(row *repository.DeliveryProgram) dto.ProgramView {
 	updated := row.UpdatedTime
 	return dto.ProgramView{
-		ProgramID:   row.Id,
-		ProgramCode: row.ProgramCode,
-		BizLine:     contract.BizLine(row.BizLine),
-		Name:        row.Name,
-		Summary:     row.Summary,
-		Status:      row.Status,
-		UpdatedBy:   row.UpdatedBy,
-		UpdatedAt:   &updated,
+		ProgramID:        row.Id,
+		ProgramCode:      row.ProgramCode,
+		BizLine:          contract.BizLine(row.BizLine),
+		Name:             row.Name,
+		Summary:          row.Summary,
+		Status:           row.Status,
+		GitRepositoryURL: row.GitRepositoryURL,
+		GitRemoteName:    row.GitRemoteName,
+		GitBaseBranch:    row.GitBaseBranch,
+		UpdatedBy:        row.UpdatedBy,
+		UpdatedAt:        &updated,
 	}
 }

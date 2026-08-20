@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
   `name`         varchar(128) NOT NULL,                        -- 项目名称
   `summary`      varchar(512) NOT NULL,                        -- 一句话说明
   `status`       varchar(16)  NOT NULL DEFAULT 'active',       -- active 进行中 / archived 已归档
+  `git_repository_url` varchar(512) NOT NULL DEFAULT '',        -- 期望 Git 远端地址；为空表示不校验
+  `git_remote_name` varchar(64) NOT NULL DEFAULT 'origin',      -- 远端名
+  `git_base_branch` varchar(255) NOT NULL DEFAULT '',           -- 新需求默认基准分支
   `created_by`   varchar(64)  NOT NULL,
   `updated_by`   varchar(64)  NOT NULL,
   `created_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,

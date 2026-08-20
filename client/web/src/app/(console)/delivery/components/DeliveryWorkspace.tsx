@@ -12,7 +12,7 @@ import {
   SearchOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Badge, Button, Empty, Input, Modal, Popover, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Alert, Badge, Button, Empty, Input, Modal, Popover, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,7 +22,8 @@ import { copyTextToClipboard } from "@/utils/clipboard";
 import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { getAuthUser } from "@/utils/auth";
 import {
-  DELIVERY_KINDS,
+	DELIVERY_KINDS,
+	bindRequirementGitBranch,
 	DELIVERY_PHASES,
   DELIVERY_STATUSES,
   STATUS_COLORS,
@@ -119,6 +120,7 @@ export function DeliveryWorkspace() {
   const {
     bizLine,
     programs,
+		selectedProgram,
     programId,
     setProgramId,
     stages,
@@ -140,6 +142,10 @@ export function DeliveryWorkspace() {
     loading,
     submitting,
     codexBridgeReady,
+		gitWorkspaceStatus,
+		gitWorkspaceError,
+		gitWorkspaceLoading,
+		refreshGitWorkspaceStatus,
     executingItemKey,
     batchStarting,
     sequenceStarting,
@@ -150,6 +156,7 @@ export function DeliveryWorkspace() {
     remove,
     advancePhase,
     executeWithCodex,
+		prepareRequirementGitBranch,
     executeBatchWithCodex,
     executeSequenceWithCodex,
     stageName,
@@ -177,6 +184,10 @@ export function DeliveryWorkspace() {
   const [editingRequirement, setEditingRequirement] = useState<DeliveryRequirementRecord | null>(null);
   const [startRequirementTesting, setStartRequirementTesting] = useState(false);
 	const [timelineRequirement, setTimelineRequirement] = useState<DeliveryRequirementRecord | null>(null);
+	const [gitRequirement, setGitRequirement] = useState<DeliveryRequirementRecord | null>(null);
+	const [gitPrepareStrategy, setGitPrepareStrategy] = useState<"switch" | "commit" | "stash">("switch");
+	const [gitCommitMessage, setGitCommitMessage] = useState("");
+	const [gitPreparing, setGitPreparing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftModule, setDraftModule] = useState("");
@@ -722,6 +733,48 @@ export function DeliveryWorkspace() {
     }
   }, [programId, refresh, refreshRequirements, t]);
 
+	const openGitCheck = useCallback((requirement: DeliveryRequirementRecord) => {
+		setGitRequirement(requirement);
+		setGitPrepareStrategy(gitWorkspaceStatus?.dirty ? "stash" : "switch");
+		setGitCommitMessage(`chore: save work before ${requirement.gitBranch}`);
+		void refreshGitWorkspaceStatus().then((status) => {
+			// 弹窗打开前可能还是上一次需求的快照；真正确认的状态回来后再选默认策略。
+			setGitPrepareStrategy(status?.dirty ? "stash" : "switch");
+		});
+	}, [gitWorkspaceStatus?.dirty, refreshGitWorkspaceStatus]);
+
+	const confirmGitPreparation = useCallback(async () => {
+		if (!gitRequirement?.gitBranch) return;
+		setGitPreparing(true);
+		try {
+			const result = await prepareRequirementGitBranch(
+				gitRequirement.gitBranch,
+				gitPrepareStrategy,
+				gitCommitMessage.trim(),
+			);
+			// 从 origin/feature 关联时，本机实际分支会变成 feature；把这个规范化名称写回需求。
+			if (result.branch && result.branch !== gitRequirement.gitBranch) {
+				await bindRequirementGitBranch(
+					programId,
+					gitRequirement.requirementKey,
+					gitRequirement.gitBaseBranch,
+					result.branch,
+				);
+			}
+			await refreshRequirements();
+			setGitRequirement(null);
+			message.success(result.stashed
+				? t("delivery.requirement.gitPreparedStashed")
+				: result.committed
+					? t("delivery.requirement.gitPreparedCommitted")
+					: t("delivery.requirement.gitPrepared"));
+		} catch (error) {
+			message.error((error as Error).message);
+		} finally {
+			setGitPreparing(false);
+		}
+	}, [gitCommitMessage, gitPrepareStrategy, gitRequirement, prepareRequirementGitBranch, programId, refreshRequirements, t]);
+
   const columns: ColumnsType<DeliveryItemRecord> = [
     {
       title: t("delivery.field.title"),
@@ -813,6 +866,17 @@ export function DeliveryWorkspace() {
     },
     { title: t("delivery.field.dueDate"), dataIndex: "dueDate", width: 120 },
   ];
+
+  const gitAlreadyOnRequirementBranch = Boolean(
+    gitWorkspaceStatus?.currentBranch
+    && gitRequirement?.gitBranch
+    && gitWorkspaceStatus.currentBranch === gitRequirement.gitBranch,
+  );
+  const gitBranchesDiffer = Boolean(
+    gitWorkspaceStatus?.currentBranch
+    && gitRequirement?.gitBranch
+    && gitWorkspaceStatus.currentBranch !== gitRequirement.gitBranch,
+  );
 
   return (
     <div className="manager-page-stack manager-delivery">
@@ -960,6 +1024,10 @@ export function DeliveryWorkspace() {
           }}
           onOutline={setOutlineRequirement}
 		  onTimeline={setTimelineRequirement}
+		  onGitCheck={openGitCheck}
+		  gitWorkspaceStatus={gitWorkspaceStatus}
+		  gitWorkspaceError={gitWorkspaceError}
+		  gitWorkspaceLoading={gitWorkspaceLoading}
           onStatusChange={handleRequirementStatusChange}
           onDelete={(requirementKey) => void handleDeleteRequirement(requirementKey)}
         />
@@ -1239,6 +1307,7 @@ export function DeliveryWorkspace() {
         requirement={editingRequirement}
         programId={programId}
         programName={programs.find((program) => program.programId === programId)?.name ?? ""}
+		projectGitBaseBranch={selectedProgram?.gitBaseBranch ?? ""}
         bizLine={bizLine}
         stages={stages}
         modules={modules}
@@ -1280,6 +1349,85 @@ export function DeliveryWorkspace() {
         requirement={timelineRequirement}
         onClose={() => setTimelineRequirement(null)}
       />
+
+		<Modal
+			open={Boolean(gitRequirement)}
+			title={t("delivery.requirement.gitCheckTitle")}
+			okText={t("delivery.requirement.gitPrepare")}
+			confirmLoading={gitPreparing}
+			footer={gitAlreadyOnRequirementBranch ? (
+				<Button type="primary" onClick={() => setGitRequirement(null)}>
+					{t("common.close")}
+				</Button>
+			) : undefined}
+			okButtonProps={{
+				disabled: Boolean(gitWorkspaceLoading || gitWorkspaceError || !gitRequirement?.gitBranch || !gitWorkspaceStatus?.remoteMatches || gitWorkspaceStatus?.detached),
+			}}
+			onCancel={() => setGitRequirement(null)}
+			onOk={() => void confirmGitPreparation()}
+		>
+			<div className="delivery-drawer">
+				{gitWorkspaceError ? <Alert type="warning" showIcon message={gitWorkspaceError} /> : null}
+				{gitWorkspaceStatus && !gitWorkspaceStatus.remoteMatches ? <Alert type="error" showIcon message={t("delivery.requirement.gitRemoteMismatch")} /> : null}
+				{gitWorkspaceStatus?.detached ? <Alert type="error" showIcon message={t("delivery.requirement.gitDetached")} /> : null}
+				{gitAlreadyOnRequirementBranch ? <Alert
+					type="success"
+					showIcon
+					message={t("delivery.requirement.gitAlreadyOnBranch")}
+				/> : null}
+				{gitWorkspaceStatus?.remoteMatches && !gitWorkspaceStatus.detached && gitWorkspaceStatus.currentBranch !== gitRequirement?.gitBranch ? <Alert
+					type="warning"
+					showIcon
+					message={t("delivery.requirement.gitBranchMismatch")
+						.replace("{current}", gitWorkspaceStatus.currentBranch || "HEAD")
+						.replace("{target}", gitRequirement?.gitBranch || "")}
+				/> : null}
+				<label>
+					{t("delivery.requirement.gitCurrentBranch")}
+					<Input readOnly value={gitWorkspaceStatus?.currentBranch || "HEAD"} className="manager-mono" />
+				</label>
+				<label>
+					{t("delivery.requirement.gitTargetBranch")}
+					<Input readOnly value={gitRequirement?.gitBranch || ""} className="manager-mono" />
+				</label>
+				{gitBranchesDiffer && gitWorkspaceStatus ? <Alert
+					type={gitWorkspaceStatus.dirty ? "warning" : "info"}
+					showIcon
+					message={t("delivery.requirement.gitPendingFiles")
+						.replace("{changed}", String(gitWorkspaceStatus.changed))
+						.replace("{staged}", String(gitWorkspaceStatus.staged))
+						.replace("{unstaged}", String(gitWorkspaceStatus.unstaged))
+						.replace("{untracked}", String(gitWorkspaceStatus.untracked))}
+					description={gitWorkspaceStatus.dirty ? t("delivery.requirement.gitDirtySwitchHint") : undefined}
+				/> : null}
+				{gitWorkspaceStatus?.dirty && !gitBranchesDiffer ? <Alert
+					type="warning"
+					showIcon
+					message={t("delivery.requirement.gitDirtySummary")
+						.replace("{staged}", String(gitWorkspaceStatus.staged))
+						.replace("{unstaged}", String(gitWorkspaceStatus.unstaged))
+						.replace("{untracked}", String(gitWorkspaceStatus.untracked))}
+					description={gitAlreadyOnRequirementBranch ? undefined : t("delivery.requirement.gitDirtySwitchHint")}
+				/> : null}
+				{gitWorkspaceStatus?.dirty && gitWorkspaceStatus.currentBranch !== gitRequirement?.gitBranch ? <>
+					<label>
+						{t("delivery.requirement.gitDirtyStrategy")}
+						<Segmented
+							value={gitPrepareStrategy}
+							onChange={(value) => setGitPrepareStrategy(value as "commit" | "stash")}
+							options={[
+								{ value: "stash", label: t("delivery.requirement.gitStrategy.stash") },
+								{ value: "commit", label: t("delivery.requirement.gitStrategy.commit") },
+							]}
+						/>
+					</label>
+					{gitPrepareStrategy === "commit" ? <label>
+						{t("delivery.requirement.gitCommitMessage")}
+						<Input value={gitCommitMessage} onChange={(event) => setGitCommitMessage(event.target.value)} />
+					</label> : null}
+				</> : null}
+			</div>
+		</Modal>
 
       <Modal
         open={Boolean(pendingGroupedExecution)}

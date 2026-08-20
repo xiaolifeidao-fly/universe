@@ -3008,7 +3008,7 @@ select {
 	min-height: 0;
 	flex: 1;
 	align-items: stretch;
-	grid-template-columns: minmax(240px, 288px) minmax(0, 1fr);
+	grid-template-columns: minmax(280px, 336px) minmax(0, 1fr);
 	transition: grid-template-columns 220ms ease, gap 220ms ease;
 }
 

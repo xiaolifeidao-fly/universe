@@ -15,6 +15,7 @@ import {
 	Alert,
 	Button,
 	Drawer,
+	Divider,
 	Empty,
 	Form,
 	Input,
@@ -44,6 +45,7 @@ import {
 	migrateProgram,
 	saveModule,
 	saveProgramAssignment,
+	saveProgramGitConfig,
 	saveProgram,
 	saveStage,
 	validateCodexWorkspace,
@@ -138,6 +140,8 @@ export function ProgramManagementWorkspace() {
 	const [workspaceLoading, setWorkspaceLoading] = useState(false);
 	const [workspaceSaving, setWorkspaceSaving] = useState(false);
 	const [workspaceSource, setWorkspaceSource] = useState<"saved" | "matched" | "manual" | "unmatched">("unmatched");
+	const [gitRepositoryUrl, setGitRepositoryUrl] = useState("");
+	const [gitBaseBranch, setGitBaseBranch] = useState("");
 	// 只读成员建不了项目也编辑不了项目；系统管理员在空间维度不再有隐式权限。
 	// 空间维度的权限跟着业务线列表从服务端下来，不查本地缓存的授权范围 ——
 	// 那份缓存在刚建完空间、或别人调整过你的权限之后就不准了。
@@ -515,6 +519,8 @@ export function ProgramManagementWorkspace() {
 		const saved = getProjectWorkspacePreference(program.programId);
 		setWorkspacePath(saved?.workspace || "");
 		setWorkspaceSource(saved ? "saved" : "unmatched");
+		setGitRepositoryUrl(program.gitRepositoryUrl || "");
+		setGitBaseBranch(program.gitBaseBranch || "");
 		try {
 			const catalog = await fetchCodexLocalProjects(program.programId);
 			setWorkspaceProjects(catalog.projects);
@@ -539,14 +545,29 @@ export function ProgramManagementWorkspace() {
 	const saveWorkspacePreference = async () => {
 		if (!workspaceProgram) return;
 		const candidate = workspacePath.trim();
-		if (!candidate) {
+		const gitConfigChanged = workspaceProgram.canAdminister && (
+			gitRepositoryUrl.trim() !== (workspaceProgram.gitRepositoryUrl || "")
+			|| gitBaseBranch.trim() !== (workspaceProgram.gitBaseBranch || "")
+		);
+		if (!candidate && !gitConfigChanged) {
 			message.error(t("programs.workspace.required"));
 			return;
 		}
 		setWorkspaceSaving(true);
 		try {
-			const result = await validateCodexWorkspace(workspaceProgram.programId, candidate);
-			saveProjectWorkspacePreference(workspaceProgram.programId, result.workspace);
+			if (candidate) {
+				const result = await validateCodexWorkspace(workspaceProgram.programId, candidate);
+				saveProjectWorkspacePreference(workspaceProgram.programId, result.workspace);
+			}
+			if (gitConfigChanged) {
+				await saveProgramGitConfig({
+					programId: workspaceProgram.programId,
+					gitRepositoryUrl: gitRepositoryUrl.trim(),
+					gitRemoteName: workspaceProgram.gitRemoteName || "origin",
+					gitBaseBranch: gitBaseBranch.trim(),
+				});
+				await refresh();
+			}
 			message.success(t("programs.workspace.saved"));
 			setWorkspaceProgram(null);
 		} catch (error) {
@@ -835,6 +856,31 @@ export function ProgramManagementWorkspace() {
 								}}
 							/>
 						</Form.Item>
+						<Divider orientation="left" plain>{t("programs.git.title")}</Divider>
+						<Alert
+							showIcon
+							type="info"
+							message={t("programs.git.hint")}
+						/>
+						<Form.Item label={t("programs.git.repositoryUrl")} extra={t("programs.git.repositoryUrlHint")} style={{ marginTop: 16 }}>
+							<Input
+								disabled={!workspaceProgram?.canAdminister}
+								value={gitRepositoryUrl}
+								placeholder={t("programs.git.repositoryUrlPlaceholder")}
+								onChange={(event) => setGitRepositoryUrl(event.target.value)}
+							/>
+						</Form.Item>
+						<Form.Item label={t("programs.git.baseBranch")} extra={t("programs.git.baseBranchHint")}>
+							<Input
+								disabled={!workspaceProgram?.canAdminister}
+								value={gitBaseBranch}
+								placeholder={t("programs.git.baseBranchPlaceholder")}
+								onChange={(event) => setGitBaseBranch(event.target.value)}
+							/>
+						</Form.Item>
+						{!workspaceProgram?.canAdminister ? (
+							<small className="manager-table-subline">{t("programs.git.readonly")}</small>
+						) : null}
 					</Form>
 				</Space>
 			</Modal>

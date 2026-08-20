@@ -30,6 +30,7 @@ type Service interface {
 	CountPrograms(ctx context.Context, bizLine contract.BizLine) (int64, error)
 	GetProgram(ctx context.Context, bizLine contract.BizLine, programID int64) (dto.ProgramView, error)
 	SaveProgram(ctx context.Context, req dto.SaveProgramRequest) error
+	SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramGitConfigRequest) (dto.ProgramView, error)
 	MigrateProgram(ctx context.Context, req dto.MigrateProgramRequest) error
 
 	// ---------- 阶段 / 模块 ----------

@@ -10,6 +10,7 @@ import {
   createItem,
   deleteItem,
   fetchCodexBridgeHealth,
+	fetchCodexGitWorkspaceStatus,
   fetchBoard,
   fetchItems,
   fetchModules,
@@ -18,6 +19,7 @@ import {
   fetchRequirements,
   fetchStages,
   patchItem,
+	prepareCodexGitBranch,
   rebuildSnapshot,
   startCodexExecutionBatch,
   startCodexExecution,
@@ -27,6 +29,7 @@ import {
   type CreateItemPayload,
   type DeliveryBoard,
   type CodexBridgeHealth,
+	type CodexGitWorkspaceStatus,
   type DeliveryItemRecord,
   type DeliveryModuleRecord,
   type DeliveryProgramRecord,
@@ -88,7 +91,8 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
   const [itemCatalog, setItemCatalog] = useState<DeliveryItemRecord[]>([]);
   const [requirements, setRequirements] = useState<DeliveryRequirementRecord[]>([]);
   const [requirementsLoading, setRequirementsLoading] = useState(false);
-  const [requirementScope, setRequirementScope] = useState<"mine" | "">("mine");
+  // 正常进入任务看板时展示项目内全部需求；分享链接仍由 sharedRequirementOnly 单独直查。
+  const [requirementScope, setRequirementScope] = useState<"mine" | "">("");
   const [requirementKeyword, setRequirementKeyword] = useState("");
   // 分享页先聚焦链接中的一条需求；用户可通过「查询所有」解除该限制。
   const [sharedRequirementOnly, setSharedRequirementOnly] = useState(Boolean(sharedRequirementKey));
@@ -98,6 +102,9 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
   const [submitting, setSubmitting] = useState(false);
   const [codexHealth, setCodexHealth] = useState<CodexBridgeHealth | null>(null);
   const [codexHealthLoading, setCodexHealthLoading] = useState(false);
+	const [gitWorkspaceStatus, setGitWorkspaceStatus] = useState<CodexGitWorkspaceStatus | null>(null);
+	const [gitWorkspaceError, setGitWorkspaceError] = useState("");
+	const [gitWorkspaceLoading, setGitWorkspaceLoading] = useState(false);
   const [executingItemKey, setExecutingItemKey] = useState("");
   const [preparingTestCasesKey, setPreparingTestCasesKey] = useState("");
   const [batchStarting, setBatchStarting] = useState(false);
@@ -146,6 +153,36 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
   useEffect(() => {
     if (programId) void checkCodexHealth();
   }, [checkCodexHealth, programId]);
+
+	const selectedProgram = useMemo(
+		() => programs.find((program) => program.programId === programId) ?? null,
+		[programId, programs],
+	);
+
+	const refreshGitWorkspaceStatus = useCallback(async () => {
+		if (!programId || !selectedProgram) {
+			setGitWorkspaceStatus(null);
+			setGitWorkspaceError("");
+			return null;
+		}
+		setGitWorkspaceLoading(true);
+		try {
+			const status = await fetchCodexGitWorkspaceStatus(programId, selectedProgram);
+			setGitWorkspaceStatus(status);
+			setGitWorkspaceError("");
+			return status;
+		} catch (error) {
+			setGitWorkspaceStatus(null);
+			setGitWorkspaceError((error as Error).message);
+			return null;
+		} finally {
+			setGitWorkspaceLoading(false);
+		}
+	}, [programId, selectedProgram]);
+
+	useEffect(() => {
+		void refreshGitWorkspaceStatus();
+	}, [refreshGitWorkspaceStatus]);
 
   // 项目列表：业务线切换要重新拉，选中的项目优先沿用上次。
   useEffect(() => {
@@ -407,6 +444,18 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     [bizLine, configFor, programId, refresh, refreshCatalog],
   );
 
+	const prepareRequirementGitBranch = useCallback(async (
+		branch: string,
+		strategy: "switch" | "commit" | "stash",
+		commitMessage = "",
+	) => {
+		if (!selectedProgram) throw new Error("未选择项目");
+		const result = await prepareCodexGitBranch(programId, branch, selectedProgram, strategy, commitMessage);
+		setGitWorkspaceStatus(result.status);
+		setGitWorkspaceError("");
+		return result;
+	}, [programId, selectedProgram]);
+
   const generateTestingCases = useCallback(
     async (item: DeliveryItemRecord, testingRequirements = "") => {
       setPreparingTestCasesKey(item.itemKey);
@@ -494,6 +543,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
   return {
     bizLine,
     programs,
+		selectedProgram,
     programId,
     setProgramId,
     stages,
@@ -517,6 +567,10 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     codexHealth,
     codexBridgeReady: Boolean(codexHealth?.ready),
     codexHealthLoading,
+		gitWorkspaceStatus,
+		gitWorkspaceError,
+		gitWorkspaceLoading,
+		refreshGitWorkspaceStatus,
     checkCodexHealth,
     executingItemKey,
     preparingTestCasesKey,
@@ -530,6 +584,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     snapshot,
     advancePhase,
     executeWithCodex,
+		prepareRequirementGitBranch,
     generateTestingCases,
     executeBatchWithCodex,
     executeSequenceWithCodex,

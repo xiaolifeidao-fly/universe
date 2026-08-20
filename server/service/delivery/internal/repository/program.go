@@ -91,6 +91,24 @@ func (r *DeliveryRepository) SaveProgram(ctx context.Context, row *DeliveryProgr
 		}).Error
 }
 
+// SaveProgramGitConfig 单独更新项目共享的 Git 策略，避免设置远端校验时覆盖项目正文。
+func (r *DeliveryRepository) SaveProgramGitConfig(ctx context.Context, bizLine string, programID int64, values map[string]any) (*DeliveryProgram, error) {
+	var row DeliveryProgram
+	if err := r.Db.WithContext(ctx).Model(&DeliveryProgram{}).
+		Where("biz_line = ? AND id = ?", bizLine, programID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	if err := r.Db.WithContext(ctx).Model(&DeliveryProgram{}).
+		Where("biz_line = ? AND id = ?", bizLine, programID).Updates(values).Error; err != nil {
+		return nil, err
+	}
+	if err := r.Db.WithContext(ctx).Model(&DeliveryProgram{}).
+		Where("biz_line = ? AND id = ?", bizLine, programID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 // MoveProgramBizLine 迁移项目及其全部交付数据。调用方必须包在同一事务中，
 // 这样任一表的唯一键冲突都会让整次迁移回滚。
 func (r *DeliveryRepository) MoveProgramBizLine(

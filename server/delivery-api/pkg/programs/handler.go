@@ -30,6 +30,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 项目 / 阶段 / 模块都是配置，写一律 RequireUser。
 	api := group.Group("/delivery", httpx.RequireUser())
 	api.POST("/program/save", h.saveProgram)
+	api.POST("/program/git-config", h.saveGitConfig)
 	api.POST("/program/migrate", h.migrateProgram)
 	api.POST("/stage/save", h.saveStage)
 	api.POST("/stage/delete", h.deleteStage)
@@ -105,6 +106,24 @@ func (h *Handler) saveProgram(context *gin.Context) {
 	}
 	req.ActorID = httpx.CallerID(context)
 	httpx.JSON(context, nil, h.service.SaveProgram(context.Request.Context(), req))
+}
+
+func (h *Handler) saveGitConfig(context *gin.Context) {
+	var req deliverydto.SaveProgramGitConfigRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveManagedProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.SaveProgramGitConfig(context.Request.Context(), req)
+	if err == nil {
+		view.CanAdminister = true
+		view.CanWrite = true
+	}
+	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) migrateProgram(context *gin.Context) {

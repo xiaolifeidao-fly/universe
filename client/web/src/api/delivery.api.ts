@@ -56,6 +56,14 @@ export class DeliveryProgramRecord {
 
   status = "active";
 
+  /** 项目共享的期望 Git 远端；为空表示仅展示本机状态，不校验远端。 */
+  gitRepositoryUrl = "";
+
+  gitRemoteName = "origin";
+
+  /** 新需求创建分支时优先采用的基准分支。 */
+  gitBaseBranch = "";
+
   updatedBy = "";
 
   updatedAt?: string;
@@ -535,6 +543,45 @@ export class CodexGitBranchCatalog {
   defaultBranch = "";
 }
 
+/** 本机桥接读取的工作目录 Git 快照；不含远端地址或差异内容。 */
+export class CodexGitWorkspaceStatus {
+  workspace = "";
+
+  isGitRepository = false;
+
+  remoteName = "origin";
+
+  remoteMatches = true;
+
+  currentBranch = "";
+
+  detached = false;
+
+  dirty = false;
+
+  changed = 0;
+
+  staged = 0;
+
+  unstaged = 0;
+
+  untracked = 0;
+
+  checkedAt = 0;
+}
+
+export class CodexGitPrepareResult {
+  branch = "";
+
+  previousBranch = "";
+
+  committed = false;
+
+  stashed = false;
+
+  status = new CodexGitWorkspaceStatus();
+}
+
 export class CodexGitBranchResult {
   created = false;
 
@@ -997,6 +1044,13 @@ export interface SaveProgramPayload {
 	actorName?: string;
 }
 
+export interface SaveProgramGitConfigPayload {
+  programId: number;
+  gitRepositoryUrl?: string;
+  gitRemoteName?: string;
+  gitBaseBranch?: string;
+}
+
 export interface MigrateProgramPayload extends SaveProgramPayload {
 	targetBizLine: BusinessLineId;
 }
@@ -1111,6 +1165,11 @@ export async function saveProgram(bizLine: BusinessLineId, payload: SaveProgramP
 		params: withBizLine(bizLine),
 	});
 	return unwrapApiResponse(response.data);
+}
+
+export async function saveProgramGitConfig(payload: SaveProgramGitConfigPayload) {
+  const response = await instance.post<ApiResponse<DeliveryProgramRecord>>("/delivery/program/git-config", payload);
+  return plainToInstance(DeliveryProgramRecord, unwrapApiResponse(response.data));
 }
 
 export async function migrateProgram(bizLine: BusinessLineId, payload: MigrateProgramPayload) {
@@ -1448,6 +1507,45 @@ export async function fetchCodexGitBranches(programId: number) {
   const catalog = plainToInstance(CodexGitBranchCatalog, response.data);
   catalog.branches = (response.data.branches ?? []).map((branch) => String(branch || "")).filter(Boolean);
   return catalog;
+}
+
+export async function fetchCodexGitWorkspaceStatus(
+  programId: number,
+  config: Pick<DeliveryProgramRecord, "gitRepositoryUrl" | "gitRemoteName">,
+) {
+  const response = await instance.get<CodexGitWorkspaceStatus>(`${CODEX_BRIDGE_URL}/v1/codex/git/status`, {
+    params: bridgeWorkspaceParams(programId, {
+      programId,
+      expectedRemoteUrl: config.gitRepositoryUrl,
+      remoteName: config.gitRemoteName || "origin",
+    }),
+    timeout: 15000,
+  });
+  return plainToInstance(CodexGitWorkspaceStatus, response.data);
+}
+
+export async function prepareCodexGitBranch(
+  programId: number,
+  branch: string,
+  config: Pick<DeliveryProgramRecord, "gitRepositoryUrl" | "gitRemoteName">,
+  strategy: "switch" | "commit" | "stash" = "switch",
+  commitMessage = "",
+) {
+  const response = await instance.post<CodexGitPrepareResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/git/prepare`,
+    bridgeWorkspaceParams(programId, {
+      programId,
+      branch,
+      strategy,
+      commitMessage,
+      expectedRemoteUrl: config.gitRepositoryUrl,
+      remoteName: config.gitRemoteName || "origin",
+    }),
+    { timeout: 150000 },
+  );
+  const result = plainToInstance(CodexGitPrepareResult, response.data);
+  result.status = plainToInstance(CodexGitWorkspaceStatus, response.data.status ?? response.data);
+  return result;
 }
 
 export async function createCodexGitBranch(programId: number, baseBranch: string, branch: string) {

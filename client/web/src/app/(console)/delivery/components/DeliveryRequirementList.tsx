@@ -1,6 +1,7 @@
 "use client";
 
 import {
+	BranchesOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -14,7 +15,7 @@ import {
   SearchOutlined,
   SwapOutlined,
 } from "@ant-design/icons";
-import { Button, Dropdown, Empty, Input, Popconfirm, Segmented, Select, Spin, Tooltip } from "antd";
+import { Button, Dropdown, Empty, Input, Popconfirm, Segmented, Select, Spin, Tag, Tooltip } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -22,6 +23,7 @@ import {
   REQUIREMENT_MODES,
   REQUIREMENT_STATUSES,
   type BoardGroupBy,
+	type CodexGitWorkspaceStatus,
   type DeliveryModuleRecord,
   type DeliveryRequirementRecord,
   type DeliveryStageRecord,
@@ -68,6 +70,11 @@ interface DeliveryRequirementListProps {
   onOutline: (requirement: DeliveryRequirementRecord) => void;
 	/** 需求时间线包含需求本身及其下所有任务的变动。 */
   onTimeline: (requirement: DeliveryRequirementRecord) => void;
+  /** 用户显式确认后才会进入分支切换步骤。 */
+  onGitCheck: (requirement: DeliveryRequirementRecord) => void;
+  gitWorkspaceStatus: CodexGitWorkspaceStatus | null;
+  gitWorkspaceError: string;
+  gitWorkspaceLoading: boolean;
   onStatusChange: (requirement: DeliveryRequirementRecord, status: RequirementStatus) => Promise<void>;
   onDelete: (requirementKey: string) => void;
 }
@@ -96,6 +103,10 @@ export function DeliveryRequirementList({
   onTest,
   onOutline,
 	onTimeline,
+	onGitCheck,
+	gitWorkspaceStatus,
+	gitWorkspaceError,
+	gitWorkspaceLoading,
   onStatusChange,
   onDelete,
 }: DeliveryRequirementListProps) {
@@ -196,9 +207,24 @@ export function DeliveryRequirementList({
     }));
   }, [boardGroupBy, moduleName, modules, stageName, stages, t, visibleRequirements]);
 
+	const gitStateOf = (requirement: DeliveryRequirementRecord) => {
+		if (!requirement.gitEnabled || !requirement.gitBranch) return null;
+		if (gitWorkspaceError) return { color: "default", label: t("delivery.requirement.gitState.unavailable") };
+		if (!gitWorkspaceStatus) return { color: "default", label: t("delivery.requirement.gitState.pending") };
+		if (!gitWorkspaceStatus.remoteMatches || gitWorkspaceStatus.detached) {
+			return { color: "error", label: t("delivery.requirement.gitState.blocked") };
+		}
+		if (gitWorkspaceStatus.currentBranch !== requirement.gitBranch) {
+			return { color: "warning", label: t("delivery.requirement.gitState.mismatch") };
+		}
+		if (gitWorkspaceStatus.dirty) return { color: "warning", label: t("delivery.requirement.gitState.dirty") };
+		return { color: "success", label: t("delivery.requirement.gitState.ready") };
+	};
+
   const renderRequirementCard = (requirement: DeliveryRequirementRecord, boardCard = false) => {
     const isSelected = requirement.requirementKey === selectedKey;
     const statusChanging = changingStatusKey === requirement.requirementKey;
+		const gitState = gitStateOf(requirement);
 
     const changeStatus = async (status: RequirementStatus) => {
       if (status === requirement.status || statusChanging) return;
@@ -230,6 +256,20 @@ export function DeliveryRequirementList({
           </Tooltip>
         </div>
         <div className="delivery-requirement-card__actions" onClick={(event) => event.stopPropagation()}>
+			{gitState ? <Tooltip title={t("delivery.requirement.gitCheck")}>
+				<Button
+					type="text"
+					size="small"
+					shape="circle"
+					icon={<BranchesOutlined />}
+					loading={gitWorkspaceLoading}
+					aria-label={t("delivery.requirement.gitCheck")}
+					onClick={(event) => {
+						event.stopPropagation();
+						onGitCheck(requirement);
+					}}
+				/>
+			</Tooltip> : null}
           <Dropdown
             trigger={["click"]}
             menu={{
@@ -347,6 +387,10 @@ export function DeliveryRequirementList({
         <small className="delivery-requirement-card__status">
           {t(`delivery.requirement.status.${requirement.status}`)}
         </small>
+			{gitState ? <small className="delivery-requirement-card__status">
+				<Tag color={gitState.color} bordered={false}>{gitState.label}</Tag>
+				<span className="manager-mono">{requirement.gitBranch}</span>
+			</small> : null}
         {boardCard && requirement.detail ? <p className="delivery-requirement-card__brief">{requirementMentionPlainText(requirement.detail, requirementNameByKey)}</p> : null}
       </div>
     );
@@ -361,6 +405,9 @@ export function DeliveryRequirementList({
         <div>
           <h3>{t("delivery.requirement.list")}</h3>
           {programName ? <small>{programName}</small> : null}
+			{gitWorkspaceStatus ? <small className="manager-mono">
+				{t("delivery.requirement.gitCurrentBranch")} {gitWorkspaceStatus.currentBranch || "HEAD"}
+			</small> : null}
         </div>
         <div className="delivery-requirement-rail__header-actions">
           <Tooltip title={expanded ? t("delivery.requirement.collapseList") : t("delivery.requirement.expandList")}>

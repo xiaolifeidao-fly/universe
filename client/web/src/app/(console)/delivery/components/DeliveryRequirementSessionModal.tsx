@@ -98,6 +98,8 @@ interface DeliveryRequirementSessionModalProps {
   requirement: DeliveryRequirementRecord | null;
   programId: number;
   programName: string;
+	/** 项目级默认基准分支；需求自身已配置时始终优先。 */
+	projectGitBaseBranch?: string;
   bizLine: BusinessLineId;
   stages: DeliveryStageRecord[];
   modules: DeliveryModuleRecord[];
@@ -171,6 +173,7 @@ export function DeliveryRequirementSessionModal({
   requirement,
   programId,
   programName,
+	projectGitBaseBranch = "",
   bizLine,
   stages,
   modules,
@@ -412,7 +415,7 @@ export function DeliveryRequirementSessionModal({
     setGeneratePrototype(requirement?.generatePrototype ?? false);
 		// Git 开关以需求自身的设置为准；这条需求没单独设置过（新建或历史需求）才用偏好里的默认值。
 		setGitEnabled(requirement?.gitEnabled ?? gitEnabledByDefaultRef.current);
-		setGitBaseBranch(requirement?.gitBaseBranch ?? "");
+		setGitBaseBranch(requirement?.gitBaseBranch ?? projectGitBaseBranch);
 		setGitBranch(requirement?.gitBranch ?? "");
 		setGitBranches([]);
     setStageKey(requirement?.stageKey ?? "");
@@ -420,7 +423,7 @@ export function DeliveryRequirementSessionModal({
     setKind(requirement?.kind ?? "");
     setOwnerIds((requirement?.owners ?? []).map((member) => member.id));
     setAssistantIds((requirement?.assistants ?? []).map((member) => member.id));
-  }, [open, requirement]);
+	}, [open, projectGitBaseBranch, requirement]);
 
   useEffect(() => {
     if (!open) return;
@@ -1613,6 +1616,18 @@ export function DeliveryRequirementSessionModal({
 												? t("delivery.requirement.gitBranchPlaceholder").replace("{key}", saved.requirementKey)
 												: t("delivery.requirement.gitBranchPlaceholderUnsaved")}
 											onChange={(event) => setGitBranch(event.target.value)}
+										/>
+									</label>
+									<label>
+										{t("delivery.requirement.gitExistingBranch")}
+										<Select
+											showSearch
+											optionFilterProp="label"
+											loading={gitBranchesLoading}
+											placeholder={t("delivery.requirement.gitExistingBranchPlaceholder")}
+											value={undefined}
+											onChange={setGitBranch}
+											options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
 										/>
 									</label>
 									<Button
