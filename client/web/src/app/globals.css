@@ -4901,3 +4901,145 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	 .manager-ai-preferences__config-grid, .manager-ai-preferences__scene-heading{ grid-template-columns: 1fr; gap: 7px; }
 	.manager-ai-preferences__scene-heading .ant-select { width: 100%; }
 }
+
+/* ── 任务面板设计初衷弹窗（TaskBoardStoryModal） ────────────────────────────
+   三个场景各自一张示意图，动画全部走 CSS keyframes，不引入任何动画库。
+   颜色只用 manager-* 语义变量：现状用 amber/red，任务面板用 primary/green。 */
+.board-story .ant-modal-body { padding-top: 4px; }
+.board-story__heading { display: grid; gap: 2px; }
+.board-story__heading strong { color: var(--manager-text); font-size: var(--manager-fs-lg); }
+.board-story__heading small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 400; }
+.board-story__switcher { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 14px; }
+.board-story__scene-title { margin: 0 0 12px; color: var(--manager-text); font-size: var(--manager-fs-xl); font-weight: 650; line-height: var(--manager-lh-tight); }
+.board-story__stage {
+	position: relative; display: grid; align-content: center; gap: 18px;
+	min-height: 260px; padding: 22px 24px; overflow: hidden;
+	border: 1px solid var(--manager-border); border-radius: var(--manager-r-lg);
+	background: radial-gradient(120% 140% at 12% 0%, color-mix(in srgb, var(--manager-primary) 8%, transparent), transparent 62%), var(--manager-panel);
+	animation: storyStageIn 0.4s var(--manager-ease) both;
+}
+@keyframes storyStageIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.board-story__columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+.board-story__card { display: grid; align-content: start; gap: 8px; padding: 14px 16px; border: 1px solid var(--manager-border); border-radius: var(--manager-r); background: var(--manager-surface); }
+.board-story__card header { font-size: var(--manager-fs-sm); font-weight: 650; letter-spacing: 0.04em; }
+.board-story__card ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.board-story__card li { position: relative; padding-left: 18px; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: var(--manager-lh-snug); }
+.board-story__card li::before { position: absolute; left: 2px; top: 0; }
+.board-story__card--pain { border-color: color-mix(in srgb, var(--manager-amber) 32%, var(--manager-border)); }
+.board-story__card--pain header { color: var(--manager-amber); }
+.board-story__card--pain li::before { content: "✕"; color: var(--manager-amber); }
+.board-story__card--fix { border-color: color-mix(in srgb, var(--manager-primary) 34%, var(--manager-border)); }
+.board-story__card--fix header { color: var(--manager-primary); }
+.board-story__card--fix li::before { content: "✓"; color: var(--manager-green); }
+.board-story__metric { justify-self: start; margin-top: 2px; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--manager-green) 12%, transparent); color: var(--manager-green); font-size: var(--manager-fs-xs); font-weight: 650; }
+.board-story__footer { margin: 14px 0 0; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-snug); }
+
+/* 通用节点 / 连线 */
+.board-story-node { display: grid; justify-items: center; gap: 4px; flex: 0 0 auto; width: 74px; }
+.board-story-node__icon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--manager-border-strong); background: var(--manager-surface); font-size: 19px; box-shadow: var(--manager-shadow-sm); }
+.board-story-node__label { color: var(--manager-text-soft); font-size: var(--manager-fs-xs); text-align: center; }
+.board-story-node--primary .board-story-node__icon { border-color: color-mix(in srgb, var(--manager-primary) 55%, transparent); background: var(--manager-primary-light); }
+.board-story-node--good .board-story-node__icon { border-color: color-mix(in srgb, var(--manager-green) 55%, transparent); background: color-mix(in srgb, var(--manager-green) 12%, var(--manager-surface)); }
+.board-story-wire { position: relative; flex: 1 1 auto; min-width: 48px; height: 2px; margin-bottom: 18px; border-radius: 2px; }
+.board-story-wire--bad { background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--manager-amber) 55%, transparent) 0 6px, transparent 6px 12px); }
+.board-story-wire--good { background: color-mix(in srgb, var(--manager-primary) 32%, transparent); }
+
+/* 场景一：信息保真 */
+.board-story-collab { display: grid; gap: 22px; }
+.board-story-lane { display: grid; grid-template-columns: 82px minmax(0, 1fr) 96px; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--manager-r); border: 1px solid transparent; }
+.board-story-lane--bad { border-color: color-mix(in srgb, var(--manager-amber) 26%, transparent); background: color-mix(in srgb, var(--manager-amber) 7%, var(--manager-surface)); }
+.board-story-lane--good { border-color: color-mix(in srgb, var(--manager-primary) 26%, transparent); background: color-mix(in srgb, var(--manager-primary) 7%, var(--manager-surface)); }
+.board-story-lane__tag { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 600; }
+.board-story-lane__flow { display: flex; align-items: center; }
+.board-story-lane__score { justify-self: end; font-size: var(--manager-fs-sm); font-weight: 700; }
+.board-story-lane__score--bad { color: var(--manager-amber); }
+.board-story-lane__score--good { color: var(--manager-green); }
+
+.board-story-packet { position: absolute; top: -9px; width: 20px; height: 20px; border-radius: 6px; }
+.board-story-packet--decay { background: var(--manager-amber); animation: storyTravel 4.4s linear infinite, storyShrink 4.4s linear infinite; }
+.board-story-packet--intact { background: var(--manager-primary); box-shadow: 0 0 0 4px color-mix(in srgb, var(--manager-primary) 16%, transparent); animation: storyTravel 3.6s ease-in-out infinite; }
+.board-story-packet--delay { animation-delay: 0.5s; }
+.board-story-packet--delay2 { animation-delay: 1s; }
+.board-story-shard { position: absolute; inset: 0; margin: auto; width: 7px; height: 7px; border-radius: 2px; background: var(--manager-amber); }
+.board-story-shard--1 { animation: storyShardDrop 4.4s linear infinite; }
+.board-story-shard--2 { animation: storyShardDrop 4.4s linear infinite 0.45s; }
+.board-story-shard--3 { animation: storyShardDrop 4.4s linear infinite 0.9s; }
+@keyframes storyTravel {
+	0% { left: 0; opacity: 0; }
+	12% { opacity: 1; }
+	88% { opacity: 1; }
+	100% { left: calc(100% - 20px); opacity: 0; }
+}
+@keyframes storyShrink { 0%, 25% { transform: scale(1); } 55% { transform: scale(0.78); } 100% { transform: scale(0.5); } }
+@keyframes storyShardDrop {
+	0%, 28% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
+	30% { opacity: 0.9; }
+	100% { opacity: 0; transform: translate(-14px, 26px) rotate(60deg); }
+}
+
+/* 场景二：时间碎片 vs 整块时间 */
+.board-story-focus { display: grid; gap: 24px; }
+.board-story-timeline { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px 14px; }
+.board-story-timeline__tag { color: var(--manager-text-soft); font-size: var(--manager-fs-xs); font-weight: 650; }
+.board-story-timeline__track { display: flex; gap: 5px; height: 34px; }
+.board-story-frag { display: flex; flex: 1 1 0; gap: 3px; }
+.board-story-frag__ask { flex: 0 0 16px; border-radius: 4px; background: var(--manager-primary); animation: storyPulse 2.4s ease-in-out infinite; }
+.board-story-frag__wait { flex: 1 1 auto; border-radius: 4px; background-image: repeating-linear-gradient(115deg, color-mix(in srgb, var(--manager-amber) 26%, transparent) 0 7px, color-mix(in srgb, var(--manager-amber) 10%, transparent) 7px 14px); background-size: 200% 100%; animation: storyStripes 1.6s linear infinite; }
+.board-story-timeline__note { grid-column: 2; color: var(--manager-amber); font-size: var(--manager-fs-xs); }
+.board-story-timeline__track--after { gap: 6px; }
+.board-story-block { display: grid; place-items: center; border-radius: 6px; color: #fff; font-size: var(--manager-fs-xs); font-weight: 600; }
+.board-story-block--plan { flex: 2 1 0; background: var(--manager-violet); }
+.board-story-block--exec { position: relative; flex: 6 1 0; gap: 3px; padding: 5px 8px; align-content: center; justify-items: stretch; background: color-mix(in srgb, var(--manager-primary) 14%, var(--manager-surface)); border: 1px solid color-mix(in srgb, var(--manager-primary) 34%, transparent); color: var(--manager-primary); }
+.board-story-exec__label { position: absolute; inset-inline-start: 8px; top: -17px; color: var(--manager-primary); font-size: var(--manager-fs-micro); }
+.board-story-exec__bar { height: 4px; border-radius: 2px; background: var(--manager-primary); transform-origin: left center; animation: storyFill 3.2s ease-in-out infinite; }
+.board-story-block--review { flex: 1.4 1 0; background: var(--manager-green); }
+.board-story-freetime { grid-column: 2; display: flex; align-items: center; justify-content: center; height: 24px; border-radius: 6px; background: color-mix(in srgb, var(--manager-green) 14%, transparent); border: 1px dashed color-mix(in srgb, var(--manager-green) 45%, transparent); color: var(--manager-green); font-size: var(--manager-fs-xs); font-weight: 600; animation: storyGlow 3.2s ease-in-out infinite; }
+@keyframes storyPulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+@keyframes storyStripes { to { background-position: -200% 0; } }
+@keyframes storyFill { 0% { transform: scaleX(0.04); } 70%, 100% { transform: scaleX(1); } }
+@keyframes storyGlow { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--manager-green) 12%, transparent); } }
+
+/* 场景三：算力共享 */
+.board-story-compute { display: grid; grid-template-columns: 178px minmax(0, 1fr); align-items: center; gap: 18px 10px; }
+.board-story-hub { display: grid; justify-items: center; gap: 3px; padding: 14px 12px; border-radius: var(--manager-r); border: 1px solid color-mix(in srgb, var(--manager-primary) 38%, transparent); background: var(--manager-surface); box-shadow: var(--manager-shadow-sm); }
+.board-story-hub__icon { font-size: 24px; }
+.board-story-hub strong { color: var(--manager-text); font-size: var(--manager-fs-base); }
+.board-story-hub small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); text-align: center; }
+.board-story-fanout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 6px; }
+.board-story-member { display: flex; align-items: center; gap: 6px; }
+.board-story-member__wire { position: relative; flex: 0 0 38px; height: 2px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--manager-primary) 40%, transparent) 0 5px, transparent 5px 10px); }
+.board-story-member__task { position: absolute; top: -5px; width: 12px; height: 12px; border-radius: 3px; background: var(--manager-primary); animation: storyDispatch 2.6s ease-in-out infinite; }
+.board-story-member__card { flex: 1 1 auto; display: grid; gap: 4px; padding: 8px 10px; border-radius: var(--manager-r-sm); border: 1px solid var(--manager-border); background: var(--manager-surface); }
+.board-story-member__name { color: var(--manager-text); font-size: var(--manager-fs-xs); font-weight: 600; }
+.board-story-member__card small { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); }
+.board-story-member__meter { height: 5px; border-radius: 3px; background: var(--manager-panel-muted); overflow: hidden; }
+.board-story-member__meter i { display: block; height: 100%; border-radius: 3px; background: var(--manager-green); transform-origin: left center; animation: storyFill 2.6s ease-in-out infinite; }
+.board-story-throughput { grid-column: 1 / -1; display: grid; gap: 6px; }
+.board-story-throughput__row { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px; }
+.board-story-throughput__row em { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-style: normal; }
+.board-story-throughput__bar { height: 10px; border-radius: 5px; transform-origin: left center; }
+.board-story-throughput__bar--serial { background: color-mix(in srgb, var(--manager-amber) 55%, transparent); animation: storyBarSerial 3.4s ease-out infinite; }
+.board-story-throughput__bar--parallel { background: linear-gradient(90deg, var(--manager-primary), var(--manager-green)); animation: storyBarParallel 3.4s ease-out infinite; }
+@keyframes storyDispatch { 0% { left: 0; opacity: 0; } 20% { opacity: 1; } 100% { left: 30px; opacity: 0; } }
+@keyframes storyBarSerial { 0% { transform: scaleX(0.02); } 60%, 100% { transform: scaleX(0.26); } }
+@keyframes storyBarParallel { 0% { transform: scaleX(0.02); } 60%, 100% { transform: scaleX(1); } }
+
+@media (max-width: 860px) {
+	.board-story__columns, .board-story-compute, .board-story-fanout { grid-template-columns: minmax(0, 1fr); }
+	.board-story-lane { grid-template-columns: minmax(0, 1fr); }
+	.board-story-lane__score { justify-self: start; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.board-story__stage *, .board-story__stage { animation: none !important; }
+}
+
+.manager-story-trigger.ant-btn {
+	border-color: color-mix(in srgb, var(--manager-violet) 55%, var(--manager-border));
+	color: var(--manager-violet);
+}
+.manager-story-trigger.ant-btn:hover {
+	border-color: var(--manager-violet) !important;
+	background: color-mix(in srgb, var(--manager-violet) 10%, transparent) !important;
+	color: var(--manager-violet) !important;
+}

@@ -3,6 +3,7 @@
 import {
   AppstoreOutlined,
   BranchesOutlined,
+  BulbOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
 	CopyOutlined,
@@ -51,6 +52,11 @@ import {
 import { AIEnvironmentHealth, fetchAIEnvironmentHealth } from "@/ai-preferences/aiEnvironment.api";
 import { DeliveryTaskPlannerUpdateStatus, fetchDeliveryTaskPlannerHealth, fetchDeliveryTaskPlannerUpdate } from "@/api/delivery.api";
 import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
+
+const TaskBoardStoryModal = dynamic(
+  () => import("./TaskBoardStoryModal").then((module) => module.TaskBoardStoryModal),
+  { ssr: false },
+);
 
 const LocalEnvironmentPreferencesModal = dynamic(
   () => import("./LocalEnvironmentPreferencesModal").then((module) => module.LocalEnvironmentPreferencesModal),
@@ -184,6 +190,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	const [passwordSubmitting, setPasswordSubmitting] = useState(false);
 	const [preferencesOpen, setPreferencesOpen] = useState(false);
 	const [localEnvironmentOpen, setLocalEnvironmentOpen] = useState(false);
+	const [storyOpen, setStoryOpen] = useState(false);
 	const [preferencesDraft, setPreferencesDraft] = useState<AIPreferences>(preferences);
 	const [aiEnvironmentHealth, setAIEnvironmentHealth] = useState<AIEnvironmentHealth | null>(null);
 	const [aiEnvironmentLoading, setAIEnvironmentLoading] = useState(false);
@@ -594,6 +601,13 @@ export function ManagerShell({ children }: ManagerShellProps) {
               <span style={{ flex: 1 }} />
               <Space className="manager-prototype-top-actions" size={8}>
                 <Button
+                  className="manager-story-trigger"
+                  icon={<BulbOutlined />}
+                  onClick={() => setStoryOpen(true)}
+                >
+                  {t("story.trigger")}
+                </Button>
+                <Button
                   className="manager-local-environment-trigger"
                   icon={<ThunderboltOutlined />}
                   onClick={() => setLocalEnvironmentOpen(true)}
@@ -976,6 +990,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 			</div>
 		  </div>
 		</Modal>
+      <TaskBoardStoryModal open={storyOpen} onClose={() => setStoryOpen(false)} />
       <LocalEnvironmentPreferencesModal open={localEnvironmentOpen} onClose={() => setLocalEnvironmentOpen(false)} />
     </div>
   );
