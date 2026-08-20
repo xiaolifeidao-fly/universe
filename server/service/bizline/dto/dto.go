@@ -9,6 +9,8 @@ type BizLineView struct {
 	Enabled     bool   `json:"enabled"`
 	// Visible 为否时这条业务线只对本空间管理员可见，成员也看不到。
 	Visible bool `json:"visible"`
+	// CreatedBy 是建这个空间的人。创建者不能被移出空间，前端据此隐掉那一行的剔除入口。
+	CreatedBy int64 `json:"createdBy"`
 
 	// CanManage / CanWrite 是「当前调用者对这条业务线的权限」，由 API 层按调用者身份填充。
 	// 前端据此决定按钮的显隐 —— 权限判定只有服务端说了算，
@@ -75,6 +77,9 @@ type SaveBizLineRequest struct {
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
 	Visible     bool   `json:"visible"`
+	// CreatedBy 只在新建时落库，由 API 层按调用者填充；更新时不动这一列，
+	// 所以客户端传什么都改不了空间的创建者。
+	CreatedBy int64 `json:"-"`
 }
 
 type DeleteBizLineRequest struct {

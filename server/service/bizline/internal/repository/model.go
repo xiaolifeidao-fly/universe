@@ -11,6 +11,7 @@ type BizLineDef struct {
 	Description string    `gorm:"column:description;type:varchar(512)" description:"业务线描述，分享链接上展示给受邀人"`
 	Enabled     bool      `gorm:"column:enabled;default:1" description:"是否启用"`
 	Visible     bool      `gorm:"column:visible;default:1" description:"是否可见：置否后只有本空间管理员能看到它"`
+	CreatedBy   int64     `gorm:"column:created_by;default:0" description:"创建人用户标识，创建者不能被移出空间"`
 	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
 	UpdatedTime time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
 }

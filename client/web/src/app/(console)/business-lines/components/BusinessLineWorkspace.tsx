@@ -192,10 +192,10 @@ export function BusinessLineWorkspace() {
 		void loadMembers(record.code);
 	};
 
-	const changePermission = async (member: BizLineMemberRecord, canWrite: boolean) => {
+	const changePermission = async (member: BizLineMemberRecord, permission: BizLineMemberRecord["permission"]) => {
 		if (!memberLine) return;
 		try {
-			await saveBizLineMemberPermission(memberLine.code, member.id, canWrite);
+			await saveBizLineMemberPermission(memberLine.code, member.id, permission);
 			message.success(t("businessLines.permissionSaved"));
 			await loadMembers(memberLine.code);
 		} catch (error) {
@@ -352,6 +352,9 @@ export function BusinessLineWorkspace() {
 				render: (value: string, record) => (
 					<div>
 						<b data-locale-static="false">{value || record.username}</b>
+						{memberLine && record.id === memberLine.createdBy ? (
+							<Tag style={{ marginLeft: 8 }}>{t("businessLines.memberCreator")}</Tag>
+						) : null}
 						<div className="manager-table-subline manager-mono" data-locale-static="false">{record.username}</div>
 					</div>
 				),
@@ -361,19 +364,21 @@ export function BusinessLineWorkspace() {
 				dataIndex: "permission",
 				width: 160,
 				render: (permission: BizLineMemberRecord["permission"], record) =>
-					record.isManager || !memberLine || !canManage(memberLine) ? (
+					// 自己这一行只读：给自己降级等于交出这个空间的管理权，服务端也会挡。
+					!memberLine || !canManage(memberLine) || record.id === currentUserID ? (
 						<Tag color={permission === "manager" ? "gold" : permission === "write" ? "blue" : "default"}>
 							{permissionLabel(permission)}
 						</Tag>
 					) : (
 						<Select
-							value={record.canWrite ? "write" : "read"}
+							value={permission}
 							style={{ width: 120 }}
 							options={[
 								{ value: "read", label: t("businessLines.permissionRead") },
 								{ value: "write", label: t("businessLines.permissionWrite") },
+								{ value: "manager", label: t("businessLines.permissionManager") },
 							]}
-							onChange={(value) => void changePermission(record, value === "write")}
+							onChange={(value) => void changePermission(record, value as BizLineMemberRecord["permission"])}
 						/>
 					),
 			},
@@ -391,7 +396,8 @@ export function BusinessLineWorkspace() {
 				render: (_, record) =>
 					// 自己这一行不给剔除入口：退出空间该由另一位管理员来做，
 					// 顺手把自己踢出去就等于交出了这个空间的管理权。
-					memberLine && canManage(memberLine) && record.id !== currentUserID ? (
+					// 创建者同样没有剔除入口：后来拿到管理权的人不该能把建这个空间的人清出去。
+					memberLine && canManage(memberLine) && record.id !== currentUserID && record.id !== memberLine.createdBy ? (
 						<Popconfirm
 							title={t("businessLines.memberRemoveConfirm")}
 							okButtonProps={{ danger: true }}

@@ -138,7 +138,7 @@ func (s *service) Save(ctx context.Context, req dto.SaveBizLineRequest) error {
 		}
 	}
 
-	return s.repo.Upsert(ctx, &repository.BizLineDef{Code: code, Name: name, Description: description, Enabled: req.Enabled, Visible: req.Visible})
+	return s.repo.Upsert(ctx, &repository.BizLineDef{Code: code, Name: name, Description: description, Enabled: req.Enabled, Visible: req.Visible, CreatedBy: req.CreatedBy})
 }
 
 func (s *service) CountEnabledOwned(ctx context.Context, codes []string) (int64, error) {
@@ -320,5 +320,6 @@ func toView(row *repository.BizLineDef) dto.BizLineView {
 		Description: row.Description,
 		Enabled:     row.Enabled,
 		Visible:     row.Visible,
+		CreatedBy:   row.CreatedBy,
 	}
 }

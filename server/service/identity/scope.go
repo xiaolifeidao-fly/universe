@@ -271,6 +271,22 @@ func (s *service) SaveBizLineMember(ctx context.Context, req dto.BizLineMemberRe
 	if user.Status != StatusActive {
 		return errors.New("不能为停用用户分配权限")
 	}
+	// 降级最后一个管理员等于把空间变成孤儿，和剔除最后一个管理员是同一件事。
+	if !req.AsManager {
+		current, findErr := s.repo.FindBizLineAssignment(ctx, bizLine, req.UserID)
+		if findErr != nil && !repository.IsNotFound(findErr) {
+			return findErr
+		}
+		if findErr == nil && current.IsManager {
+			managers, countErr := s.repo.CountBizLineManagers(ctx, bizLine)
+			if countErr != nil {
+				return countErr
+			}
+			if managers <= 1 {
+				return errors.New("至少保留一个空间管理员")
+			}
+		}
+	}
 	return s.repo.UpsertBizLineMember(ctx, &repository.IdentityUserBizLine{
 		UserID:    req.UserID,
 		BizLine:   bizLine,

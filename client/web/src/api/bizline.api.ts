@@ -15,6 +15,9 @@ export class BizLineRecord {
 	/** 置否后除本空间管理员外任何人都看不到这个空间，成员也不例外。 */
 	visible = true;
 
+	/** 建这个空间的人。创建者不能被移出空间，成员面板据此隐掉那一行的剔除入口。 */
+	createdBy = 0;
+
 	/** 当前登录用户对这条业务线的权限，由服务端按调用者身份返回。 */
 	canManage = false;
 
@@ -96,8 +99,16 @@ export async function fetchBizLineMembers(bizLine: string) {
 	return getDataList(BizLineMemberRecord, "/bizline/line/members", { bizLine });
 }
 
-export async function saveBizLineMemberPermission(bizLine: string, userId: number, canWrite: boolean) {
-	const response = await instance.post<ApiResponse<null>>("/bizline/line/member/permission", { bizLine, userId, canWrite });
+/**
+ * 调整成员在空间里的角色。管理员一档由空间管理员授予，服务端会挡住降级最后一个管理员。
+ */
+export async function saveBizLineMemberPermission(bizLine: string, userId: number, permission: BizLinePermission) {
+	const response = await instance.post<ApiResponse<null>>("/bizline/line/member/permission", {
+		bizLine,
+		userId,
+		canWrite: permission !== "read",
+		asManager: permission === "manager",
+	});
 	return unwrapApiResponse(response.data);
 }
 

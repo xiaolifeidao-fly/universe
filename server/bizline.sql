@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS `zt_bizline_def` (
   `description`  varchar(512) NOT NULL DEFAULT '',         -- 空间描述，分享链接上展示给受邀人
   `enabled`      tinyint(1)   NOT NULL DEFAULT 1,          -- 是否可选用
   `visible`      tinyint(1)   NOT NULL DEFAULT 1,          -- 是否可见：置 0 后只有本空间管理员能看到
+  `created_by`   bigint       NOT NULL DEFAULT 0,          -- 创建人用户标识，创建者不能被移出空间
   `created_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

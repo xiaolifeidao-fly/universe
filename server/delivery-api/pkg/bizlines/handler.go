@@ -72,10 +72,13 @@ func (h *Handler) save(context *gin.Context) {
 	code := strings.ToLower(strings.TrimSpace(req.Code))
 	current, getErr := h.service.Get(context.Request.Context(), code)
 	creating := getErr != nil
+	actorID, hasActor := callerUserID(context)
 	if creating {
 		if !h.allowMoreBizLines(context) {
 			return
 		}
+		// 创建者随空间一起落库：后面剔除成员时要拿它挡住把创建者移出空间。
+		req.CreatedBy = actorID
 	} else {
 		if !httpx.CanManageBizLine(context, code) {
 			// 看得到这个空间的人是在改它；看不到的人是想用一个已被占用的编码建新空间。
@@ -96,7 +99,7 @@ func (h *Handler) save(context *gin.Context) {
 		return
 	}
 	if creating {
-		if actorID, ok := callerUserID(context); ok {
+		if hasActor {
 			if err := h.identities.SaveBizLineMember(context.Request.Context(), identitydto.BizLineMemberRequest{
 				BizLine: code, UserID: actorID, CanWrite: true, AsManager: true,
 			}); err != nil {
@@ -167,6 +170,12 @@ func (h *Handler) saveMemberPermission(context *gin.Context) {
 		httpx.Fail(context, "无权调整该空间成员权限")
 		return
 	}
+	// 调权是管理别人的动作。自己给自己降级等于顺手交出这个空间的管理权，
+	// 和剔除自己是同一类误操作 —— 要放弃管理权请让另一位管理员来做。
+	if actorID, ok := callerUserID(context); ok && actorID == req.UserID {
+		httpx.Fail(context, "不能调整自己的权限")
+		return
+	}
 	httpx.JSON(context, nil, h.identities.SaveBizLineMember(context.Request.Context(), req))
 }
 
@@ -184,6 +193,16 @@ func (h *Handler) removeMember(context *gin.Context) {
 	// 而且极易误点 —— 要退出请让另一位管理员来做。
 	if actorID, ok := callerUserID(context); ok && actorID == req.UserID {
 		httpx.Fail(context, "不能把自己移出空间")
+		return
+	}
+	// 空间创建者一律留下：后来被授予管理权的人不该能把建这个空间的人清出去。
+	line, err := h.service.Get(context.Request.Context(), strings.ToLower(strings.TrimSpace(req.BizLine)))
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return
+	}
+	if line.CreatedBy > 0 && line.CreatedBy == req.UserID {
+		httpx.Fail(context, "不能把空间创建者移出空间")
 		return
 	}
 	httpx.JSON(context, nil, h.identities.RemoveBizLineMember(context.Request.Context(), req.BizLine, req.UserID))
