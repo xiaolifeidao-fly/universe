@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="manager"
-PORT="${PORT:-7893}"
+PORT="${PORT:-7894}"
 export LC_ALL=C
 export LANG=C
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +32,7 @@ cat > "$DIST_DIR/start.sh" <<'EOF'
 set -eu
 
 APP_NAME="manager"
-PORT="${PORT:-7893}"
+PORT="${PORT:-7894}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$SCRIPT_DIR/$APP_NAME.pid"
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
