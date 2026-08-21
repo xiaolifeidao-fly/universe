@@ -214,16 +214,18 @@ export function DeliveryRequirementList({
 
 	const gitStateOf = (requirement: DeliveryRequirementRecord) => {
 		if (!projectGitEnabled || !requirement.gitEnabled || !requirement.gitBranch) return null;
-		if (gitWorkspaceError) return { color: "default", label: t("delivery.requirement.gitState.unavailable") };
-		if (!gitWorkspaceStatus) return { color: "default", label: t("delivery.requirement.gitState.pending") };
+		// current 表示这条需求的分支正是项目此刻所处的分支，卡片上要单独标出来。
+		const base = { current: false, currentBranch: gitWorkspaceStatus?.currentBranch ?? "" };
+		if (gitWorkspaceError) return { ...base, color: "default", label: t("delivery.requirement.gitState.unavailable") };
+		if (!gitWorkspaceStatus) return { ...base, color: "default", label: t("delivery.requirement.gitState.pending") };
 		if (gitWorkspaceStatus.detached) {
-			return { color: "error", label: t("delivery.requirement.gitState.blocked") };
+			return { ...base, currentBranch: "", color: "error", label: t("delivery.requirement.gitState.blocked") };
 		}
 		if (gitWorkspaceStatus.currentBranch !== requirement.gitBranch) {
-			return { color: "warning", label: t("delivery.requirement.gitState.mismatch") };
+			return { ...base, color: "warning", label: t("delivery.requirement.gitState.mismatch") };
 		}
-		if (gitWorkspaceStatus.dirty) return { color: "warning", label: t("delivery.requirement.gitState.dirty") };
-		return { color: "success", label: t("delivery.requirement.gitState.ready") };
+		if (gitWorkspaceStatus.dirty) return { ...base, current: true, color: "warning", label: t("delivery.requirement.gitState.dirty") };
+		return { ...base, current: true, color: "success", label: t("delivery.requirement.gitState.ready") };
 	};
 
   const renderRequirementCard = (requirement: DeliveryRequirementRecord, boardCard = false) => {
@@ -422,6 +424,13 @@ export function DeliveryRequirementList({
 				  <em>{t("delivery.requirement.gitBranch")}</em>
 				  <code className="manager-mono">{requirement.gitBranch}</code>
 				  <b>{gitState.label}</b>
+				  {/* 分支不一致时，光说「不一致」没用，得指出项目此刻停在哪条分支。 */}
+				  {gitState.currentBranch ? (
+					<span className="delivery-requirement-card__branch-tip-current">
+					  <em>{t("delivery.requirement.gitCurrentBranch")}</em>
+					  <code className="manager-mono">{gitState.currentBranch}</code>
+					</span>
+				  ) : null}
 				</span>
 			  )}
 			>
@@ -430,6 +439,9 @@ export function DeliveryRequirementList({
 				<span className="delivery-requirement-card__detail-copy">
 				  <code className="manager-mono">{requirement.gitBranch}</code>
 				</span>
+				{gitState.current ? (
+				  <Tag color="processing" bordered={false}>{t("delivery.requirement.gitCurrentBranchTag")}</Tag>
+				) : null}
 				<Tag color={gitState.color} bordered={false}>{gitState.label}</Tag>
 			  </span>
 			</Tooltip>

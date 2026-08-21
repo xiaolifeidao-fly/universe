@@ -546,6 +546,9 @@ export class CodexGitBranchCatalog {
   branches: string[] = [];
 
   defaultBranch = "";
+
+  /** 工作目录此刻所处的分支；游离 HEAD 时为空串。 */
+  currentBranch = "";
 }
 
 /** 本机桥接读取的工作目录 Git 快照；不含远端地址或差异内容。 */

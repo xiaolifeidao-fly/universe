@@ -42,6 +42,28 @@ function handleAuthFailure(message?: string | null, error?: string | null) {
   }
 }
 
+/** 桥接类接口（非统一响应）失败时把服务端返回的具体原因顶到 error.message，别让界面只剩一句 HTTP 状态码。 */
+function detailOfErrorResponse(data: unknown): string {
+  if (typeof data === "string") return data.trim();
+  if (data && typeof data === "object") {
+    const payload = data as { error?: unknown; message?: unknown };
+    const detail = payload.error ?? payload.message;
+    if (typeof detail === "string") return detail.trim();
+  }
+  return "";
+}
+
+instance.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const detail = detailOfErrorResponse((error as { response?: { data?: unknown } })?.response?.data);
+    if (detail && error instanceof Error) {
+      error.message = detail;
+    }
+    return Promise.reject(error);
+  },
+);
+
 function unwrapResponse<T>(response: ApiResponse<T>): T {
   if (!response.success) {
     handleAuthFailure(response.message, response.error);

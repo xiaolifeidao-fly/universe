@@ -238,6 +238,7 @@ export function DeliveryRequirementSessionModal({
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
 	const [gitBranch, setGitBranch] = useState("");
 	const [gitBranches, setGitBranches] = useState<string[]>([]);
+	const [gitCurrentBranch, setGitCurrentBranch] = useState("");
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
 	const [gitCreating, setGitCreating] = useState(false);
 	const [gitPushOpen, setGitPushOpen] = useState(false);
@@ -438,10 +439,13 @@ export function DeliveryRequirementSessionModal({
 			.then((catalog) => {
 				if (cancelled) return;
 				setGitBranches(catalog.branches);
+				setGitCurrentBranch(catalog.currentBranch || "");
 				setGitBaseBranch((current) => current || catalog.defaultBranch || catalog.branches[0] || "");
 			})
 			.catch(() => {
-				if (!cancelled) message.warning(t("delivery.requirement.gitLoadBranchesFailed"));
+				if (cancelled) return;
+				setGitCurrentBranch("");
+				message.warning(t("delivery.requirement.gitLoadBranchesFailed"));
 			})
 			.finally(() => {
 				if (!cancelled) setGitBranchesLoading(false);
@@ -833,9 +837,17 @@ export function DeliveryRequirementSessionModal({
 			setGitBranch(next.gitBranch);
 			setSaved(next);
 			onRequirementSaved(next);
+			// 创建（或切换）成功后项目就停在这条分支上，标注要立刻跟上。
+			setGitCurrentBranch(created.branch);
 			message.success(t("delivery.requirement.gitBranchCreated"));
 		} catch (error) {
-			message.error((error as Error).message);
+			// Git 的失败原因往往是多行输出，toast 会截断，这里用弹窗把服务端返回的原文完整交代。
+			Modal.error({
+				title: t("delivery.requirement.gitBranchCreateFailed"),
+				content: <pre className="delivery-requirement-git-error">{(error as Error).message}</pre>,
+				okText: t("common.close"),
+				wrapClassName: "manager-form-skin",
+			});
 		} finally {
 			setGitCreating(false);
 		}
@@ -1571,6 +1583,11 @@ export function DeliveryRequirementSessionModal({
 							</div>
 							{gitEnabled ? (
 								<>
+									{/* 建分支前先把项目此刻所处的分支摆出来，基准分支选错的代价太高。 */}
+									<small className="delivery-requirement-git-status">
+										<span>{gitCurrentBranch ? t("delivery.requirement.gitCurrentBranch") : t("delivery.requirement.gitCurrentBranchDetached")}</span>
+										{gitCurrentBranch ? <code className="manager-mono">{gitCurrentBranch}</code> : null}
+									</small>
 									<label>
 										{t("delivery.requirement.gitBaseBranch")}
 										<Select
