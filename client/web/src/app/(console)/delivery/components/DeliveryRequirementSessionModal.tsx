@@ -91,6 +91,7 @@ import {
   clipboardAttachments,
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
+import { getProjectWorkspace } from "@/project-workspaces/projectWorkspacePreferences";
 
 interface DeliveryRequirementSessionModalProps {
   open: boolean;
@@ -842,9 +843,20 @@ export function DeliveryRequirementSessionModal({
 			message.success(t("delivery.requirement.gitBranchCreated"));
 		} catch (error) {
 			// Git 的失败原因往往是多行输出，toast 会截断，这里用弹窗把服务端返回的原文完整交代。
+			const detail = (error as Error).message;
+			// 未提交改动是最常见的失败原因，光给原文不够，得说清楚去哪里、用什么方式处理。
+			const dirty = detail.includes("未提交改动");
 			Modal.error({
 				title: t("delivery.requirement.gitBranchCreateFailed"),
-				content: <pre className="delivery-requirement-git-error">{(error as Error).message}</pre>,
+				content: (
+					<div className="delivery-requirement-git-error">
+						<pre>{detail}</pre>
+						{dirty ? (
+							<p>{t("delivery.requirement.gitBranchCreateDirtyHint").replace("{workspace}", getProjectWorkspace(programId) || "")}</p>
+						) : null}
+						<p>{t("delivery.requirement.gitBranchCreateRetryHint")}</p>
+					</div>
+				),
 				okText: t("common.close"),
 				wrapClassName: "manager-form-skin",
 			});

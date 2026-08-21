@@ -4760,8 +4760,10 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 /* 需求窗口的 Git 分支状态和推送确认。 */
 .delivery-requirement-git-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: 1.6; }
 .delivery-requirement-git-status code { color: var(--manager-text); }
-/* Git 失败原文常是多行输出，弹窗里保留换行、允许长行滚动。 */
-.delivery-requirement-git-error { margin: 0; max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: var(--manager-fs-xs); line-height: 1.6; color: var(--manager-text); }
+/* Git 失败原文常是多行输出，弹窗里保留换行、允许长行滚动，原文下面再跟操作指引。 */
+.delivery-requirement-git-error { display: grid; gap: 8px; font-size: var(--manager-fs-xs); line-height: 1.6; color: var(--manager-text); }
+.delivery-requirement-git-error pre { margin: 0; max-height: 240px; overflow: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--manager-border); background: var(--manager-bg-soft); white-space: pre-wrap; word-break: break-word; font-family: var(--manager-mono); }
+.delivery-requirement-git-error p { margin: 0; color: var(--manager-text-soft); }
 .delivery-requirement-git-push { display: grid; gap: 12px; }
 .delivery-requirement-git-push p { margin: 0; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: 1.6; }
 .delivery-requirement-git-push label { display: grid; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); }
