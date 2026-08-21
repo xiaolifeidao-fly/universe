@@ -4660,7 +4660,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .program-environment-setup__overview-icon,
 .program-environment-setup__ssh-icon { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; border-radius: var(--manager-r-sm); }
 .program-environment-setup__title-icon { border: 1px solid color-mix(in srgb, var(--manager-primary) 22%, var(--manager-border)); background: color-mix(in srgb, var(--manager-primary) 8%, var(--manager-surface)); color: var(--manager-primary); }
-.program-environment-setup__summary { display: grid; flex: 0 1 auto; gap: 14px; max-height: calc(100% - 238px); overflow: auto; padding: 18px 24px 16px; }
+.program-environment-setup__summary { display: grid; flex: 0 1 auto; gap: 14px; max-height: calc(100% - 356px); overflow: auto; padding: 18px 24px 16px; }
 .program-environment-setup__overview { display: flex; align-items: flex-start; gap: 10px; }
 .program-environment-setup__overview-icon { margin-top: 1px; background: color-mix(in srgb, var(--manager-cyan) 10%, var(--manager-surface)); color: var(--manager-cyan); }
 .program-environment-setup__overview > div { min-width: 0; }
@@ -4755,10 +4755,18 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   .program-environment-setup-modal { top: 16px; padding-bottom: 16px; }
   .program-environment-setup-modal .ant-modal-content { height: calc(100dvh - 32px); }
   .program-environment-setup-modal .ant-modal-header { padding: 18px 48px 14px 18px; }
-  .program-environment-setup__summary { max-height: calc(100% - 212px); padding: 16px 18px 14px; }
+  .program-environment-setup__summary { max-height: calc(100% - 320px); padding: 16px 18px 14px; }
   .program-environment-setup__platform-hint { padding-left: 0; }
   .program-environment-setup__actions { padding: 10px 18px; }
   .program-environment-setup-transcript { flex-basis: 180px; padding: 16px 18px; }
+}
+
+/* 预设环境也能续聊：输入区固定在底部，不参与聊天记录的滚动。 */
+.program-environment-setup__composer { flex: 0 0 auto; padding: 12px 24px 16px; }
+.program-environment-setup__composer-hint { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-base); }
+
+@media (max-width: 760px) {
+  .program-environment-setup__composer { padding: 10px 18px 14px; }
 }
 
 /* 空状态的说明文案不要横铺满整栏，收在中间一段易读的宽度里。 */

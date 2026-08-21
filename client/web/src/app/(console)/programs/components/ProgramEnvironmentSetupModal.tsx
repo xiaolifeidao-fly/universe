@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowLeftOutlined, CheckCircleOutlined, CopyOutlined, InfoCircleOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, ToolOutlined } from "@ant-design/icons";
-import { Button, Empty, Modal, Space, Table, Tag, Tooltip, message } from "antd";
+import { ArrowLeftOutlined, CheckCircleOutlined, CopyOutlined, InfoCircleOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SendOutlined, ToolOutlined } from "@ant-design/icons";
+import { Button, Empty, Input, Modal, Space, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { effortForConfig, modelForConfig, toolDisplayName, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
@@ -58,6 +58,8 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
 
   const rows = useMemo<EnvironmentRow[]>(() => [
     ...(useGit
@@ -102,6 +104,7 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
   useEffect(() => {
     if (!open) {
       setConversation(null);
+      setDraft("");
       return;
     }
     void load();
@@ -160,6 +163,32 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
       message.error((error as Error).message);
     } finally {
       setStopping(false);
+    }
+  };
+
+  /** 续聊：会话在跑就把话追加进当前回合，没在跑就用这句话续起上一条会话。 */
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      const action = await startCodexEnvironmentSetup({
+        useGit,
+        environments,
+        message: text,
+        threadId: conversation?.threadId || "",
+        newConversation: false,
+        provider,
+        model: modelForConfig(setupConfig),
+        reasoningEffort: effortForConfig(setupConfig),
+        fastMode: provider === "claude" && setupConfig.claudeFastMode,
+      });
+      setDraft("");
+      await load(action.threadId || conversation?.threadId || "");
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setSending(false);
     }
   };
 
@@ -321,6 +350,26 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
           )}
           {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
         </div>
+        <footer className="delivery-session-composer is-stacked program-environment-setup__composer">
+          <div className="delivery-session-composer__input">
+            <Input.TextArea
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              value={draft}
+              disabled={sending}
+              placeholder={t("programs.environment.input")}
+              onChange={(event) => setDraft(event.target.value)}
+              onPressEnter={(event) => {
+                if (event.shiftKey) return;
+                event.preventDefault();
+                void send();
+              }}
+            />
+            <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim()} onClick={() => void send()}>
+              {t("delivery.session.send")}
+            </Button>
+          </div>
+          <small className="program-environment-setup__composer-hint">{t("programs.environment.inputHint")}</small>
+        </footer>
       </div>
     </Modal>
   );
