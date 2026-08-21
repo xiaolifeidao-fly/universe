@@ -14,7 +14,7 @@ ARCHIVE="$SCRIPT_DIR/$PACKAGE_NAME.tar.gz"
 cd "$SCRIPT_DIR"
 
 echo "building $APP_NAME..."
-npm run build想·
+npm run build
 
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
@@ -23,7 +23,7 @@ cp -R .next "$DIST_DIR/.next"
 rm -rf "$DIST_DIR/.next/cache"
 [ -d public ] && cp -R public "$DIST_DIR/"
 
-for file in package.json package-lock.json next.config.mjs ".env" ".env.dev" ".env "; do
+for file in package.json package-lock.json next.config.mjs .env .env.dev; do
   [ -f "$file" ] && cp "$file" "$DIST_DIR/"
 done
 
