@@ -4742,6 +4742,9 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .local-environment-preferences__plugin-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-base); }
 .local-environment-preferences__plugin-progress-heading > span:last-child { flex: 0 0 auto; color: var(--manager-text-faint); font-family: var(--manager-mono); }
 .local-environment-preferences__plugin-progress .ant-progress { line-height: 1; }
+.local-environment-preferences__runtime-test { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.local-environment-preferences__runtime-test > span { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-base); }
+.local-environment-preferences__runtime-value { width: fit-content; max-width: 100%; overflow-x: auto; white-space: nowrap; padding: 5px 7px; border: 1px solid var(--manager-border); border-radius: var(--manager-r-sm); background: var(--manager-panel); color: var(--manager-text-soft); font-size: var(--manager-fs-xs); }
 .local-environment-plugin-link,
 .delivery-plugin-install__repository { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .local-environment-plugin-link > a,
@@ -4756,6 +4759,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   .local-environment-preferences-modal .ant-modal-footer { padding: 14px 18px 18px; }
   .local-environment-preferences__title b { font-size: var(--manager-fs-lg); }
   .local-environment-preferences__setting-row.is-selection { grid-template-columns: 1fr; gap: 12px; }
+  .local-environment-preferences__runtime-test { align-items: flex-start; flex-direction: column; }
   .local-environment-preferences__footer { align-items: stretch; flex-direction: column; }
   .local-environment-preferences__footer > .ant-space { justify-content: flex-end; }
   .local-environment-preferences__setup.ant-btn { align-self: flex-start; }

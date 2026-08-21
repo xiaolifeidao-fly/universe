@@ -532,6 +532,10 @@ export class DeliveryTaskPlannerRuntimeInfo {
   version = "";
 }
 
+export class DeliveryTaskPlannerRuntimeTestResult {
+  value = "";
+}
+
 export type DeliveryTaskPlannerUpdateState =
   | "resolving"
   | "downloading"
@@ -1841,6 +1845,13 @@ export async function fetchDeliveryTaskPlannerRuntimeInfo() {
     timeout: 3000,
   });
   return plainToInstance(DeliveryTaskPlannerRuntimeInfo, response.data);
+}
+
+export async function fetchDeliveryTaskPlannerRuntimeTest() {
+  const response = await instance.get<DeliveryTaskPlannerRuntimeTestResult>(`${CODEX_BRIDGE_URL}/v1/plugin/runtime-test`, {
+    timeout: 3000,
+  });
+  return plainToInstance(DeliveryTaskPlannerRuntimeTestResult, response.data);
 }
 
 export async function fetchDeliveryTaskPlannerUpdate(force = false) {
