@@ -29,6 +29,7 @@ import { PropsWithChildren, type CSSProperties, type ReactNode, useCallback, use
 import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
+import { useDeliveryTaskPlannerHeartbeat } from "@/project-workspaces/deliveryTaskPlannerHeartbeat";
 import { clearAuthToken, getAuthUser, isAuthTokenRemembered, isPasswordChangeRequired, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
@@ -176,6 +177,8 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	const { activeBusinessLine, businessLines, businessLinesLoaded, setActiveBusinessLine } = useBusinessLine();
 	const { preferences, setPreferences } = useAIPreferences();
 	const authUser = getAuthUser();
+	// 本地插件的 token 和 user_id 全靠这条心跳，登录期间一直跑。
+	useDeliveryTaskPlannerHeartbeat();
 	const isAdmin = authUser?.role === "admin";
 	const navEntries = useMemo(() => navEntriesFor(isAdmin), [isAdmin]);
 	const navGroups = useMemo(() => navEntries.filter(isNavGroup), [navEntries]);

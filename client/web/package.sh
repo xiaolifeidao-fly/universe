@@ -14,7 +14,7 @@ ARCHIVE="$SCRIPT_DIR/$PACKAGE_NAME.tar.gz"
 cd "$SCRIPT_DIR"
 
 echo "building $APP_NAME..."
-npm run build
+npm run build想·
 
 rm -rf "$DIST_DIR"
 mkdir -p "$DIST_DIR"
