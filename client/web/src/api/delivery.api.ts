@@ -575,6 +575,38 @@ export class CodexGitWorkspaceStatus {
   checkedAt = 0;
 }
 
+/** 工作目录的 Git 归属快照：用于判断项目偏好设置里要不要显示「初始化并关联」。 */
+export class CodexGitWorkspaceCheck {
+  workspace = "";
+
+  exists = false;
+
+  isGitRepository = false;
+
+  repositoryRoot = "";
+
+  remoteName = "origin";
+
+  remoteConfigured = false;
+
+  empty = false;
+}
+
+export class CodexGitInitResult {
+  workspace = "";
+
+  initialized = false;
+
+  branch = "";
+
+  remoteName = "origin";
+
+  /** true 表示目录里原有文件，改用索引对齐远端，本地文件留成未提交改动。 */
+  adopted = false;
+
+  status = new CodexGitWorkspaceStatus();
+}
+
 export class CodexGitPrepareResult {
   branch = "";
 
@@ -1644,6 +1676,39 @@ export async function prepareCodexGitBranch(
   );
   const result = plainToInstance(CodexGitPrepareResult, response.data);
   result.status = plainToInstance(CodexGitWorkspaceStatus, response.data.status ?? response.data);
+  return result;
+}
+
+/** workspace 由调用方传入：这一步的目录还没保存进偏好设置，也可能还不是 Git 仓库。 */
+export async function checkCodexGitWorkspace(programId: number, workspace: string) {
+  const response = await instance.get<CodexGitWorkspaceCheck>(`${CODEX_BRIDGE_URL}/v1/codex/git/workspace-check`, {
+    params: { programId, workspace: workspace.trim() },
+    timeout: 15000,
+  });
+  return plainToInstance(CodexGitWorkspaceCheck, response.data);
+}
+
+/** 首次关联要把整个仓库拉下来，超时按克隆的量级给，不按普通接口给。 */
+export async function initializeCodexGitWorkspace(payload: {
+  programId: number;
+  workspace: string;
+  repositoryUrl: string;
+  remoteName?: string;
+  baseBranch?: string;
+}) {
+  const response = await instance.post<CodexGitInitResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/git/init`,
+    {
+      programId: payload.programId,
+      workspace: payload.workspace.trim(),
+      repositoryUrl: payload.repositoryUrl.trim(),
+      remoteName: payload.remoteName?.trim() || "origin",
+      baseBranch: payload.baseBranch?.trim() || "",
+    },
+    { timeout: 20 * 60 * 1000 },
+  );
+  const result = plainToInstance(CodexGitInitResult, response.data);
+  result.status = plainToInstance(CodexGitWorkspaceStatus, response.data.status ?? {});
   return result;
 }
 

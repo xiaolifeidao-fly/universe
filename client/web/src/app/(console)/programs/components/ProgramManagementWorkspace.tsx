@@ -4,6 +4,7 @@ import {
 	AppstoreOutlined,
 	BranchesOutlined,
 	CheckCircleOutlined,
+	CloudDownloadOutlined,
 	DeleteOutlined,
 	EditOutlined,
 	FlagOutlined,
@@ -45,8 +46,10 @@ import {
 	deleteStage,
 	fetchModules,
 	fetchModulesPage,
+	checkCodexGitWorkspace,
 	fetchCodexGitBranches,
 	fetchCodexLocalProjects,
+	initializeCodexGitWorkspace,
 	fetchProgramAssignment,
 	fetchPrograms,
 	fetchStages,
@@ -57,6 +60,7 @@ import {
 	saveProgram,
 	saveStage,
 	validateCodexWorkspace,
+	type CodexGitWorkspaceCheck,
 	type CodexLocalProjectRecord,
 	type DeliveryModuleRecord,
 	type DeliveryProgramRecord,
@@ -154,6 +158,11 @@ export function ProgramManagementWorkspace() {
 	const [workspaceTab, setWorkspaceTab] = useState<"workspace" | "git">("workspace");
 	const [gitBranches, setGitBranches] = useState<string[]>([]);
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
+	const [gitWorkspaceCheck, setGitWorkspaceCheck] = useState<CodexGitWorkspaceCheck | null>(null);
+	const [gitWorkspaceChecking, setGitWorkspaceChecking] = useState(false);
+	const [gitInitializing, setGitInitializing] = useState(false);
+	/** 初始化完仓库后自增，让下面的 Git 状态 effect 重跑一遍。 */
+	const [gitStateVersion, setGitStateVersion] = useState(0);
 	// 只读成员建不了项目也编辑不了项目；系统管理员在空间维度不再有隐式权限。
 	// 空间维度的权限跟着业务线列表从服务端下来，不查本地缓存的授权范围 ——
 	// 那份缓存在刚建完空间、或别人调整过你的权限之后就不准了。
@@ -530,6 +539,7 @@ export function ProgramManagementWorkspace() {
 		setWorkspaceLoading(true);
 		setWorkspaceTab("workspace");
 		setGitBranches([]);
+		setGitWorkspaceCheck(null);
 		const saved = getProjectWorkspacePreference(program.programId);
 		setWorkspacePath(saved?.workspace || "");
 		setWorkspaceSource(saved ? "saved" : "unmatched");
@@ -602,28 +612,86 @@ export function ProgramManagementWorkspace() {
 		}
 	};
 
+	// 先看目录是不是 Git 仓库：不是就只留初始化入口，读分支没有意义。
 	useEffect(() => {
 		if (!workspaceProgram || workspaceTab !== "git" || !gitEnabled) return;
 		const workspace = workspacePath.trim();
-		if (!workspace) return;
+		if (!workspace) {
+			setGitWorkspaceCheck(null);
+			return;
+		}
 		let cancelled = false;
-		setGitBranchesLoading(true);
-		void fetchCodexGitBranches(workspaceProgram.programId, workspace)
-			.then((catalog) => {
+		const programId = workspaceProgram.programId;
+		setGitWorkspaceChecking(true);
+		void (async () => {
+			let repository = false;
+			try {
+				const check = await checkCodexGitWorkspace(programId, workspace);
+				if (cancelled) return;
+				setGitWorkspaceCheck(check);
+				repository = check.isGitRepository;
+			} catch {
+				if (cancelled) return;
+				// 桥接不可用时不显示初始化入口，避免把连不上本机误判成没有仓库。
+				setGitWorkspaceCheck(null);
+				repository = true;
+			} finally {
+				if (!cancelled) setGitWorkspaceChecking(false);
+			}
+			if (!repository) {
+				setGitBranches([]);
+				return;
+			}
+			setGitBranchesLoading(true);
+			try {
+				const catalog = await fetchCodexGitBranches(programId, workspace);
 				if (cancelled) return;
 				setGitBranches(catalog.branches);
 				setGitBaseBranch((current) => current || catalog.defaultBranch || "");
-			})
-			.catch(() => {
+			} catch {
 				if (!cancelled) setGitBranches([]);
-			})
-			.finally(() => {
+			} finally {
 				if (!cancelled) setGitBranchesLoading(false);
-			});
+			}
+		})();
 		return () => {
 			cancelled = true;
 		};
-	}, [gitEnabled, workspacePath, workspaceProgram, workspaceTab]);
+	}, [gitEnabled, gitStateVersion, workspacePath, workspaceProgram, workspaceTab]);
+
+	/** 把当前工作目录关联到远端仓库：init + remote + fetch + 检出基准分支，本地已有文件不会被覆盖。 */
+	const initializeWorkspaceGit = async () => {
+		if (!workspaceProgram) return;
+		const workspace = workspacePath.trim();
+		if (!workspace) {
+			setWorkspaceTab("workspace");
+			message.error(t("programs.workspace.required"));
+			return;
+		}
+		const repositoryUrl = gitRepositoryUrl.trim();
+		if (!repositoryUrl) {
+			message.error(t("programs.git.repositoryUrlRequired"));
+			return;
+		}
+		setGitInitializing(true);
+		try {
+			const result = await initializeCodexGitWorkspace({
+				programId: workspaceProgram.programId,
+				workspace,
+				repositoryUrl,
+				baseBranch: gitBaseBranch.trim(),
+			});
+			setGitBaseBranch((current) => current || result.branch);
+			message.success(
+				t(result.adopted ? "programs.git.initializedAdopted" : "programs.git.initialized").replace("{branch}", result.branch),
+			);
+			setGitStateVersion((version) => version + 1);
+		} catch (error) {
+			message.error((error as Error).message);
+		} finally {
+			setGitInitializing(false);
+		}
+	};
 
 	const gitBranchOptions = useMemo(
 		() => gitBranches.map((branch) => ({ value: branch, label: branch })),
@@ -1005,6 +1073,26 @@ export function ProgramManagementWorkspace() {
 										) : (
 											<div className="manager-codex-empty">{t("programs.git.disabledHint")}</div>
 										)}
+										{gitEnabled && gitWorkspaceCheck && !gitWorkspaceCheck.isGitRepository ? (
+											<div className="manager-codex-note manager-codex-note--warn">
+												<ExclamationCircleOutlined />
+												<div>
+													<strong>{t(gitWorkspaceCheck.exists ? "programs.git.notRepository" : "programs.git.workspaceMissing")}</strong>
+													<p>{t("programs.git.notRepositoryHint").replace("{workspace}", gitWorkspaceCheck.workspace)}</p>
+													<Button
+														className="manager-codex-note__action"
+														type="primary"
+														size="small"
+														icon={<CloudDownloadOutlined />}
+														loading={gitInitializing}
+														disabled={gitWorkspaceChecking || !gitRepositoryUrl.trim()}
+														onClick={() => void initializeWorkspaceGit()}
+													>
+														{t("programs.git.initialize")}
+													</Button>
+												</div>
+											</div>
+										) : null}
 										{gitEnabled ? <p className="manager-codex-foot">{t("programs.git.hint")}</p> : null}
 										{!workspaceProgram?.canAdminister ? (
 											<p className="manager-codex-foot">{t("programs.git.readonly")}</p>

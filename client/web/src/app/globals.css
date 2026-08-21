@@ -1247,6 +1247,17 @@ select {
   line-height: var(--manager-lh-snug);
 }
 
+/* 提示块里的操作按钮：图标不跟随提示色，也不吃提示块给图标的偏移。 */
+.manager-codex-note__action {
+  margin-top: 9px;
+}
+
+.manager-codex-note__action .anticon {
+  margin-top: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
 .manager-codex-toggle {
   display: flex;
   align-items: center;
