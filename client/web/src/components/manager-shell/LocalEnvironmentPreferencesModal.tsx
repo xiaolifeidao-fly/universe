@@ -8,6 +8,7 @@ import {
   fetchDeliveryTaskPlannerRuntimeInfo,
   fetchDeliveryTaskPlannerRuntimeTest,
   fetchDeliveryTaskPlannerUpdate,
+  installDeliveryTaskPlannerUpdate,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
@@ -57,6 +58,14 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
   const [runtimeTestValue, setRuntimeTestValue] = useState("");
   const pluginInstallationRef = useRef<DeliveryTaskPlannerUpdateInstallation | null>(null);
 
+  const setVisiblePluginInstallation = useCallback((installation?: DeliveryTaskPlannerUpdateInstallation | null) => {
+    const visibleInstallation = installation && VISIBLE_PLUGIN_UPDATE_STATES.has(installation.status)
+      ? installation
+      : null;
+    pluginInstallationRef.current = visibleInstallation;
+    setPluginInstallation(visibleInstallation);
+  }, []);
+
   const checkPluginRuntime = useCallback(async (showLoading = true) => {
     if (showLoading) setPluginStatusLoading(true);
     let serviceReachable = false;
@@ -77,12 +86,7 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
         setPluginInstalled(true);
         setPluginVersion(update.localVersion);
       }
-      const installation = update.installation;
-      const visibleInstallation = installation && VISIBLE_PLUGIN_UPDATE_STATES.has(installation.status)
-        ? installation
-        : null;
-      pluginInstallationRef.current = visibleInstallation;
-      setPluginInstallation(visibleInstallation);
+      setVisiblePluginInstallation(update.installation);
     } catch {
       if (!serviceReachable) {
         // A bridge restart briefly closes the loopback port. Preserve an active
@@ -98,7 +102,7 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     } finally {
       if (showLoading) setPluginStatusLoading(false);
     }
-  }, []);
+  }, [setVisiblePluginInstallation]);
 
   useEffect(() => {
     if (!open) {
@@ -136,6 +140,37 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
       void checkPluginRuntime();
     } finally {
       setRuntimeTestLoading(false);
+    }
+  };
+
+  const checkPluginUpdate = async () => {
+    setPluginStatusLoading(true);
+    try {
+      try {
+        const info = await fetchDeliveryTaskPlannerRuntimeInfo();
+        setPluginInstalled(info.installed);
+        setPluginVersion(info.version);
+      } catch {
+        // Older bridge versions do not expose /v1/plugin/info. The update
+        // endpoint below still returns the installed version for them.
+      }
+
+      const update = await fetchDeliveryTaskPlannerUpdate(true);
+      if (update.localVersion) {
+        setPluginInstalled(true);
+        setPluginVersion(update.localVersion);
+      }
+      setVisiblePluginInstallation(update.installation);
+
+      const installationInProgress = update.installation
+        && ACTIVE_PLUGIN_UPDATE_STATES.has(update.installation.status);
+      if (!update.updateAvailable || !update.remoteVersion || installationInProgress) return;
+
+      setVisiblePluginInstallation(await installDeliveryTaskPlannerUpdate(update.remoteVersion));
+    } catch (error) {
+      message.error((error as Error).message || t("programs.environment.pluginUpdate.failed"));
+    } finally {
+      setPluginStatusLoading(false);
     }
   };
 
@@ -223,7 +258,7 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                   size="small"
                   icon={<ReloadOutlined />}
                   loading={pluginStatusLoading}
-                  onClick={() => void checkPluginRuntime()}
+                  onClick={() => void checkPluginUpdate()}
                 >
                   {t("programs.environment.pluginVersionCheck")}
                 </Button>
