@@ -1,8 +1,9 @@
 "use client";
 
-import { FileTextOutlined, LinkOutlined, MessageOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { ClockCircleOutlined, FileTextOutlined, LinkOutlined, MessageOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { DragDropContext, Draggable, Droppable, type DropResult } from "@hello-pangea/dnd";
 import { Button, Checkbox, Select, Tag, Tooltip } from "antd";
+import dayjs from "dayjs";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
@@ -30,6 +31,8 @@ interface DeliveryKanbanProps {
   canExecute: (item: DeliveryItemRecord) => boolean;
   executingItemKey: string;
 	highlightedOwner: string;
+	/** 消息中心跳转过来要定位的那条任务，卡片上加一层高亮。 */
+	focusedItemKey?: string;
 	ownerOptions: Array<{ value: string; label: string }>;
 	changingOwnerItemKey: string;
 	onOwnerChange: (item: DeliveryItemRecord, ownerId: string) => void;
@@ -138,6 +141,7 @@ export function DeliveryKanban({
 	canExecute,
 	executingItemKey,
 	highlightedOwner,
+	focusedItemKey = "",
 	ownerOptions,
 	changingOwnerItemKey,
 	onOwnerChange,
@@ -320,7 +324,9 @@ export function DeliveryKanban({
                           <article
                             className={`delivery-card${parallelItemKeys.has(item.itemKey) ? " is-parallel" : ""}${dragSnapshot.isDragging ? " is-dragging" : ""}${
                               dependencyDrag?.sourceItemKey === item.itemKey ? " is-dependency-source" : ""
-                            }${dependencyDrag?.targetItemKey === item.itemKey ? " is-dependency-target" : ""}${isOwnerHighlighted ? " is-owner-highlighted" : ""}`}
+                            }${dependencyDrag?.targetItemKey === item.itemKey ? " is-dependency-target" : ""}${isOwnerHighlighted ? " is-owner-highlighted" : ""}${
+                              focusedItemKey && item.itemKey === focusedItemKey ? " is-focus-highlighted" : ""
+                            }`}
                             data-delivery-item-key={item.itemKey}
                             style={{
                               ...dragProvided.draggableProps.style,
@@ -362,7 +368,7 @@ export function DeliveryKanban({
 								</button>
 							))}
                             <div className="delivery-card-top">
-                              <span className="delivery-pill">{t(`delivery.status.${item.status}`)}</span>
+                              <span className={`delivery-pill is-${item.status}`}>{t(`delivery.status.${item.status}`)}</span>
                               <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                                 <em>{groupBy === "module" ? stageName(item.stageKey) : moduleName(item.moduleKey)}</em>
 								{canExecute(item) ? (
@@ -432,7 +438,14 @@ export function DeliveryKanban({
 													{isSelectable(item) ? (
 													<Checkbox checked={selectedItemKeys.includes(item.itemKey)} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectionChange(event.target.checked ? [...selectedItemKeys, item.itemKey] : selectedItemKeys.filter((key) => key !== item.itemKey))} />
 												) : null}
-                              <span>{t(`delivery.kind.${item.kind}`)}</span>
+                              {item.createdAt ? (
+                                <Tooltip title={`${t("delivery.field.createdAt")}: ${dayjs(item.createdAt).format("YYYY-MM-DD HH:mm")}`}>
+                                  <span className="delivery-card-created-at">
+                                    <ClockCircleOutlined aria-hidden="true" />
+                                    <time dateTime={item.createdAt}>{dayjs(item.createdAt).format("MM-DD HH:mm")}</time>
+                                  </span>
+                                </Tooltip>
+                              ) : null}
                               {item.dependsOnItemKeys.length > 0 ? (
                                 <Tooltip
                                   title={`${t("delivery.field.dependsOnItemKeys")}: ${item.dependsOnItemKeys

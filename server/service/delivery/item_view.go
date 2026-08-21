@@ -22,6 +22,7 @@ func toItemViews(
 }
 
 func toItemView(row *repository.DeliveryItem, dependsOnItemKeys []string, dependencySourceSides, dependencyTargetSides map[string]string) dto.ItemView {
+	created := row.CreatedTime
 	updated := row.UpdatedTime
 	dependencies := append([]string{}, dependsOnItemKeys...)
 	phase := phaseForLegacyItem(row)
@@ -56,6 +57,7 @@ func toItemView(row *repository.DeliveryItem, dependsOnItemKeys []string, depend
 		DependencySourceSides: cloneStringMap(dependencySourceSides),
 		DependencyTargetSides: cloneStringMap(dependencyTargetSides),
 		Version:               row.Version,
+		CreatedAt:             &created,
 		UpdatedBy:             row.UpdatedBy,
 		UpdatedAt:             &updated,
 	}

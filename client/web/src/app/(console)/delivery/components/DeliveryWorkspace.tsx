@@ -2,7 +2,6 @@
 
 import {
   ArrowRightOutlined,
-	BellOutlined,
 	FastForwardOutlined,
   PlayCircleOutlined,
   DeploymentUnitOutlined,
@@ -12,8 +11,9 @@ import {
   SearchOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Alert, Badge, Button, Empty, Input, Modal, Popover, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Empty, Input, Modal, Segmented, Select, Space, Spin, Switch, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import dayjs from "dayjs";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
@@ -50,6 +50,7 @@ import { DeliveryRequirementList } from "./DeliveryRequirementList";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
 import { DeliveryOnboardingGuide } from "./DeliveryOnboardingGuide";
+import { DeliveryGitWorkspaceBadge } from "./DeliveryGitWorkspaceBadge";
 
 // 全景视角已经独立成「全景视图」菜单（/panorama），这里只留看板和列表。
 type ViewMode = "board" | "list";
@@ -57,48 +58,15 @@ type PendingGroupedExecution =
   | { mode: "batch"; itemKeys: string[]; closeDrawer?: boolean }
   | { mode: "sequence"; itemKeys?: string[]; startItemKey?: string; closeDrawer?: boolean };
 
-type DeliveryNotificationStatus = "blocked" | "dropped" | "done";
-type DeliveryNotificationCounts = Record<DeliveryNotificationStatus, number>;
+/** 消息中心跳过来要落到哪儿：任务看板 / 任务聊天 / 需求编辑弹窗。 */
+type FocusMode = "board" | "detail" | "requirement";
+
+/** 消息中心跳转令牌的有效期：点一下到页面就位是秒级的，超过这个时间就当过期链接。 */
+const FOCUS_TOKEN_TTL_MS = 30_000;
 
 const BOARD_SCALE_MIN = 35;
 const BOARD_SCALE_MAX = 100;
 const BOARD_WHEEL_SCALE_FACTOR = 0.05;
-
-interface DeliveryNotificationStorage {
-  counts: DeliveryNotificationCounts;
-  readCounts: DeliveryNotificationCounts;
-}
-
-interface DeliveryNotificationReadState {
-  scope: string;
-  counts: DeliveryNotificationCounts;
-}
-
-const EMPTY_DELIVERY_NOTIFICATION_COUNTS: DeliveryNotificationCounts = {
-  blocked: 0,
-  dropped: 0,
-  done: 0,
-};
-
-function readDeliveryNotificationCounts(value: unknown): DeliveryNotificationCounts {
-  const counts = value as Partial<DeliveryNotificationCounts> | undefined;
-  return {
-    blocked: Math.max(0, Number(counts?.blocked) || 0),
-    dropped: Math.max(0, Number(counts?.dropped) || 0),
-    done: Math.max(0, Number(counts?.done) || 0),
-  };
-}
-
-function readDeliveryNotificationStorage(storageKey: string): DeliveryNotificationCounts {
-  try {
-    const rawValue = window.localStorage.getItem(storageKey);
-    if (!rawValue) return EMPTY_DELIVERY_NOTIFICATION_COUNTS;
-    const saved = JSON.parse(rawValue) as Partial<DeliveryNotificationStorage>;
-    return readDeliveryNotificationCounts(saved.readCounts);
-  } catch {
-    return EMPTY_DELIVERY_NOTIFICATION_COUNTS;
-  }
-}
 
 export function DeliveryWorkspace() {
   const searchParams = useSearchParams();
@@ -109,6 +77,16 @@ export function DeliveryWorkspace() {
   const sharedRequirementKey = (searchParams?.get("requirementKey") ?? "").trim();
   const sharedProgramId = Number(searchParams?.get("programId")) || 0;
   const sharedBizLine = (searchParams?.get("bizLine") ?? "").trim();
+  // 消息中心跳转带来的聚焦参数：定位到某个项目某条需求下的一条任务。
+  const focusItemKey = (searchParams?.get("focusItemKey") ?? "").trim();
+  const focusRequirementKey = (searchParams?.get("focusRequirementKey") ?? "").trim();
+  const focusModeParam = (searchParams?.get("focusMode") ?? "board").trim();
+  const focusMode: FocusMode = focusModeParam === "detail" || focusModeParam === "requirement" ? focusModeParam : "board";
+  // 令牌有两个作用：同一条任务连点两次也要重新聚焦；以及带时间戳，
+  // 过期的链接（比如照着旧地址刷新页面）不再触发定位和弹窗。
+  const focusToken = Number(searchParams?.get("focusToken")) || 0;
+  const focusFresh = focusToken > 0 && Date.now() - focusToken < FOCUS_TOKEN_TTL_MS;
+  const focusSignature = focusItemKey && focusFresh ? `${focusToken}:${sharedProgramId}:${focusItemKey}` : "";
 
   // 分享链接明确写入业务线和项目，打开时不受接收者本地记忆的上下文影响。
   useEffect(() => {
@@ -200,11 +178,15 @@ export function DeliveryWorkspace() {
   const [executionConstraints, setExecutionConstraints] = useState("");
   const [onboardingWrittenRequirementKey, setOnboardingWrittenRequirementKey] = useState("");
   const [onboardingExecutionStartedVersion, setOnboardingExecutionStartedVersion] = useState(0);
-  const [notificationReadState, setNotificationReadState] = useState<DeliveryNotificationReadState>({
-    scope: "",
-    counts: EMPTY_DELIVERY_NOTIFICATION_COUNTS,
-  });
   const taskPanelScrollRef = useRef<HTMLDivElement>(null);
+  // 消息中心定位的任务：高亮 + 滚动到可视区，滚一次就够，不随后续渲染反复跳。
+  const [focusedItemKey, setFocusedItemKey] = useState("");
+  const appliedFocusRef = useRef("");
+  // 待落地的定位放在 state 里而不是 ref：任务目录或需求列表可能本来就是现成的，
+  // 用 ref 存的话这两个 effect 不会因为「有活要干」而重跑，弹窗就永远打不开。
+  const [pendingFocus, setPendingFocus] = useState<{ itemKey: string; mode: FocusMode } | null>(null);
+  const [pendingRequirementFocus, setPendingRequirementFocus] = useState("");
+  const scrolledFocusRef = useRef("");
   const boardScaleRef = useRef(boardScale);
 
   useEffect(() => {
@@ -285,51 +267,6 @@ export function DeliveryWorkspace() {
   }, [requirements, setFilters, sharedRequirementKey, sharedRequirementOnly]);
 
   const overview = board.overview;
-  const notificationStorageKey = useMemo(() => {
-    if (!userId || !bizLine || !programId || !filters.requirementKey) return "";
-    return `zb.delivery.notification-center.v2:${userId}:${bizLine}:${programId}:${filters.requirementKey}`;
-  }, [bizLine, filters.requirementKey, programId, userId]);
-  const notificationCounts = useMemo<DeliveryNotificationCounts>(() => (
-    itemCatalog.reduce<DeliveryNotificationCounts>((counts, item) => {
-      if (item.status === "blocked" || item.status === "dropped" || item.status === "done") {
-        counts[item.status] += 1;
-      }
-      return counts;
-    }, { ...EMPTY_DELIVERY_NOTIFICATION_COUNTS })
-  ), [itemCatalog]);
-  const notificationReadCounts = notificationReadState.scope === notificationStorageKey
-    ? notificationReadState.counts
-    : EMPTY_DELIVERY_NOTIFICATION_COUNTS;
-  const notificationUnreadCount = useMemo(
-    () => (Object.keys(notificationCounts) as DeliveryNotificationStatus[]).reduce(
-      (total, status) => total + Math.max(0, notificationCounts[status] - notificationReadCounts[status]),
-      0,
-    ),
-    [notificationCounts, notificationReadCounts],
-  );
-
-  useEffect(() => {
-    setNotificationReadState({
-      scope: notificationStorageKey,
-      counts: notificationStorageKey
-        ? readDeliveryNotificationStorage(notificationStorageKey)
-        : EMPTY_DELIVERY_NOTIFICATION_COUNTS,
-    });
-  }, [notificationStorageKey]);
-
-  useEffect(() => {
-    if (!notificationStorageKey || notificationReadState.scope !== notificationStorageKey) return;
-    const value: DeliveryNotificationStorage = {
-      counts: notificationCounts,
-      readCounts: notificationReadCounts,
-    };
-    window.localStorage.setItem(notificationStorageKey, JSON.stringify(value));
-  }, [notificationCounts, notificationReadCounts, notificationReadState.scope, notificationStorageKey]);
-
-  const handleNotificationOpenChange = useCallback((open: boolean) => {
-    if (!open || !notificationStorageKey) return;
-    setNotificationReadState({ scope: notificationStorageKey, counts: notificationCounts });
-  }, [notificationCounts, notificationStorageKey]);
   const ownerOptions = useMemo(
     () => Array.from(new Set(allItems.map((item) => item.ownerName.trim()).filter(Boolean)))
       .sort((left, right) => left.localeCompare(right, "zh-CN"))
@@ -663,13 +600,132 @@ export function DeliveryWorkspace() {
   const handleRequirementSelect = useCallback((requirementKey: string) => {
     const selectedRequirementKey = sharedRequirementOnly ? sharedRequirementKey : requirementKey;
     const requirement = requirements.find((item) => item.requirementKey === selectedRequirementKey);
+    const nextPhase = requirement?.startPhase ?? filters.phase;
+    // 点的还是当前这条需求时筛选条件没有变化，拉取任务的副作用不会重跑，得手动补一次。
+    const filtersUnchanged = (filters.requirementKey ?? "") === selectedRequirementKey && filters.phase === nextPhase;
     setSelectedItemKeys([]);
+    // 手动换需求就说明消息中心那次定位结束了，别再留着高亮。
+    setFocusedItemKey("");
     setFilters((current) => ({
       ...current,
       requirementKey: selectedRequirementKey || undefined,
       phase: requirement?.startPhase ?? current.phase,
     }));
-  }, [requirements, setFilters, sharedRequirementKey, sharedRequirementOnly]);
+    if (selectedRequirementKey && filtersUnchanged) void refresh();
+  }, [filters.phase, filters.requirementKey, refresh, requirements, setFilters, sharedRequirementKey, sharedRequirementOnly]);
+
+  // 第一步：项目切到位后先选中需求，任务目录随之按需求加载。
+  useEffect(() => {
+    if (!focusSignature || appliedFocusRef.current === focusSignature) return;
+    if (!programId || (sharedProgramId && programId !== sharedProgramId)) return;
+    appliedFocusRef.current = focusSignature;
+    setPendingFocus({ itemKey: focusItemKey, mode: focusMode });
+    setPendingRequirementFocus(focusMode === "requirement" ? focusRequirementKey : "");
+    scrolledFocusRef.current = "";
+    setFocusedItemKey(focusItemKey);
+    setView("board");
+    setRequirementsExpanded(false);
+    setSelectedItemKeys([]);
+    // 左侧列表可能还停在「只看我的」或某个关键词上，先恢复全量，跳过来的需求才一定在列表里。
+    queryAllRequirements();
+    if (focusRequirementKey) {
+      setFilters((current) => ({ ...current, requirementKey: focusRequirementKey }));
+    }
+
+    // 定位是一次性的：参数留在地址栏里，刷新页面会再弹一次需求编辑窗口。
+    // 用 history.replaceState 就地抹掉（保留 programId），不触发路由跳转。
+    const url = new URL(window.location.href);
+    for (const key of ["focusItemKey", "focusRequirementKey", "focusMode", "focusToken"]) {
+      url.searchParams.delete(key);
+    }
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [
+    focusItemKey,
+    focusMode,
+    focusRequirementKey,
+    focusSignature,
+    programId,
+    queryAllRequirements,
+    setFilters,
+    sharedProgramId,
+  ]);
+
+  // 第二步：任务目录到位后，把看板阶段切到这条任务所在的阶段；要看详情的直接开聊天。
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const item = itemCatalog.find((record) => record.itemKey === pendingFocus.itemKey);
+    if (!item) {
+      // 目录已经按这条需求加载完却没有这条任务：它多半被删了，别把定位一直挂着。
+      if (itemCatalog.length) {
+        setPendingFocus(null);
+        setFocusedItemKey("");
+      }
+      return;
+    }
+    setPendingFocus(null);
+    setFilters((current) => (current.phase === item.phase ? current : { ...current, phase: item.phase }));
+    if (pendingFocus.mode === "detail") setSessionItem(item);
+  }, [itemCatalog, pendingFocus, setFilters]);
+
+  // 从消息中心点需求名进来的：需求加载好就直接打开这条需求的编辑弹窗。
+  useEffect(() => {
+    if (!pendingRequirementFocus) return;
+    const requirement = requirements.find((record) => record.requirementKey === pendingRequirementFocus);
+    if (!requirement) return;
+    setPendingRequirementFocus("");
+    setEditingRequirement(requirement);
+    setPlanningOpen(true);
+  }, [pendingRequirementFocus, requirements]);
+
+  // 第三步：卡片渲染出来后把它挪到看板正中间，横向纵向都自己算。
+  //
+  // 这里不用 scrollIntoView：它会一路把所有可滚动祖先都滚一遍，卡片经常停在容器边缘而不是正中，
+  // 依赖连线和卡片高度也还在变。自己按容器矩形算目标位置，只滚任务面板这一层。
+  useEffect(() => {
+    if (!focusedItemKey || pendingFocus || scrolledFocusRef.current === focusedItemKey) return;
+    if (view !== "board" || loading) return;
+    const scroller = taskPanelScrollRef.current;
+    const card = scroller?.querySelector<HTMLElement>(`[data-delivery-item-key="${CSS.escape(focusedItemKey)}"]`);
+    if (!scroller || !card) return;
+    scrolledFocusRef.current = focusedItemKey;
+
+    const centerFocusedCard = () => {
+      const cardRect = card.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      const clamp = (value: number, max: number) => Math.max(0, Math.min(value, max));
+      scroller.scrollTo({
+        left: clamp(
+          scroller.scrollLeft + (cardRect.left - scrollerRect.left) - (scroller.clientWidth - cardRect.width) / 2,
+          scroller.scrollWidth - scroller.clientWidth,
+        ),
+        top: clamp(
+          scroller.scrollTop + (cardRect.top - scrollerRect.top) - (scroller.clientHeight - cardRect.height) / 2,
+          scroller.scrollHeight - scroller.clientHeight,
+        ),
+        behavior: "smooth",
+      });
+    };
+    // 等这一帧的布局落定再量，否则量到的是依赖连线铺开之前的位置。
+    const frame = window.requestAnimationFrame(centerFocusedCard);
+
+    // 左侧需求栏是另一个滚动容器，单独把选中的需求卡片带进可视区，不牵动任务面板。
+    const requirementCard = document.querySelector<HTMLElement>(
+      `[data-delivery-requirement-key="${CSS.escape(filters.requirementKey ?? "")}"]`,
+    );
+    const requirementList = requirementCard?.closest<HTMLElement>(".delivery-requirement-rail__list");
+    if (requirementCard && requirementList) {
+      const cardRect = requirementCard.getBoundingClientRect();
+      const listRect = requirementList.getBoundingClientRect();
+      if (cardRect.top < listRect.top || cardRect.bottom > listRect.bottom) {
+        requirementList.scrollTo({
+          top: Math.max(0, requirementList.scrollTop + (cardRect.top - listRect.top) - 12),
+          behavior: "smooth",
+        });
+      }
+    }
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [allItems, filters.requirementKey, focusedItemKey, loading, pendingFocus, view]);
 
   // 重置只影响左侧需求查询；恢复全部需求，当前任务看板保持不动。
   const handleResetRequirementQuery = useCallback(() => {
@@ -825,6 +881,12 @@ export function DeliveryWorkspace() {
       ),
     },
     {
+      title: t("delivery.field.createdAt"),
+      dataIndex: "createdAt",
+      width: 150,
+      render: (value?: string) => (value ? dayjs(value).format("YYYY-MM-DD HH:mm") : t("delivery.empty")),
+    },
+    {
       title: t("delivery.field.dependsOnItemKeys"),
       dataIndex: "dependsOnItemKeys",
       width: 210,
@@ -897,6 +959,14 @@ export function DeliveryWorkspace() {
               ))}
             </div>
           </div>
+          <DeliveryGitWorkspaceBadge
+            enabled={Boolean(selectedProgram?.gitEnabled)}
+            programName={selectedProgram?.name ?? ""}
+            status={gitWorkspaceStatus}
+            error={gitWorkspaceError}
+            loading={gitWorkspaceLoading}
+            onRefresh={() => void refreshGitWorkspaceStatus()}
+          />
           {filters.requirementKey && board.requirementOverview ? (
             <div className="delivery-requirement-kpi-line">
               <span className="delivery-requirement-kpi-line__label">{t("delivery.kpi.requirementProgress")}</span>
@@ -933,36 +1003,6 @@ export function DeliveryWorkspace() {
               handleRequirementSelect(requirementKey);
             }}
           />
-          <Popover
-            placement="bottomRight"
-            trigger="click"
-            title={t("delivery.notificationCenter.title")}
-            onOpenChange={handleNotificationOpenChange}
-            content={(
-              <div className="delivery-notification-popover">
-                <div className="delivery-notification-popover__row is-blocked">
-                  <span>{t("delivery.notificationCenter.blocked")}</span>
-                  <b>{notificationCounts.blocked}</b>
-                </div>
-                <div className="delivery-notification-popover__row is-dropped">
-                  <span>{t("delivery.notificationCenter.dropped")}</span>
-                  <b>{notificationCounts.dropped}</b>
-                </div>
-                <div className="delivery-notification-popover__row is-done">
-                  <span>{t("delivery.notificationCenter.done")}</span>
-                  <b>{notificationCounts.done}</b>
-                </div>
-              </div>
-            )}
-          >
-            <Badge count={notificationUnreadCount} overflowCount={99} size="small">
-              <Button
-                className="delivery-notification-button"
-                icon={<BellOutlined />}
-                aria-label={t("delivery.notificationCenter.title")}
-              />
-            </Badge>
-          </Popover>
           <Select
             value={programId || undefined}
             style={{ minWidth: 180 }}
@@ -1194,6 +1234,7 @@ export function DeliveryWorkspace() {
                 <Empty description={t("delivery.requirement.selectToViewTasks")} />
               ) : view === "board" ? (
                 <DeliveryKanban
+                  focusedItemKey={focusedItemKey}
                   groupBy={filters.groupBy}
                   columns={board.columns}
                   boardScale={boardScale}

@@ -1112,7 +1112,220 @@ select {
   color: var(--manager-primary) !important;
   font-weight: 600;
   box-shadow: var(--manager-shadow-sm);
-}/* ─── Dashboard-specific (legacy console pages) ─── */
+}/* ─── Codex workspace modal ─── */
+
+.manager-codex-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r);
+  background: linear-gradient(135deg, var(--manager-primary-light), var(--manager-panel));
+}
+
+.manager-codex-head-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--manager-surface);
+  border: 1px solid var(--manager-border);
+  color: var(--manager-primary);
+  font-size: var(--manager-fs-lg);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.manager-codex-head-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.manager-codex-head-copy strong {
+  color: var(--manager-text);
+  font-size: var(--manager-fs-lg);
+  line-height: var(--manager-lh-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-codex-head-copy .manager-table-subline {
+  margin-top: 0;
+}
+
+.manager-codex-tabs .ant-tabs-nav {
+  margin-bottom: 16px;
+}
+
+.manager-codex-tabs .ant-tabs-nav::before {
+  border-bottom: 1px solid var(--manager-border);
+}
+
+.manager-codex-tabs .ant-tabs-tab {
+  padding: 8px 2px;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-base);
+}
+
+.manager-codex-tabs .ant-tabs-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.manager-codex-pane {
+  display: grid;
+  gap: 14px;
+}
+
+.manager-codex-pane .ant-form-item {
+  margin-bottom: 14px;
+}
+
+.manager-codex-pane .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+
+.manager-codex-pane .ant-form-item-extra {
+  margin-top: 5px;
+  color: var(--manager-text-faint) !important;
+  font-size: var(--manager-fs-xs);
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-codex-note {
+  display: flex;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: var(--manager-r-sm);
+  border: 1px solid var(--manager-border);
+  background: var(--manager-panel);
+  --manager-codex-tone: var(--manager-text-faint);
+}
+
+.manager-codex-note--ok {
+  --manager-codex-tone: var(--manager-success);
+  border-color: color-mix(in srgb, var(--manager-success) 26%, transparent);
+  background: color-mix(in srgb, var(--manager-success) 7%, var(--manager-surface));
+}
+
+.manager-codex-note--warn {
+  --manager-codex-tone: var(--manager-warning);
+  border-color: color-mix(in srgb, var(--manager-warning) 30%, transparent);
+  background: color-mix(in srgb, var(--manager-warning) 8%, var(--manager-surface));
+}
+
+.manager-codex-note--info {
+  --manager-codex-tone: var(--manager-blue);
+  border-color: color-mix(in srgb, var(--manager-blue) 24%, transparent);
+  background: color-mix(in srgb, var(--manager-blue) 6%, var(--manager-surface));
+}
+
+.manager-codex-note .anticon {
+  margin-top: 2px;
+  color: var(--manager-codex-tone);
+  font-size: 15px;
+}
+
+.manager-codex-note strong {
+  display: block;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-sm);
+  font-weight: 600;
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-codex-note p {
+  margin: 2px 0 0;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-codex-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 15px;
+  border-radius: var(--manager-r-sm);
+  border: 1px solid var(--manager-border);
+  background: var(--manager-panel);
+  transition: border-color var(--manager-t), background var(--manager-t);
+}
+
+.manager-codex-toggle--on {
+  border-color: color-mix(in srgb, var(--manager-primary) 34%, transparent);
+  background: var(--manager-primary-light);
+}
+
+.manager-codex-toggle strong {
+  display: block;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-base);
+  font-weight: 600;
+}
+
+.manager-codex-toggle p {
+  margin: 3px 0 0;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-codex-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.manager-codex-option b {
+  color: var(--manager-text);
+  font-weight: 600;
+}
+
+.manager-codex-option span {
+  flex: 1;
+  min-width: 0;
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-codex-pane .manager-codex-path input,
+.manager-codex-pane .manager-codex-path.ant-input {
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-sm);
+}
+
+.manager-codex-foot {
+  margin: 0;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-codex-empty {
+  padding: 22px 16px;
+  border-radius: var(--manager-r-sm);
+  border: 1px dashed var(--manager-border-strong);
+  background: var(--manager-bg-soft);
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-sm);
+  line-height: var(--manager-lh-snug);
+  text-align: center;
+}
+
+/* ─── Dashboard-specific (legacy console pages) ─── */
 
 /* ─── Module toolbar ─── */
 
@@ -1272,6 +1485,156 @@ select {
   flex: 0 0 auto;
 }
 
+/* 项目分支与未提交文件数量提到顶部，需求列表栏头不再重复这条信息。 */
+.delivery-git-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 6px 10px 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--manager-primary) 30%, var(--manager-border));
+  border-left: 3px solid var(--manager-primary);
+  border-radius: var(--manager-r-sm);
+  background: color-mix(in srgb, var(--manager-primary) 6%, var(--manager-surface));
+  font-size: var(--manager-fs-xs);
+}
+
+.delivery-git-badge.is-dirty {
+  border-color: color-mix(in srgb, var(--manager-warning) 40%, var(--manager-border));
+  border-left-color: var(--manager-warning);
+  background: color-mix(in srgb, var(--manager-warning) 8%, var(--manager-surface));
+}
+
+.delivery-git-badge.is-error {
+  border-color: color-mix(in srgb, var(--manager-danger) 40%, var(--manager-border));
+  border-left-color: var(--manager-danger);
+  background: color-mix(in srgb, var(--manager-danger) 8%, var(--manager-surface));
+}
+
+.delivery-git-badge.is-clean {
+  border-color: color-mix(in srgb, var(--manager-success) 34%, var(--manager-border));
+  border-left-color: var(--manager-success);
+  background: color-mix(in srgb, var(--manager-success) 6%, var(--manager-surface));
+}
+
+.delivery-git-badge__icon {
+  color: var(--manager-primary);
+  font-size: var(--manager-fs-base);
+}
+
+.delivery-git-badge.is-dirty .delivery-git-badge__icon { color: var(--manager-warning); }
+.delivery-git-badge.is-error .delivery-git-badge__icon { color: var(--manager-danger); }
+.delivery-git-badge.is-clean .delivery-git-badge__icon { color: var(--manager-success); }
+
+.delivery-git-badge__main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.delivery-git-badge__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--manager-text-faint);
+  white-space: nowrap;
+}
+
+.delivery-git-badge__label > b {
+  color: var(--manager-text);
+}
+
+.delivery-git-badge__branch {
+  max-width: 320px;
+  overflow: hidden;
+  color: var(--manager-text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delivery-git-badge__state {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--manager-primary) 12%, var(--manager-surface));
+  color: var(--manager-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.delivery-git-badge.is-dirty .delivery-git-badge__state {
+  background: color-mix(in srgb, var(--manager-warning) 16%, var(--manager-surface));
+  color: var(--manager-warning);
+}
+
+.delivery-git-badge.is-error .delivery-git-badge__state {
+  background: color-mix(in srgb, var(--manager-danger) 16%, var(--manager-surface));
+  color: var(--manager-danger);
+}
+
+.delivery-git-badge.is-clean .delivery-git-badge__state {
+  background: color-mix(in srgb, var(--manager-success) 14%, var(--manager-surface));
+  color: var(--manager-success);
+}
+
+.delivery-git-badge__counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--manager-border);
+}
+
+/* 数量为 0 时保持灰底，只有真正有文件时才亮起来。 */
+.delivery-git-badge__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid var(--manager-border);
+  border-radius: 999px;
+  background: var(--manager-surface);
+  color: var(--manager-text-faint);
+  white-space: nowrap;
+}
+
+.delivery-git-badge__count > b {
+  font-variant-numeric: tabular-nums;
+}
+
+.delivery-git-badge__count.is-active {
+  border-color: color-mix(in srgb, var(--manager-blue) 40%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-blue) 10%, var(--manager-surface));
+  color: var(--manager-blue);
+}
+
+.delivery-git-badge__count.is-staged.is-active {
+  border-color: color-mix(in srgb, var(--manager-green) 40%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-green) 10%, var(--manager-surface));
+  color: var(--manager-green);
+}
+
+.delivery-git-badge__count.is-unstaged.is-active {
+  border-color: color-mix(in srgb, var(--manager-amber) 44%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-amber) 12%, var(--manager-surface));
+  color: var(--manager-amber);
+}
+
+.delivery-git-badge__count.is-untracked.is-active {
+  border-color: color-mix(in srgb, var(--manager-violet) 40%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-violet) 10%, var(--manager-surface));
+  color: var(--manager-violet);
+}
+
+.delivery-git-badge__count.is-changed.is-active {
+  border-color: color-mix(in srgb, var(--manager-orange) 44%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-orange) 12%, var(--manager-surface));
+  color: var(--manager-orange);
+  font-weight: 600;
+}
+
 /* 任务统计紧跟项目名称，不再单独占用标题区高度。 */
 .delivery-kpi-inline {
   display: flex;
@@ -1309,7 +1672,11 @@ select {
   letter-spacing: 0;
 }
 
-.delivery-notification-button.ant-btn {
+.manager-notification-anchor {
+  display: inline-flex;
+}
+
+.manager-notification-button.ant-btn {
   display: inline-grid;
   width: 32px;
   height: 32px;
@@ -1317,31 +1684,23 @@ select {
   padding: 0;
 }
 
-.delivery-notification-popover {
-  width: 208px;
-}
-
-.delivery-notification-popover__row {
+.manager-notification-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 34px;
-  border-bottom: 1px solid var(--manager-border);
-  color: var(--manager-text-soft);
-  font-size: var(--manager-fs-sm);
+  gap: 16px;
 }
 
-.delivery-notification-popover__row:last-child {
-  border-bottom: 0;
-}
-
-.delivery-notification-popover__row > span {
+.manager-notification-head__count {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-xs);
+  font-weight: 400;
 }
 
-.delivery-notification-popover__row > span::before {
+.manager-notification-head__count::before {
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -1349,16 +1708,164 @@ select {
   content: "";
 }
 
-.delivery-notification-popover__row > b {
-  color: var(--manager-text);
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-base);
-  font-variant-numeric: tabular-nums;
+.manager-notification-head__count.is-blocked::before { background: #d95c5c; }
+.manager-notification-head__count.is-dropped::before { background: #9b8c7f; }
+
+.manager-notification-popover {
+  /* 三列都摊得开，横向滚动条就不该出现。 */
+  width: min(660px, 92vw);
+  max-height: 800px;
+  overflow: hidden;
 }
 
-.delivery-notification-popover__row.is-blocked > span::before { background: #d95c5c; }
-.delivery-notification-popover__row.is-dropped > span::before { background: #9b8c7f; }
-.delivery-notification-popover__row.is-done > span::before { background: #3b9a73; }
+.manager-notification-popover .ant-table-body,
+.manager-notification-popover .ant-table-content {
+  overflow-x: hidden !important;
+}
+
+/* 表格必须铺满弹层，否则表头背景和弹层右边缘对不齐。 */
+.manager-notification-popover .ant-table-wrapper,
+.manager-notification-popover .ant-table,
+.manager-notification-popover .ant-table-container {
+  width: 100%;
+}
+
+/* 设了 scroll.y 之后 antd 会把表体固定成 overflow-y: scroll，并在表头补一格占位，
+   条目少的时候就剩一条灰色空轨道。改成按需出现，占位格一并去掉。 */
+.manager-notification-popover .ant-table-body {
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+}
+
+.manager-notification-popover .ant-table-cell-scrollbar {
+  display: none;
+}
+
+.manager-notification-popover__loading {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+}
+
+.manager-notification-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.manager-notification-cell__main {
+  display: block;
+  overflow: hidden;
+  color: var(--manager-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 需求名是个入口，长得像链接就够了，别再套一层按钮底色。 */
+.manager-notification-cell__link {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--manager-primary);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+
+.manager-notification-cell__link:hover {
+  color: var(--manager-primary-hover);
+  text-decoration: underline;
+}
+
+.manager-notification-cell__link:disabled {
+  color: var(--manager-text-soft);
+  cursor: default;
+  text-decoration: none;
+}
+
+.manager-notification-cell__sub {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+}
+
+.manager-notification-cell__sub > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.manager-notification-cell__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 1px;
+}
+
+/* 状态只是行内的一个小标记，不该占掉半行宽度。 */
+.manager-notification-status {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: var(--manager-fs-xs);
+  line-height: 1;
+}
+
+.manager-notification-status.is-blocked {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
+.manager-notification-status.is-dropped {
+  border-color: rgba(152, 162, 179, 0.35);
+  background: rgba(152, 162, 179, 0.14);
+  color: #6b7280;
+}
+
+.manager-notification-actions .ant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 27px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: var(--manager-fs-xs);
+}
+
+.manager-notification-actions .ant-btn .anticon {
+  font-size: 12px;
+}
+
+.manager-notification-actions .ant-btn:not(.ant-btn-primary) {
+  border-color: var(--manager-border);
+  color: var(--manager-text-soft);
+}
+
+.manager-notification-actions .ant-btn:not(.ant-btn-primary):hover {
+  border-color: var(--manager-primary);
+  color: var(--manager-primary);
+}
+
+/* 消息中心定位过来的那张卡片：一圈醒目描边，滚到位后一眼能认出来。 */
+.delivery-card.is-focus-highlighted {
+  border-color: #d95c5c;
+  box-shadow: 0 0 0 2px rgba(217, 92, 92, 0.35);
+}
 
 .delivery-toolbar {
   display: flex;
@@ -1726,6 +2233,26 @@ select {
   font-size: var(--manager-fs-xs);
 }
 
+/* 状态胶囊统一用实心底色，一眼能分出未开始 / 进行中 / 已完成 / 受阻。 */
+.delivery-pill.is-todo,
+.delivery-pill.is-doing,
+.delivery-pill.is-done,
+.delivery-pill.is-blocked,
+.delivery-pill.is-dropped {
+  color: #fff;
+  font-weight: 600;
+}
+
+.delivery-pill.is-todo { border-color: #98a2b3; background: #98a2b3; }
+
+.delivery-pill.is-doing { border-color: #2563eb; background: #2563eb; }
+
+.delivery-pill.is-done { border-color: #12a150; background: #12a150; }
+
+.delivery-pill.is-blocked { border-color: #dc2626; background: #dc2626; }
+
+.delivery-pill.is-dropped { border-color: #6b7280; background: #6b7280; }
+
 .delivery-card-top em {
   margin-left: auto;
   overflow: hidden;
@@ -1793,6 +2320,15 @@ select {
 }
 
 .delivery-card-foot span:last-child { margin-left: auto; }
+
+.delivery-card-created-at {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.delivery-card-created-at time { font-variant-numeric: tabular-nums; }
 
 .delivery-card-owner-select {
   min-width: 0;
@@ -1878,8 +2414,10 @@ select {
 }
 
 .delivery-card.is-parallel .delivery-card-foot span:nth-of-type(2) {
-  margin-left: 0;
+	margin-left: 0;
 }
+
+.delivery-card.is-parallel .delivery-card-created-at { gap: 3px; }
 
 .delivery-card.is-parallel .delivery-card-foot span:last-child {
   margin-left: auto;
@@ -1976,6 +2514,8 @@ select {
 .delivery-board .delivery-card > p,
 .delivery-board .delivery-card-foot { font-size: calc(var(--manager-fs-xs) * var(--delivery-board-scale)); }
 
+.delivery-board .delivery-card-created-at { gap: calc(4px * var(--delivery-board-scale)); }
+
 .delivery-board .delivery-card > b {
   margin-bottom: calc(5px * var(--delivery-board-scale));
   font-size: calc(var(--manager-fs-sm) * var(--delivery-board-scale));
@@ -2045,6 +2585,7 @@ select {
 .delivery-board .delivery-card.is-parallel .delivery-card-session-button .anticon { font-size: calc(var(--manager-fs-base) * var(--delivery-board-scale)); }
 .delivery-board .delivery-card.is-parallel .delivery-card-phases { margin-bottom: calc(6px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-micro) * var(--delivery-board-scale)); }
 .delivery-board .delivery-card.is-parallel .delivery-card-foot { gap: calc(5px * var(--delivery-board-scale)) calc(7px * var(--delivery-board-scale)); margin-top: calc(7px * var(--delivery-board-scale)); font-size: calc(var(--manager-fs-micro) * var(--delivery-board-scale)); }
+.delivery-board .delivery-card.is-parallel .delivery-card-created-at { gap: calc(3px * var(--delivery-board-scale)); }
 .delivery-board .delivery-card.is-parallel .delivery-card-owner-select { flex-basis: calc(74px * var(--delivery-board-scale)); }
 
 .delivery-board .delivery-dependency-layer > path.delivery-dependency-line { stroke-width: calc(1.6px * var(--delivery-board-scale)); }
@@ -2138,14 +2679,34 @@ select {
 /* ---- 抽屉表单 ---- */
 
 .delivery-item-drawer .ant-drawer-header {
-	padding-block: 15px;
+	flex-wrap: wrap;
+	row-gap: 12px;
+	padding-block: 13px;
 	border-bottom-color: var(--manager-border);
+}
+
+/* 头部固定两行：第一行任务名，第二行操作按钮 */
+.delivery-item-drawer .ant-drawer-header-title {
+	flex: 1 1 100%;
+	min-width: 0;
+	gap: 10px;
+}
+
+.delivery-item-drawer .ant-drawer-title { min-width: 0; }
+
+.delivery-item-drawer .ant-drawer-extra {
+	flex: 1 1 100%;
+	min-width: 0;
+	margin-inline-start: 0;
 }
 
 .delivery-item-drawer .ant-drawer-extra > .ant-space {
 	justify-content: flex-end;
 	flex-wrap: wrap;
+	row-gap: 8px;
 }
+
+.delivery-item-drawer .ant-drawer-extra .ant-btn { white-space: nowrap; }
 
 .delivery-item-drawer .ant-drawer-body { padding: 20px 24px 28px; }
 
@@ -2187,12 +2748,25 @@ select {
   gap: 11px;
 }
 
+.delivery-drawer-title { min-width: 0; }
+
+.delivery-drawer-title__text {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	line-height: 1.4;
+}
+
 .delivery-drawer-title-meta {
 	display: block;
+	overflow: hidden;
 	margin-top: 3px;
 	color: var(--manager-text-faint);
 	font-size: var(--manager-fs-xs);
 	font-weight: 400;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 
 .delivery-detail-tabs > .ant-tabs-nav { margin-bottom: 18px; }
@@ -2346,18 +2920,64 @@ select {
 	background: var(--manager-surface);
 }
 
+/* 当前看的是哪一份文档：一行紧凑的说明条，目录可省略，文件名和更新时间始终完整可读。 */
 .delivery-document-panel__path {
-	display: block;
-	overflow: auto;
+	display: inline-flex;
+	max-width: 100%;
+	min-width: 0;
+	align-items: center;
+	align-self: flex-start;
+	gap: 8px;
 	margin: -2px 0 14px;
-	padding: 8px 10px;
-	border: 1px dashed var(--manager-border-strong);
-	border-radius: var(--manager-r-sm);
+	padding: 5px 10px;
+	border: 1px solid var(--manager-border);
+	border-radius: 999px;
 	background: var(--manager-bg-soft);
-	color: var(--manager-text-faint);
-	font-family: var(--manager-mono);
+	color: var(--manager-text-soft);
 	font-size: var(--manager-fs-xs);
-	line-height: 1.5;
+	line-height: 20px;
+}
+
+.delivery-document-panel__path-icon {
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+	font-size: 12px;
+}
+
+.delivery-document-panel__path-text {
+	display: flex;
+	min-width: 0;
+	align-items: baseline;
+	font-family: var(--manager-mono);
+}
+
+/* 目录长了就从这里截断，文件名不参与压缩。 */
+.delivery-document-panel__path-dir {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--manager-text-faint);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.delivery-document-panel__path-name {
+	flex: 0 0 auto;
+	color: var(--manager-text);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+/* 时间跟在文件名后面，别甩到最右边跟路径断开。 */
+.delivery-document-panel__path-time::before {
+	margin-right: 6px;
+	color: var(--manager-border-strong);
+	content: "·";
+}
+
+.delivery-document-panel__path-time {
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
 
@@ -2536,9 +3156,22 @@ select {
 
 /* 栏目里有多份文档时，横条上的下拉框负责切换看哪一份。 */
 .delivery-document-panel__picker {
-	min-width: 160px;
-	max-width: 260px;
+	min-width: 150px;
+	max-width: 240px;
 	flex: 0 1 auto;
+}
+
+.delivery-document-panel__picker .ant-select-selector {
+	border-radius: 999px;
+}
+
+.delivery-document-panel__picker .ant-select-selection-item {
+	font-size: var(--manager-fs-xs);
+}
+
+.delivery-document-panel__picker .ant-select-arrow {
+	color: var(--manager-text-faint);
+	font-size: 11px;
 }
 
 /* 全屏预览：左侧文件列表，右侧预览与编辑。 */
@@ -3312,7 +3945,7 @@ select {
 
 .delivery-requirement-rail__list {
 	display: grid;
-	gap: 8px;
+	gap: 6px;
 	min-height: 0;
 	height: 100%;
 	align-content: start;
@@ -3320,7 +3953,7 @@ select {
 }
 
 .delivery-requirement-rail.is-expanded .delivery-requirement-rail__list {
-	gap: 12px;
+	gap: 8px;
 }
 
 .delivery-requirement-rail__result-bar {
@@ -3343,9 +3976,9 @@ select {
 
 .delivery-requirement-card {
 	display: grid;
-	gap: 4px;
+	gap: 3px;
 	width: 100%;
-	padding: 9px 10px;
+	padding: 7px 9px;
 	border: 1px solid var(--manager-border);
 	border-radius: var(--manager-r-md);
 	background: var(--manager-panel);
@@ -3356,16 +3989,16 @@ select {
 }
 
 .delivery-requirement-rail.is-expanded .delivery-requirement-card {
-	gap: 10px;
-	padding: 16px 18px;
+	gap: 8px;
+	padding: 12px 14px;
 }
 
 /* 展开后的列表用于快速定位需求，不再把详情块塞进每一行；完整内容仍由编辑入口查看。 */
 .delivery-requirement-rail.is-expanded .delivery-requirement-card:not(.is-board-card) {
-	grid-template-columns: minmax(200px, 1.2fr) auto minmax(220px, 1fr) auto;
+	grid-template-columns: minmax(160px, 1fr) auto minmax(0, 2.6fr);
 	align-items: center;
-	gap: 14px;
-	padding: 8px 12px;
+	gap: 10px;
+	padding: 6px 10px;
 }
 
 .delivery-requirement-rail.is-expanded .delivery-requirement-card:not(.is-board-card) .delivery-requirement-card__head {
@@ -3383,13 +4016,8 @@ select {
 	white-space: nowrap;
 }
 
-.delivery-requirement-rail.is-expanded .delivery-requirement-card:not(.is-board-card) .delivery-requirement-card__meta,
-.delivery-requirement-rail.is-expanded .delivery-requirement-card:not(.is-board-card) .delivery-requirement-card__status {
-	min-width: 0;
-	overflow: hidden;
-	line-height: 1.5;
-	text-overflow: ellipsis;
-	white-space: nowrap;
+.delivery-requirement-rail.is-expanded .delivery-requirement-card:not(.is-board-card) .delivery-requirement-card__details {
+	justify-content: flex-end;
 }
 
 .delivery-requirement-card:hover {
@@ -3428,19 +4056,120 @@ select {
 	flex-wrap: wrap;
 	flex-shrink: 0;
 	align-items: center;
+	gap: 0;
+}
+
+/* 卡片操作按钮压到 24px，窄栏里一行放得下整套动作，省下的高度留给需求信息。 */
+.delivery-requirement-card__actions .ant-btn.ant-btn-sm {
+	width: 24px;
+	height: 24px;
+	min-width: 24px;
+	padding: 0;
+	font-size: var(--manager-fs-xs);
+}
+
+/* 主负责人 / 需求状态 / 时间 / 分支各自一枚彩色胶囊，按内容占宽而不是等分格子，同样高度里能塞下更多信息。 */
+.delivery-requirement-card__details {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	min-width: 0;
+}
+
+.delivery-requirement-card__detail {
+	--requirement-meta-accent: var(--manager-primary);
+	display: inline-flex;
+	max-width: 100%;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+	min-height: 22px;
+	padding: 1px 8px 1px 6px;
+	border: 1px solid color-mix(in srgb, var(--requirement-meta-accent) 32%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--requirement-meta-accent) 11%, var(--manager-surface));
+	color: var(--requirement-meta-accent);
+	font-size: var(--manager-fs-xs);
+	line-height: 1.4;
+}
+
+.delivery-requirement-card__detail--time { --requirement-meta-accent: var(--manager-violet); }
+.delivery-requirement-card__detail--owner { --requirement-meta-accent: var(--manager-cyan); }
+.delivery-requirement-card__detail--branch { --requirement-meta-accent: var(--manager-amber); }
+.delivery-requirement-card__detail--status-open { --requirement-meta-accent: var(--manager-blue); }
+.delivery-requirement-card__detail--status-done { --requirement-meta-accent: var(--manager-success); }
+.delivery-requirement-card__detail--status-dropped { --requirement-meta-accent: var(--manager-text-faint); }
+
+.delivery-requirement-card__detail > .anticon,
+.delivery-requirement-card__status-dot {
+	flex: 0 0 auto;
+}
+
+.delivery-requirement-card__detail > .anticon {
+	font-size: 12px;
+}
+
+.delivery-requirement-card__status-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--requirement-meta-accent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--requirement-meta-accent) 13%, transparent);
+}
+
+/* 胶囊只留取值，维度靠图标和颜色区分，字段名由 title 兜底，省下的是每张卡的实打实高度。 */
+.delivery-requirement-card__detail-copy {
+	display: inline-flex;
+	min-width: 0;
+	align-items: baseline;
+}
+
+.delivery-requirement-card__detail-copy b,
+.delivery-requirement-card__detail-copy code {
+	min-width: 0;
+	overflow: hidden;
+	color: color-mix(in srgb, var(--requirement-meta-accent) 72%, var(--manager-text));
+	font-size: var(--manager-fs-xs);
+	font-weight: 600;
+	line-height: 1.4;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.delivery-requirement-card__detail--branch .delivery-requirement-card__detail-copy {
+	flex: 1;
+}
+
+.delivery-requirement-card__branch-tip {
+	display: grid;
 	gap: 2px;
+	max-width: 320px;
 }
 
-.delivery-requirement-card__meta,
-.delivery-requirement-card__status {
-	color: var(--manager-text-faint);
-	font-size: var(--manager-fs-xs);
-	line-height: 1.6;
+.delivery-requirement-card__branch-tip em {
+	color: rgba(255, 255, 255, 0.65);
+	font-size: var(--manager-fs-micro);
+	font-style: normal;
 }
 
-.delivery-requirement-card.is-all small {
-	color: var(--manager-text-faint);
+.delivery-requirement-card__branch-tip code {
+	overflow-wrap: anywhere;
 	font-size: var(--manager-fs-xs);
+}
+
+.delivery-requirement-card__branch-tip b {
+	color: rgba(255, 255, 255, 0.75);
+	font-size: var(--manager-fs-micro);
+	font-weight: 500;
+}
+
+.delivery-requirement-card__detail--branch .ant-tag {
+	flex: 0 0 auto;
+	margin: 0;
+	margin-inline-start: auto;
+	padding-inline: 5px;
+	font-size: var(--manager-fs-micro);
+	line-height: 16px;
 }
 
 .delivery-requirement-card__expanded {
@@ -3493,8 +4222,8 @@ select {
 }
 
 .delivery-requirement-card.is-board-card {
-	gap: 7px;
-	padding: 12px;
+	gap: 5px;
+	padding: 9px 10px;
 	background: var(--manager-surface);
 }
 
@@ -3508,9 +4237,9 @@ select {
 	overflow: hidden;
 	color: var(--manager-text-soft);
 	font-size: var(--manager-fs-xs);
-	line-height: 1.65;
+	line-height: 1.55;
 	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 3;
+	-webkit-line-clamp: 2;
 }
 
 .delivery-requirement-kanban {
@@ -4264,11 +4993,13 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	.delivery-requirement-rail__list { max-height: 240px; }
 	.delivery-requirement-layout.is-requirements-expanded { gap: 0; grid-template-columns: 1fr; }
 	.delivery-requirement-layout.is-requirements-expanded .delivery-requirement-rail__list { max-height: none; }
-	.delivery-requirement-rail.is-expanded .delivery-requirement-rail__filters-base,
-	.delivery-requirement-rail__expanded-tools,
-	.delivery-requirement-card__expanded,
-	.delivery-requirement-kanban { grid-template-columns: 1fr; }
-	.delivery-requirement-rail__expanded-tools { align-items: stretch; }
+		.delivery-requirement-rail.is-expanded .delivery-requirement-rail__filters-base,
+		.delivery-requirement-rail__expanded-tools,
+		.delivery-requirement-card__expanded,
+		.delivery-requirement-kanban { grid-template-columns: 1fr; }
+		.delivery-requirement-rail.is-expanded .delivery-requirement-card:not(.is-board-card) { grid-template-columns: 1fr; }
+		.delivery-requirement-rail.is-expanded .delivery-requirement-card__details { justify-content: flex-start; }
+		.delivery-requirement-rail__expanded-tools { align-items: stretch; }
 	.delivery-requirement-kanban { gap: 10px; }
 	.delivery-session-document-tabs > .ant-tabs-nav { padding-inline: 14px; }
 	.delivery-session-document-tabs .ant-tabs-tabpane { padding: 16px 14px 24px; }

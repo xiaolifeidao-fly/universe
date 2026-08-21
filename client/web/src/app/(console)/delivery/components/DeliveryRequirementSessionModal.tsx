@@ -81,6 +81,7 @@ import {
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { DeliveryRequirementDetailInput, requirementMentionKeys, requirementMentionReferences } from "./DeliveryRequirementDetailInput";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
+import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
 import {
@@ -266,10 +267,8 @@ export function DeliveryRequirementSessionModal({
   const [prototypeEditSending, setPrototypeEditSending] = useState(false);
   const [contextPanelWidth, setContextPanelWidth] = useState(defaultContextPanelWidth);
   const [resizingContext, setResizingContext] = useState(false);
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const planningShellRef = useRef<HTMLDivElement>(null);
   const contextResizePointerIdRef = useRef<number | null>(null);
-  const prototypeEditTranscriptRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const awaitingPlanningResultRef = useRef("");
@@ -632,18 +631,17 @@ export function DeliveryRequirementSessionModal({
     };
   }, [resizeContextPanel, resizingContext]);
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [active, flattenedItems.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, flattenedItems.length]);
 
   const prototypeEditItems = useMemo(
     () => (prototypeEditConversation?.turns ?? []).flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id }))),
     [prototypeEditConversation],
   );
 
-  useEffect(() => {
-    prototypeEditTranscriptRef.current?.scrollTo({ top: prototypeEditTranscriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [prototypeEditActive, prototypeEditItems.length]);
+  const { ref: prototypeEditTranscriptRef, onScroll: onPrototypeEditTranscriptScroll } = useStickToBottom<HTMLDivElement>([
+    prototypeEditActive,
+    prototypeEditItems.length,
+  ]);
 
   // 确认写入只在「已经出过一轮预览、当前没有回合在跑」时可用：没有方案可确认，或方案还在生成中都不放行。
   const canConfirmWrite =
@@ -1227,7 +1225,7 @@ export function DeliveryRequirementSessionModal({
               </Tooltip>
             </div>
           </header>
-          <div className="delivery-session-transcript" ref={transcriptRef}>
+          <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
             {/* 首次加载时只显示转圈，不要再叠一层空状态：两个「空」摞在一起像坏了。 */}
             {loading && !conversation ? (
               <div className="delivery-session-transcript__loading"><Spin /></div>
@@ -1922,7 +1920,7 @@ export function DeliveryRequirementSessionModal({
                 />
               </Tooltip>
             </header>
-            <div ref={prototypeEditTranscriptRef} className="delivery-session-transcript" style={{ flex: 1, minHeight: 360, maxHeight: "calc(100vh - 350px)" }}>
+            <div ref={prototypeEditTranscriptRef} onScroll={onPrototypeEditTranscriptScroll} className="delivery-session-transcript" style={{ flex: 1, minHeight: 360, maxHeight: "calc(100vh - 350px)" }}>
               {prototypeEditItems.length ? prototypeEditItems.map((item, index) => (
                 <Fragment key={`${item.turnId}-${item.id || index}`}>
                   <PlanningTranscriptItem item={item} programId={programId} toolName={toolName} />

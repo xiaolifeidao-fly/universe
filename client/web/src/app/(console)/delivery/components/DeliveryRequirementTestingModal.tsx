@@ -42,6 +42,7 @@ import {
   type RequirementTestingStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
 import {
   MAX_ATTACHMENTS,
@@ -122,7 +123,6 @@ export function DeliveryRequirementTestingModal({
   const [draggingAttachments, setDraggingAttachments] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "cases" | "report">("chat");
   const [testCaseOnly, setTestCaseOnly] = useState(true);
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const wasActiveRef = useRef(false);
@@ -191,9 +191,7 @@ export function DeliveryRequirementTestingModal({
     return () => window.clearInterval(timer);
   }, [active, load, open]);
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [active, flattenedItems.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, flattenedItems.length]);
 
   const send = async (requestedText?: string, requestedTestCaseOnly = testCaseOnly) => {
     const text = (requestedText ?? draft).trim();
@@ -346,7 +344,7 @@ export function DeliveryRequirementTestingModal({
             items={[
               {
                 key: "chat", label: t("delivery.requirement.testingChat"),
-                children: <div className="delivery-session-transcript" ref={transcriptRef}>
+                children: <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                   <Alert className="delivery-testing-cases-chat-hint" type="info" showIcon message={t("delivery.testingCases.chatHint.title")} description={t("delivery.testingCases.chatHint.description")} />
                   {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{turn.items.map((item) => <TestingTranscriptItem item={item} programId={programId} toolName={toolName} key={`${turn.id}-${item.id}-${item.type}`} />)}<SessionChangeSummary changes={changesOfTurn(turn.items)} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.requirement.testingEmpty").replace("{tool}", toolName)} />}
                   {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}

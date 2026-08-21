@@ -2,6 +2,7 @@
 
 import {
 	BranchesOutlined,
+	ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -12,8 +13,9 @@ import {
   PlusOutlined,
 	ReloadOutlined,
   ShareAltOutlined,
-  SearchOutlined,
-  SwapOutlined,
+	SearchOutlined,
+	SwapOutlined,
+	UserOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Empty, Input, Popconfirm, Segmented, Select, Spin, Tag, Tooltip } from "antd";
 import dayjs from "dayjs";
@@ -228,6 +230,8 @@ export function DeliveryRequirementList({
     const isSelected = requirement.requirementKey === selectedKey;
     const statusChanging = changingStatusKey === requirement.requirementKey;
 		const gitState = gitStateOf(requirement);
+    // 信息位省略了字段名、长值也会截断，悬停提示得把「字段名 + 完整取值」补回来。
+    const ownerNames = (requirement.owners ?? []).map((member) => member.name).join("、") || t("delivery.requirement.unassigned");
 
     const changeStatus = async (status: RequirementStatus) => {
       if (status === requirement.status || statusChanging) return;
@@ -243,13 +247,16 @@ export function DeliveryRequirementList({
       <div
         key={requirement.requirementKey}
         className={`delivery-requirement-card${isSelected ? " is-selected" : ""}${boardCard ? " is-board-card" : ""}`}
+        // 消息中心跳过来时按这个属性把需求卡片滚进可视区。
+        data-delivery-requirement-key={requirement.requirementKey}
         role="button"
         tabIndex={0}
-        onClick={() => onSelect(isSelected ? "" : requirement.requirementKey)}
+        // 点卡片一律是「看这条需求」：再点一次也重新拉一次任务，不做取消选中。
+        onClick={() => onSelect(requirement.requirementKey)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onSelect(isSelected ? "" : requirement.requirementKey);
+            onSelect(requirement.requirementKey);
           }
         }}
       >
@@ -258,7 +265,13 @@ export function DeliveryRequirementList({
             <b>{requirement.name || requirement.requirementKey}</b>
           </Tooltip>
         </div>
-        <div className="delivery-requirement-card__actions" onClick={(event) => event.stopPropagation()}>
+        <div
+          className="delivery-requirement-card__actions"
+          // 只有点在动作按钮上才拦下冒泡；动作行的空白处仍然算点中这条需求。
+          onClick={(event) => {
+            if ((event.target as HTMLElement).closest("button")) event.stopPropagation();
+          }}
+        >
 			{gitState ? <Tooltip title={t("delivery.requirement.gitCheck")}>
 				<Button
 					type="text"
@@ -380,20 +393,48 @@ export function DeliveryRequirementList({
             </Tooltip>
           </Popconfirm>
         </div>
-        <small className="delivery-requirement-card__meta">
-          {requirement.createdAt ? dayjs(requirement.createdAt).format("MM-DD HH:mm") : ""}
-          {" · "}
-          {t("delivery.requirement.createdBy")}: {requirement.createdByName || requirement.createdBy || t("delivery.requirement.unassigned")}
-          {" · "}
-          {t("delivery.requirement.owners")}: {(requirement.owners ?? []).map((member) => member.name).join("、") || t("delivery.requirement.unassigned")}
-        </small>
-        <small className="delivery-requirement-card__status">
-          {t(`delivery.requirement.status.${requirement.status}`)}
-        </small>
-			{gitState ? <small className="delivery-requirement-card__status">
+		<div className="delivery-requirement-card__details" aria-label={t("delivery.requirement.list")}>
+		  <span className="delivery-requirement-card__detail delivery-requirement-card__detail--owner" title={`${t("delivery.requirement.owners")}: ${ownerNames}`}>
+			<UserOutlined aria-hidden="true" />
+			<span className="delivery-requirement-card__detail-copy">
+			  <b>{ownerNames}</b>
+			</span>
+		  </span>
+		  <span className={`delivery-requirement-card__detail delivery-requirement-card__detail--status-${requirement.status}`} title={`${t("delivery.requirement.status")}: ${t(`delivery.requirement.status.${requirement.status}`)}`}>
+			<span className="delivery-requirement-card__status-dot" aria-hidden="true" />
+			<span className="delivery-requirement-card__detail-copy">
+			  <b>{t(`delivery.requirement.status.${requirement.status}`)}</b>
+			</span>
+		  </span>
+		  {requirement.createdAt ? (
+			<span className="delivery-requirement-card__detail delivery-requirement-card__detail--time" title={`${t("delivery.requirement.createdAt")}: ${dayjs(requirement.createdAt).format("YYYY-MM-DD HH:mm")}`}>
+			  <ClockCircleOutlined aria-hidden="true" />
+			  <span className="delivery-requirement-card__detail-copy">
+				<b>{dayjs(requirement.createdAt).format("MM-DD HH:mm")}</b>
+			  </span>
+			</span>
+		  ) : null}
+		  {gitState && requirement.gitBranch ? (
+			/* 分支名在胶囊里会被截断，用悬浮框给出完整分支名和当前工作区状态。 */
+			<Tooltip
+			  title={(
+				<span className="delivery-requirement-card__branch-tip">
+				  <em>{t("delivery.requirement.gitBranch")}</em>
+				  <code className="manager-mono">{requirement.gitBranch}</code>
+				  <b>{gitState.label}</b>
+				</span>
+			  )}
+			>
+			  <span className="delivery-requirement-card__detail delivery-requirement-card__detail--branch">
+				<BranchesOutlined aria-hidden="true" />
+				<span className="delivery-requirement-card__detail-copy">
+				  <code className="manager-mono">{requirement.gitBranch}</code>
+				</span>
 				<Tag color={gitState.color} bordered={false}>{gitState.label}</Tag>
-				<span className="manager-mono">{requirement.gitBranch}</span>
-			</small> : null}
+			  </span>
+			</Tooltip>
+		  ) : null}
+		</div>
         {boardCard && requirement.detail ? <p className="delivery-requirement-card__brief">{requirementMentionPlainText(requirement.detail, requirementNameByKey)}</p> : null}
       </div>
     );
@@ -408,9 +449,6 @@ export function DeliveryRequirementList({
         <div>
           <h3>{t("delivery.requirement.list")}</h3>
           {programName ? <small>{programName}</small> : null}
-			{gitWorkspaceStatus ? <small className="manager-mono">
-				{t("delivery.requirement.gitCurrentBranch")} {gitWorkspaceStatus.currentBranch || "HEAD"}
-			</small> : null}
         </div>
         <div className="delivery-requirement-rail__header-actions">
           <Tooltip title={expanded ? t("delivery.requirement.collapseList") : t("delivery.requirement.expandList")}>

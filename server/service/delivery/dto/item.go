@@ -67,6 +67,7 @@ type ItemView struct {
 	DependencyTargetSides map[string]string `json:"dependencyTargetSides"`
 	// Version 前端改这条时必须原样带回来，服务端据此判定并发冲突。
 	Version   int        `json:"version"`
+	CreatedAt *time.Time `json:"createdAt"`
 	UpdatedBy string     `json:"updatedBy"`
 	UpdatedAt *time.Time `json:"updatedAt"`
 }

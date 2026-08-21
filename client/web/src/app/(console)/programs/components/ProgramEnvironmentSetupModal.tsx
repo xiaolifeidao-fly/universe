@@ -3,7 +3,7 @@
 import { ArrowLeftOutlined, CheckCircleOutlined, CopyOutlined, InfoCircleOutlined, LoadingOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, ToolOutlined } from "@ant-design/icons";
 import { Button, Empty, Modal, Space, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { effortForConfig, modelForConfig, toolDisplayName, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import {
   fetchCodexEnvironmentSetupConversation,
@@ -14,6 +14,7 @@ import {
 import { useLocale } from "@/i18n/LocaleProvider";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { GIT_PRESET, describeEnvironment, type EnvironmentCommands } from "@/project-workspaces/environmentPresets";
+import { useStickToBottom } from "../../delivery/hooks/useStickToBottom";
 import { SessionMessageContent } from "../../delivery/components/DeliverySessionMessage";
 
 interface ProgramEnvironmentSetupModalProps {
@@ -57,7 +58,6 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const transcriptRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo<EnvironmentRow[]>(() => [
     ...(useGit
@@ -127,9 +127,7 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
   const githubSshStatus = statusesById.get(GIT_PRESET.id);
   const githubSshPublicKey = githubSshStatus?.githubSshPublicKey || "";
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [active, items.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, items.length]);
 
   const start = async () => {
     if (!rows.length) return;
@@ -301,7 +299,7 @@ export function ProgramEnvironmentSetupModal({ open, useGit, environments, onClo
           {!active && items.length ? <Tag color="success" icon={<CheckCircleOutlined />}>{t("programs.environment.finished")}</Tag> : null}
           </Space>
         </div>
-        <div className="delivery-session-transcript program-environment-setup-transcript" ref={transcriptRef}>
+        <div className="delivery-session-transcript program-environment-setup-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
           {loading && !conversation ? (
             <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div>
           ) : items.length ? (

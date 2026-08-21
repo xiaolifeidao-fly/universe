@@ -206,7 +206,10 @@ function DocumentSetView({
       {layout === "panel" && options.length > 1 ? (
         <Select
           size="small"
+          variant="filled"
           className="delivery-document-panel__picker"
+          popupMatchSelectWidth={false}
+          suffixIcon={<FileTextOutlined />}
           aria-label={t("delivery.docset.file")}
           value={path || undefined}
           placeholder={t("delivery.docset.selectPlaceholder")}
@@ -275,11 +278,23 @@ function DocumentSetView({
     <SessionDocumentText value={document?.content ?? ""} fallback={emptyText || t("delivery.docset.empty")} />
   );
 
+  // 路径本身很长，横着塞一行会被挤没：目录部分可以省略，文件名和更新时间始终看得见。
+  const lastSlash = path.lastIndexOf("/");
+  const pathDir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "";
+  const pathName = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
   const meta = path ? (
-    <code className="delivery-document-panel__path">
-      {path}
-      {document?.modifiedAt ? ` · ${dayjs(document.modifiedAt).format("YYYY-MM-DD HH:mm")}` : ""}
-    </code>
+    <div className="delivery-document-panel__path" title={path}>
+      <FileTextOutlined className="delivery-document-panel__path-icon" />
+      <span className="delivery-document-panel__path-text">
+        {pathDir ? <span className="delivery-document-panel__path-dir">{pathDir}</span> : null}
+        <span className="delivery-document-panel__path-name">{pathName}</span>
+      </span>
+      {document?.modifiedAt ? (
+        <span className="delivery-document-panel__path-time">
+          {dayjs(document.modifiedAt).format("YYYY-MM-DD HH:mm")}
+        </span>
+      ) : null}
+    </div>
   ) : null;
 
   if (layout === "split") {

@@ -73,6 +73,7 @@ import {
   clipboardAttachments,
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
+import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
@@ -196,7 +197,6 @@ export function DeliveryTaskSessionModal({
     requirements: DeliveryRequirementRecord[];
     items: DeliveryItemRecord[];
   } | null>(null);
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const sessionShellRef = useRef<HTMLDivElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -389,9 +389,11 @@ export function DeliveryTaskSessionModal({
     return () => window.clearInterval(timer);
   }, [active, awaitingTerminalResult, load, open]);
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [flattenedItems.length, liveEvents.length, active]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([
+    flattenedItems.length,
+    liveEvents.length,
+    active,
+  ]);
 
   const send = async () => {
     const text = draft.trim() || (chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
@@ -684,7 +686,7 @@ export function DeliveryTaskSessionModal({
                 </Tooltip>
               </div>
             </header>
-            <div className="delivery-session-transcript" ref={transcriptRef}>
+            <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
               <Spin spinning={loading && !detail}>
                 {!newConversation && flattenedItems.length ? (
                   // 按回合渲染：每个回合末尾补一份「本次改动」，对齐直接用 Codex / Claude 时看到的改动清单。

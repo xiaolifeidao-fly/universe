@@ -37,6 +37,7 @@ import {
   type TestingCasesStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionDocumentText, SessionMessageContent, changesOfTurn, SessionChangeSummary } from "./DeliverySessionMessage";
 
 interface DeliveryTaskTestingCasesModalProps {
@@ -97,7 +98,6 @@ export function DeliveryTaskTestingCasesModal({
   const [sending, setSending] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "cases">("chat");
-  const transcriptRef = useRef<HTMLDivElement>(null);
   const wasActiveRef = useRef(false);
   const initializedRef = useRef(false);
 
@@ -158,9 +158,7 @@ export function DeliveryTaskTestingCasesModal({
     return () => window.clearInterval(timer);
   }, [active, load, open]);
 
-  useEffect(() => {
-    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
-  }, [active, flattenedItems.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, flattenedItems.length]);
 
   const send = async () => {
     const text = draft.trim();
@@ -259,7 +257,7 @@ export function DeliveryTaskTestingCasesModal({
             items={[
               {
                 key: "chat", label: t("delivery.taskTestingCases.chat"),
-                children: <div className="delivery-session-transcript" ref={transcriptRef}>
+                children: <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                   <Alert className="delivery-testing-cases-chat-hint" type="info" showIcon message={t("delivery.testingCases.chatHint.title")} description={t("delivery.testingCases.chatHint.description")} />
                   {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{turn.items.map((entry) => <TranscriptItem item={entry} programId={programId} toolName={toolName} key={`${turn.id}-${entry.id}-${entry.type}`} />)}<SessionChangeSummary changes={changesOfTurn(turn.items)} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.taskTestingCases.empty").replace("{tool}", toolName)} />}
                   {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}

@@ -5,10 +5,22 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// splitFilterValues 把「a,b」这类多值筛选拆成去空后的切片，单值查询不受影响。
+func splitFilterValues(value string) []string {
+	values := make([]string, 0, 2)
+	for _, part := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
+}
 
 // ---------- 任务 ----------
 
@@ -43,8 +55,11 @@ func (r *DeliveryRepository) itemScope(ctx context.Context, q ItemQuery) *gorm.D
 	if q.RequirementKey != "" {
 		tx = tx.Where("requirement_key = ?", q.RequirementKey)
 	}
-	if q.Status != "" {
-		tx = tx.Where("status = ?", q.Status)
+	// 消息中心一次要同时看「受阻」和「不做」，状态支持逗号分隔的多值。
+	if statuses := splitFilterValues(q.Status); len(statuses) == 1 {
+		tx = tx.Where("status = ?", statuses[0])
+	} else if len(statuses) > 1 {
+		tx = tx.Where("status IN ?", statuses)
 	}
 	if q.Phase != "" {
 		tx = tx.Where("phase = ?", q.Phase)

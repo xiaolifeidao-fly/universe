@@ -2,10 +2,15 @@
 
 import {
 	AppstoreOutlined,
+	BranchesOutlined,
+	CheckCircleOutlined,
 	DeleteOutlined,
 	EditOutlined,
 	FlagOutlined,
+	ExclamationCircleOutlined,
 	FolderOpenOutlined,
+	InfoCircleOutlined,
+	LoadingOutlined,
 	PlusOutlined,
 	ReloadOutlined,
 	SettingOutlined,
@@ -13,9 +18,9 @@ import {
 } from "@ant-design/icons";
 import {
 	Alert,
+	AutoComplete,
 	Button,
 	Drawer,
-	Divider,
 	Empty,
 	Form,
 	Input,
@@ -26,6 +31,7 @@ import {
 	Space,
 	Switch,
 	Table,
+	Tabs,
 	Tag,
 	Tooltip,
 	message,
@@ -39,6 +45,7 @@ import {
 	deleteStage,
 	fetchModules,
 	fetchModulesPage,
+	fetchCodexGitBranches,
 	fetchCodexLocalProjects,
 	fetchProgramAssignment,
 	fetchPrograms,
@@ -144,6 +151,9 @@ export function ProgramManagementWorkspace() {
 	const [gitEnabled, setGitEnabled] = useState(false);
 	const [gitRepositoryUrl, setGitRepositoryUrl] = useState("");
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
+	const [workspaceTab, setWorkspaceTab] = useState<"workspace" | "git">("workspace");
+	const [gitBranches, setGitBranches] = useState<string[]>([]);
+	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
 	// 只读成员建不了项目也编辑不了项目；系统管理员在空间维度不再有隐式权限。
 	// 空间维度的权限跟着业务线列表从服务端下来，不查本地缓存的授权范围 ——
 	// 那份缓存在刚建完空间、或别人调整过你的权限之后就不准了。
@@ -518,6 +528,8 @@ export function ProgramManagementWorkspace() {
 		setWorkspaceProgram(program);
 		setWorkspaceProjects([]);
 		setWorkspaceLoading(true);
+		setWorkspaceTab("workspace");
+		setGitBranches([]);
 		const saved = getProjectWorkspacePreference(program.programId);
 		setWorkspacePath(saved?.workspace || "");
 		setWorkspaceSource(saved ? "saved" : "unmatched");
@@ -556,10 +568,12 @@ export function ProgramManagementWorkspace() {
 			))
 		);
 		if (!candidate && !gitConfigChanged) {
+			setWorkspaceTab("workspace");
 			message.error(t("programs.workspace.required"));
 			return;
 		}
 		if (gitEnabled && !gitBaseBranch.trim()) {
+			setWorkspaceTab("git");
 			message.error(t("programs.git.baseBranchRequired"));
 			return;
 		}
@@ -588,13 +602,61 @@ export function ProgramManagementWorkspace() {
 		}
 	};
 
+	useEffect(() => {
+		if (!workspaceProgram || workspaceTab !== "git" || !gitEnabled) return;
+		const workspace = workspacePath.trim();
+		if (!workspace) return;
+		let cancelled = false;
+		setGitBranchesLoading(true);
+		void fetchCodexGitBranches(workspaceProgram.programId, workspace)
+			.then((catalog) => {
+				if (cancelled) return;
+				setGitBranches(catalog.branches);
+				setGitBaseBranch((current) => current || catalog.defaultBranch || "");
+			})
+			.catch(() => {
+				if (!cancelled) setGitBranches([]);
+			})
+			.finally(() => {
+				if (!cancelled) setGitBranchesLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [gitEnabled, workspacePath, workspaceProgram, workspaceTab]);
+
+	const gitBranchOptions = useMemo(
+		() => gitBranches.map((branch) => ({ value: branch, label: branch })),
+		[gitBranches],
+	);
+
 	const workspaceOptions = useMemo(
 		() => workspaceProjects.flatMap((project) => project.rootPaths.map((rootPath) => ({
 			value: rootPath,
-			label: `${project.name} · ${rootPath}`,
+			name: project.name,
+			label: (
+				<span className="manager-codex-option">
+					<b data-locale-static="false">{project.name}</b>
+					<span data-locale-static="false">{rootPath}</span>
+				</span>
+			),
 		}))),
 		[workspaceProjects],
 	);
+
+	const workspaceNote = useMemo(() => {
+		if (workspaceSource === "unmatched") {
+			return { tone: "warn", icon: <ExclamationCircleOutlined />, key: "programs.workspace.unmatched" };
+		}
+		if (workspaceSource === "manual") {
+			return { tone: "info", icon: <InfoCircleOutlined />, key: "programs.workspace.manual" };
+		}
+		return {
+			tone: "ok",
+			icon: <CheckCircleOutlined />,
+			key: workspaceSource === "saved" ? "programs.workspace.savedStatus" : "programs.workspace.matched",
+		};
+	}, [workspaceSource]);
 
 	const columns = useMemo<ColumnsType<DeliveryProgramRecord>>(
 		() => [
@@ -827,79 +889,132 @@ export function ProgramManagementWorkspace() {
 				onCancel={() => setWorkspaceProgram(null)}
 				onOk={() => void saveWorkspacePreference()}
 			>
-				<Space direction="vertical" size={16} style={{ width: "100%" }}>
-					<div>
-						<div className="manager-table-subline">{t("programs.workspace.program")}</div>
-						<strong data-locale-static="false">{workspaceProgram?.name}</strong>
-						<div className="manager-table-subline">
-							{t("programs.workspace.programCode")} · <span className="manager-mono" data-locale-static="false">{workspaceProgram?.programCode || "-"}</span>
+				<div className="manager-codex-modal">
+					<div className="manager-codex-head">
+						<span className="manager-codex-head-avatar" aria-hidden="true">
+							{(workspaceProgram?.name || workspaceProgram?.programCode || "?").trim().slice(0, 1)}
+						</span>
+						<div className="manager-codex-head-copy">
+							<span className="manager-section-label">{t("programs.workspace.program")}</span>
+							<strong data-locale-static="false">{workspaceProgram?.name}</strong>
+							<div className="manager-table-subline manager-mono" data-locale-static="false">
+								{workspaceProgram?.programCode || "-"}
+							</div>
 						</div>
 					</div>
-					<Alert
-						showIcon
-						type={workspaceSource === "unmatched" ? "warning" : "info"}
-						message={t(workspaceSource === "saved" ? "programs.workspace.savedStatus" : `programs.workspace.${workspaceSource}`)}
-						description={t("programs.workspace.localHint")}
+					<Tabs
+						className="manager-codex-tabs"
+						activeKey={workspaceTab}
+						onChange={(key) => setWorkspaceTab(key as "workspace" | "git")}
+						items={[
+							{
+								key: "workspace",
+								label: <><FolderOpenOutlined />{t("programs.workspace.tabWorkspace")}</>,
+								children: (
+									<div className="manager-codex-pane">
+										<div className={`manager-codex-note manager-codex-note--${workspaceNote.tone}`}>
+											{workspaceNote.icon}
+											<div>
+												<strong>{t(workspaceNote.key)}</strong>
+												<p>{t("programs.workspace.localHint")}</p>
+											</div>
+										</div>
+										<Form layout="vertical" style={{ width: "100%" }}>
+											<Form.Item label={t("programs.workspace.detected")}>
+												<Select
+													allowClear
+													showSearch
+													loading={workspaceLoading}
+													placeholder={t("programs.workspace.detectedPlaceholder")}
+													options={workspaceOptions}
+													optionLabelProp="value"
+													filterOption={(input, option) => {
+														const keyword = input.trim().toLocaleLowerCase();
+														if (!keyword) return true;
+														return `${option?.name || ""} ${option?.value || ""}`.toLocaleLowerCase().includes(keyword);
+													}}
+													value={workspaceOptions.some((option) => option.value === workspacePath) ? workspacePath : undefined}
+													onChange={(value) => {
+														setWorkspacePath(value || "");
+														setWorkspaceSource("matched");
+													}}
+												/>
+											</Form.Item>
+											<Form.Item label={t("programs.workspace.path")} required extra={t("programs.workspace.pathHint")}>
+												<Input
+													className="manager-codex-path"
+													prefix={<FolderOpenOutlined />}
+													value={workspacePath}
+													placeholder={t("programs.workspace.pathPlaceholder")}
+													onChange={(event) => {
+														setWorkspacePath(event.target.value);
+														setWorkspaceSource("manual");
+													}}
+												/>
+											</Form.Item>
+										</Form>
+									</div>
+								),
+							},
+							{
+								key: "git",
+								label: <><BranchesOutlined />{t("programs.workspace.tabGit")}</>,
+								children: (
+									<div className="manager-codex-pane">
+										<div className={`manager-codex-toggle${gitEnabled ? " manager-codex-toggle--on" : ""}`}>
+											<div>
+												<strong>{t("programs.git.enabled")}</strong>
+												<p>{t("programs.git.enabledHint")}</p>
+											</div>
+											<Switch
+												checked={gitEnabled}
+												disabled={!workspaceProgram?.canAdminister}
+												aria-label={t("programs.git.enabled")}
+												onChange={setGitEnabled}
+											/>
+										</div>
+										{gitEnabled ? (
+											<Form layout="vertical" style={{ width: "100%" }}>
+												<Form.Item label={t("programs.git.repositoryUrl")} extra={t("programs.git.repositoryUrlHint")}>
+													<Input
+														className="manager-codex-path"
+														disabled={!workspaceProgram?.canAdminister}
+														value={gitRepositoryUrl}
+														placeholder={t("programs.git.repositoryUrlPlaceholder")}
+														onChange={(event) => setGitRepositoryUrl(event.target.value)}
+													/>
+												</Form.Item>
+												<Form.Item label={t("programs.git.baseBranch")} required extra={t("programs.git.baseBranchHint")}>
+													<AutoComplete
+														allowClear
+														disabled={!workspaceProgram?.canAdminister}
+														value={gitBaseBranch}
+														options={gitBranchOptions}
+														placeholder={t("programs.git.baseBranchPlaceholder")}
+														filterOption={(input, option) => String(option?.value || "").toLocaleLowerCase().includes(input.trim().toLocaleLowerCase())}
+														onChange={(value) => setGitBaseBranch(value || "")}
+													>
+														<Input
+															className="manager-codex-path"
+															prefix={<BranchesOutlined />}
+															suffix={gitBranchesLoading ? <LoadingOutlined /> : undefined}
+														/>
+													</AutoComplete>
+												</Form.Item>
+											</Form>
+										) : (
+											<div className="manager-codex-empty">{t("programs.git.disabledHint")}</div>
+										)}
+										{gitEnabled ? <p className="manager-codex-foot">{t("programs.git.hint")}</p> : null}
+										{!workspaceProgram?.canAdminister ? (
+											<p className="manager-codex-foot">{t("programs.git.readonly")}</p>
+										) : null}
+									</div>
+								),
+							},
+						]}
 					/>
-					<Form layout="vertical" style={{ width: "100%" }}>
-						<Form.Item label={t("programs.workspace.detected")}>
-							<Select
-								allowClear
-								showSearch
-								loading={workspaceLoading}
-								placeholder={t("programs.workspace.detectedPlaceholder")}
-								options={workspaceOptions}
-								value={workspaceOptions.some((option) => option.value === workspacePath) ? workspacePath : undefined}
-								onChange={(value) => {
-									setWorkspacePath(value || "");
-									setWorkspaceSource("matched");
-								}}
-							/>
-						</Form.Item>
-						<Form.Item label={t("programs.workspace.path")} required extra={t("programs.workspace.pathHint")}>
-							<Input
-								prefix={<FolderOpenOutlined />}
-								value={workspacePath}
-								placeholder={t("programs.workspace.pathPlaceholder")}
-								onChange={(event) => {
-									setWorkspacePath(event.target.value);
-									setWorkspaceSource("manual");
-								}}
-							/>
-						</Form.Item>
-						<Divider orientation="left" plain>{t("programs.git.title")}</Divider>
-						<Form.Item label={t("programs.git.enabled")} extra={t("programs.git.enabledHint")}>
-							<Switch
-								checked={gitEnabled}
-								disabled={!workspaceProgram?.canAdminister}
-								aria-label={t("programs.git.enabled")}
-								onChange={setGitEnabled}
-							/>
-						</Form.Item>
-						{gitEnabled ? <>
-							<Alert showIcon type="info" message={t("programs.git.hint")} />
-							<Form.Item label={t("programs.git.repositoryUrl")} extra={t("programs.git.repositoryUrlHint")} style={{ marginTop: 16 }}>
-								<Input
-									disabled={!workspaceProgram?.canAdminister}
-									value={gitRepositoryUrl}
-									placeholder={t("programs.git.repositoryUrlPlaceholder")}
-									onChange={(event) => setGitRepositoryUrl(event.target.value)}
-								/>
-							</Form.Item>
-							<Form.Item label={t("programs.git.baseBranch")} required extra={t("programs.git.baseBranchHint")}>
-								<Input
-									disabled={!workspaceProgram?.canAdminister}
-									value={gitBaseBranch}
-									placeholder={t("programs.git.baseBranchPlaceholder")}
-									onChange={(event) => setGitBaseBranch(event.target.value)}
-								/>
-							</Form.Item>
-						</> : null}
-						{!workspaceProgram?.canAdminister ? (
-							<small className="manager-table-subline">{t("programs.git.readonly")}</small>
-						) : null}
-					</Form>
-				</Space>
+				</div>
 			</Modal>
 
 			<Modal

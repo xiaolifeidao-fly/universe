@@ -89,6 +89,14 @@ func TestOrderByCreationUsesAscendingOrderForEveryTask(t *testing.T) {
 	}
 }
 
+func TestItemViewIncludesCreatedAt(t *testing.T) {
+	created := time.Date(2026, time.August, 21, 10, 30, 0, 0, time.UTC)
+	view := toItemView(&repository.DeliveryItem{CreatedTime: created}, nil, nil, nil)
+	if view.CreatedAt == nil || !view.CreatedAt.Equal(created) {
+		t.Fatalf("任务视图未返回创建时间：%#v", view.CreatedAt)
+	}
+}
+
 func TestNormalizeProgress(t *testing.T) {
 	cases := []struct {
 		status string

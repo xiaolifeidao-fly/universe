@@ -327,6 +327,8 @@ export class DeliveryItemRecord {
   /** 乐观锁版本，改这条时必须原样带回服务端。 */
   version = 0;
 
+  createdAt?: string;
+
   updatedBy = "";
 
   updatedAt?: string;
@@ -1266,6 +1268,8 @@ export interface RequirementPageQuery {
 interface ItemPageQuery {
   programId: number;
   requirementKey?: string;
+  /** 支持逗号分隔的多状态，例如消息中心要的 "blocked,dropped"。 */
+  status?: string;
   keyword?: string;
   pageIndex?: number;
   pageSize?: number;
@@ -1418,6 +1422,56 @@ export async function fetchItems(programId: number, requirementKey = "") {
   return fetchItemsPage({ programId, requirementKey: requirementKey || undefined });
 }
 
+/** 消息中心的一行：一条需要关注的任务，连同它所属的项目和需求。 */
+export interface DeliveryAttentionTask {
+  programId: number;
+  programName: string;
+  requirementKey: string;
+  requirementName: string;
+  /** 需求负责人（含辅助人）姓名，消息中心直接展示，不用再点进需求才看得到。 */
+  requirementOwners: string[];
+  itemKey: string;
+  title: string;
+  status: DeliveryStatus;
+  phase: DeliveryPhase;
+  updatedAt?: string;
+}
+
+/**
+ * 拉取当前业务线下所有项目里「受阻」和「不做」的任务。
+ * 服务端的任务查询按项目授权，跨项目只能逐个项目取；项目数是个位数量级，并发发出即可。
+ */
+export async function fetchDeliveryAttentionTasks(bizLine: BusinessLineId): Promise<DeliveryAttentionTask[]> {
+  const programs = await fetchPrograms(bizLine);
+  const groups = await Promise.all(programs.map(async (program) => {
+    try {
+      const [items, requirements] = await Promise.all([
+        fetchItemsPage({ programId: program.programId, status: "blocked,dropped" }),
+        fetchRequirements({ programId: program.programId, scope: "" }),
+      ]);
+      const requirementByKey = new Map(requirements.data.map((requirement) => [requirement.requirementKey, requirement]));
+      return items.data.map<DeliveryAttentionTask>((item) => ({
+        programId: program.programId,
+        programName: program.name || String(program.programId),
+        requirementKey: item.requirementKey,
+        requirementName: requirementByKey.get(item.requirementKey)?.name || item.requirementKey,
+        requirementOwners: (requirementByKey.get(item.requirementKey)?.owners ?? [])
+          .map((owner) => owner.name)
+          .filter(Boolean),
+        itemKey: item.itemKey,
+        title: item.title,
+        status: item.status,
+        phase: item.phase,
+        updatedAt: item.updatedAt,
+      }));
+    } catch {
+      // 单个项目取不到（无权限或服务端异常）不该让整个消息中心变空。
+      return [];
+    }
+  }));
+  return groups.flat();
+}
+
 /**
  * 聊天 @ 的首屏目录固定各取最近 20 条；带关键词时用于本地候选无命中后的服务端补查。
  * 需求和任务各自分页，不能混成一页而让其中一种实体挤占候选名额。
@@ -1550,9 +1604,13 @@ export async function validateCodexWorkspace(programId: number, workspace: strin
   return plainToInstance(CodexWorkspaceValidation, response.data);
 }
 
-export async function fetchCodexGitBranches(programId: number) {
+/** workspace 传值时使用该目录读取分支，用于工作目录尚未保存到浏览器的场景。 */
+export async function fetchCodexGitBranches(programId: number, workspace = "") {
+  const params = workspace.trim()
+    ? { programId, workspace: workspace.trim() }
+    : bridgeWorkspaceParams(programId, { programId });
   const response = await instance.get<CodexGitBranchCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/git/branches`, {
-    params: bridgeWorkspaceParams(programId, { programId }),
+    params,
     timeout: 15000,
   });
   const catalog = plainToInstance(CodexGitBranchCatalog, response.data);

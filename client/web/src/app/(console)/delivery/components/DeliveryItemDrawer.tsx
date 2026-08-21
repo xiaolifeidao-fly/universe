@@ -378,8 +378,8 @@ export function DeliveryItemDrawer({
       open={open}
       onClose={onClose}
       title={activeItem ? (
-        <div>
-          <span>{activeItem.title}</span>
+        <div className="delivery-drawer-title">
+          <span className="delivery-drawer-title__text" title={activeItem.title}>{activeItem.title}</span>
           <small className="delivery-drawer-title-meta manager-mono">{activeItem.itemKey} · v{activeItem.version}</small>
         </div>
       ) : ""}
@@ -587,6 +587,7 @@ export function DeliveryItemDrawer({
                         { key: "stage", label: t("delivery.field.stageKey"), children: stages.find((stage) => stage.stageKey === activeItem.stageKey)?.tag || activeItem.stageKey || "-" },
                         { key: "module", label: t("delivery.field.moduleKey"), children: modules.find((module) => module.moduleKey === activeItem.moduleKey)?.name || activeItem.moduleKey || "-" },
                         { key: "phase", label: t("delivery.field.phase"), children: t(`delivery.phase.${activeItem.phase}`) },
+						{ key: "createdAt", label: t("delivery.field.createdAt"), children: activeItem.createdAt ? dayjs(activeItem.createdAt).format("YYYY-MM-DD HH:mm") : "-" },
 						{ key: "testingCasesStatus", label: t("delivery.testingCases.status"), children: t(`delivery.testingCases.status.${activeItem.testingCasesStatus || "todo"}`) },
                         { key: "benefitTags", label: t("delivery.field.benefitTags"), children: activeItem.benefitTags.length ? <span className="delivery-benefit-tags">{activeItem.benefitTags.map((tag) => <Tag color="gold" key={tag}>{tag}</Tag>)}</span> : "-" },
                         {

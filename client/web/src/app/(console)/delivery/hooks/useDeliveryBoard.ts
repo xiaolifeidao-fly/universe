@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { effortForConfig, modelForConfig, sceneForPhase, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { getUserScopedStorageKey } from "@/utils/auth";
+import { notifyDeliveryTasksChanged } from "@/api/deliveryTaskEvents";
 import {
   advanceDeliveryPhase,
   createItem,
@@ -345,6 +346,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
       try {
         await patchItem({ programId, ...payload });
         await Promise.all([refresh(), refreshCatalog()]);
+        notifyDeliveryTasksChanged();
         return true;
       } catch (error) {
         message.error((error as Error).message);
@@ -380,6 +382,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
       try {
         await deleteItem(programId, itemKey);
         await Promise.all([refresh(), refreshCatalog()]);
+        notifyDeliveryTasksChanged();
         return true;
       } catch (error) {
         message.error((error as Error).message);
@@ -412,6 +415,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
 		try {
 			await advanceDeliveryPhase({ programId, phase, items });
 			await Promise.all([refresh(), refreshCatalog()]);
+			notifyDeliveryTasksChanged();
 			return true;
 		} catch (error) {
 			message.error((error as Error).message);

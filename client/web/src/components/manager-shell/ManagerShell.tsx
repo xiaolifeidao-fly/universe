@@ -52,6 +52,7 @@ import {
 import { AIEnvironmentHealth, fetchAIEnvironmentHealth } from "@/ai-preferences/aiEnvironment.api";
 import { DeliveryTaskPlannerUpdateStatus, fetchDeliveryTaskPlannerHealth, fetchDeliveryTaskPlannerUpdate } from "@/api/delivery.api";
 import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
+import { ManagerNotificationCenter } from "./ManagerNotificationCenter";
 
 const TaskBoardStoryModal = dynamic(
   () => import("./TaskBoardStoryModal").then((module) => module.TaskBoardStoryModal),
@@ -617,6 +618,8 @@ export function ManagerShell({ children }: ManagerShellProps) {
                 <Tooltip title={t("aiPreferences.title")}>
                   <Button aria-label={t("aiPreferences.title")} icon={<SettingOutlined />} onClick={openPreferences} />
                 </Tooltip>
+                {/* 消息中心跨所有项目汇总受阻和不做的任务，位置紧跟偏好设置。 */}
+                <ManagerNotificationCenter />
                 <Select
                   aria-label={t("businessLine.current")}
                   className="manager-business-line-select"
