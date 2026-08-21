@@ -515,11 +515,67 @@ export class DeliveryTaskPlannerUpdateStatus {
 
   remoteVersion = "";
 
+  remoteCommit = "";
+
   updateAvailable = false;
 
   checkedAt = 0;
 
   message = "";
+
+  installation?: DeliveryTaskPlannerUpdateInstallation;
+}
+
+export class DeliveryTaskPlannerRuntimeInfo {
+  installed = false;
+
+  version = "";
+}
+
+export type DeliveryTaskPlannerUpdateState =
+  | "resolving"
+  | "downloading"
+  | "validating"
+  | "installing"
+  | "restart_required"
+  | "restarting"
+  | "completed"
+  | "failed";
+
+export class DeliveryTaskPlannerUpdateLog {
+  at = "";
+
+  level = "info";
+
+  message = "";
+}
+
+export class DeliveryTaskPlannerUpdateInstallation {
+  jobId = "";
+
+  status: DeliveryTaskPlannerUpdateState = "resolving";
+
+  progress = 0;
+
+  localVersion = "";
+
+  targetVersion = "";
+
+  commit = "";
+
+  startedAt = "";
+
+  finishedAt = "";
+
+  message = "";
+
+  restartRequired = false;
+
+  activeRuns = 0;
+
+  components: string[] = [];
+
+  logs: DeliveryTaskPlannerUpdateLog[] = [];
 }
 
 export class CodexLocalProjectRecord {
@@ -1780,11 +1836,37 @@ export async function fetchDeliveryTaskPlannerHealth() {
   return plainToInstance(CodexBridgeHealth, response.data);
 }
 
-export async function fetchDeliveryTaskPlannerUpdate() {
+export async function fetchDeliveryTaskPlannerRuntimeInfo() {
+  const response = await instance.get<DeliveryTaskPlannerRuntimeInfo>(`${CODEX_BRIDGE_URL}/v1/plugin/info`, {
+    timeout: 3000,
+  });
+  return plainToInstance(DeliveryTaskPlannerRuntimeInfo, response.data);
+}
+
+export async function fetchDeliveryTaskPlannerUpdate(force = false) {
   const response = await instance.get<DeliveryTaskPlannerUpdateStatus>(`${CODEX_BRIDGE_URL}/v1/plugin/update`, {
+    params: force ? { force: true } : undefined,
     timeout: 8000,
   });
   return plainToInstance(DeliveryTaskPlannerUpdateStatus, response.data);
+}
+
+export async function installDeliveryTaskPlannerUpdate(expectedVersion: string) {
+  const response = await instance.post<DeliveryTaskPlannerUpdateInstallation>(
+    `${CODEX_BRIDGE_URL}/v1/plugin/update/install`,
+    { expectedVersion },
+    { timeout: 10000 },
+  );
+  return plainToInstance(DeliveryTaskPlannerUpdateInstallation, response.data);
+}
+
+export async function restartDeliveryTaskPlannerUpdate(jobId: string) {
+  const response = await instance.post<DeliveryTaskPlannerUpdateInstallation>(
+    `${CODEX_BRIDGE_URL}/v1/plugin/update/restart`,
+    { jobId },
+    { timeout: 10000 },
+  );
+  return plainToInstance(DeliveryTaskPlannerUpdateInstallation, response.data);
 }
 
 export async function fetchCodexModels(programId: number, provider: AITool = "codex") {

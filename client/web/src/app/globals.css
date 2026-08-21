@@ -4733,6 +4733,15 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .local-environment-preferences__plugin-icon { width: 28px; height: 28px; color: var(--manager-text-faint); background: var(--manager-panel); border-color: var(--manager-border); }
 .local-environment-preferences__plugin-content { display: grid; min-width: 0; flex: 1; gap: 5px; padding-top: 1px; }
 .local-environment-preferences__plugin-content > b { font-size: var(--manager-fs-sm); }
+.local-environment-preferences__plugin-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.local-environment-preferences__plugin-heading > b { color: var(--manager-text); font-size: var(--manager-fs-sm); font-weight: 650; }
+.local-environment-preferences__plugin-heading > .ant-btn { flex: 0 0 auto; color: var(--manager-primary); }
+.local-environment-preferences__plugin-runtime { display: flex; align-items: center; gap: 8px; color: var(--manager-text-faint); font-size: var(--manager-fs-sm); }
+.local-environment-preferences__plugin-runtime .ant-tag { margin: 0; font-family: var(--manager-mono); }
+.local-environment-preferences__plugin-progress { display: grid; gap: 2px; margin-top: 4px; }
+.local-environment-preferences__plugin-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-base); }
+.local-environment-preferences__plugin-progress-heading > span:last-child { flex: 0 0 auto; color: var(--manager-text-faint); font-family: var(--manager-mono); }
+.local-environment-preferences__plugin-progress .ant-progress { line-height: 1; }
 .local-environment-plugin-link,
 .delivery-plugin-install__repository { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .local-environment-plugin-link > a,
@@ -4756,6 +4765,25 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-plugin-install__prompt { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
 .delivery-plugin-install__prompt code { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--manager-border); background: var(--manager-surface-muted, transparent); color: var(--manager-text-soft); line-height: 1.6; }
 .delivery-plugin-install__prompt .ant-btn { flex: 0 0 auto; }
+.delivery-plugin-update__components { display: flex; flex-wrap: wrap; gap: 6px; min-height: 22px; }
+.delivery-plugin-update__logs {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--manager-border);
+  border-radius: 10px;
+  background: var(--manager-surface-muted, rgba(15, 23, 42, 0.04));
+  padding: 10px 12px;
+  font-family: var(--manager-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--manager-fs-xs, 12px);
+  line-height: 1.55;
+}
+.delivery-plugin-update__logs:empty::before { content: "…"; color: var(--manager-text-soft); }
+.delivery-plugin-update__logs > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
+.delivery-plugin-update__logs time { color: var(--manager-text-soft); font-variant-numeric: tabular-nums; }
+.delivery-plugin-update__logs span { min-width: 0; overflow-wrap: anywhere; color: var(--manager-text); }
+.delivery-plugin-update__logs [data-level="success"] span { color: var(--manager-green); }
+.delivery-plugin-update__logs [data-level="warning"] span { color: var(--manager-amber); }
+.delivery-plugin-update__logs [data-level="error"] span { color: var(--manager-red, #dc2626); }
 
 /* 需求窗口的 Git 分支状态和推送确认。 */
 .delivery-requirement-git-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: 1.6; }

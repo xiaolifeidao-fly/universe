@@ -25,7 +25,7 @@ import { Alert, Avatar, Badge, Button, Descriptions, Divider, Drawer, Dropdown, 
 import type { MenuProps } from "antd";
 import { usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { PropsWithChildren, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { PropsWithChildren, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
@@ -51,7 +51,14 @@ import {
   useAIPreferences,
 } from "@/ai-preferences/AIPreferencesProvider";
 import { AIEnvironmentHealth, fetchAIEnvironmentHealth } from "@/ai-preferences/aiEnvironment.api";
-import { DeliveryTaskPlannerUpdateStatus, fetchDeliveryTaskPlannerHealth, fetchDeliveryTaskPlannerUpdate } from "@/api/delivery.api";
+import {
+	type DeliveryTaskPlannerUpdateInstallation,
+	type DeliveryTaskPlannerUpdateStatus,
+	fetchDeliveryTaskPlannerHealth,
+	fetchDeliveryTaskPlannerUpdate,
+	installDeliveryTaskPlannerUpdate,
+	restartDeliveryTaskPlannerUpdate,
+} from "@/api/delivery.api";
 import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
 import { ManagerNotificationCenter } from "./ManagerNotificationCenter";
 
@@ -69,6 +76,7 @@ const { Content, Header, Sider } = Layout;
 
 const SIDEBAR_COLLAPSED_KEY = "zb.sidebar.collapsed";
 const NAV_CLOSED_GROUPS_KEY = "zb.nav.closedGroups";
+const TASK_PLANNER_UPDATE_INTERVAL_MS = 60_000;
 
 const PAGE_TITLES: Record<string, [string, string]> = {
   "/dashboard": ["page.dashboard.title", "page.dashboard.subtitle"],
@@ -199,9 +207,9 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	const [aiEnvironmentHealth, setAIEnvironmentHealth] = useState<AIEnvironmentHealth | null>(null);
 	const [aiEnvironmentLoading, setAIEnvironmentLoading] = useState(false);
 	const [taskPlannerInstallOpen, setTaskPlannerInstallOpen] = useState(false);
-	const [taskPlannerUpdateOpen, setTaskPlannerUpdateOpen] = useState(false);
-	const [taskPlannerUpdate, setTaskPlannerUpdate] = useState<DeliveryTaskPlannerUpdateStatus | null>(null);
+	const [taskPlannerInstallation, setTaskPlannerInstallation] = useState<DeliveryTaskPlannerUpdateInstallation | null>(null);
 	const [taskPlannerHealthLoading, setTaskPlannerHealthLoading] = useState(false);
+	const taskPlannerUpdateActionBusy = useRef(false);
 	const [passwordForm] = Form.useForm<{ currentPassword: string; newPassword: string; confirmPassword: string }>();
 
   const items = useMemo<MenuItem[]>(
@@ -345,63 +353,94 @@ export function ManagerShell({ children }: ManagerShellProps) {
     }
   };
 
-	const checkTaskPlannerHealth = useCallback(async () => {
+	const advanceSilentTaskPlannerUpdate = useCallback(async (update: DeliveryTaskPlannerUpdateStatus) => {
+		const installation = update.installation ?? null;
+		setTaskPlannerInstallation(installation);
+		if (taskPlannerUpdateActionBusy.current) return;
+
+		if (installation?.status === "restart_required") {
+			// The browser path bootstraps upgrades from older bridges that do not yet
+			// own the server-side restart monitor. New bridges also monitor in the
+			// background, so whichever side wins the restart race safely completes it.
+			if (installation.activeRuns > 0 || !installation.jobId) return;
+			taskPlannerUpdateActionBusy.current = true;
+			try {
+				setTaskPlannerInstallation(await restartDeliveryTaskPlannerUpdate(installation.jobId));
+			} catch {
+				// The server-side monitor may already have moved the job to restarting,
+				// or the loopback port may be closing. The status poll will reconnect.
+			} finally {
+				taskPlannerUpdateActionBusy.current = false;
+			}
+			return;
+		}
+
+		const installationFinished = !installation || ["completed", "failed"].includes(installation.status);
+		if (!update.updateAvailable || !update.remoteVersion || !installationFinished) return;
+		taskPlannerUpdateActionBusy.current = true;
+		try {
+			setTaskPlannerInstallation(await installDeliveryTaskPlannerUpdate(update.remoteVersion));
+		} catch {
+			// Discovery runs every minute, so transient download/authentication errors
+			// retry silently without requiring the operator to manage an update dialog.
+		} finally {
+			taskPlannerUpdateActionBusy.current = false;
+		}
+	}, []);
+
+	const checkTaskPlannerHealth = useCallback(async (showMissingPlugin = true, force = false) => {
 		setTaskPlannerHealthLoading(true);
 		try {
 			await fetchDeliveryTaskPlannerHealth();
 			setTaskPlannerInstallOpen(false);
 			try {
-				const update = await fetchDeliveryTaskPlannerUpdate();
-				setTaskPlannerUpdate(update);
-				setTaskPlannerUpdateOpen(update.updateAvailable);
-			} catch (error) {
-				// A healthy bridge with no version endpoint is an older plugin release.
-				const missingVersionEndpoint = (error as { response?: { status?: number } }).response?.status === 404;
-				const update = Object.assign(new DeliveryTaskPlannerUpdateStatus(), {
-					updateAvailable: missingVersionEndpoint,
-					message: missingVersionEndpoint ? "unsupported-version-check" : "",
-				});
-				setTaskPlannerUpdate(update);
-				setTaskPlannerUpdateOpen(missingVersionEndpoint);
+				const update = await fetchDeliveryTaskPlannerUpdate(force);
+				await advanceSilentTaskPlannerUpdate(update);
+			} catch {
+				// A legacy bridge without update endpoints remains usable, but cannot
+				// participate in the silent updater until it is installed once manually.
+				setTaskPlannerInstallation(null);
 			}
 			return true;
 		} catch {
-			setTaskPlannerUpdate(null);
-			setTaskPlannerUpdateOpen(false);
-			setTaskPlannerInstallOpen(true);
+			setTaskPlannerInstallation(null);
+			if (showMissingPlugin) setTaskPlannerInstallOpen(true);
 			return false;
 		} finally {
 			setTaskPlannerHealthLoading(false);
 		}
-	}, []);
+	}, [advanceSilentTaskPlannerUpdate]);
 
-	// The shell remains mounted during in-console navigation, so include pathname
-	// to recheck whenever someone enters the task board or another console page.
+	// The shell remains mounted during console navigation. Check immediately and
+	// then once a minute so a newly published GitHub version is noticed without a refresh.
 	useEffect(() => {
-		void checkTaskPlannerHealth();
-	}, [checkTaskPlannerHealth, pathname]);
+		void checkTaskPlannerHealth(true);
+		const timer = window.setInterval(() => {
+			void checkTaskPlannerHealth(false);
+		}, TASK_PLANNER_UPDATE_INTERVAL_MS);
+		return () => window.clearInterval(timer);
+	}, [checkTaskPlannerHealth]);
+
+	useEffect(() => {
+		if (!taskPlannerInstallation || !["resolving", "downloading", "validating", "installing", "restart_required", "restarting"].includes(taskPlannerInstallation.status)) return;
+		const timer = window.setInterval(() => {
+			void fetchDeliveryTaskPlannerUpdate(false)
+				.then((update) => {
+					void advanceSilentTaskPlannerUpdate(update);
+				})
+				.catch(() => {
+					// A restart briefly closes the loopback port. Keep polling until it returns.
+				});
+		}, taskPlannerInstallation.status === "restart_required" ? 5000 : 1000);
+		return () => window.clearInterval(timer);
+	}, [advanceSilentTaskPlannerUpdate, taskPlannerInstallation?.jobId, taskPlannerInstallation?.status]);
 
 	const taskPlannerInstallPrompt = t("delivery.plugin.installPrompt")
 		.replace("{url}", DELIVERY_TASK_PLANNER_REPOSITORY_URL);
-	const taskPlannerUpdatePrompt = t("delivery.plugin.updatePrompt")
-		.replace("{url}", DELIVERY_TASK_PLANNER_REPOSITORY_URL)
-		.replace("{remoteVersion}", taskPlannerUpdate?.remoteVersion || t("delivery.plugin.latestVersion"));
-	const taskPlannerUpdateDescription = taskPlannerUpdate?.message === "unsupported-version-check"
-		? t("delivery.plugin.updateLegacyDescription")
-		: t("delivery.plugin.updateDescription")
-			.replace("{localVersion}", taskPlannerUpdate?.localVersion || "-")
-			.replace("{remoteVersion}", taskPlannerUpdate?.remoteVersion || "-");
-
 	const copyTaskPlannerInstallPrompt = () => {
 		void copyTextToClipboard(taskPlannerInstallPrompt)
 			.then(() => message.success(t("delivery.plugin.installCopied")))
 			.catch(() => message.error(t("delivery.plugin.installCopyFailed")));
-	};
-
-	const copyTaskPlannerUpdatePrompt = () => {
-		void copyTextToClipboard(taskPlannerUpdatePrompt)
-			.then(() => message.success(t("delivery.plugin.updateCopied")))
-			.catch(() => message.error(t("delivery.plugin.updateCopyFailed")));
 	};
 
   const openPreferences = () => {
@@ -930,67 +969,6 @@ export function ManagerShell({ children }: ManagerShellProps) {
 				  icon={<CopyOutlined />}
 				  aria-label={t("delivery.plugin.copyInstall")}
 				  onClick={copyTaskPlannerInstallPrompt}
-				/>
-			  </Tooltip>
-			</div>
-		  </div>
-		</Modal>
-		<Modal
-		  open={taskPlannerUpdateOpen}
-		  title={t("delivery.plugin.updateTitle")}
-		  closable
-		  maskClosable
-		  onCancel={() => setTaskPlannerUpdateOpen(false)}
-		  footer={(
-			<Space>
-			  <Button onClick={() => setTaskPlannerUpdateOpen(false)}>{t("common.cancel")}</Button>
-			  <Button type="primary" icon={<ReloadOutlined />} loading={taskPlannerHealthLoading} onClick={() => void checkTaskPlannerHealth()}>
-				{t("delivery.plugin.retry")}
-			  </Button>
-			</Space>
-		  )}
-		>
-		  <div className="delivery-plugin-install">
-			<p>{taskPlannerUpdateDescription}</p>
-			<div className="delivery-plugin-install__repository">
-			  <a href={DELIVERY_TASK_PLANNER_REPOSITORY_URL} target="_blank" rel="noreferrer">
-				{DELIVERY_TASK_PLANNER_REPOSITORY_URL}
-			  </a>
-			  <Space size={2}>
-				<Tooltip title={t("delivery.plugin.copyRepository")}>
-				  <Button
-					type="text"
-					size="small"
-					icon={<CopyOutlined />}
-					aria-label={t("delivery.plugin.copyRepository")}
-					onClick={() => {
-					  void copyTextToClipboard(DELIVERY_TASK_PLANNER_REPOSITORY_URL)
-						.then(() => message.success(t("delivery.plugin.repositoryCopied")))
-						.catch(() => message.error(t("delivery.plugin.repositoryCopyFailed")));
-					}}
-				  />
-				</Tooltip>
-				<Tooltip title={t("delivery.plugin.openRepository")}>
-				  <Button
-					type="text"
-					size="small"
-					icon={<ExportOutlined />}
-					aria-label={t("delivery.plugin.openRepository")}
-					href={DELIVERY_TASK_PLANNER_REPOSITORY_URL}
-					target="_blank"
-				  />
-				</Tooltip>
-			  </Space>
-			</div>
-			<div className="delivery-plugin-install__prompt">
-			  <code>{taskPlannerUpdatePrompt}</code>
-			  <Tooltip title={t("delivery.plugin.copyUpdate")}>
-				<Button
-				  type="text"
-				  size="small"
-				  icon={<CopyOutlined />}
-				  aria-label={t("delivery.plugin.copyUpdate")}
-				  onClick={copyTaskPlannerUpdatePrompt}
 				/>
 			  </Tooltip>
 			</div>

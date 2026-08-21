@@ -1,8 +1,13 @@
 "use client";
 
-import { CopyOutlined, DesktopOutlined, ExportOutlined, LinkOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { Button, Modal, Select, Space, Switch, Tooltip, message } from "antd";
-import { useEffect, useState } from "react";
+import { CopyOutlined, DesktopOutlined, ExportOutlined, LinkOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { Button, Modal, Progress, Select, Space, Switch, Tag, Tooltip, message } from "antd";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type DeliveryTaskPlannerUpdateInstallation,
+  fetchDeliveryTaskPlannerRuntimeInfo,
+  fetchDeliveryTaskPlannerUpdate,
+} from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   getLocalEnvironmentPreference,
@@ -18,11 +23,68 @@ interface LocalEnvironmentPreferencesModalProps {
   onClose: () => void;
 }
 
+const ACTIVE_PLUGIN_UPDATE_STATES = new Set([
+  "resolving",
+  "downloading",
+  "validating",
+  "installing",
+  "restart_required",
+  "restarting",
+]);
+
 export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnvironmentPreferencesModalProps) {
   const { t } = useLocale();
   const [useGit, setUseGit] = useState(false);
   const [environments, setEnvironments] = useState<string[]>([]);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [pluginInstalled, setPluginInstalled] = useState(false);
+  const [pluginVersion, setPluginVersion] = useState("");
+  const [pluginStatusLoading, setPluginStatusLoading] = useState(false);
+  const [pluginInstallation, setPluginInstallation] = useState<DeliveryTaskPlannerUpdateInstallation | null>(null);
+  const pluginInstallationRef = useRef<DeliveryTaskPlannerUpdateInstallation | null>(null);
+
+  const checkPluginRuntime = useCallback(async (showLoading = true) => {
+    if (showLoading) setPluginStatusLoading(true);
+    let serviceReachable = false;
+    try {
+      const info = await fetchDeliveryTaskPlannerRuntimeInfo();
+      serviceReachable = true;
+      setPluginInstalled(info.installed);
+      setPluginVersion(info.version);
+    } catch {
+      // The update endpoint below is also the compatibility path for 0.3.x
+      // bridges, which do not expose /v1/plugin/info yet.
+    }
+
+    try {
+      const update = await fetchDeliveryTaskPlannerUpdate(false);
+      serviceReachable = true;
+      if (update.localVersion) {
+        setPluginInstalled(true);
+        setPluginVersion(update.localVersion);
+      }
+      const installation = update.installation;
+      const activeInstallation = installation && ACTIVE_PLUGIN_UPDATE_STATES.has(installation.status)
+        ? installation
+        : null;
+      pluginInstallationRef.current = activeInstallation;
+      setPluginInstallation(activeInstallation);
+    } catch {
+      if (!serviceReachable) {
+        // A bridge restart briefly closes the loopback port. Preserve an active
+        // job so polling continues and the progress can recover after restart.
+        const current = pluginInstallationRef.current;
+        if (!current || !ACTIVE_PLUGIN_UPDATE_STATES.has(current.status)) {
+          setPluginInstalled(false);
+          setPluginVersion("");
+          pluginInstallationRef.current = null;
+          setPluginInstallation(null);
+        }
+      }
+    } finally {
+      if (showLoading) setPluginStatusLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -32,7 +94,20 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     const saved = getLocalEnvironmentPreference();
     setUseGit(saved.useGit);
     setEnvironments(saved.environments);
-  }, [open]);
+    void checkPluginRuntime();
+  }, [checkPluginRuntime, open]);
+
+  useEffect(() => {
+    if (!open || !pluginInstallation || !ACTIVE_PLUGIN_UPDATE_STATES.has(pluginInstallation.status)) return;
+    const timer = window.setInterval(() => {
+      void checkPluginRuntime(false);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [checkPluginRuntime, open, pluginInstallation?.jobId, pluginInstallation?.status]);
+
+  const pluginUpdateStatusLabel = pluginInstallation
+    ? t(`programs.environment.pluginUpdate.${pluginInstallation.status}`)
+    : "";
 
   const save = () => {
     saveLocalEnvironmentPreference(useGit, environments);
@@ -111,7 +186,42 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
           <section className="local-environment-preferences__plugin" aria-label={t("programs.environment.pluginTitle")}>
             <span className="local-environment-preferences__plugin-icon"><LinkOutlined /></span>
             <div className="local-environment-preferences__plugin-content">
-              <b>{t("programs.environment.pluginTitle")}</b>
+              <div className="local-environment-preferences__plugin-heading">
+                <b>{t("programs.environment.pluginTitle")}</b>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  loading={pluginStatusLoading}
+                  onClick={() => void checkPluginRuntime()}
+                >
+                  {t("programs.environment.pluginVersionCheck")}
+                </Button>
+              </div>
+              <div className="local-environment-preferences__plugin-runtime">
+                <span>{t("programs.environment.pluginVersion")}</span>
+                {pluginStatusLoading ? (
+                  <Tag>{t("programs.environment.pluginChecking")}</Tag>
+                ) : pluginInstalled && pluginVersion ? (
+                  <Tag color="green">{pluginVersion}</Tag>
+                ) : (
+                  <Tag>{t("programs.environment.pluginNotInstalled")}</Tag>
+                )}
+              </div>
+              {pluginInstallation ? (
+                <div className="local-environment-preferences__plugin-progress">
+                  <div className="local-environment-preferences__plugin-progress-heading">
+                    <span>{pluginUpdateStatusLabel}</span>
+                    <span>{pluginInstallation.progress}%</span>
+                  </div>
+                  <Progress
+                    percent={Math.max(0, Math.min(100, pluginInstallation.progress))}
+                    size="small"
+                    showInfo={false}
+                    status="active"
+                  />
+                </div>
+              ) : null}
               <div className="local-environment-plugin-link">
                 <a href={DELIVERY_TASK_PLANNER_REPOSITORY_URL} target="_blank" rel="noreferrer">
                   {DELIVERY_TASK_PLANNER_REPOSITORY_URL}
