@@ -54,7 +54,8 @@ func (h *Handler) overview(context *gin.Context) {
 	httpx.JSON(context, view, err)
 }
 
-func programIDFromQuery(context *gin.Context) (int64, bool) {
+// ProgramIDFromQuery is shared by delivery read handlers that use the same program scope.
+func ProgramIDFromQuery(context *gin.Context) (int64, bool) {
 	programID, err := strconv.ParseInt(context.Query("programId"), 10, 64)
 	if err != nil || programID <= 0 {
 		httpx.JSON(context, nil, errors.New("缺少项目标识"))
@@ -62,6 +63,8 @@ func programIDFromQuery(context *gin.Context) (int64, bool) {
 	}
 	return programID, true
 }
+
+func programIDFromQuery(context *gin.Context) (int64, bool) { return ProgramIDFromQuery(context) }
 
 func (h *Handler) resolveProgramBizLine(context *gin.Context, programID int64, target *contract.BizLine) bool {
 	bizLine, err := h.service.ResolveProgramBizLine(context.Request.Context(), programID)

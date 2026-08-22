@@ -4,7 +4,12 @@
 package delivery
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"regexp"
+	"strings"
+	"time"
 )
 
 // 任务状态。看板的五列，半年内不会变，先写死在代码里 ——
@@ -66,6 +71,63 @@ var executorTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 var executionSessionStatuses = map[string]struct{}{
 	"pending": {}, "running": {}, "completed": {}, "blocked": {}, "closed": {},
+}
+
+const (
+	ExecutionBatchModeParallel    = "parallel"
+	ExecutionBatchModeSequence    = "sequence"
+	ExecutionBatchStatusRunning   = "running"
+	ExecutionBatchStatusCompleted = "completed"
+	ExecutionBatchStatusBlocked   = "blocked"
+	ExecutionBatchItemPending     = "pending"
+	ExecutionBatchItemRunning     = "running"
+	ExecutionBatchItemCompleted   = "completed"
+	ExecutionBatchItemBlocked     = "blocked"
+)
+
+var executionBatchModes = map[string]struct{}{
+	ExecutionBatchModeParallel: {}, ExecutionBatchModeSequence: {},
+}
+
+var executionBatchStatuses = map[string]struct{}{
+	ExecutionBatchStatusRunning: {}, ExecutionBatchStatusCompleted: {}, ExecutionBatchStatusBlocked: {},
+}
+
+var executionBatchItemStatuses = map[string]struct{}{
+	ExecutionBatchItemPending: {}, ExecutionBatchItemRunning: {}, ExecutionBatchItemCompleted: {}, ExecutionBatchItemBlocked: {},
+}
+
+func normalizeExecutionBatchMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := executionBatchModes[value]; !ok {
+		return "", fmt.Errorf("未知的执行批次模式：%s", value)
+	}
+	return value, nil
+}
+
+func normalizeExecutionBatchStatus(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := executionBatchStatuses[value]; !ok {
+		return "", fmt.Errorf("未知的执行批次状态：%s", value)
+	}
+	return value, nil
+}
+
+func normalizeExecutionBatchItemStatus(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := executionBatchItemStatuses[value]; !ok {
+		return "", fmt.Errorf("未知的批次任务状态：%s", value)
+	}
+	return value, nil
+}
+
+func generateExecutionBatchID() string {
+	raw := make([]byte, 10)
+	if _, err := rand.Read(raw); err != nil {
+		// crypto/rand 失败极罕见；保留时间戳仍能让批次具备可读、可索引的唯一键。
+		return fmt.Sprintf("batch-%d", time.Now().UnixNano())
+	}
+	return "batch-" + hex.EncodeToString(raw)
 }
 
 // 拆解会话的状态跟着执行器的回合状态走，和任务执行会话不是同一套词表。

@@ -209,7 +209,7 @@ function FocusScene() {
   );
 }
 
-/** 场景三：一份梳理好的任务，派给多台本机环境并发跑。 */
+/** 场景三：协调者组织和分派需求，成员在自己的本机启动 AI 执行并验收。 */
 function ComputeScene() {
   const { t } = useLocale();
   const members = [t("story.s3.member1"), t("story.s3.member2"), t("story.s3.member3"), t("story.s3.member4")];
@@ -235,6 +235,16 @@ function ComputeScene() {
             </div>
           </div>
         ))}
+      </div>
+      <div className="board-story-roles">
+        <div className="board-story-role board-story-role--coordination">
+          <strong>🧠 {t("story.s3.coordinatorRole")}</strong>
+          <small>{t("story.s3.coordinatorNote")}</small>
+        </div>
+        <div className="board-story-role board-story-role--member">
+          <strong>🧑‍💻 {t("story.s3.memberRole")}</strong>
+          <small>{t("story.s3.memberNote")}</small>
+        </div>
       </div>
       <div className="board-story-throughput">
         <span className="board-story-throughput__row">

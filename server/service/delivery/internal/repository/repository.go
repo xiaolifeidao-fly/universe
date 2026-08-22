@@ -18,8 +18,8 @@ type DeliveryRepository struct {
 // 不在服务启动时跑 —— 线上 DDL 不该是进程启动的副作用。
 func (r *DeliveryRepository) AutoMigrate() error {
 	return r.Db.AutoMigrate(
-		&DeliveryProgram{}, &DeliveryStage{}, &DeliveryModule{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementPlanningSession{}, &DeliveryRequirementTestingSession{},
-		&DeliveryItem{}, &DeliveryItemExecutionSession{}, &DeliveryItemDependency{}, &DeliveryItemEvent{}, &DeliverySnapshot{},
+		&DeliveryProgram{}, &DeliveryStage{}, &DeliveryModule{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementCompletionNotification{}, &DeliveryRequirementPlanningSession{}, &DeliveryRequirementTestingSession{},
+		&DeliveryItem{}, &DeliveryItemExecutionSession{}, &DeliveryExecutionBatch{}, &DeliveryExecutionBatchItem{}, &DeliveryItemDependency{}, &DeliveryItemEvent{}, &DeliverySnapshot{},
 	)
 }
 

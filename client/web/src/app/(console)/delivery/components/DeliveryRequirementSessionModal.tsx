@@ -54,7 +54,7 @@ import {
   fetchCodexRequirementTestingConversation,
   fetchCodexPlanningConversation,
   fetchDeliveryConversationMentionCatalog,
-  fetchMembers,
+	fetchProgramMembers,
   generateCodexRequirementPrototype,
   saveRequirement,
   sendCodexRequirementPrototypeMessage,
@@ -213,6 +213,7 @@ export function DeliveryRequirementSessionModal({
   const [stopping, setStopping] = useState(false);
   const [saving, setSaving] = useState(false);
   const [members, setMembers] = useState<MemberRecord[]>([]);
+	const [membersProgramId, setMembersProgramId] = useState(0);
   const [mentionCatalog, setMentionCatalog] = useState<{
     requirements: DeliveryRequirementRecord[];
     items: DeliveryItemRecord[];
@@ -426,11 +427,28 @@ export function DeliveryRequirementSessionModal({
 	}, [open, projectGitBaseBranch, projectGitEnabled, requirement]);
 
   useEffect(() => {
-    if (!open) return;
-    fetchMembers()
-      .then(setMembers)
-      .catch(() => message.warning(t("delivery.requirement.membersFailed")));
-  }, [open, t]);
+    if (!open || !programId) {
+      setMembers([]);
+		setMembersProgramId(0);
+      return undefined;
+    }
+    let cancelled = false;
+		setMembers([]);
+		setMembersProgramId(0);
+    void fetchProgramMembers(programId)
+      .then((next) => {
+			if (!cancelled) {
+				setMembers(next);
+				setMembersProgramId(programId);
+			}
+      })
+      .catch(() => {
+        if (!cancelled) message.warning(t("delivery.requirement.membersFailed"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, programId, t]);
 
 	useEffect(() => {
 		if (!open || !projectGitEnabled || !gitEnabled) return;
@@ -681,10 +699,12 @@ export function DeliveryRequirementSessionModal({
     );
   }, [assistantIds, detail, generatePrototype, gitBaseBranch, gitBranch, gitEnabled, preGenerateTaskDocuments, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, projectGitEnabled, saved, splitTasks, stageKey, startPhase, status]);
 
+	// 弹窗在切换项目时也不能展示上一个项目的缓存成员。
+	const projectMembers = membersProgramId === programId ? members : [];
   const memberOptions = useMemo(
-    () => members.map((member) => ({ value: member.id, label: member.displayName || member.username })),
-    [members],
-  );
+		() => projectMembers.map((member) => ({ value: member.id, label: member.displayName || member.username })),
+		[projectMembers],
+	);
 
   useEffect(() => {
     if (!open || !programId) return undefined;
@@ -761,11 +781,11 @@ export function DeliveryRequirementSessionModal({
       ids.map((id) => ({
         id,
         name:
-          members.find((member) => member.id === id)?.displayName
+			projectMembers.find((member) => member.id === id)?.displayName
           ?? fallback.find((member) => member.id === id)?.name
           ?? id,
       })),
-    [members],
+		[projectMembers],
   );
 
   const save = async () => {

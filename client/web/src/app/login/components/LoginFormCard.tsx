@@ -39,7 +39,7 @@ export function LoginFormCard() {
   // 邀请链接会先把人踢到登录页，登录完要回到那条链接而不是默认落地页。
   // 只接受站内相对路径，避免变成开放跳转。
   const rawRedirect = searchParams?.get("redirect") ?? "";
-  const landingPath = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/delivery";
+  const landingPath = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/my-work";
   const [messageApi, contextHolder] = message.useMessage();
   const [submitting, setSubmitting] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);

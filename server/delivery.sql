@@ -270,7 +270,80 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_item_execution_session` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------------------
--- 6. 任务依赖：predecessor -> successor 表示后置任务等待前置任务
+-- 6. 执行批次：一次批量并行或串行启动的服务端生命周期。
+--    批次固定关联一条需求和启动时的需求分支；完成提醒只属于启动者。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_execution_batch` (
+  `id`                     bigint       NOT NULL AUTO_INCREMENT,
+  `biz_line`               varchar(32)  NOT NULL,
+  `program_id`             bigint       NOT NULL,
+  `batch_id`               varchar(64)  NOT NULL,
+  `requirement_key`        varchar(64)  NOT NULL,
+  `requirement_name`       varchar(255) NOT NULL,
+  `requirement_git_branch` varchar(255) NOT NULL,
+  `mode`                   varchar(16)  NOT NULL,              -- parallel / sequence
+  `executor_type`          varchar(32)  NOT NULL,              -- codex / claude
+  `status`                 varchar(16)  NOT NULL,              -- running / completed / blocked
+  `item_count`             bigint       NOT NULL,
+  `completed_count`        bigint       NOT NULL,
+  `blocked_count`          bigint       NOT NULL,
+  `summary`                varchar(2048) NOT NULL,
+  `notification_read_at`   timestamp    NULL,                  -- 启动者点击完成提醒的时间
+  `started_at`             timestamp    NULL,
+  `finished_at`            timestamp    NULL,
+  `created_by`             varchar(64)  NOT NULL,
+  `created_by_name`        varchar(64)  NOT NULL,
+  `updated_by`             varchar(64)  NOT NULL,
+  `created_time`           timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time`           timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_execution_batch` (`biz_line`, `program_id`, `batch_id`),
+  KEY `idx_dlv_execution_batch_requirement` (`biz_line`, `program_id`, `requirement_key`),
+  KEY `idx_dlv_execution_batch_notice` (`biz_line`, `program_id`, `status`, `finished_at`, `created_by`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
+-- 6.1 执行批次任务：保留本批次内每条任务的进度和结果，任务后来变更也不影响历史。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_execution_batch_item` (
+  `id`           bigint      NOT NULL AUTO_INCREMENT,
+  `biz_line`     varchar(32) NOT NULL,
+  `program_id`   bigint      NOT NULL,
+  `batch_id`     varchar(64) NOT NULL,
+  `item_key`     varchar(64) NOT NULL,
+  `sequence`     bigint      NOT NULL,
+  `status`       varchar(16) NOT NULL,                         -- pending / running / completed / blocked
+  `message`      varchar(1024) NOT NULL,
+  `created_time` timestamp   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time` timestamp   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_execution_batch_item` (`biz_line`, `program_id`, `batch_id`, `item_key`),
+  KEY `idx_dlv_execution_batch_item_active` (`biz_line`, `program_id`, `batch_id`, `item_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
+-- 6.2 需求完成通知：需求进入 done 后，逐位通知主负责人和协助者。
+--     创建人不是默认接收人；每位接收人独立确认已读。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_requirement_completion_notification` (
+  `id`                   bigint       NOT NULL AUTO_INCREMENT,
+  `biz_line`             varchar(32)  NOT NULL,
+  `program_id`           bigint       NOT NULL,
+  `requirement_key`      varchar(64)  NOT NULL,
+  `requirement_name`     varchar(255) NOT NULL,
+  `recipient_id`         varchar(64)  NOT NULL,
+  `recipient_name`       varchar(64)  NOT NULL,
+  `notification_read_at` timestamp    NULL,                     -- 仅当前接收人的已读时间
+  `completed_at`         timestamp    NOT NULL,                 -- 本轮需求被标记完成的时间
+  `created_time`         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time`         timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_requirement_completion_notice` (`biz_line`, `program_id`, `requirement_key`, `recipient_id`),
+  KEY `idx_dlv_requirement_completion_recipient` (`biz_line`, `program_id`, `recipient_id`, `notification_read_at`, `completed_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
+-- 7. 任务依赖：predecessor -> successor 表示后置任务等待前置任务
 --    一对多表示并行分叉，多对一表示汇合；环形依赖由 service 拒绝
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `zt_delivery_item_dependency` (

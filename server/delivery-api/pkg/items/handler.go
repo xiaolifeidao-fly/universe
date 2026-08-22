@@ -4,6 +4,7 @@ package items
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"common/middleware/httpx"
 	"common/middleware/routers"
@@ -11,13 +12,19 @@ import (
 	"contract"
 	"service/delivery"
 	deliverydto "service/delivery/dto"
+	"service/identity"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{ service delivery.Service }
+type Handler struct {
+	service    delivery.Service
+	identities identity.Service
+}
 
-func NewHandler(service delivery.Service) *Handler { return &Handler{service: service} }
+func NewHandler(service delivery.Service, identities identity.Service) *Handler {
+	return &Handler{service: service, identities: identities}
+}
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 推进任务是人维护的配置，写一律 RequireUser —— 机器不该改路线图。
@@ -92,6 +99,9 @@ func (h *Handler) create(context *gin.Context) {
 	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
 		return
 	}
+	if !h.normalizeItemOwner(context, req.ProgramID, &req.OwnerID, &req.OwnerName) {
+		return
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.CreateItem(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
@@ -110,9 +120,50 @@ func (h *Handler) patch(context *gin.Context) {
 	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
 		return
 	}
+	if req.OwnerID != nil {
+		ownerName := ""
+		if req.OwnerName != nil {
+			ownerName = *req.OwnerName
+		}
+		if !h.normalizeItemOwner(context, req.ProgramID, req.OwnerID, &ownerName) {
+			return
+		}
+		req.OwnerName = &ownerName
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.PatchItem(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
+}
+
+// normalizeItemOwner 统一从项目成员目录取得任务负责人显示名。
+// OwnerID 没有变化时不碰 OwnerName，兼容执行器记录当前执行人名称的历史调用。
+func (h *Handler) normalizeItemOwner(context *gin.Context, programID int64, ownerID, ownerName *string) bool {
+	*ownerID = strings.TrimSpace(*ownerID)
+	if *ownerID == "" {
+		*ownerName = ""
+		return true
+	}
+	members, err := h.identities.ListProgramMembers(context.Request.Context(), programID)
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return false
+	}
+	for _, member := range members {
+		if member.ID != *ownerID {
+			continue
+		}
+		name := strings.TrimSpace(member.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(member.Username)
+		}
+		if name == "" {
+			name = member.ID
+		}
+		*ownerName = name
+		return true
+	}
+	httpx.Fail(context, "任务负责人只能从所属项目成员中选择")
+	return false
 }
 
 func (h *Handler) delete(context *gin.Context) {

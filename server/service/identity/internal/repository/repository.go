@@ -155,6 +155,22 @@ func (r *IdentityRepository) ListProgramAssignments(ctx context.Context, program
 	return rows, nil
 }
 
+// ListActiveUsersByIDs 返回指定范围内仍可参与分配的成员。
+// 不用关联外键，身份域和项目域仍以业务键解耦。
+func (r *IdentityRepository) ListActiveUsersByIDs(ctx context.Context, ids []int64) ([]*IdentityUser, error) {
+	if len(ids) == 0 {
+		return []*IdentityUser{}, nil
+	}
+	var rows []*IdentityUser
+	if err := r.Db.WithContext(ctx).
+		Where("id IN ? AND status = ?", ids, "active").
+		Order("id asc").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 func (r *IdentityRepository) ReplaceAssignments(ctx context.Context, userID int64, bizLines []string, programs []IdentityUserProgram) error {
 	return r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existingBizLines []*IdentityUserBizLine

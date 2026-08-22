@@ -104,6 +104,35 @@ func (s *service) ListProgramAssignment(ctx context.Context, programID int64) (d
 	return toScopeAssignment(nil, rows), nil
 }
 
+// ListProgramMembers 为项目内的人员指派提供最小必要信息。
+// 项目成员可能因停用或删除而残留在历史任务中；它们不再作为新的候选项返回。
+func (s *service) ListProgramMembers(ctx context.Context, programID int64) ([]dto.MemberView, error) {
+	if programID <= 0 {
+		return nil, errors.New("缺少项目标识")
+	}
+	assignments, err := s.repo.ListProgramAssignments(ctx, programID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, 0, len(assignments))
+	for _, assignment := range assignments {
+		ids = append(ids, assignment.UserID)
+	}
+	users, err := s.repo.ListActiveUsersByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]dto.MemberView, 0, len(users))
+	for _, user := range users {
+		members = append(members, dto.MemberView{
+			ID:          strconv.FormatInt(user.ID, 10),
+			Username:    user.Username,
+			DisplayName: user.DisplayName,
+		})
+	}
+	return members, nil
+}
+
 func (s *service) ReplaceProgramAssignment(ctx context.Context, bizLine string, programID int64, assignment dto.ScopeAssignment) error {
 	if programID <= 0 {
 		return errors.New("缺少项目标识")

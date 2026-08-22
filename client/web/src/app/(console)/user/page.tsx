@@ -20,7 +20,7 @@ export default function UserPage() {
 
   if (isAdmin === null) return null;
   if (!isAdmin) {
-    return <Result status="403" title="403" subTitle={t("shell.noPermission")} extra={<a onClick={() => router.replace("/delivery")}>{t("invite.back")}</a>} />;
+    return <Result status="403" title="403" subTitle={t("shell.noPermission")} extra={<a onClick={() => router.replace("/my-work")}>{t("invite.back")}</a>} />;
   }
   return <UserManagementDemo />;
 }

@@ -35,6 +35,9 @@ type Service interface {
 	ReplaceBizLineAssignment(context.Context, string, dto.ScopeAssignment) error
 	// ListBizLineMembers 供空间的「查看成员」面板与项目成员候选列表使用。
 	ListBizLineMembers(context.Context, string) ([]dto.BizLineMemberView, error)
+	// ListProgramMembers 是项目内负责人、协助人等选人控件的候选来源。
+	// 它只返回已经分配到该项目且仍在职的成员。
+	ListProgramMembers(context.Context, int64) ([]dto.MemberView, error)
 	// SaveBizLineMember 单条加入或调权；加入的唯一入口是分享链接。
 	SaveBizLineMember(context.Context, dto.BizLineMemberRequest) error
 	RemoveBizLineMember(context.Context, string, int64) error

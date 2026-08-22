@@ -22,6 +22,9 @@ export const DELIVERY_STATUSES = ["todo", "doing", "done", "blocked", "dropped"]
 
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
+export type DeliveryExecutionBatchMode = "parallel" | "sequence";
+export type DeliveryExecutionBatchStatus = "running" | "completed" | "blocked";
+
 /** 一条交付任务依次经过需求、开发、测试三个可独立流转的阶段。 */
 export const DELIVERY_PHASES = ["requirement", "development", "testing"] as const;
 
@@ -1329,6 +1332,14 @@ export async function fetchProgramAssignment(programId: number) {
 	return getData(ProgramAssignment, "/delivery/program/assignment", { programId });
 }
 
+/**
+ * 负责人、协助人等人员指派只能选所属项目已分配的在职成员。
+ * 不能再用全站成员接口作为候选，否则会把不在项目里的账号暴露在下拉框里。
+ */
+export async function fetchProgramMembers(programId: number) {
+	return getDataList(MemberRecord, "/delivery/program/members", { programId });
+}
+
 export async function saveProgramAssignment(programId: number, assignment: ProgramAssignment) {
 	const response = await instance.post<ApiResponse<null>>("/delivery/program/assignment", { programId, ...assignment });
 	return unwrapApiResponse(response.data);
@@ -1350,8 +1361,8 @@ export async function deleteStage(programId: number, stageKey: string) {
 
 export interface RequirementPageQuery {
   programId: number;
-  /** mine 只看和我有关的（我创建 / 我负责 / 我辅助），空值表示全部。 */
-  scope?: "mine" | "";
+  /** mine 包含创建人；assigned 只取主负责人或协助人，空值表示全部。 */
+  scope?: "mine" | "assigned" | "";
   keyword?: string;
   status?: RequirementStatus | "";
   pageIndex?: number;
@@ -1530,6 +1541,65 @@ export interface DeliveryAttentionTask {
   updatedAt?: string;
 }
 
+/** 一次批量或串行执行的服务端记录；完成后用于消息中心提醒。 */
+export class DeliveryExecutionBatchRecord {
+  batchId = "";
+
+  programId = 0;
+
+  requirementKey = "";
+
+  requirementName = "";
+
+  /** 运行发起时冻结的需求分支，便于回溯本次执行对应的 RB。 */
+  requirementGitBranch = "";
+
+  mode: DeliveryExecutionBatchMode = "parallel";
+
+  executorType = "codex";
+
+  status: DeliveryExecutionBatchStatus = "running";
+
+  itemCount = 0;
+
+  completedCount = 0;
+
+  blockedCount = 0;
+
+  summary = "";
+
+  notificationReadAt?: string;
+
+  startedAt?: string;
+
+  finishedAt?: string;
+}
+
+export interface DeliveryExecutionBatchNotification extends DeliveryExecutionBatchRecord {
+  programName: string;
+}
+
+/** 需求被标记完成后，服务端按负责人/协助者逐人维护的一条提醒。 */
+export class DeliveryRequirementCompletionNotificationRecord {
+  programId = 0;
+
+  requirementKey = "";
+
+  requirementName = "";
+
+  recipientId = "";
+
+  recipientName = "";
+
+  notificationReadAt?: string;
+
+  completedAt?: string;
+}
+
+export interface DeliveryRequirementCompletionNotification extends DeliveryRequirementCompletionNotificationRecord {
+  programName: string;
+}
+
 /**
  * 拉取当前业务线下所有项目里「受阻」和「不做」的任务。
  * 服务端的任务查询按项目授权，跨项目只能逐个项目取；项目数是个位数量级，并发发出即可。
@@ -1563,6 +1633,75 @@ export async function fetchDeliveryAttentionTasks(bizLine: BusinessLineId): Prom
     }
   }));
   return groups.flat();
+}
+
+/**
+ * 完成批次的提醒由服务端按启动者维护已读态；跨项目仍按项目权限逐个拉取。
+ * 不与受阻/不做任务混在同一接口，二者的未读语义不同。
+ */
+export async function fetchDeliveryExecutionBatchNotifications(
+  bizLine: BusinessLineId,
+): Promise<DeliveryExecutionBatchNotification[]> {
+  const programs = await fetchPrograms(bizLine);
+  const groups = await Promise.all(programs.map(async (program) => {
+    try {
+      const batches = await getDataList(
+        DeliveryExecutionBatchRecord,
+        "/delivery/execution-batch/notifications",
+        { programId: program.programId },
+      );
+      return batches.map<DeliveryExecutionBatchNotification>((batch) => ({
+        ...batch,
+        programName: program.name || String(program.programId),
+      }));
+    } catch {
+      return [];
+    }
+  }));
+  return groups.flat();
+}
+
+/** 用户进入对应需求时确认完成批次提醒；受阻/不做任务不会走这个已读机制。 */
+export async function markDeliveryExecutionBatchNotificationRead(programId: number, batchId: string) {
+  const response = await instance.post<ApiResponse<DeliveryExecutionBatchRecord>>(
+    "/delivery/execution-batch/notification/read",
+    { programId, batchId },
+  );
+  return plainToInstance(DeliveryExecutionBatchRecord, unwrapApiResponse(response.data));
+}
+
+/**
+ * 需求完成消息只由服务端返回给当前登录用户（负责人或协助者）；每人的已读状态互不影响。
+ */
+export async function fetchDeliveryRequirementCompletionNotifications(
+  bizLine: BusinessLineId,
+): Promise<DeliveryRequirementCompletionNotification[]> {
+  const programs = await fetchPrograms(bizLine);
+  const groups = await Promise.all(programs.map(async (program) => {
+    try {
+      const notifications = await getDataList(
+        DeliveryRequirementCompletionNotificationRecord,
+        "/delivery/requirement/completion-notifications",
+        { programId: program.programId },
+      );
+      return notifications.map<DeliveryRequirementCompletionNotification>((notification) => ({
+        ...notification,
+        programName: program.name || String(program.programId),
+      }));
+    } catch {
+      return [];
+    }
+  }));
+  return groups.flat();
+}
+
+/** 当前接收者打开需求时确认自己收到的完成提醒。 */
+export async function markDeliveryRequirementCompletionNotificationRead(programId: number, requirementKey: string) {
+  const response = await instance.post<ApiResponse<DeliveryRequirementCompletionNotificationRecord>>(
+    "/delivery/requirement/completion-notification/read",
+    { programId, requirementKey },
+  );
+  return plainToInstance(DeliveryRequirementCompletionNotificationRecord, unwrapApiResponse(response.data));
 }
 
 /**

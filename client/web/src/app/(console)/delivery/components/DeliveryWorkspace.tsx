@@ -28,7 +28,7 @@ import {
   DELIVERY_STATUSES,
   STATUS_COLORS,
   deleteRequirement,
-	fetchMembers,
+	fetchProgramMembers,
   saveRequirement,
   type BoardGroupBy,
   type DeliveryItemRecord,
@@ -58,8 +58,8 @@ type PendingGroupedExecution =
   | { mode: "batch"; itemKeys: string[]; closeDrawer?: boolean }
   | { mode: "sequence"; itemKeys?: string[]; startItemKey?: string; closeDrawer?: boolean };
 
-/** 消息中心跳过来要落到哪儿：任务看板 / 任务聊天 / 需求编辑弹窗。 */
-type FocusMode = "board" | "detail" | "requirement";
+/** 消息中心或工作台跳过来要落到哪儿：看板 / 任务聊天 / 需求编辑 / 需求大纲。 */
+type FocusMode = "board" | "detail" | "requirement" | "outline";
 
 /** 消息中心跳转令牌的有效期：点一下到页面就位是秒级的，超过这个时间就当过期链接。 */
 const FOCUS_TOKEN_TTL_MS = 30_000;
@@ -77,16 +77,19 @@ export function DeliveryWorkspace() {
   const sharedRequirementKey = (searchParams?.get("requirementKey") ?? "").trim();
   const sharedProgramId = Number(searchParams?.get("programId")) || 0;
   const sharedBizLine = (searchParams?.get("bizLine") ?? "").trim();
-  // 消息中心跳转带来的聚焦参数：定位到某个项目某条需求下的一条任务。
+  // 消息中心跳转带来的聚焦参数：可定位任务，也可只定位一条需求（完成批次通知）。
   const focusItemKey = (searchParams?.get("focusItemKey") ?? "").trim();
   const focusRequirementKey = (searchParams?.get("focusRequirementKey") ?? "").trim();
   const focusModeParam = (searchParams?.get("focusMode") ?? "board").trim();
-  const focusMode: FocusMode = focusModeParam === "detail" || focusModeParam === "requirement" ? focusModeParam : "board";
+  const focusMode: FocusMode = ["detail", "requirement", "outline"].includes(focusModeParam)
+    ? focusModeParam as FocusMode
+    : "board";
   // 令牌有两个作用：同一条任务连点两次也要重新聚焦；以及带时间戳，
   // 过期的链接（比如照着旧地址刷新页面）不再触发定位和弹窗。
   const focusToken = Number(searchParams?.get("focusToken")) || 0;
   const focusFresh = focusToken > 0 && Date.now() - focusToken < FOCUS_TOKEN_TTL_MS;
-  const focusSignature = focusItemKey && focusFresh ? `${focusToken}:${sharedProgramId}:${focusItemKey}` : "";
+  const focusTarget = focusItemKey || focusRequirementKey;
+  const focusSignature = focusTarget && focusFresh ? `${focusToken}:${sharedProgramId}:${focusTarget}` : "";
 
   // 分享链接明确写入业务线和项目，打开时不受接收者本地记忆的上下文影响。
   useEffect(() => {
@@ -151,6 +154,7 @@ export function DeliveryWorkspace() {
   const [keyword, setKeyword] = useState("");
   const [highlightedOwner, setHighlightedOwner] = useState("");
   const [members, setMembers] = useState<MemberRecord[]>([]);
+	const [membersProgramId, setMembersProgramId] = useState(0);
   const [changingOwnerItemKey, setChangingOwnerItemKey] = useState("");
   const [editing, setEditing] = useState<DeliveryItemRecord | null>(null);
   const [sessionItem, setSessionItem] = useState<DeliveryItemRecord | null>(null);
@@ -185,7 +189,10 @@ export function DeliveryWorkspace() {
   // 待落地的定位放在 state 里而不是 ref：任务目录或需求列表可能本来就是现成的，
   // 用 ref 存的话这两个 effect 不会因为「有活要干」而重跑，弹窗就永远打不开。
   const [pendingFocus, setPendingFocus] = useState<{ itemKey: string; mode: FocusMode } | null>(null);
-  const [pendingRequirementFocus, setPendingRequirementFocus] = useState("");
+  const [pendingRequirementFocus, setPendingRequirementFocus] = useState<{
+    requirementKey: string;
+    action: "requirement" | "outline";
+  } | null>(null);
   const scrolledFocusRef = useRef("");
   const boardScaleRef = useRef(boardScale);
 
@@ -277,19 +284,16 @@ export function DeliveryWorkspace() {
     () => highlightedOwner ? allItems.filter((item) => item.ownerName === highlightedOwner).length : 0,
     [allItems, highlightedOwner],
   );
+	// 项目切换到候选接口返回之间，绝不能短暂复用上一个项目的成员。
+	const projectMembers = membersProgramId === programId ? members : [];
   const taskOwnerOptions = useMemo(() => {
     const options = new Map<string, string>();
-    members.forEach((member) => {
+		projectMembers.forEach((member) => {
       const label = member.displayName || member.username || member.id;
       if (member.id) options.set(member.id, label);
     });
-    // 存量任务可能尚未回填 ownerId，保留原显示名，避免下拉框看起来像未分配。
-    allItems.forEach((item) => {
-      const value = item.ownerId || item.ownerName;
-      if (value && !options.has(value)) options.set(value, item.ownerName || value);
-    });
     return Array.from(options, ([value, label]) => ({ value, label }));
-  }, [allItems, members]);
+  }, [projectMembers]);
   const filterOwnerOptions = useMemo(
     () => Array.from(new Set(taskOwnerOptions.map((option) => option.label)))
       .sort((left, right) => left.localeCompare(right, "zh-CN"))
@@ -298,19 +302,29 @@ export function DeliveryWorkspace() {
   );
 
   useEffect(() => {
+    if (!programId) {
+      setMembers([]);
+		setMembersProgramId(0);
+      return undefined;
+    }
     let cancelled = false;
-    fetchMembers()
+		setMembers([]);
+		setMembersProgramId(0);
+    fetchProgramMembers(programId)
       .then((list) => {
-        if (!cancelled) setMembers(list);
+			if (!cancelled) {
+				setMembers(list);
+				setMembersProgramId(programId);
+			}
       })
       .catch(() => {
-        // 保留存量负责人的回退选项；接口短暂失败不影响浏览或编辑其他字段。
+        // 候选加载失败时不显示项目外人员；用户仍可查看其他字段。
         if (!cancelled) message.warning(t("delivery.ownerQuickAssign.membersFailed"));
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [programId, t]);
 
   useEffect(() => {
     if (highlightedOwner && !ownerOptions.some((owner) => owner.value === highlightedOwner)) {
@@ -373,7 +387,7 @@ export function DeliveryWorkspace() {
 
   const handleOwnerChange = useCallback(
     async (item: DeliveryItemRecord, ownerId: string) => {
-      const member = members.find((candidate) => candidate.id === ownerId);
+		const member = projectMembers.find((candidate) => candidate.id === ownerId);
       const ownerName = member ? (member.displayName || member.username || member.id) : "";
       if (!member && ownerId && !item.ownerId && ownerId === item.ownerName) return;
       if (item.ownerId === ownerId && item.ownerName === ownerName) return;
@@ -391,7 +405,7 @@ export function DeliveryWorkspace() {
         setChangingOwnerItemKey("");
       }
     },
-    [members, patch, t],
+		[patch, projectMembers, t],
   );
 
   const handleCreateDependency = useCallback(
@@ -619,8 +633,12 @@ export function DeliveryWorkspace() {
     if (!focusSignature || appliedFocusRef.current === focusSignature) return;
     if (!programId || (sharedProgramId && programId !== sharedProgramId)) return;
     appliedFocusRef.current = focusSignature;
-    setPendingFocus({ itemKey: focusItemKey, mode: focusMode });
-    setPendingRequirementFocus(focusMode === "requirement" ? focusRequirementKey : "");
+    setPendingFocus(focusItemKey ? { itemKey: focusItemKey, mode: focusMode } : null);
+    setPendingRequirementFocus(
+      focusRequirementKey && (focusMode === "requirement" || focusMode === "outline")
+        ? { requirementKey: focusRequirementKey, action: focusMode }
+        : null,
+    );
     scrolledFocusRef.current = "";
     setFocusedItemKey(focusItemKey);
     setView("board");
@@ -631,6 +649,8 @@ export function DeliveryWorkspace() {
     if (focusRequirementKey) {
       setFilters((current) => ({ ...current, requirementKey: focusRequirementKey }));
     }
+    // 完成批次通知可能在用户离开看板后才抵达；跳回时立即刷新任务与需求状态。
+    void refresh();
 
     // 定位是一次性的：参数留在地址栏里，刷新页面会再弹一次需求编辑窗口。
     // 用 history.replaceState 就地抹掉（保留 programId），不触发路由跳转。
@@ -646,6 +666,7 @@ export function DeliveryWorkspace() {
     focusSignature,
     programId,
     queryAllRequirements,
+    refresh,
     setFilters,
     sharedProgramId,
   ]);
@@ -667,14 +688,18 @@ export function DeliveryWorkspace() {
     if (pendingFocus.mode === "detail") setSessionItem(item);
   }, [itemCatalog, pendingFocus, setFilters]);
 
-  // 从消息中心点需求名进来的：需求加载好就直接打开这条需求的编辑弹窗。
+  // 从消息中心或待我处理工作台点进来：需求加载好后直接打开编辑窗或大纲。
   useEffect(() => {
     if (!pendingRequirementFocus) return;
-    const requirement = requirements.find((record) => record.requirementKey === pendingRequirementFocus);
+    const requirement = requirements.find((record) => record.requirementKey === pendingRequirementFocus.requirementKey);
     if (!requirement) return;
-    setPendingRequirementFocus("");
-    setEditingRequirement(requirement);
-    setPlanningOpen(true);
+    setPendingRequirementFocus(null);
+    if (pendingRequirementFocus.action === "outline") {
+      setOutlineRequirement(requirement);
+    } else {
+      setEditingRequirement(requirement);
+      setPlanningOpen(true);
+    }
   }, [pendingRequirementFocus, requirements]);
 
   // 第三步：卡片渲染出来后把它挪到看板正中间，横向纵向都自己算。

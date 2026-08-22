@@ -1721,6 +1721,7 @@ select {
 
 .manager-notification-head__count.is-blocked::before { background: #d95c5c; }
 .manager-notification-head__count.is-dropped::before { background: #9b8c7f; }
+.manager-notification-head__count.is-done::before { background: var(--manager-green); }
 
 .manager-notification-popover {
   /* 三列都摊得开，横向滚动条就不该出现。 */
@@ -1756,6 +1757,29 @@ select {
   display: grid;
   min-height: 120px;
   place-items: center;
+}
+
+.manager-notification-sections {
+  display: grid;
+  gap: 14px;
+  max-height: min(720px, calc(100vh - 180px));
+  overflow-y: auto;
+}
+
+.manager-notification-section {
+  display: grid;
+  gap: 6px;
+}
+
+.manager-notification-section + .manager-notification-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--manager-border);
+}
+
+.manager-notification-section__title {
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-xs);
+  font-weight: 600;
 }
 
 .manager-notification-cell {
@@ -1846,6 +1870,17 @@ select {
   border-color: rgba(152, 162, 179, 0.35);
   background: rgba(152, 162, 179, 0.14);
   color: #6b7280;
+}
+
+.manager-notification-status.is-done {
+  border-color: color-mix(in srgb, var(--manager-green) 36%, transparent);
+  background: color-mix(in srgb, var(--manager-green) 11%, transparent);
+  color: var(--manager-green-dark, #10833f);
+}
+
+.manager-notification-batch-unread {
+  color: var(--manager-green);
+  font-size: 15px;
 }
 
 .manager-notification-actions .ant-btn {
@@ -5847,7 +5882,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 @keyframes storyFill { 0% { transform: scaleX(0.04); } 70%, 100% { transform: scaleX(1); } }
 @keyframes storyGlow { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--manager-green) 12%, transparent); } }
 
-/* 场景三：算力共享 */
+/* 场景三：协调大脑把需求分派到成员本机并行执行。 */
 .board-story-compute { display: grid; grid-template-columns: 178px minmax(0, 1fr); align-items: center; gap: 18px 10px; }
 .board-story-hub { display: grid; justify-items: center; gap: 3px; padding: 14px 12px; border-radius: var(--manager-r); border: 1px solid color-mix(in srgb, var(--manager-primary) 38%, transparent); background: var(--manager-surface); box-shadow: var(--manager-shadow-sm); }
 .board-story-hub__icon { font-size: 24px; }
@@ -5862,6 +5897,12 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .board-story-member__card small { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); }
 .board-story-member__meter { height: 5px; border-radius: 3px; background: var(--manager-panel-muted); overflow: hidden; }
 .board-story-member__meter i { display: block; height: 100%; border-radius: 3px; background: var(--manager-green); transform-origin: left center; animation: storyFill 2.6s ease-in-out infinite; }
+.board-story-roles { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.board-story-role { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--manager-border); border-radius: var(--manager-r-sm); background: var(--manager-surface); }
+.board-story-role strong { color: var(--manager-text); font-size: var(--manager-fs-xs); }
+.board-story-role small { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); line-height: var(--manager-lh-snug); }
+.board-story-role--coordination { border-color: color-mix(in srgb, var(--manager-primary) 32%, var(--manager-border)); }
+.board-story-role--member { border-color: color-mix(in srgb, var(--manager-green) 32%, var(--manager-border)); }
 .board-story-throughput { grid-column: 1 / -1; display: grid; gap: 6px; }
 .board-story-throughput__row { display: grid; grid-template-columns: 124px minmax(0, 1fr); align-items: center; gap: 12px; }
 .board-story-throughput__row em { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-style: normal; }
@@ -5874,6 +5915,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 @media (max-width: 860px) {
 	.board-story__columns, .board-story-compute, .board-story-fanout { grid-template-columns: minmax(0, 1fr); }
+	.board-story-roles { grid-template-columns: minmax(0, 1fr); }
 	.board-story-lane { grid-template-columns: minmax(0, 1fr); }
 	.board-story-lane__score { justify-self: start; }
 }
@@ -5889,4 +5931,383 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	border-color: var(--manager-violet) !important;
 	background: color-mix(in srgb, var(--manager-violet) 10%, transparent) !important;
 	color: var(--manager-violet) !important;
+}
+
+
+/*
+ * 工作台底色画在滚动容器上：页面级容器只有内容那么高，内容不满屏时下方会露出外壳的白底。
+ * 这一层是内容区自身，任何滚动高度都盖得住；底色收尾回到 --manager-bg，不会出现色块断层。
+ */
+.manager-console-content--my-work {
+	background:
+		radial-gradient(1180px 520px at 4% -6%, color-mix(in srgb, var(--manager-primary) 18%, transparent), transparent 62%),
+		radial-gradient(960px 460px at 102% 0%, color-mix(in srgb, var(--manager-cyan) 16%, transparent), transparent 58%),
+		linear-gradient(180deg, color-mix(in srgb, var(--manager-primary) 6%, var(--manager-bg)) 0%, var(--manager-bg) 520px);
+	background-attachment: local;
+}
+
+.my-work-page {
+	min-height: 100%;
+}
+
+/* 工作台：当前空间内的需求卡片。不复用看板任务卡，避免把任务阶段误展示成需求状态。 */
+.my-work-stats {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 16px;
+	padding: 14px 18px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-lg);
+	background:
+		linear-gradient(180deg, var(--manager-surface) 0%, color-mix(in srgb, var(--manager-bg-soft) 60%, var(--manager-surface)) 100%);
+	box-shadow: var(--manager-shadow-sm);
+}
+
+.my-work-stats__figures {
+	display: flex;
+	align-items: stretch;
+	flex-wrap: wrap;
+	min-width: 0;
+}
+
+/* 数字在上、标签在下；分隔用一根发丝线，不做成一排灰色方块。 */
+.my-work-stat {
+	display: grid;
+	gap: 3px;
+	min-width: 88px;
+	padding: 0 20px;
+	border-left: 1px solid var(--manager-border);
+}
+
+.my-work-stat:first-child {
+	padding-left: 0;
+	border-left: 0;
+}
+
+.my-work-stat b {
+	color: var(--manager-text);
+	font-size: 24px;
+	font-weight: 600;
+	line-height: 1.05;
+	letter-spacing: -.02em;
+	font-variant-numeric: tabular-nums;
+}
+
+.my-work-stat.is-primary b { color: var(--manager-primary); }
+
+.my-work-stat span {
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	letter-spacing: .06em;
+	text-transform: uppercase;
+}
+
+.my-work-stats__tools {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-left: auto;
+}
+
+.my-work-stats__space {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border: 1px solid var(--manager-border);
+	border-radius: 999px;
+	background: var(--manager-surface);
+	overflow: hidden;
+	color: var(--manager-text-soft);
+	font-size: var(--manager-fs-xs);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.my-work-stats__space .anticon { color: var(--manager-primary); font-size: 12px; }
+.my-work-stats__space code { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); letter-spacing: .04em; }
+
+.my-work-stats .ant-segmented {
+	padding: 2px;
+	border: 1px solid var(--manager-border);
+	background: var(--manager-surface);
+}
+
+.my-work-stats__refresh.ant-btn { color: var(--manager-text-faint); }
+
+.my-work-stats__refresh.ant-btn:hover {
+	color: var(--manager-primary) !important;
+	background: var(--manager-primary-light) !important;
+}
+
+.my-work-loading,
+.my-work-empty {
+	display: grid;
+	min-height: 220px;
+	place-items: center;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-lg);
+	background: var(--manager-surface);
+}
+
+.my-work-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+	gap: 14px;
+}
+
+.my-work-card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	padding: 14px 16px 12px;
+	overflow: hidden;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r);
+	background: var(--manager-surface);
+	transition: border-color var(--manager-t), box-shadow var(--manager-t), transform var(--manager-t);
+}
+
+/* 顶端一道极细的品牌色描边，只在悬停时点亮，静态时保持克制。 */
+.my-work-card::before {
+	position: absolute;
+	inset: 0 0 auto;
+	height: 2px;
+	background: linear-gradient(90deg, var(--manager-primary), var(--manager-violet));
+	opacity: 0;
+	content: "";
+	transition: opacity var(--manager-t);
+}
+
+.my-work-card:hover {
+	border-color: color-mix(in srgb, var(--manager-primary) 32%, var(--manager-border));
+	box-shadow: var(--manager-shadow-md);
+	transform: translateY(-2px);
+}
+
+.my-work-card:hover::before { opacity: 1; }
+
+.my-work-card__head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.my-work-card__identity {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+}
+
+.my-work-card__head code {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	letter-spacing: .04em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 状态与 Git 判定共用的小圆点标签，比 antd Tag 更轻。 */
+.my-work-chip {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 5px;
+	padding: 2px 8px 2px 6px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-text-faint) 10%, transparent);
+	color: var(--manager-text-soft);
+	font-size: var(--manager-fs-micro);
+	font-weight: 500;
+	line-height: 16px;
+	white-space: nowrap;
+}
+
+.my-work-chip > i {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: currentColor;
+}
+
+.my-work-chip.is-open {
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+}
+
+.my-work-chip.is-success {
+	background: color-mix(in srgb, var(--manager-success) 12%, transparent);
+	color: var(--manager-success);
+}
+
+.my-work-chip.is-warning {
+	background: color-mix(in srgb, var(--manager-warning) 14%, transparent);
+	color: var(--manager-warning);
+}
+
+.my-work-chip.is-danger {
+	background: color-mix(in srgb, var(--manager-danger) 12%, transparent);
+	color: var(--manager-danger);
+}
+
+.my-work-card__open.ant-btn {
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+	opacity: .7;
+	transition: opacity var(--manager-t);
+}
+
+.my-work-card:hover .my-work-card__open.ant-btn { opacity: 1; }
+
+.my-work-card__open.ant-btn:hover {
+	color: var(--manager-primary) !important;
+	background: var(--manager-primary-light) !important;
+}
+
+.my-work-card h3 {
+	display: -webkit-box;
+	margin: 10px 0 0;
+	overflow: hidden;
+	color: var(--manager-text);
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 1.45;
+	letter-spacing: -.01em;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+}
+
+.my-work-card__content > p {
+	display: -webkit-box;
+	margin: 5px 0 0;
+	overflow: hidden;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+	line-height: 1.6;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+}
+
+.my-work-card__git {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 11px;
+	padding: 6px 9px;
+	border: 1px solid color-mix(in srgb, var(--manager-border) 70%, transparent);
+	border-radius: var(--manager-r-sm);
+	background: color-mix(in srgb, var(--manager-bg-soft) 70%, var(--manager-surface));
+	color: var(--manager-text-soft);
+	font-size: var(--manager-fs-micro);
+}
+
+.my-work-card__git > .anticon { color: var(--manager-text-faint); font-size: 12px; }
+
+.my-work-card__git code {
+	max-width: 100%;
+	overflow: hidden;
+	color: var(--manager-text);
+	letter-spacing: .02em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.my-work-card__git-current {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+	padding-left: 6px;
+	border-left: 1px solid var(--manager-border);
+}
+
+.my-work-card__git-current em {
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+	font-style: normal;
+	white-space: nowrap;
+}
+
+/* 事实区压成一行图标 + 值，卡片高度不再被两列定义列表撑开。 */
+.my-work-card__facts {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 5px 14px;
+	/* 顶到底部，同一行里高矮不一的卡片在事实区和操作区对齐。 */
+	margin: 12px 0 0;
+	margin-top: auto;
+	padding-top: 11px;
+	border-top: 1px solid color-mix(in srgb, var(--manager-border) 65%, transparent);
+}
+
+.my-work-card__facts > div {
+	display: inline-flex;
+	min-width: 0;
+	max-width: 100%;
+	align-items: center;
+	gap: 5px;
+}
+
+.my-work-card__facts dt,
+.my-work-card__facts dd {
+	margin: 0;
+}
+
+.my-work-card__facts dt {
+	display: inline-flex;
+	color: var(--manager-text-faint);
+	font-size: 11px;
+	opacity: .8;
+}
+
+.my-work-card__facts dd {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--manager-text-soft);
+	font-size: var(--manager-fs-micro);
+	font-variant-numeric: tabular-nums;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 操作按钮平时压到 55% 透明度，鼠标进入卡片才完全显影。 */
+.my-work-card__actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 2px;
+	margin: 8px -8px -4px 0;
+	opacity: .55;
+	transition: opacity var(--manager-t);
+}
+
+.my-work-card:hover .my-work-card__actions,
+.my-work-card:focus-within .my-work-card__actions { opacity: 1; }
+
+.my-work-card__actions .ant-btn-text {
+	color: var(--manager-text-faint);
+}
+
+.my-work-card__actions .ant-btn-text:hover {
+	color: var(--manager-primary) !important;
+	background: var(--manager-primary-light) !important;
+}
+
+@media (max-width: 640px) {
+	.my-work-grid { grid-template-columns: minmax(0, 1fr); }
+	.my-work-stats { gap: 12px; padding: 12px 14px; }
+	.my-work-stats__tools { margin-left: 0; }
+	.my-work-stat { min-width: 76px; padding: 0 14px; }
+	.my-work-stat b { font-size: 20px; }
 }

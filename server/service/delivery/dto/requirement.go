@@ -82,7 +82,34 @@ type RequirementPage struct {
 	Data  []RequirementView `json:"data"`
 }
 
-// RequirementQuery Scope=mine 只看和我有关的（我创建 / 我负责 / 我辅助），
+// RequirementCompletionNotificationView 是需求进入 done 后发给当前负责人或协助者的一条消息。
+// 每位接收人有独立的 notificationReadAt，前端点击后只消除自己的未读角标。
+type RequirementCompletionNotificationView struct {
+	BizLine            contract.BizLine `json:"bizLine"`
+	ProgramID          int64            `json:"programId"`
+	RequirementKey     string           `json:"requirementKey"`
+	RequirementName    string           `json:"requirementName"`
+	RecipientID        string           `json:"recipientId"`
+	RecipientName      string           `json:"recipientName"`
+	NotificationReadAt *time.Time       `json:"notificationReadAt"`
+	CompletedAt        *time.Time       `json:"completedAt"`
+}
+
+type RequirementCompletionNotificationQuery struct {
+	BizLine   contract.BizLine `form:"-"`
+	ProgramID int64            `form:"programId"`
+	ActorID   string           `form:"-"`
+}
+
+type MarkRequirementCompletionNotificationReadRequest struct {
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	ActorID        string           `json:"-"`
+}
+
+// RequirementQuery Scope=mine 只看和我有关的（我创建 / 我负责 / 我辅助）；
+// Scope=assigned 只看明确指给我的（我负责 / 我辅助），不把创建人身份算进来；
 // 其余取值表示不限定。
 type RequirementQuery struct {
 	Page

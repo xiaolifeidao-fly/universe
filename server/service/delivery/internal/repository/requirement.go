@@ -12,15 +12,16 @@ import (
 // ---------- 需求 ----------
 
 // RequirementQuery 需求列表条件。RelatedTo 命中「创建人 / 主负责人 / 辅助人是我」，
-// 空值表示不限定，即页面上的「全部需求」。
+// AssignedTo 只命中「主负责人 / 辅助人是我」；两者空值均表示不限定。
 type RequirementQuery struct {
-	BizLine   string
-	ProgramID int64
-	Keyword   string
-	Status    string
-	RelatedTo string
-	Offset    int
-	Limit     int
+	BizLine    string
+	ProgramID  int64
+	Keyword    string
+	Status     string
+	RelatedTo  string
+	AssignedTo string
+	Offset     int
+	Limit      int
 }
 
 func (r *DeliveryRepository) requirementScope(ctx context.Context, q RequirementQuery) *gorm.DB {
@@ -37,6 +38,10 @@ func (r *DeliveryRepository) requirementScope(ctx context.Context, q Requirement
 	if q.RelatedTo != "" {
 		member := "%," + q.RelatedTo + ",%"
 		tx = tx.Where("created_by = ? OR owner_ids LIKE ? OR assistant_ids LIKE ?", q.RelatedTo, member, member)
+	}
+	if q.AssignedTo != "" {
+		member := "%," + q.AssignedTo + ",%"
+		tx = tx.Where("owner_ids LIKE ? OR assistant_ids LIKE ?", member, member)
 	}
 	return tx
 }

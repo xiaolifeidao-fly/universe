@@ -38,6 +38,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/module/delete", h.deleteModule)
 	api.POST("/import", h.importItems)
 	api.GET("/program/assignment", h.assignment)
+	api.GET("/program/members", h.members)
 	api.POST("/program/assignment", h.saveAssignment)
 
 	// 只读的配置，控制台和将来的定时快照作业都要看。
@@ -256,6 +257,20 @@ func (h *Handler) assignment(context *gin.Context) {
 	}
 	assignment, err := h.identities.ListProgramAssignment(context.Request.Context(), programID)
 	httpx.JSON(context, assignment, err)
+}
+
+// members 只返回当前项目已分配的在职成员，供负责人和协助人下拉框使用。
+func (h *Handler) members(context *gin.Context) {
+	programID, ok := programIDFromQuery(context)
+	if !ok {
+		return
+	}
+	var bizLine contract.BizLine
+	if !h.resolveProgramBizLine(context, programID, &bizLine) {
+		return
+	}
+	members, err := h.identities.ListProgramMembers(context.Request.Context(), programID)
+	httpx.JSON(context, members, err)
 }
 
 func (h *Handler) saveAssignment(context *gin.Context) {

@@ -183,6 +183,30 @@ type DeliveryRequirementEvent struct {
 func (d *DeliveryRequirementEvent) TableName() string { return "zt_delivery_requirement_event" }
 func (d *DeliveryRequirementEvent) Init()             {}
 
+// DeliveryRequirementCompletionNotification 是需求完成时发送给每位负责人和协助者的独立提醒。
+// 它不复用需求表上的字段：同一条需求的不同收件人必须分别确认已读。
+// 唯一键让需求再次从未完成改为完成时刷新同一位收件人的提醒，而不是积累不可处理的历史消息。
+type DeliveryRequirementCompletionNotification struct {
+	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_requirement_completion_notice,priority:1;index:idx_dlv_requirement_completion_recipient,priority:1" description:"业务线"`
+
+	ProgramID       int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_requirement_completion_notice,priority:2;index:idx_dlv_requirement_completion_recipient,priority:2" description:"所属项目"`
+	RequirementKey  string `gorm:"column:requirement_key;type:varchar(64);uniqueIndex:uk_dlv_requirement_completion_notice,priority:3" description:"已完成需求键"`
+	RequirementName string `gorm:"column:requirement_name;type:varchar(255)" description:"完成时冻结的需求名称"`
+	RecipientID     string `gorm:"column:recipient_id;type:varchar(64);uniqueIndex:uk_dlv_requirement_completion_notice,priority:4;index:idx_dlv_requirement_completion_recipient,priority:3" description:"接收人（负责人或协助者）"`
+	RecipientName   string `gorm:"column:recipient_name;type:varchar(64)" description:"接收人显示名快照"`
+	// NotificationReadAt 只属于当前 RecipientID；点击后不会影响同需求的其他负责人或协助者。
+	NotificationReadAt *time.Time `gorm:"column:notification_read_at;type:timestamp NULL;index:idx_dlv_requirement_completion_recipient,priority:4" description:"完成提醒已读时间"`
+	CompletedAt        time.Time  `gorm:"column:completed_at;type:timestamp;index:idx_dlv_requirement_completion_recipient,priority:5" description:"本次标记完成的时间"`
+	CreatedTime        time.Time  `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+	UpdatedTime        time.Time  `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"最近刷新时间"`
+}
+
+func (d *DeliveryRequirementCompletionNotification) TableName() string {
+	return "zt_delivery_requirement_completion_notification"
+}
+func (d *DeliveryRequirementCompletionNotification) Init() {}
+
 // DeliveryRequirementPlanningSession 需求拆解会话目录：一条需求下开过哪几轮拆解对话。
 //
 // 只存目录，不存对话正文 —— 正文由 Codex / Claude 自己的会话缓存持有，
@@ -333,6 +357,55 @@ func (d *DeliveryItemExecutionSession) TableName() string {
 	return "zt_delivery_item_execution_session"
 }
 func (d *DeliveryItemExecutionSession) Init() {}
+
+// DeliveryExecutionBatch 记录一次由用户在任务面板发起的批量或串行执行。
+// 本地桥接负责实际驱动 AI；这里保存跨浏览器刷新、桥接重启后仍可追溯的批次事实。
+type DeliveryExecutionBatch struct {
+	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_execution_batch,priority:1;index:idx_dlv_execution_batch_notice,priority:1;index:idx_dlv_execution_batch_requirement,priority:1" description:"业务线"`
+
+	ProgramID            int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_execution_batch,priority:2;index:idx_dlv_execution_batch_notice,priority:2;index:idx_dlv_execution_batch_requirement,priority:2" description:"所属项目"`
+	BatchID              string `gorm:"column:batch_id;type:varchar(64);uniqueIndex:uk_dlv_execution_batch,priority:3" description:"服务端批次业务键"`
+	RequirementKey       string `gorm:"column:requirement_key;type:varchar(64);index:idx_dlv_execution_batch_requirement,priority:3" description:"关联需求键"`
+	RequirementName      string `gorm:"column:requirement_name;type:varchar(255)" description:"启动时冻结的需求名称"`
+	RequirementGitBranch string `gorm:"column:requirement_git_branch;type:varchar(255)" description:"启动时冻结的需求 Git 分支"`
+	Mode                 string `gorm:"column:mode;type:varchar(16)" description:"parallel 批量并行 / sequence 串行"`
+	ExecutorType         string `gorm:"column:executor_type;type:varchar(32)" description:"codex / claude"`
+	Status               string `gorm:"column:status;type:varchar(16);index:idx_dlv_execution_batch_notice,priority:3" description:"running / completed / blocked"`
+	ItemCount            int    `gorm:"column:item_count" description:"批次任务数"`
+	CompletedCount       int    `gorm:"column:completed_count" description:"已完成任务数"`
+	BlockedCount         int    `gorm:"column:blocked_count" description:"受阻任务数"`
+	Summary              string `gorm:"column:summary;type:varchar(2048)" description:"完成或受阻摘要"`
+	// 完成消息只发给启动者，单字段即可表示这位启动者是否已经点击过提醒。
+	NotificationReadAt *time.Time `gorm:"column:notification_read_at;type:timestamp NULL" description:"完成提醒已读时间"`
+	StartedAt          *time.Time `gorm:"column:started_at;type:timestamp NULL" description:"开始时间"`
+	FinishedAt         *time.Time `gorm:"column:finished_at;type:timestamp NULL;index:idx_dlv_execution_batch_notice,priority:4" description:"结束时间"`
+	CreatedBy          string     `gorm:"column:created_by;type:varchar(64);index:idx_dlv_execution_batch_notice,priority:5" description:"启动人"`
+	CreatedByName      string     `gorm:"column:created_by_name;type:varchar(64)" description:"启动人显示名"`
+	UpdatedBy          string     `gorm:"column:updated_by;type:varchar(64)" description:"最后更新人"`
+	CreatedTime        time.Time  `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+	UpdatedTime        time.Time  `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
+}
+
+func (d *DeliveryExecutionBatch) TableName() string { return "zt_delivery_execution_batch" }
+func (d *DeliveryExecutionBatch) Init()             {}
+
+// DeliveryExecutionBatchItem 是批次中的任务快照。任务本身后来被移动或删除也不抹去本次运行记录。
+type DeliveryExecutionBatchItem struct {
+	Id          int64     `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine     string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_execution_batch_item,priority:1;index:idx_dlv_execution_batch_item_active,priority:1" description:"业务线"`
+	ProgramID   int64     `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_execution_batch_item,priority:2;index:idx_dlv_execution_batch_item_active,priority:2" description:"所属项目"`
+	BatchID     string    `gorm:"column:batch_id;type:varchar(64);uniqueIndex:uk_dlv_execution_batch_item,priority:3;index:idx_dlv_execution_batch_item_active,priority:3" description:"批次键"`
+	ItemKey     string    `gorm:"column:item_key;type:varchar(64);uniqueIndex:uk_dlv_execution_batch_item,priority:4;index:idx_dlv_execution_batch_item_active,priority:4" description:"任务键"`
+	Sequence    int       `gorm:"column:sequence" description:"启动请求中的顺序"`
+	Status      string    `gorm:"column:status;type:varchar(16)" description:"pending / running / completed / blocked"`
+	Message     string    `gorm:"column:message;type:varchar(1024)" description:"该任务在本批次中的结果摘要"`
+	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+	UpdatedTime time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
+}
+
+func (d *DeliveryExecutionBatchItem) TableName() string { return "zt_delivery_execution_batch_item" }
+func (d *DeliveryExecutionBatchItem) Init()             {}
 
 // DeliveryItemDependency 任务依赖边。PredecessorItemKey -> SuccessorItemKey 表示
 // 后置任务必须等待前置任务；一对多表示并行分叉，多对一表示汇合。

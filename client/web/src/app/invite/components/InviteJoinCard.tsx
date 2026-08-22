@@ -62,7 +62,7 @@ export function InviteJoinCard() {
 			await refreshAuthUser();
 			await refreshBusinessLines().catch(() => undefined);
 			message.success(t("invite.joinSuccess"));
-			router.replace("/delivery");
+			router.replace("/my-work");
 		} catch (caught) {
 			message.error((caught as Error).message);
 		} finally {
@@ -86,7 +86,7 @@ export function InviteJoinCard() {
 					title={t("invite.invalid")}
 					subTitle={error || undefined}
 					extra={
-						<Button type="primary" onClick={() => router.replace("/delivery")}>
+						<Button type="primary" onClick={() => router.replace("/my-work")}>
 							{t("invite.back")}
 						</Button>
 					}
@@ -123,7 +123,7 @@ export function InviteJoinCard() {
 						<Button type="primary" loading={joining} onClick={() => void join()}>
 							{t("invite.confirm")}
 						</Button>
-						<Button onClick={() => router.replace("/delivery")}>{t("invite.back")}</Button>
+						<Button onClick={() => router.replace("/my-work")}>{t("invite.back")}</Button>
 					</Space>
 				</Space>
 			</Card>

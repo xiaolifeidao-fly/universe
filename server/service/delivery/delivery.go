@@ -46,6 +46,8 @@ type Service interface {
 	ListRequirements(ctx context.Context, query dto.RequirementQuery) (dto.RequirementPage, error)
 	GetRequirement(ctx context.Context, bizLine contract.BizLine, programID int64, requirementKey string) (dto.RequirementView, error)
 	SaveRequirement(ctx context.Context, req dto.SaveRequirementRequest) (dto.RequirementView, error)
+	ListRequirementCompletionNotifications(ctx context.Context, query dto.RequirementCompletionNotificationQuery) ([]dto.RequirementCompletionNotificationView, error)
+	MarkRequirementCompletionNotificationRead(ctx context.Context, req dto.MarkRequirementCompletionNotificationReadRequest) (dto.RequirementCompletionNotificationView, error)
 	BindRequirementGitBranch(ctx context.Context, req dto.BindRequirementGitBranchRequest) (dto.RequirementView, error)
 	DeleteRequirement(ctx context.Context, req dto.DeleteRequirementRequest) error
 	// 拆解会话目录：桥接是本地进程，重启就没了，聊天列表只能由服务端持有。
@@ -73,6 +75,13 @@ type Service interface {
 	ListExecutionSessions(ctx context.Context, query dto.ExecutionSessionQuery) ([]dto.ExecutionSessionView, error)
 	UpdateExecutionSessionStatus(ctx context.Context, req dto.UpdateExecutionSessionStatusRequest) (dto.ExecutionSessionView, error)
 	UpdateItemTestingCases(ctx context.Context, req dto.UpdateItemTestingCasesRequest) (dto.ItemView, error)
+	// ---------- 执行批次 ----------
+	CreateExecutionBatch(ctx context.Context, req dto.CreateExecutionBatchRequest) (dto.ExecutionBatchView, error)
+	UpdateExecutionBatchItem(ctx context.Context, req dto.UpdateExecutionBatchItemRequest) (dto.ExecutionBatchView, error)
+	FinalizeExecutionBatch(ctx context.Context, req dto.FinalizeExecutionBatchRequest) (dto.ExecutionBatchView, error)
+	GetExecutionBatch(ctx context.Context, bizLine contract.BizLine, programID int64, batchID string) (dto.ExecutionBatchView, error)
+	ListExecutionBatchNotifications(ctx context.Context, query dto.ExecutionBatchNotificationQuery) ([]dto.ExecutionBatchView, error)
+	MarkExecutionBatchNotificationRead(ctx context.Context, req dto.MarkExecutionBatchNotificationReadRequest) (dto.ExecutionBatchView, error)
 
 	// ---------- 看板 / 概览 ----------
 	Board(ctx context.Context, query dto.BoardQuery) (dto.BoardView, error)

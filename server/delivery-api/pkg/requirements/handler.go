@@ -6,6 +6,7 @@ package requirements
 import (
 	"errors"
 	"strconv"
+	"strings"
 
 	"common/middleware/httpx"
 	"common/middleware/routers"
@@ -13,18 +14,25 @@ import (
 	"contract"
 	"service/delivery"
 	deliverydto "service/delivery/dto"
+	"service/identity"
 
 	"github.com/gin-gonic/gin"
 )
 
-type Handler struct{ service delivery.Service }
+type Handler struct {
+	service    delivery.Service
+	identities identity.Service
+}
 
-func NewHandler(service delivery.Service) *Handler { return &Handler{service: service} }
+func NewHandler(service delivery.Service, identities identity.Service) *Handler {
+	return &Handler{service: service, identities: identities}
+}
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 需求是人维护的，写一律 RequireUser；读放开到服务凭证，拆解插件要拿需求上下文。
 	api := group.Group("/delivery", httpx.RequireUser())
 	api.POST("/requirement/save", h.save)
+	api.POST("/requirement/completion-notification/read", h.markCompletionNotificationRead)
 	api.POST("/requirement/git-branch/bind", h.bindGitBranch)
 	api.POST("/requirement/delete", h.delete)
 	api.POST("/requirement/prototype/save", h.savePrototype)
@@ -32,6 +40,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 拆解会话目录由桥接写入，和任务执行会话绑定同样走用户凭证。
 	api.POST("/requirement/planning-session/bind", h.bindPlanningSession)
 	api.POST("/requirement/testing-session/bind", h.bindTestingSession)
+	api.GET("/requirement/completion-notifications", h.listCompletionNotifications)
 
 	group.GET("/delivery/requirements", httpx.RequireUserOrService(), h.list)
 	group.GET("/delivery/requirement", httpx.RequireUserOrService(), h.get)
@@ -146,6 +155,37 @@ func (h *Handler) list(context *gin.Context) {
 	httpx.JSON(context, page, err)
 }
 
+// listCompletionNotifications 只按凭证中的当前用户取需求完成消息，不能由浏览器指定收件人。
+func (h *Handler) listCompletionNotifications(context *gin.Context) {
+	programID, ok := programIDFromQuery(context)
+	if !ok {
+		return
+	}
+	var bizLine contract.BizLine
+	if !h.resolveProgramBizLine(context, programID, &bizLine) {
+		return
+	}
+	views, err := h.service.ListRequirementCompletionNotifications(context.Request.Context(), deliverydto.RequirementCompletionNotificationQuery{
+		BizLine: bizLine, ProgramID: programID, ActorID: httpx.CallerID(context),
+	})
+	httpx.JSON(context, views, err)
+}
+
+// markCompletionNotificationRead 的接收人一律由调用者凭证覆盖，避免代他人确认已读。
+func (h *Handler) markCompletionNotificationRead(context *gin.Context) {
+	var req deliverydto.MarkRequirementCompletionNotificationReadRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.MarkRequirementCompletionNotificationRead(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
 func (h *Handler) get(context *gin.Context) {
 	programID, ok := programIDFromQuery(context)
 	if !ok {
@@ -171,9 +211,65 @@ func (h *Handler) save(context *gin.Context) {
 	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
 		return
 	}
+	if !h.normalizeRequirementMembers(context, req.ProgramID, req.Owners, req.Assistants) {
+		return
+	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.SaveRequirement(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
+}
+
+// normalizeRequirementMembers 把人员显示名收敛到项目成员目录，并拒绝项目外的负责人、协助人。
+// 选人限制不能只依赖浏览器下拉框，否则仍可通过旧客户端或直接请求绕过。
+func (h *Handler) normalizeRequirementMembers(
+	context *gin.Context,
+	programID int64,
+	groups ...[]deliverydto.RequirementMember,
+) bool {
+	needsValidation := false
+	for _, group := range groups {
+		for _, member := range group {
+			if strings.TrimSpace(member.ID) != "" {
+				needsValidation = true
+				break
+			}
+		}
+	}
+	if !needsValidation {
+		return true
+	}
+	members, err := h.identities.ListProgramMembers(context.Request.Context(), programID)
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return false
+	}
+	allowed := make(map[string]string, len(members))
+	for _, member := range members {
+		name := strings.TrimSpace(member.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(member.Username)
+		}
+		if name == "" {
+			name = member.ID
+		}
+		allowed[member.ID] = name
+	}
+	for _, group := range groups {
+		for index := range group {
+			id := strings.TrimSpace(group[index].ID)
+			if id == "" {
+				continue
+			}
+			name, ok := allowed[id]
+			if !ok {
+				httpx.Fail(context, "负责人和协助人只能从所属项目成员中选择")
+				return false
+			}
+			group[index].ID = id
+			group[index].Name = name
+		}
+	}
+	return true
 }
 
 func (h *Handler) getPrototype(context *gin.Context) {

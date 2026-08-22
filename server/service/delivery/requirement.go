@@ -26,21 +26,30 @@ func (s *service) ListRequirements(ctx context.Context, query dto.RequirementQue
 		return dto.RequirementPage{}, errors.New("缺少项目标识")
 	}
 	relatedTo := ""
-	if strings.EqualFold(strings.TrimSpace(query.Scope), scopeMine) {
+	assignedTo := ""
+	switch strings.ToLower(strings.TrimSpace(query.Scope)) {
+	case scopeMine:
 		relatedTo = strings.TrimSpace(query.ActorID)
 		if relatedTo == "" {
 			// 拿不到操作人时不能悄悄退化成「全部」——那等于把别人的需求也算成我的。
 			return dto.RequirementPage{Total: 0, Data: []dto.RequirementView{}}, nil
 		}
+	case scopeAssigned:
+		assignedTo = strings.TrimSpace(query.ActorID)
+		if assignedTo == "" {
+			// 待我处理不能因身份缺失退化为全部需求，避免数据越权展示。
+			return dto.RequirementPage{Total: 0, Data: []dto.RequirementView{}}, nil
+		}
 	}
 	rows, total, err := s.repo.ListRequirements(ctx, repository.RequirementQuery{
-		BizLine:   query.BizLine.String(),
-		ProgramID: query.ProgramID,
-		Keyword:   strings.TrimSpace(query.Keyword),
-		Status:    strings.TrimSpace(query.Status),
-		RelatedTo: relatedTo,
-		Offset:    query.Offset(),
-		Limit:     query.Limit(),
+		BizLine:    query.BizLine.String(),
+		ProgramID:  query.ProgramID,
+		Keyword:    strings.TrimSpace(query.Keyword),
+		Status:     strings.TrimSpace(query.Status),
+		RelatedTo:  relatedTo,
+		AssignedTo: assignedTo,
+		Offset:     query.Offset(),
+		Limit:      query.Limit(),
 	})
 	if err != nil {
 		return dto.RequirementPage{}, err
@@ -209,6 +218,12 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 			if err := tx.CreateRequirement(ctx, row); err != nil {
 				return err
 			}
+			// 新建时直接标记完成也属于一次完成动作，应通知当前负责人和协助者。
+			if row.Status == RequirementStatusDone {
+				if err := tx.UpsertRequirementCompletionNotifications(ctx, requirementCompletionNotifications(row)); err != nil {
+					return err
+				}
+			}
 			return tx.AppendRequirementEvents(ctx, []*repository.DeliveryRequirementEvent{requirementCreateEvent(row, req.ActorID, req.ActorName)})
 		}); err != nil {
 			return dto.RequirementView{}, err
@@ -291,6 +306,16 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		if affected == 0 {
 			return contract.ErrVersionConflict
 		}
+		// 仅在状态第一次进入 done 时发消息。收件人取本次保存后的负责人/协助者，
+		// 不按需求创建人发送；创建人若同时承担这两个角色，仍然是合法收件人。
+		if current.Status != RequirementStatusDone && status == RequirementStatusDone {
+			if err := tx.UpsertRequirementCompletionNotifications(ctx, requirementCompletionNotifications(&repository.DeliveryRequirement{
+				BizLine: current.BizLine, ProgramID: current.ProgramID, RequirementKey: current.RequirementKey, Name: name,
+				OwnerIDs: ownerIDs, OwnerNames: ownerNames, AssistantIDs: assistantIDs, AssistantNames: assistantNames,
+			})); err != nil {
+				return err
+			}
+		}
 		return tx.AppendRequirementEvents(ctx, events)
 	}); err != nil {
 		return dto.RequirementView{}, err
@@ -367,6 +392,10 @@ func (s *service) DeleteRequirement(ctx context.Context, req dto.DeleteRequireme
 		if err := tx.DeleteRequirementTestingSessions(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey); err != nil {
 			return err
 		}
+		// 需求删除后消息已没有可跳转目标，连同每位成员的已读记录一并清理。
+		if err := tx.DeleteRequirementCompletionNotifications(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey); err != nil {
+			return err
+		}
 		affected, err := tx.DeleteRequirement(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey)
 		if err != nil {
 			return err
@@ -381,6 +410,55 @@ func (s *service) DeleteRequirement(ctx context.Context, req dto.DeleteRequireme
 	})
 }
 
+// ListRequirementCompletionNotifications 只返回当前用户作为负责人或协助者收到的完成消息。
+// 创建人不在收件人表中，因此不会因创建身份看到这类提醒。
+func (s *service) ListRequirementCompletionNotifications(ctx context.Context, query dto.RequirementCompletionNotificationQuery) ([]dto.RequirementCompletionNotificationView, error) {
+	if !query.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if query.ProgramID <= 0 {
+		return nil, errors.New("缺少项目标识")
+	}
+	if strings.TrimSpace(query.ActorID) == "" {
+		return nil, errors.New("无法识别当前用户")
+	}
+	rows, err := s.repo.ListRequirementCompletionNotifications(ctx, query.BizLine.String(), query.ProgramID, query.ActorID)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]dto.RequirementCompletionNotificationView, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, toRequirementCompletionNotificationView(row))
+	}
+	return views, nil
+}
+
+// MarkRequirementCompletionNotificationRead 以当前凭证里的接收人身份确认已读。
+// 查询条件带 recipient_id，任何用户都不能帮另一位负责人消除未读。
+func (s *service) MarkRequirementCompletionNotificationRead(ctx context.Context, req dto.MarkRequirementCompletionNotificationReadRequest) (dto.RequirementCompletionNotificationView, error) {
+	if !req.BizLine.Valid() {
+		return dto.RequirementCompletionNotificationView{}, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 || strings.TrimSpace(req.RequirementKey) == "" {
+		return dto.RequirementCompletionNotificationView{}, errors.New("缺少项目或需求标识")
+	}
+	if strings.TrimSpace(req.ActorID) == "" {
+		return dto.RequirementCompletionNotificationView{}, errors.New("无法识别当前用户")
+	}
+	notification, err := s.repo.FindRequirementCompletionNotification(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey, req.ActorID)
+	if err != nil {
+		return dto.RequirementCompletionNotificationView{}, translate(err)
+	}
+	if notification.NotificationReadAt == nil {
+		now := time.Now()
+		if _, err := s.repo.MarkRequirementCompletionNotificationRead(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey, req.ActorID, now); err != nil {
+			return dto.RequirementCompletionNotificationView{}, err
+		}
+		notification.NotificationReadAt = &now
+	}
+	return toRequirementCompletionNotificationView(notification), nil
+}
+
 // ---------- 需求辅助 ----------
 
 // 需求状态刻意只有三个：需求层是「这件事要不要做、做完没有」，
@@ -391,8 +469,12 @@ const (
 	RequirementStatusDropped = "dropped"
 )
 
-// scopeMine 是需求列表的默认视角：创建人 / 主负责人 / 辅助人是我。
-const scopeMine = "mine"
+const (
+	// scopeMine 是需求列表的默认视角：创建人 / 主负责人 / 辅助人是我。
+	scopeMine = "mine"
+	// scopeAssigned 是待我处理的口径：只匹配主负责人或协助人，创建人不是匹配条件。
+	scopeAssigned = "assigned"
+)
 
 const maxRequirementMembers = 20
 
@@ -714,6 +796,43 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 		CreatedAt:                &created,
 		UpdatedBy:                row.UpdatedBy,
 		UpdatedAt:                &updated,
+	}
+}
+
+// requirementCompletionNotifications 只从主负责人和辅助人派生收件人；创建人不是默认收件人。
+// 两个角色里同一人只保留一条消息，显示名优先使用主负责人里的最新值。
+func requirementCompletionNotifications(row *repository.DeliveryRequirement) []*repository.DeliveryRequirementCompletionNotification {
+	members := append(requirementMembersOf(row.OwnerIDs, row.OwnerNames), requirementMembersOf(row.AssistantIDs, row.AssistantNames)...)
+	seen := make(map[string]struct{}, len(members))
+	notifications := make([]*repository.DeliveryRequirementCompletionNotification, 0, len(members))
+	for _, member := range members {
+		id := strings.TrimSpace(member.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		name := strings.TrimSpace(member.Name)
+		if name == "" {
+			name = id
+		}
+		notifications = append(notifications, &repository.DeliveryRequirementCompletionNotification{
+			BizLine: row.BizLine, ProgramID: row.ProgramID, RequirementKey: row.RequirementKey, RequirementName: row.Name,
+			RecipientID: id, RecipientName: name,
+		})
+	}
+	return notifications
+}
+
+func toRequirementCompletionNotificationView(row *repository.DeliveryRequirementCompletionNotification) dto.RequirementCompletionNotificationView {
+	completedAt := row.CompletedAt
+	return dto.RequirementCompletionNotificationView{
+		BizLine: contract.BizLine(row.BizLine), ProgramID: row.ProgramID,
+		RequirementKey: row.RequirementKey, RequirementName: row.RequirementName,
+		RecipientID: row.RecipientID, RecipientName: row.RecipientName,
+		NotificationReadAt: row.NotificationReadAt, CompletedAt: &completedAt,
 	}
 }
 

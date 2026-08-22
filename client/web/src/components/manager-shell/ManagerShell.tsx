@@ -11,7 +11,8 @@ import {
 	ExportOutlined,
   FolderOutlined,
   GlobalOutlined,
-  IdcardOutlined,
+	IdcardOutlined,
+	InboxOutlined,
 	KeyOutlined,
 	LogoutOutlined,
   MenuOutlined,
@@ -97,6 +98,7 @@ const PAGE_TITLES: Record<string, [string, string]> = {
   "/scoring": ["评分体系", "健康分 · 执行分 · 等级反哺 · Scoring"],
   "/survival": ["投产存活反馈", "真实存活率回测 · 校准评分与流程 · Survival Loop"],
   "/delivery": ["page.delivery.title", "page.delivery.subtitle"],
+  "/my-work": ["page.myWork.title", "page.myWork.subtitle"],
   "/panorama": ["page.panorama.title", "page.panorama.subtitle"],
   "/business-lines": ["page.businessLines.title", "page.businessLines.subtitle"],
   "/programs": ["page.programs.title", "page.programs.subtitle"],
@@ -136,6 +138,7 @@ const DELIVERY_NAV_GROUP: NavGroup = {
   tone: "blue",
   icon: <span>🧭</span>,
   children: [
+    { key: "/my-work", label: "nav.myWork", icon: <InboxOutlined /> },
     { key: "/delivery", label: "nav.deliveryBoard", icon: <span>🗂️</span> },
     { key: "/panorama", label: "nav.panorama", icon: <span>🌐</span> },
   ],
@@ -258,7 +261,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	    [navEntries, t],
   );
 
-  const activePath = pathname ?? "/delivery";
+  const activePath = pathname ?? "/my-work";
   const openGroupKey = findGroupKey(activePath, navGroups);
   const [pageTitle, pageSubtitle] = PAGE_TITLES[activePath] ?? ["brand.name", "page.fallback.subtitle"];
 
@@ -713,7 +716,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
               </Space>
             </Header>
 
-            <Content className={`manager-console-content${activePath === "/delivery" ? " manager-console-content--delivery" : ""}`} style={{ padding: 20 }}>
+            <Content className={`manager-console-content${activePath === "/delivery" ? " manager-console-content--delivery" : ""}${activePath === "/my-work" ? " manager-console-content--my-work" : ""}`} style={{ padding: 20 }}>
 			  {!businessLinesLoaded ? (
 				  <div className="manager-stagger-3" style={{ display: "grid", minHeight: 240, placeItems: "center" }}><Spin /></div>
 			  ) : activeBusinessLine.id || activePath === "/business-lines" ? (

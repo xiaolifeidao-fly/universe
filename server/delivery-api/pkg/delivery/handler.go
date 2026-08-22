@@ -14,6 +14,7 @@ import (
 
 	"delivery-api/pkg/bizlines"
 	"delivery-api/pkg/boards"
+	"delivery-api/pkg/executionbatches"
 	"delivery-api/pkg/items"
 	"delivery-api/pkg/programs"
 	"delivery-api/pkg/requirements"
@@ -31,8 +32,9 @@ func NewHandler(deliveryService deliveryservice.Service, bizLineService bizline.
 		identity.NewHandler(identityService, bizLineService),
 		bizlines.NewHandler(bizLineService, identityService),
 		programs.NewHandler(deliveryService, identityService),
-		requirements.NewHandler(deliveryService),
-		items.NewHandler(deliveryService),
+		requirements.NewHandler(deliveryService, identityService),
+		items.NewHandler(deliveryService, identityService),
+		executionbatches.NewHandler(deliveryService),
 		boards.NewHandler(deliveryService),
 		snapshots.NewHandler(deliveryService),
 	}}

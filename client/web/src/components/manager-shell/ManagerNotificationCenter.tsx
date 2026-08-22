@@ -2,6 +2,7 @@
 
 import {
   BellOutlined,
+  CheckCircleOutlined,
   MessageOutlined,
   ProjectOutlined,
   ReloadOutlined,
@@ -14,7 +15,16 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { fetchDeliveryAttentionTasks, type DeliveryAttentionTask } from "@/api/delivery.api";
+import {
+  fetchDeliveryAttentionTasks,
+  fetchDeliveryExecutionBatchNotifications,
+  fetchDeliveryRequirementCompletionNotifications,
+  markDeliveryExecutionBatchNotificationRead,
+  markDeliveryRequirementCompletionNotificationRead,
+  type DeliveryAttentionTask,
+  type DeliveryExecutionBatchNotification,
+  type DeliveryRequirementCompletionNotification,
+} from "@/api/delivery.api";
 import { DELIVERY_TASKS_CHANGED_EVENT } from "@/api/deliveryTaskEvents";
 
 /** 消息中心自动刷新的间隔；任务状态是人改出来的，一分钟一次足够。 */
@@ -38,15 +48,26 @@ export function ManagerNotificationCenter() {
   const [popoverOffsetX, setPopoverOffsetX] = useState(0);
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState<DeliveryAttentionTask[]>([]);
+  const [batches, setBatches] = useState<DeliveryExecutionBatchNotification[]>([]);
+  const [completionNotifications, setCompletionNotifications] = useState<DeliveryRequirementCompletionNotification[]>([]);
 
   const refresh = useCallback(async () => {
     if (!bizLine) {
       setTasks([]);
+      setBatches([]);
+      setCompletionNotifications([]);
       return;
     }
     setLoading(true);
     try {
-      setTasks(await fetchDeliveryAttentionTasks(bizLine));
+      const [nextTasks, nextBatches, nextCompletionNotifications] = await Promise.all([
+        fetchDeliveryAttentionTasks(bizLine),
+        fetchDeliveryExecutionBatchNotifications(bizLine),
+        fetchDeliveryRequirementCompletionNotifications(bizLine),
+      ]);
+      setTasks(nextTasks);
+      setBatches(nextBatches);
+      setCompletionNotifications(nextCompletionNotifications);
     } catch {
       // 顶栏的铃铛不该因为一次拉取失败弹错误提示，保留上一次的结果即可。
     } finally {
@@ -91,7 +112,9 @@ export function ManagerNotificationCenter() {
   const counts = useMemo(() => ({
     blocked: tasks.filter((task) => task.status === "blocked").length,
     dropped: tasks.filter((task) => task.status === "dropped").length,
-  }), [tasks]);
+    unreadBatches: batches.filter((batch) => !batch.notificationReadAt).length,
+    unreadRequirements: completionNotifications.filter((notification) => !notification.notificationReadAt).length,
+  }), [batches, completionNotifications, tasks]);
 
   const goDelivery = useCallback((task: DeliveryAttentionTask, mode: FocusMode) => {
     setOpen(false);
@@ -101,6 +124,52 @@ export function ManagerNotificationCenter() {
       focusItemKey: task.itemKey,
       focusMode: mode,
       // 同一条任务连点两次也要重新聚焦，靠这个一次性令牌把两次跳转区分开。
+      focusToken: String(Date.now()),
+    });
+    router.push(`/delivery?${query.toString()}`);
+  }, [router]);
+
+  const goBatchRequirement = useCallback(async (batch: DeliveryExecutionBatchNotification) => {
+    setOpen(false);
+    // 已读只作用于完成批次；原有受阻/不做消息仍由任务当前状态决定，不会被这次点击消掉。
+    try {
+      const updated = await markDeliveryExecutionBatchNotificationRead(batch.programId, batch.batchId);
+      setBatches((current) => current.map((entry) => (
+        entry.batchId === updated.batchId && entry.programId === updated.programId
+          ? { ...entry, notificationReadAt: updated.notificationReadAt }
+          : entry
+      )));
+    } catch {
+      // 跳转本身不依赖确认成功；下次轮询会重试拉取最新已读状态。
+    }
+    const query = new URLSearchParams({
+      programId: String(batch.programId),
+      focusRequirementKey: batch.requirementKey,
+      focusMode: "requirement",
+      focusToken: String(Date.now()),
+    });
+    router.push(`/delivery?${query.toString()}`);
+  }, [router]);
+
+  const goCompletedRequirement = useCallback(async (notification: DeliveryRequirementCompletionNotification) => {
+    setOpen(false);
+    try {
+      const updated = await markDeliveryRequirementCompletionNotificationRead(
+        notification.programId,
+        notification.requirementKey,
+      );
+      setCompletionNotifications((current) => current.map((entry) => (
+        entry.programId === updated.programId && entry.requirementKey === updated.requirementKey
+          ? { ...entry, notificationReadAt: updated.notificationReadAt }
+          : entry
+      )));
+    } catch {
+      // 跳转不依赖确认成功；下次消息中心刷新时会重新取得自己的已读状态。
+    }
+    const query = new URLSearchParams({
+      programId: String(notification.programId),
+      focusRequirementKey: notification.requirementKey,
+      focusMode: "requirement",
       focusToken: String(Date.now()),
     });
     router.push(`/delivery?${query.toString()}`);
@@ -158,6 +227,93 @@ export function ManagerNotificationCenter() {
     },
   ], [goDelivery, t]);
 
+  const batchColumns = useMemo<ColumnsType<DeliveryExecutionBatchNotification>>(() => [
+    {
+      title: t("delivery.notificationCenter.requirement"),
+      dataIndex: "requirementName",
+      width: 240,
+      render: (_value, batch) => (
+        <div className="manager-notification-cell">
+          <Tooltip title={t("delivery.notificationCenter.batchOpenRequirement")}>
+            <button
+              type="button"
+              className="manager-notification-cell__link"
+              disabled={!batch.requirementKey}
+              onClick={() => void goBatchRequirement(batch)}
+            >
+              {batch.requirementName || t("delivery.notificationCenter.noRequirement")}
+            </button>
+          </Tooltip>
+          <span className="manager-notification-cell__sub">
+            <span><ProjectOutlined /> {batch.programName}</span>
+            {batch.requirementGitBranch ? <span>{batch.requirementGitBranch}</span> : null}
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t("delivery.notificationCenter.batch"),
+      dataIndex: "batchId",
+      render: (_value, batch) => (
+        <div className="manager-notification-cell">
+          <span className="manager-notification-cell__main">
+            {t(`delivery.notificationCenter.batchMode.${batch.mode}`)}
+          </span>
+          <span className="manager-notification-cell__meta">
+            <span className="manager-notification-status is-done">
+              {t("delivery.notificationCenter.batchProgress")
+                .replace("{completed}", String(batch.completedCount))
+                .replace("{total}", String(batch.itemCount))}
+            </span>
+            {!batch.notificationReadAt ? <CheckCircleOutlined className="manager-notification-batch-unread" /> : null}
+          </span>
+        </div>
+      ),
+    },
+  ], [goBatchRequirement, t]);
+
+  const completionColumns = useMemo<ColumnsType<DeliveryRequirementCompletionNotification>>(() => [
+    {
+      title: t("delivery.notificationCenter.requirement"),
+      dataIndex: "requirementName",
+      width: 240,
+      render: (_value, notification) => (
+        <div className="manager-notification-cell">
+          <Tooltip title={t("delivery.notificationCenter.requirementOpen")}>
+            <button
+              type="button"
+              className="manager-notification-cell__link"
+              disabled={!notification.requirementKey}
+              onClick={() => void goCompletedRequirement(notification)}
+            >
+              {notification.requirementName || t("delivery.notificationCenter.noRequirement")}
+            </button>
+          </Tooltip>
+          <span className="manager-notification-cell__sub">
+            <span><ProjectOutlined /> {notification.programName}</span>
+          </span>
+        </div>
+      ),
+    },
+    {
+      title: t("delivery.notificationCenter.completion"),
+      dataIndex: "requirementKey",
+      render: (_value, notification) => (
+        <div className="manager-notification-cell">
+          <span className="manager-notification-cell__main">
+            {t("delivery.notificationCenter.requirementCompleted")}
+          </span>
+          <span className="manager-notification-cell__meta">
+            <span className="manager-notification-status is-done">
+              {t("delivery.status.done")}
+            </span>
+            {!notification.notificationReadAt ? <CheckCircleOutlined className="manager-notification-batch-unread" /> : null}
+          </span>
+        </div>
+      ),
+    },
+  ], [goCompletedRequirement, t]);
+
   return (
     <Popover
       placement="bottomRight"
@@ -171,6 +327,12 @@ export function ManagerNotificationCenter() {
           <Space size={8}>
             <span className="manager-notification-head__count is-blocked">{t("delivery.notificationCenter.blocked")} {counts.blocked}</span>
             <span className="manager-notification-head__count is-dropped">{t("delivery.notificationCenter.dropped")} {counts.dropped}</span>
+            {counts.unreadBatches > 0 ? (
+              <span className="manager-notification-head__count is-done">{t("delivery.notificationCenter.unreadBatches")} {counts.unreadBatches}</span>
+            ) : null}
+            {counts.unreadRequirements > 0 ? (
+              <span className="manager-notification-head__count is-done">{t("delivery.notificationCenter.unreadRequirements")} {counts.unreadRequirements}</span>
+            ) : null}
             <Tooltip title={t("delivery.notificationCenter.refresh")}>
               <Button size="small" type="text" icon={<ReloadOutlined />} loading={loading} onClick={() => void refresh()} />
             </Tooltip>
@@ -179,27 +341,65 @@ export function ManagerNotificationCenter() {
       )}
       content={(
         <div className="manager-notification-popover">
-          {loading && tasks.length === 0 ? (
+          {loading && tasks.length === 0 && batches.length === 0 && completionNotifications.length === 0 ? (
             <div className="manager-notification-popover__loading"><Spin /></div>
-          ) : tasks.length === 0 ? (
+          ) : tasks.length === 0 && batches.length === 0 && completionNotifications.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.empty")} />
           ) : (
-            <Table
-              rowKey={(task) => `${task.programId}:${task.itemKey}`}
-              size="small"
-              tableLayout="fixed"
-              columns={columns}
-              dataSource={tasks}
-              pagination={tasks.length > 10 ? { pageSize: 10, size: "small", showSizeChanger: false } : false}
-              // 弹层整体不超过 800px 高：表头、分页之外的部分留给表体自己滚。
-              scroll={{ y: "min(640px, calc(100vh - 260px))" }}
-            />
+            <div className="manager-notification-sections">
+              <div className="manager-notification-section">
+                <div className="manager-notification-section__title">{t("delivery.notificationCenter.completedBatches")}</div>
+                {batches.length === 0 ? (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.batchEmpty")} />
+                ) : (
+                  <Table
+                    rowKey={(batch) => `${batch.programId}:${batch.batchId}`}
+                    size="small"
+                    tableLayout="fixed"
+                    columns={batchColumns}
+                    dataSource={batches}
+                    pagination={batches.length > 5 ? { pageSize: 5, size: "small", showSizeChanger: false } : false}
+                  />
+                )}
+              </div>
+              <div className="manager-notification-section">
+                <div className="manager-notification-section__title">{t("delivery.notificationCenter.completedRequirements")}</div>
+                {completionNotifications.length === 0 ? (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.requirementCompletionEmpty")} />
+                ) : (
+                  <Table
+                    rowKey={(notification) => `${notification.programId}:${notification.requirementKey}`}
+                    size="small"
+                    tableLayout="fixed"
+                    columns={completionColumns}
+                    dataSource={completionNotifications}
+                    pagination={completionNotifications.length > 5 ? { pageSize: 5, size: "small", showSizeChanger: false } : false}
+                  />
+                )}
+              </div>
+              <div className="manager-notification-section">
+                <div className="manager-notification-section__title">{t("delivery.notificationCenter.task")}</div>
+                {tasks.length === 0 ? (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.empty")} />
+                ) : (
+                  <Table
+                    rowKey={(task) => `${task.programId}:${task.itemKey}`}
+                    size="small"
+                    tableLayout="fixed"
+                    columns={columns}
+                    dataSource={tasks}
+                    pagination={tasks.length > 10 ? { pageSize: 10, size: "small", showSizeChanger: false } : false}
+                    scroll={{ y: "min(420px, calc(100vh - 420px))" }}
+                  />
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}
     >
       <span ref={anchorRef} className="manager-notification-anchor">
-        <Badge count={counts.blocked + counts.dropped} overflowCount={99} size="small">
+        <Badge count={counts.blocked + counts.dropped + counts.unreadBatches + counts.unreadRequirements} overflowCount={99} size="small">
           <Button
             className="manager-notification-button"
             icon={<BellOutlined />}

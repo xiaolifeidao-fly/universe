@@ -283,6 +283,31 @@ func TestRequirementViewReadsBackReferencedRequirements(t *testing.T) {
 	}
 }
 
+func TestRequirementCompletionNotificationsOnlyTargetOwnersAndAssistants(t *testing.T) {
+	notifications := requirementCompletionNotifications(&repository.DeliveryRequirement{
+		BizLine: "xianglong", ProgramID: 7, RequirementKey: "req-1", Name: "完成通知",
+		CreatedBy: "creator-only",
+		OwnerIDs:  ",owner,creator-as-owner,shared,", OwnerNames: "负责人,创建者兼负责人,双角色",
+		AssistantIDs: ",assistant,shared,", AssistantNames: "协助者,双角色（协助）",
+	})
+	if len(notifications) != 4 {
+		t.Fatalf("负责人和协助者去重后应各有一条提醒，实际 %#v", notifications)
+	}
+	byRecipient := make(map[string]*repository.DeliveryRequirementCompletionNotification, len(notifications))
+	for _, notification := range notifications {
+		byRecipient[notification.RecipientID] = notification
+	}
+	if _, exists := byRecipient["creator-only"]; exists {
+		t.Fatal("仅作为创建人的用户不应收到需求完成提醒")
+	}
+	if byRecipient["creator-as-owner"] == nil {
+		t.Fatal("创建者同时是负责人时，应按负责人身份收到提醒")
+	}
+	if got := byRecipient["shared"].RecipientName; got != "双角色" {
+		t.Fatalf("双角色应去重且优先采用负责人名称，实际 %q", got)
+	}
+}
+
 func TestNormalizeRequirementItemReferencesKeepsValidUniqueKeys(t *testing.T) {
 	stored, err := normalizeRequirementItemReferences([]string{" task-a ", "task-a", "task.v1", ""})
 	if err != nil || stored != ",task-a,task.v1," {
@@ -293,6 +318,28 @@ func TestNormalizeRequirementItemReferencesKeepsValidUniqueKeys(t *testing.T) {
 	}
 	if stored, err := normalizeRequirementItemReferences(nil); err != nil || stored != "" {
 		t.Fatalf("空任务关联应存成空串：%q, %v", stored, err)
+	}
+}
+
+func TestExecutionBatchStateTransitions(t *testing.T) {
+	if err := validateExecutionBatchItemTransition(ExecutionBatchItemPending, ExecutionBatchItemRunning); err != nil {
+		t.Fatalf("pending -> running should be valid: %v", err)
+	}
+	if err := validateExecutionBatchItemTransition(ExecutionBatchItemRunning, ExecutionBatchItemCompleted); err != nil {
+		t.Fatalf("running -> completed should be valid: %v", err)
+	}
+	if err := validateExecutionBatchItemTransition(ExecutionBatchItemCompleted, ExecutionBatchItemBlocked); err == nil {
+		t.Fatal("completed batch item must not become blocked")
+	}
+	if _, err := normalizeExecutionBatchMode("sequence"); err != nil {
+		t.Fatalf("sequence should be a valid execution batch mode: %v", err)
+	}
+	if _, err := normalizeExecutionBatchMode("fanout"); err == nil {
+		t.Fatal("unknown execution batch mode should fail")
+	}
+	first, second := generateExecutionBatchID(), generateExecutionBatchID()
+	if first == second || len(first) < len("batch-")+4 {
+		t.Fatalf("execution batch ids should be distinct and non-empty: %q / %q", first, second)
 	}
 }
 

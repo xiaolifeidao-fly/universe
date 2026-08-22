@@ -128,8 +128,8 @@ func (r *DeliveryRepository) MoveProgramBizLine(
 	}
 
 	for _, entity := range []any{
-		&DeliveryStage{}, &DeliveryModule{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementPlanningSession{},
-		&DeliveryItem{}, &DeliveryItemExecutionSession{}, &DeliveryItemDependency{},
+		&DeliveryStage{}, &DeliveryModule{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementCompletionNotification{}, &DeliveryRequirementPlanningSession{},
+		&DeliveryItem{}, &DeliveryItemExecutionSession{}, &DeliveryExecutionBatch{}, &DeliveryExecutionBatchItem{}, &DeliveryItemDependency{},
 		&DeliveryItemEvent{}, &DeliverySnapshot{},
 	} {
 		if err := r.Db.WithContext(ctx).Model(entity).
