@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type DeliveryTaskPlannerUpdateInstallation,
   fetchDeliveryTaskPlannerRuntimeInfo,
-  fetchDeliveryTaskPlannerRuntimeTest,
   fetchDeliveryTaskPlannerUpdate,
   installDeliveryTaskPlannerUpdate,
 } from "@/api/delivery.api";
@@ -46,16 +45,16 @@ const VISIBLE_PLUGIN_UPDATE_STATES = new Set([
 ]);
 
 export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnvironmentPreferencesModalProps) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const [useGit, setUseGit] = useState(false);
   const [environments, setEnvironments] = useState<string[]>([]);
   const [setupOpen, setSetupOpen] = useState(false);
   const [pluginInstalled, setPluginInstalled] = useState(false);
   const [pluginVersion, setPluginVersion] = useState("");
+  const [pluginUpdatedAt, setPluginUpdatedAt] = useState("");
+  const [pluginCheckedAt, setPluginCheckedAt] = useState(0);
   const [pluginStatusLoading, setPluginStatusLoading] = useState(false);
   const [pluginInstallation, setPluginInstallation] = useState<DeliveryTaskPlannerUpdateInstallation | null>(null);
-  const [runtimeTestLoading, setRuntimeTestLoading] = useState(false);
-  const [runtimeTestValue, setRuntimeTestValue] = useState("");
   const pluginInstallationRef = useRef<DeliveryTaskPlannerUpdateInstallation | null>(null);
 
   const setVisiblePluginInstallation = useCallback((installation?: DeliveryTaskPlannerUpdateInstallation | null) => {
@@ -69,9 +68,11 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
   const checkPluginRuntime = useCallback(async (showLoading = true) => {
     if (showLoading) setPluginStatusLoading(true);
     let serviceReachable = false;
+    let runtimeVersionAvailable = false;
     try {
       const info = await fetchDeliveryTaskPlannerRuntimeInfo();
       serviceReachable = true;
+      runtimeVersionAvailable = info.installed && Boolean(info.version);
       setPluginInstalled(info.installed);
       setPluginVersion(info.version);
     } catch {
@@ -82,10 +83,12 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     try {
       const update = await fetchDeliveryTaskPlannerUpdate(false);
       serviceReachable = true;
-      if (update.localVersion) {
+      if (!runtimeVersionAvailable && update.localVersion) {
         setPluginInstalled(true);
         setPluginVersion(update.localVersion);
       }
+      setPluginUpdatedAt(update.localUpdatedAt);
+      setPluginCheckedAt(update.checkedAt);
       setVisiblePluginInstallation(update.installation);
     } catch {
       if (!serviceReachable) {
@@ -112,7 +115,6 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     const saved = getLocalEnvironmentPreference();
     setUseGit(saved.useGit);
     setEnvironments(saved.environments);
-    setRuntimeTestValue("");
     void checkPluginRuntime();
   }, [checkPluginRuntime, open]);
 
@@ -128,26 +130,13 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     ? t(`programs.environment.pluginUpdate.${pluginInstallation.status}`)
     : "";
 
-  const runPluginRuntimeTest = async () => {
-    setRuntimeTestLoading(true);
-    try {
-      const result = await fetchDeliveryTaskPlannerRuntimeTest();
-      setRuntimeTestValue(result.value);
-      message.success(t("programs.environment.pluginRuntimeTestSuccess"));
-    } catch {
-      setRuntimeTestValue("");
-      message.error(t("programs.environment.pluginRuntimeTestFailed"));
-      void checkPluginRuntime();
-    } finally {
-      setRuntimeTestLoading(false);
-    }
-  };
-
   const checkPluginUpdate = async () => {
     setPluginStatusLoading(true);
     try {
+      let runtimeVersionAvailable = false;
       try {
         const info = await fetchDeliveryTaskPlannerRuntimeInfo();
+        runtimeVersionAvailable = info.installed && Boolean(info.version);
         setPluginInstalled(info.installed);
         setPluginVersion(info.version);
       } catch {
@@ -156,10 +145,12 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
       }
 
       const update = await fetchDeliveryTaskPlannerUpdate(true);
-      if (update.localVersion) {
+      if (!runtimeVersionAvailable && update.localVersion) {
         setPluginInstalled(true);
         setPluginVersion(update.localVersion);
       }
+      setPluginUpdatedAt(update.localUpdatedAt);
+      setPluginCheckedAt(update.checkedAt);
       setVisiblePluginInstallation(update.installation);
 
       const installationInProgress = update.installation
@@ -273,6 +264,18 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                   <Tag>{t("programs.environment.pluginNotInstalled")}</Tag>
                 )}
               </div>
+              <div className="local-environment-preferences__plugin-runtime">
+                <span>{t("programs.environment.pluginUpdatedAt")}</span>
+                <span className="manager-mono">
+                  {pluginUpdatedAt ? new Date(pluginUpdatedAt).toLocaleString(locale, { hour12: false }) : "-"}
+                </span>
+              </div>
+              <div className="local-environment-preferences__plugin-runtime">
+                <span>{t("programs.environment.pluginCheckedAt")}</span>
+                <span className="manager-mono">
+                  {pluginCheckedAt ? new Date(pluginCheckedAt * 1000).toLocaleString(locale, { hour12: false }) : "-"}
+                </span>
+              </div>
               {pluginInstallation ? (
                 <div className="local-environment-preferences__plugin-progress">
                   <div className="local-environment-preferences__plugin-progress-heading">
@@ -290,23 +293,6 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                         : "active"}
                   />
                 </div>
-              ) : null}
-              <div className="local-environment-preferences__runtime-test">
-                <Button
-                  size="small"
-                  icon={<ThunderboltOutlined />}
-                  loading={runtimeTestLoading}
-                  disabled={!pluginInstalled || pluginStatusLoading || Boolean(
-                    pluginInstallation && ACTIVE_PLUGIN_UPDATE_STATES.has(pluginInstallation.status),
-                  )}
-                  onClick={() => void runPluginRuntimeTest()}
-                >
-                  {t("programs.environment.pluginRuntimeTest")}
-                </Button>
-                <span>{t("programs.environment.pluginRuntimeTestHint")}</span>
-              </div>
-              {runtimeTestValue ? (
-                <code className="local-environment-preferences__runtime-value">{runtimeTestValue}</code>
               ) : null}
               <div className="local-environment-plugin-link">
                 <a href={DELIVERY_TASK_PLANNER_REPOSITORY_URL} target="_blank" rel="noreferrer">
