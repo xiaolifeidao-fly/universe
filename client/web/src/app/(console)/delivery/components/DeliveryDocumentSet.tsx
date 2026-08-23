@@ -1,6 +1,15 @@
 "use client";
 
-import { EditOutlined, ExpandOutlined, FileTextOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
+import {
+  EditOutlined,
+  ExpandOutlined,
+  ExportOutlined,
+  FileTextOutlined,
+  FullscreenExitOutlined,
+  FullscreenOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+} from "@ant-design/icons";
 import { Button, Empty, Input, Modal, Select, Spin, Tooltip, message } from "antd";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -13,6 +22,7 @@ import {
   type DeliveryDocumentScope,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
 import { SessionDocumentText } from "./DeliverySessionMessage";
 
 /**
@@ -126,6 +136,9 @@ function useDocumentSet(
 interface DocumentSetViewProps extends DeliveryDocumentSetProps {
   /** split 形态用于全屏预览：左侧文件列表，右侧预览与编辑。 */
   layout?: "panel" | "split";
+  /** 弹窗形态传进来的铺满视口开关，面板形态不显示这个按钮。 */
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 function DocumentSetView({
@@ -141,6 +154,8 @@ function DocumentSetView({
   refreshToken,
   scroll,
   layout = "panel",
+  fullscreen = false,
+  onToggleFullscreen,
 }: DocumentSetViewProps) {
   const { t } = useLocale();
   const { files, path, setPath, document, setDocument, loading, reload } = useDocumentSet(
@@ -188,6 +203,23 @@ function DocumentSetView({
     }
   };
 
+  /**
+   * 在浏览器新标签页打开这份 HTML：面板里的 iframe 受沙箱限制，
+   * 真要点交互、按浏览器自己的打印导出，还是独立标签页顺手。
+   *
+   * 走 blob 地址而不是把正文再传一次：正文已经在手里，也不必让后端多开一个能直出 HTML 的地址。
+   * 注意这个标签页跟控制台同源，只适合打开自己工作区里产出的文档。
+   */
+  const openInBrowser = () => {
+    const content = document?.content ?? "";
+    if (!content.trim()) return;
+    const url = URL.createObjectURL(new Blob([content], { type: "text/html;charset=utf-8" }));
+    const opened = window.open(url, "_blank", "noopener");
+    if (!opened) message.warning(t("delivery.docset.openBlocked"));
+    // 新标签页加载完就不再需要这个地址了，留着只会一直占内存。
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+
   if (!codexBridgeReady) {
     return (
       <section className={panelClassName}>
@@ -200,6 +232,12 @@ function DocumentSetView({
       </section>
     );
   }
+
+  // 路径本身很长，横着塞一行会被挤没：目录部分可以省略，文件名和更新时间始终看得见。
+  const lastSlash = path.lastIndexOf("/");
+  const pathDir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "";
+  const pathName = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+  const isHtml = /\.html?$/i.test(path);
 
   const actions = (
     <span className="delivery-outline-panel__actions">
@@ -239,6 +277,28 @@ function DocumentSetView({
           />
         </Tooltip>
       ) : null}
+      {isHtml && (document?.content ?? "").trim() ? (
+        <Tooltip title={t("delivery.docset.openInBrowser")}>
+          <Button
+            size="small"
+            type="text"
+            icon={<ExportOutlined />}
+            aria-label={t("delivery.docset.openInBrowser")}
+            onClick={openInBrowser}
+          />
+        </Tooltip>
+      ) : null}
+      {onToggleFullscreen && layout === "split" ? (
+        <Tooltip title={t(fullscreen ? "delivery.docset.exitFullscreen" : "delivery.docset.fullscreen")}>
+          <Button
+            size="small"
+            type="text"
+            icon={fullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+            aria-label={t(fullscreen ? "delivery.docset.exitFullscreen" : "delivery.docset.fullscreen")}
+            onClick={onToggleFullscreen}
+          />
+        </Tooltip>
+      ) : null}
       {editing ? (
         <>
           <Button
@@ -274,14 +334,17 @@ function DocumentSetView({
   ) : !files.length && fallback ? (
     // 目录里还没有文档时，保留库里沉淀的旧产物正文，老数据不会因为改成文档集就看不见。
     <>{fallback}</>
+  ) : isHtml && (document?.content ?? "").trim() ? (
+    // HTML 文档（例如原型页）按渲染结果预览，源码只在编辑态出现。
+    <DeliveryHtmlFrame
+      className="delivery-document-panel__frame"
+      title={pathName || t("delivery.docset.file")}
+      html={document?.content ?? ""}
+    />
   ) : (
     <SessionDocumentText value={document?.content ?? ""} fallback={emptyText || t("delivery.docset.empty")} />
   );
 
-  // 路径本身很长，横着塞一行会被挤没：目录部分可以省略，文件名和更新时间始终看得见。
-  const lastSlash = path.lastIndexOf("/");
-  const pathDir = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "";
-  const pathName = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
   const meta = path ? (
     <div className="delivery-document-panel__path" title={path}>
       <FileTextOutlined className="delivery-document-panel__path-icon" />
@@ -359,17 +422,32 @@ export function DeliveryDocumentSetModal({
   width = "min(1240px, calc(100vw - 32px))",
   ...props
 }: DeliveryDocumentSetProps & { open: boolean; onClose: () => void; width?: string | number }) {
+  // 大纲和任务文档经常又长又宽（表格、原型页），留一个铺满视口的开关。
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // 关掉再打开时回到常规尺寸，免得上次的全屏状态跟着下一份文档一起弹出来。
+  useEffect(() => {
+    if (!open) setFullscreen(false);
+  }, [open]);
+
   return (
     <Modal
-      className="delivery-document-set-modal"
+      className={`delivery-document-set-modal${fullscreen ? " is-fullscreen" : ""}`}
       open={open}
       title={null}
-      width={width}
+      width={fullscreen ? "100vw" : width}
       footer={null}
       destroyOnClose
       onCancel={onClose}
     >
-      {open && props.subjectKey ? <DocumentSetView {...props} layout="split" /> : null}
+      {open && props.subjectKey ? (
+        <DocumentSetView
+          {...props}
+          layout="split"
+          fullscreen={fullscreen}
+          onToggleFullscreen={() => setFullscreen((value) => !value)}
+        />
+      ) : null}
     </Modal>
   );
 }

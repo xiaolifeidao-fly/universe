@@ -26,6 +26,7 @@ import { Button, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select,
 import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
+import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   CLAUDE_EFFORTS,
@@ -1906,7 +1907,7 @@ export function DeliveryRequirementSessionModal({
                               style={{ width: "100%", margin: "12px 0" }}
                             />
                           ) : null}
-                          {selectedPrototypeFile ? <iframe title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} sandbox="" srcDoc={selectedPrototypeFile.html} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
+                          {selectedPrototypeFile ? <DeliveryHtmlFrame title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
                         </div>
                       ) : (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={prototypeGenerating ? t("delivery.prototype.generating") : t("delivery.prototype.notGenerated")} />
@@ -2024,10 +2025,9 @@ export function DeliveryRequirementSessionModal({
               />
             ) : null}
             {selectedPrototypeFile ? (
-              <iframe
+              <DeliveryHtmlFrame
                 title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
-                sandbox=""
-                srcDoc={selectedPrototypeFile.html}
+                html={selectedPrototypeFile.html}
                 style={{ width: "100%", flex: 1, minHeight: 540, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }}
               />
             ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}
