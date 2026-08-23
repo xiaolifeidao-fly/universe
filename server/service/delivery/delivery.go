@@ -31,6 +31,8 @@ type Service interface {
 	GetProgram(ctx context.Context, bizLine contract.BizLine, programID int64) (dto.ProgramView, error)
 	SaveProgram(ctx context.Context, req dto.SaveProgramRequest) error
 	SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramGitConfigRequest) (dto.ProgramView, error)
+	SaveProgramCloudSyncConfig(ctx context.Context, req dto.SaveProgramCloudSyncConfigRequest) (dto.ProgramView, error)
+	UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSyncFileRequest) (dto.CloudSyncFileView, error)
 	MigrateProgram(ctx context.Context, req dto.MigrateProgramRequest) error
 
 	// ---------- 阶段 / 模块 ----------
@@ -46,6 +48,8 @@ type Service interface {
 	ListRequirements(ctx context.Context, query dto.RequirementQuery) (dto.RequirementPage, error)
 	GetRequirement(ctx context.Context, bizLine contract.BizLine, programID int64, requirementKey string) (dto.RequirementView, error)
 	SaveRequirement(ctx context.Context, req dto.SaveRequirementRequest) (dto.RequirementView, error)
+	AssignRequirementMembers(ctx context.Context, req dto.AssignRequirementMembersRequest) (dto.RequirementView, error)
+	UpdateRequirementStatus(ctx context.Context, req dto.UpdateRequirementStatusRequest) (dto.RequirementView, error)
 	ListRequirementCompletionNotifications(ctx context.Context, query dto.RequirementCompletionNotificationQuery) ([]dto.RequirementCompletionNotificationView, error)
 	MarkRequirementCompletionNotificationRead(ctx context.Context, req dto.MarkRequirementCompletionNotificationReadRequest) (dto.RequirementCompletionNotificationView, error)
 	BindRequirementGitBranch(ctx context.Context, req dto.BindRequirementGitBranchRequest) (dto.RequirementView, error)
@@ -93,11 +97,18 @@ type Service interface {
 }
 
 type service struct {
-	repo *repository.DeliveryRepository
+	repo         *repository.DeliveryRepository
+	cloudStorage CloudObjectStorage
 }
 
-func New(database *gorm.DB) Service {
+// New 由应用装配层注入 OSS 适配器。未配置 OSS 时传 nil，只有实际同步时才返回明确错误，
+// 避免未启用云同步的本地环境因为缺少云端凭证而无法启动。
+func New(database *gorm.DB, cloudStorage ...CloudObjectStorage) Service {
 	repo := &repository.DeliveryRepository{}
 	repo.SetDb(database)
-	return &service{repo: repo}
+	var storage CloudObjectStorage
+	if len(cloudStorage) > 0 {
+		storage = cloudStorage[0]
+	}
+	return &service{repo: repo, cloudStorage: storage}
 }

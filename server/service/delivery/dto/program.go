@@ -21,8 +21,11 @@ type ProgramView struct {
 	GitRepositoryURL string           `json:"gitRepositoryUrl"`
 	GitRemoteName    string           `json:"gitRemoteName"`
 	GitBaseBranch    string           `json:"gitBaseBranch"`
-	UpdatedBy        string           `json:"updatedBy"`
-	UpdatedAt        *time.Time       `json:"updatedAt"`
+	// 云端同步配置由项目管理员维护；正文由本机桥接按类别上传到项目云端文件库。
+	CloudSyncEnabled bool       `json:"cloudSyncEnabled"`
+	CloudSyncScopes  []string   `json:"cloudSyncScopes"`
+	UpdatedBy        string     `json:"updatedBy"`
+	UpdatedAt        *time.Time `json:"updatedAt"`
 
 	// CanAdminister / CanWrite 是「当前调用者对这个项目的权限」，由 API 层按调用者身份填充。
 	// 前端据此决定按钮的显隐 —— 权限判定只有服务端说了算。
@@ -52,6 +55,39 @@ type SaveProgramGitConfigRequest struct {
 	GitBaseBranch    string           `json:"gitBaseBranch"`
 	ActorID          string           `json:"-"`
 	ActorName        string           `json:"actorName"`
+}
+
+// SaveProgramCloudSyncConfigRequest 只更新项目级云端同步策略；本机工作目录仍只保存在用户浏览器中。
+type SaveProgramCloudSyncConfigRequest struct {
+	BizLine          contract.BizLine `json:"-"`
+	ProgramID        int64            `json:"programId"`
+	CloudSyncEnabled bool             `json:"cloudSyncEnabled"`
+	CloudSyncScopes  []string         `json:"cloudSyncScopes"`
+	ActorID          string           `json:"-"`
+	ActorName        string           `json:"actorName"`
+}
+
+// UpsertCloudSyncFileRequest 是本机桥接向项目云端文件库写入一个已选择类别的文件。
+// Content 不从浏览器绑定，Handler 解码 contentBase64 后再交给 Service。
+type UpsertCloudSyncFileRequest struct {
+	BizLine      contract.BizLine `json:"-"`
+	ProgramID    int64            `json:"programId"`
+	Category     string           `json:"category"`
+	RelativePath string           `json:"relativePath"`
+	ContentType  string           `json:"contentType"`
+	Content      []byte           `json:"-"`
+	ActorID      string           `json:"-"`
+	ActorName    string           `json:"actorName"`
+}
+
+type CloudSyncFileView struct {
+	ProgramID    int64      `json:"programId"`
+	Category     string     `json:"category"`
+	RelativePath string     `json:"relativePath"`
+	ContentType  string     `json:"contentType"`
+	Size         int64      `json:"size"`
+	SHA256       string     `json:"sha256"`
+	UpdatedAt    *time.Time `json:"updatedAt"`
 }
 
 // MigrateProgramRequest 把一个项目及其交付数据完整迁移到目标业务线。

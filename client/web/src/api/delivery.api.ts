@@ -70,6 +70,11 @@ export class DeliveryProgramRecord {
   /** 新需求创建分支时优先采用的基准分支。 */
   gitBaseBranch = "";
 
+  /** 项目管理员选择后，本机桥接才会把对应类别上传到服务端云端文件库。 */
+  cloudSyncEnabled = false;
+
+  cloudSyncScopes: CloudSyncScope[] = [];
+
   updatedBy = "";
 
   updatedAt?: string;
@@ -671,6 +676,22 @@ export class CodexGitInitResult {
   status = new CodexGitWorkspaceStatus();
 }
 
+export const CLOUD_SYNC_SCOPES = ["chat", "requirement", "design"] as const;
+
+export type CloudSyncScope = (typeof CLOUD_SYNC_SCOPES)[number];
+
+export class CodexCloudSyncResult {
+  enabled = false;
+
+  scopes: CloudSyncScope[] = [];
+
+  uploaded = 0;
+
+  skipped = 0;
+
+  files: string[] = [];
+}
+
 export class CodexGitPrepareResult {
   branch = "";
 
@@ -1200,6 +1221,12 @@ export interface SaveProgramGitConfigPayload {
   gitBaseBranch?: string;
 }
 
+export interface SaveProgramCloudSyncConfigPayload {
+  programId: number;
+  cloudSyncEnabled: boolean;
+  cloudSyncScopes: CloudSyncScope[];
+}
+
 export interface MigrateProgramPayload extends SaveProgramPayload {
 	targetBizLine: BusinessLineId;
 }
@@ -1318,6 +1345,11 @@ export async function saveProgram(bizLine: BusinessLineId, payload: SaveProgramP
 
 export async function saveProgramGitConfig(payload: SaveProgramGitConfigPayload) {
   const response = await instance.post<ApiResponse<DeliveryProgramRecord>>("/delivery/program/git-config", payload);
+  return plainToInstance(DeliveryProgramRecord, unwrapApiResponse(response.data));
+}
+
+export async function saveProgramCloudSyncConfig(payload: SaveProgramCloudSyncConfigPayload) {
+  const response = await instance.post<ApiResponse<DeliveryProgramRecord>>("/delivery/program/cloud-sync-config", payload);
   return plainToInstance(DeliveryProgramRecord, unwrapApiResponse(response.data));
 }
 
@@ -1444,6 +1476,42 @@ export async function fetchRequirement(programId: number, requirementKey: string
 export async function saveRequirement(payload: SaveRequirementPayload) {
   const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/save", payload);
   const requirement = plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+  requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
+  return requirement;
+}
+
+export interface AssignRequirementMembersPayload {
+  programId: number;
+  requirementKey: string;
+  owners: RequirementMember[];
+  assistants: RequirementMember[];
+  /** 指派同样受乐观锁保护，必须带上读到的 version。 */
+  version: number;
+}
+
+/** 快速指派只改主负责人与协助人；不要用 saveRequirement 代替，那是整条覆盖。 */
+export async function assignRequirementMembers(payload: AssignRequirementMembersPayload) {
+  const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/members/assign", payload);
+  const requirement = plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  requirement.owners = plainToInstance(RequirementMember, requirement.owners ?? []);
+  requirement.assistants = plainToInstance(RequirementMember, requirement.assistants ?? []);
+  requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+  requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
+  return requirement;
+}
+
+/** 快速改状态只提交状态字段；同样受乐观锁保护。 */
+export async function updateRequirementStatus(programId: number, requirementKey: string, status: RequirementStatus, version: number) {
+  const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/status/update", {
+    programId,
+    requirementKey,
+    status,
+    version,
+  });
+  const requirement = plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  requirement.owners = plainToInstance(RequirementMember, requirement.owners ?? []);
+  requirement.assistants = plainToInstance(RequirementMember, requirement.assistants ?? []);
   requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
   requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
   return requirement;
@@ -1909,6 +1977,21 @@ export async function initializeCodexGitWorkspace(payload: {
   );
   const result = plainToInstance(CodexGitInitResult, response.data);
   result.status = plainToInstance(CodexGitWorkspaceStatus, response.data.status ?? {});
+  return result;
+}
+
+/** 按项目管理员已保存的云端同步范围，立即把当前工作目录的选中内容上传到服务端。 */
+export async function syncCodexCloudWorkspace(programId: number) {
+  const response = await instance.post<CodexCloudSyncResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/cloud-sync`,
+    bridgeWorkspaceParams(programId, { programId }),
+    { timeout: 5 * 60 * 1000 },
+  );
+  const result = plainToInstance(CodexCloudSyncResult, response.data);
+  result.scopes = (response.data.scopes ?? []).filter((scope): scope is CloudSyncScope =>
+    CLOUD_SYNC_SCOPES.includes(scope as CloudSyncScope),
+  );
+  result.files = (response.data.files ?? []).map((path) => String(path || "")).filter(Boolean);
   return result;
 }
 

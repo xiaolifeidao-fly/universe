@@ -20,7 +20,6 @@ import {
   fetchRequirements,
   fetchStages,
   patchItem,
-	prepareCodexGitBranch,
   rebuildSnapshot,
   startCodexExecutionBatch,
   startCodexExecution,
@@ -299,14 +298,38 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     void refreshRequirements();
   }, [refreshRequirements]);
 
+  /**
+   * 只刷新指定的一条需求，避免整列表重新拉取导致的闪烁与滚动位置丢失。
+   * 需求已被删除或拉取失败时静默跳过，交由列表整体刷新兜底。
+   */
+  const refreshRequirement = useCallback(async (requirementKey: string) => {
+    const key = requirementKey.trim();
+    if (!programId || !key) return;
+    try {
+      const requirement = await fetchRequirement(programId, key);
+      setRequirements((current) => {
+        const exists = current.some((item) => item.requirementKey === key);
+        if (!exists) return current;
+        return current.map((item) => (item.requirementKey === key ? requirement : item));
+      });
+    } catch {
+      // 忽略：需求可能已被删除，或列表本身会在其他时机整体刷新
+    }
+  }, [programId]);
+
   const queryAllRequirements = useCallback(() => {
     setSharedRequirementOnly(false);
     setRequirementScope("");
     setRequirementKeyword("");
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (!programId || !filters.requirementKey) {
+  /**
+   * `overrides` 用于路由跳转这类「筛选状态尚未完成下一次渲染」的场景。
+   * 这样可以按跳转目标拉取任务，避免先用旧筛选条件把右侧面板清空。
+   */
+  const refresh = useCallback(async (overrides: Partial<BoardFilters> = {}) => {
+    const nextFilters = { ...filters, ...overrides };
+    if (!programId || !nextFilters.requirementKey) {
       setBoard(EMPTY_BOARD);
       return;
     }
@@ -314,15 +337,15 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     try {
       const next = await fetchBoard({
         programId,
-        groupBy: filters.groupBy,
-        stageKey: filters.stageKey,
-        moduleKey: filters.moduleKey,
-        requirementKey: filters.requirementKey,
-		status: filters.status,
-		phase: filters.phase,
-        kind: filters.kind,
-		ownerName: filters.ownerName,
-        keyword: filters.keyword,
+        groupBy: nextFilters.groupBy,
+        stageKey: nextFilters.stageKey,
+        moduleKey: nextFilters.moduleKey,
+        requirementKey: nextFilters.requirementKey,
+		status: nextFilters.status,
+		phase: nextFilters.phase,
+        kind: nextFilters.kind,
+		ownerName: nextFilters.ownerName,
+        keyword: nextFilters.keyword,
       });
       setBoard(next);
     } catch (error) {
@@ -448,18 +471,6 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     [bizLine, configFor, programId, refresh, refreshCatalog],
   );
 
-	const prepareRequirementGitBranch = useCallback(async (
-		branch: string,
-		strategy: "switch" | "commit" | "stash",
-		commitMessage = "",
-	) => {
-		if (!selectedProgram?.gitEnabled) throw new Error("当前项目未启用 Git");
-		const result = await prepareCodexGitBranch(programId, branch, strategy, commitMessage);
-		setGitWorkspaceStatus(result.status);
-		setGitWorkspaceError("");
-		return result;
-	}, [programId, selectedProgram]);
-
   const generateTestingCases = useCallback(
     async (item: DeliveryItemRecord, testingRequirements = "") => {
       setPreparingTestCasesKey(item.itemKey);
@@ -562,6 +573,7 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     sharedRequirementOnly,
     queryAllRequirements,
     refreshRequirements,
+    refreshRequirement,
     board,
     allItems,
     filters,
@@ -588,7 +600,6 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
     snapshot,
     advancePhase,
     executeWithCodex,
-		prepareRequirementGitBranch,
     generateTestingCases,
     executeBatchWithCodex,
     executeSequenceWithCodex,

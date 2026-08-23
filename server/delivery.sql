@@ -29,8 +29,10 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
   `status`       varchar(16)  NOT NULL DEFAULT 'active',       -- active 进行中 / archived 已归档
 	`git_enabled` boolean NOT NULL DEFAULT FALSE,                 -- 是否启用项目 Git 与需求分支能力
 	`git_repository_url` varchar(512) NOT NULL DEFAULT '',        -- 可选记录的 Git 仓库地址，不校验本机远端
-  `git_remote_name` varchar(64) NOT NULL DEFAULT 'origin',      -- 远端名
+	`git_remote_name` varchar(64) NOT NULL DEFAULT 'origin',      -- 远端名
 	`git_base_branch` varchar(255) NOT NULL DEFAULT '',           -- 启用后新需求默认基准分支
+	`cloud_sync_enabled` boolean NOT NULL DEFAULT FALSE,          -- 是否启用选定内容的云端同步
+	`cloud_sync_scopes` varchar(128) NOT NULL DEFAULT '',         -- chat,requirement,design 的规范化逗号列表
   `created_by`   varchar(64)  NOT NULL,
   `updated_by`   varchar(64)  NOT NULL,
   `created_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -38,6 +40,27 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_dlv_program_code` (`biz_line`, `program_code`),
   KEY `idx_dlv_program_biz_line` (`biz_line`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
+-- 1.5 项目云端文件：由本机桥接显式上传的聊天、需求与设计文档快照
+--     正文只存私有 OSS；数据库只存项目相对路径、OSS 对象键与校验元数据。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_cloud_sync_file` (
+  `id`            bigint        NOT NULL AUTO_INCREMENT,
+  `biz_line`      varchar(32)   NOT NULL,
+  `program_id`    bigint        NOT NULL,
+  `category`      varchar(16)   NOT NULL,                       -- chat / requirement / design
+  `relative_path` varchar(1024) NOT NULL,                       -- 项目工作目录内相对路径
+  `content_type`  varchar(128)  NOT NULL,
+  `object_key`    varchar(1536) NOT NULL,                       -- 私有 OSS 对象键
+  `size`          bigint        NOT NULL,
+  `sha256`        char(64)      NOT NULL,
+  `updated_by`    varchar(64)   NOT NULL,
+  `updated_time`  timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_cloud_file` (`biz_line`, `program_id`, `category`, `relative_path`),
+  KEY `idx_dlv_cloud_file_updated` (`biz_line`, `program_id`, `category`, `updated_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------------------

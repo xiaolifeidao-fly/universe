@@ -323,6 +323,119 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 	return s.GetRequirement(ctx, req.BizLine, req.ProgramID, requirementKey)
 }
 
+// UpdateRequirementStatus 只改需求状态：需求列表、工作台的快速改状态走这里。
+// 和快速指派同理，不能复用整条保存接口，否则快速操作会顺手清掉计划起止时间这类没带上的字段。
+func (s *service) UpdateRequirementStatus(ctx context.Context, req dto.UpdateRequirementStatusRequest) (dto.RequirementView, error) {
+	if !req.BizLine.Valid() {
+		return dto.RequirementView{}, contract.ErrBizLineRequired
+	}
+	requirementKey := strings.TrimSpace(req.RequirementKey)
+	if req.ProgramID <= 0 || requirementKey == "" {
+		return dto.RequirementView{}, errors.New("缺少项目或需求标识")
+	}
+	if req.Version <= 0 {
+		return dto.RequirementView{}, errors.New("缺少版本号，请刷新后重试")
+	}
+	status, err := normalizeRequirementStatus(req.Status)
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	current, err := s.repo.FindRequirement(ctx, req.BizLine.String(), req.ProgramID, requirementKey)
+	if err != nil {
+		return dto.RequirementView{}, translate(err)
+	}
+	if current.Version != req.Version {
+		return dto.RequirementView{}, contract.ErrVersionConflict
+	}
+	if current.Status == status {
+		return toRequirementView(current), nil
+	}
+	values := map[string]any{
+		"status":     status,
+		"updated_by": actorOf(req.ActorID, req.ActorName),
+	}
+	events := []*repository.DeliveryRequirementEvent{{
+		BizLine: current.BizLine, ProgramID: current.ProgramID, RequirementKey: current.RequirementKey,
+		Kind: "field", Field: "status", FromValue: current.Status, ToValue: status,
+		ActorID: req.ActorID, ActorName: actorOf(req.ActorID, req.ActorName),
+	}}
+	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
+		affected, updateErr := tx.UpdateRequirement(ctx, current.BizLine, current.ProgramID, current.RequirementKey, req.Version, values)
+		if updateErr != nil {
+			return updateErr
+		}
+		if affected == 0 {
+			return contract.ErrVersionConflict
+		}
+		// 与整条保存一致：只有第一次进入 done 才给当前负责人、协助者发完成消息。
+		if current.Status != RequirementStatusDone && status == RequirementStatusDone {
+			if err := tx.UpsertRequirementCompletionNotifications(ctx, requirementCompletionNotifications(current)); err != nil {
+				return err
+			}
+		}
+		return tx.AppendRequirementEvents(ctx, events)
+	}); err != nil {
+		return dto.RequirementView{}, err
+	}
+	return s.GetRequirement(ctx, req.BizLine, req.ProgramID, requirementKey)
+}
+
+// AssignRequirementMembers 只改主负责人与辅助人：需求列表、工作台的快速指派走这里。
+// 不复用 SaveRequirement 是因为那是整条覆盖，快速指派拿不到详情、计划时间等字段，
+// 一旦复用就会把没带上的字段清空。仍然要求带 version，指派同样属于需要防覆盖的编辑。
+func (s *service) AssignRequirementMembers(ctx context.Context, req dto.AssignRequirementMembersRequest) (dto.RequirementView, error) {
+	if !req.BizLine.Valid() {
+		return dto.RequirementView{}, contract.ErrBizLineRequired
+	}
+	requirementKey := strings.TrimSpace(req.RequirementKey)
+	if req.ProgramID <= 0 || requirementKey == "" {
+		return dto.RequirementView{}, errors.New("缺少项目或需求标识")
+	}
+	if req.Version <= 0 {
+		return dto.RequirementView{}, errors.New("缺少版本号，请刷新后重试")
+	}
+	ownerIDs, ownerNames, err := normalizeRequirementMembers(req.Owners, "主负责人")
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	assistantIDs, assistantNames, err := normalizeRequirementMembers(req.Assistants, "辅助人")
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	current, err := s.repo.FindRequirement(ctx, req.BizLine.String(), req.ProgramID, requirementKey)
+	if err != nil {
+		return dto.RequirementView{}, translate(err)
+	}
+	if current.Version != req.Version {
+		return dto.RequirementView{}, contract.ErrVersionConflict
+	}
+	if current.OwnerIDs == ownerIDs && current.OwnerNames == ownerNames &&
+		current.AssistantIDs == assistantIDs && current.AssistantNames == assistantNames {
+		return toRequirementView(current), nil
+	}
+	values := map[string]any{
+		"owner_ids":       ownerIDs,
+		"owner_names":     ownerNames,
+		"assistant_ids":   assistantIDs,
+		"assistant_names": assistantNames,
+		"updated_by":      actorOf(req.ActorID, req.ActorName),
+	}
+	events := requirementMemberChangeEvents(current, ownerNames, assistantNames, req.ActorID, req.ActorName)
+	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
+		affected, updateErr := tx.UpdateRequirement(ctx, current.BizLine, current.ProgramID, current.RequirementKey, req.Version, values)
+		if updateErr != nil {
+			return updateErr
+		}
+		if affected == 0 {
+			return contract.ErrVersionConflict
+		}
+		return tx.AppendRequirementEvents(ctx, events)
+	}); err != nil {
+		return dto.RequirementView{}, err
+	}
+	return s.GetRequirement(ctx, req.BizLine, req.ProgramID, requirementKey)
+}
+
 // BindRequirementGitBranch 由浏览器在本机桥接确认创建成功后调用；服务端只记录关联结果。
 func (s *service) BindRequirementGitBranch(ctx context.Context, req dto.BindRequirementGitBranchRequest) (dto.RequirementView, error) {
 	if !req.BizLine.Valid() {
@@ -876,6 +989,23 @@ func requirementChangeEvents(
 	record("stageKey", current.StageKey, stageKey)
 	record("moduleKey", current.ModuleKey, moduleKey)
 	record("kind", normalizeKind(current.Kind), kind)
+	record("owners", current.OwnerNames, ownerNames)
+	record("assistants", current.AssistantNames, assistantNames)
+	return events
+}
+
+func requirementMemberChangeEvents(current *repository.DeliveryRequirement, ownerNames, assistantNames, actorID, actorName string) []*repository.DeliveryRequirementEvent {
+	events := make([]*repository.DeliveryRequirementEvent, 0, 2)
+	record := func(field, from, to string) {
+		if from == to {
+			return
+		}
+		events = append(events, &repository.DeliveryRequirementEvent{
+			BizLine: current.BizLine, ProgramID: current.ProgramID, RequirementKey: current.RequirementKey,
+			Kind: "field", Field: field, FromValue: requirementTimelineValue(from), ToValue: requirementTimelineValue(to),
+			ActorID: actorID, ActorName: actorOf(actorID, actorName),
+		})
+	}
 	record("owners", current.OwnerNames, ownerNames)
 	record("assistants", current.AssistantNames, assistantNames)
 	return events

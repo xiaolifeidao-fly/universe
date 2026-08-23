@@ -4833,6 +4833,11 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-requirement-git-push label { display: grid; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); }
 .delivery-requirement-git-push small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: 1.6; }
 
+/* 需求负责人快速指派弹窗：只有两个选人框，沿用需求表单的标签排版。 */
+.delivery-requirement-assign { display: grid; gap: 14px; }
+.delivery-requirement-assign label { display: grid; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); }
+.delivery-requirement-assign__target { margin: 0; color: var(--manager-text); font-size: var(--manager-fs-sm); font-weight: 600; line-height: 1.6; }
+
 /* 预设环境的会话记录占据剩余空间，环境概览和操作条不会被持续输出顶走。 */
 .program-environment-setup-transcript {
 	min-height: 0;
@@ -5951,98 +5956,250 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 }
 
 /* 工作台：当前空间内的需求卡片。不复用看板任务卡，避免把任务阶段误展示成需求状态。 */
-.my-work-stats {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 16px;
-	padding: 14px 18px;
+.my-work-hero {
+	display: grid;
+	gap: 14px;
+	padding: 16px 18px 14px;
 	border: 1px solid var(--manager-border);
 	border-radius: var(--manager-r-lg);
 	background:
-		linear-gradient(180deg, var(--manager-surface) 0%, color-mix(in srgb, var(--manager-bg-soft) 60%, var(--manager-surface)) 100%);
+		linear-gradient(180deg, var(--manager-surface) 0%, color-mix(in srgb, var(--manager-bg-soft) 55%, var(--manager-surface)) 100%);
 	box-shadow: var(--manager-shadow-sm);
 }
 
-.my-work-stats__figures {
+.my-work-hero__top {
 	display: flex;
-	align-items: stretch;
+	align-items: center;
 	flex-wrap: wrap;
-	min-width: 0;
+	gap: 12px 16px;
 }
 
-/* 数字在上、标签在下；分隔用一根发丝线，不做成一排灰色方块。 */
-.my-work-stat {
+.my-work-hero__lead {
 	display: grid;
-	gap: 3px;
-	min-width: 88px;
-	padding: 0 20px;
-	border-left: 1px solid var(--manager-border);
+	min-width: 0;
+	gap: 8px;
 }
 
-.my-work-stat:first-child {
-	padding-left: 0;
-	border-left: 0;
-}
-
-.my-work-stat b {
+.my-work-hero__space {
+	display: inline-flex;
+	min-width: 0;
+	width: fit-content;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 10px;
+	border: 1px solid color-mix(in srgb, var(--manager-primary) 18%, var(--manager-border));
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-primary) 7%, var(--manager-surface));
+	overflow: hidden;
 	color: var(--manager-text);
-	font-size: 24px;
+	font-size: var(--manager-fs-xs);
 	font-weight: 600;
-	line-height: 1.05;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.my-work-hero__space .anticon { color: var(--manager-primary); font-size: 12px; }
+.my-work-hero__space code { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); font-weight: 500; letter-spacing: .04em; }
+
+/* 总量做成一句话，而不是一排等宽方块：数字大、单位小，读起来像句子。 */
+.my-work-hero__summary {
+	display: flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin: 0;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+}
+
+.my-work-hero__summary b {
+	color: var(--manager-text);
+	font-size: 22px;
+	font-weight: 650;
+	line-height: 1.1;
 	letter-spacing: -.02em;
 	font-variant-numeric: tabular-nums;
 }
 
-.my-work-stat.is-primary b { color: var(--manager-primary); }
+.my-work-hero__summary b:first-child { color: var(--manager-primary); }
 
-.my-work-stat span {
-	color: var(--manager-text-faint);
-	font-size: var(--manager-fs-micro);
-	letter-spacing: .06em;
-	text-transform: uppercase;
+.my-work-hero__summary em {
+	width: 1px;
+	height: 12px;
+	margin: 0 4px;
+	background: var(--manager-border);
 }
 
-.my-work-stats__tools {
+.my-work-hero__tools {
 	display: flex;
 	min-width: 0;
 	align-items: center;
 	flex-wrap: wrap;
-	gap: 10px;
+	gap: 8px;
 	margin-left: auto;
 }
 
-.my-work-stats__space {
+.my-work-hero__tools .ant-segmented {
+	padding: 2px;
+	border: 1px solid var(--manager-border);
+	background: var(--manager-surface);
+}
+
+.my-work-hero__refresh.ant-btn { color: var(--manager-text-faint); }
+
+.my-work-hero__refresh.ant-btn:hover {
+	color: var(--manager-primary) !important;
+	background: var(--manager-primary-light) !important;
+}
+
+/* 身份筛选：统计与切换合二为一，按内容宽度排成一行小胶囊，不占满整行。 */
+.my-work-roles {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.my-work-role {
 	display: inline-flex;
-	min-width: 0;
 	align-items: center;
 	gap: 6px;
 	padding: 4px 10px;
 	border: 1px solid var(--manager-border);
 	border-radius: 999px;
 	background: var(--manager-surface);
-	overflow: hidden;
 	color: var(--manager-text-soft);
+	font: inherit;
 	font-size: var(--manager-fs-xs);
-	text-overflow: ellipsis;
+	line-height: 20px;
 	white-space: nowrap;
+	cursor: pointer;
+	transition: border-color var(--manager-t), background var(--manager-t), color var(--manager-t);
 }
 
-.my-work-stats__space .anticon { color: var(--manager-primary); font-size: 12px; }
-.my-work-stats__space code { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); letter-spacing: .04em; }
+.my-work-role b {
+	min-width: 18px;
+	padding: 0 5px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-text-faint) 12%, transparent);
+	color: var(--manager-text);
+	font-size: var(--manager-fs-micro);
+	font-weight: 650;
+	line-height: 16px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	order: 1;
+}
 
-.my-work-stats .ant-segmented {
-	padding: 2px;
+.my-work-role span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.my-work-role:hover {
+	border-color: color-mix(in srgb, var(--manager-primary) 28%, var(--manager-border));
+	color: var(--manager-text);
+}
+
+.my-work-role.is-active {
+	border-color: color-mix(in srgb, var(--manager-primary) 38%, var(--manager-border));
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+	font-weight: 600;
+}
+
+.my-work-role.is-active b {
+	background: color-mix(in srgb, var(--manager-primary) 16%, transparent);
+	color: var(--manager-primary);
+}
+
+/* 筛选行：项目下拉 + 关键词搜索，样式统一成和身份胶囊同一族的圆角控件。 */
+.my-work-filters {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.my-work-filters__program.ant-select,
+.my-work-filters__search.ant-input-affix-wrapper {
+	height: 32px;
+}
+
+.my-work-filters__program.ant-select { min-width: 190px; }
+
+.my-work-filters__program.ant-select .ant-select-selector {
+	height: 32px;
+	padding: 0 12px;
 	border: 1px solid var(--manager-border);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-bg-soft) 60%, var(--manager-surface));
+	box-shadow: none;
+	transition: border-color var(--manager-t), background var(--manager-t), box-shadow var(--manager-t);
+}
+
+.my-work-filters__program.ant-select .ant-select-selection-item,
+.my-work-filters__program.ant-select .ant-select-selection-search-input,
+.my-work-filters__program.ant-select .ant-select-selection-placeholder {
+	height: 30px;
+	color: var(--manager-text);
+	font-size: var(--manager-fs-xs);
+	line-height: 30px;
+}
+
+.my-work-filters__program.ant-select .ant-select-arrow {
+	color: var(--manager-text-faint);
+	font-size: 12px;
+	transition: color var(--manager-t);
+}
+
+.my-work-filters__program.ant-select:hover .ant-select-selector,
+.my-work-filters__search.ant-input-affix-wrapper:hover {
+	border-color: color-mix(in srgb, var(--manager-primary) 34%, var(--manager-border));
 	background: var(--manager-surface);
 }
 
-.my-work-stats__refresh.ant-btn { color: var(--manager-text-faint); }
-
-.my-work-stats__refresh.ant-btn:hover {
-	color: var(--manager-primary) !important;
-	background: var(--manager-primary-light) !important;
+.my-work-filters__program.ant-select-focused .ant-select-selector,
+.my-work-filters__search.ant-input-affix-wrapper-focused {
+	border-color: var(--manager-primary) !important;
+	background: var(--manager-surface);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--manager-primary) 12%, transparent) !important;
 }
+
+.my-work-filters__program.ant-select-focused .ant-select-arrow { color: var(--manager-primary); }
+
+.my-work-filters__dropdown .ant-select-item {
+	border-radius: var(--manager-r-sm);
+	font-size: var(--manager-fs-xs);
+}
+
+.my-work-filters__dropdown .ant-select-item-option-selected {
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+	font-weight: 600;
+}
+
+.my-work-filters__search.ant-input-affix-wrapper {
+	width: 240px;
+	padding: 0 12px;
+	border: 1px solid var(--manager-border);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-bg-soft) 60%, var(--manager-surface));
+	transition: border-color var(--manager-t), background var(--manager-t), box-shadow var(--manager-t);
+}
+
+.my-work-filters__search.ant-input-affix-wrapper .ant-input {
+	background: transparent;
+	color: var(--manager-text);
+	font-size: var(--manager-fs-xs);
+}
+
+.my-work-filters__search .ant-input-prefix { margin-inline-end: 8px; }
+.my-work-filters__search .ant-input-prefix .anticon { color: var(--manager-text-faint); font-size: 13px; }
+.my-work-filters__search.ant-input-affix-wrapper-focused .ant-input-prefix .anticon { color: var(--manager-primary); }
+.my-work-filters__search .ant-input-clear-icon { color: var(--manager-text-faint); }
+.my-work-filters__search .ant-input-clear-icon:hover { color: var(--manager-text-soft); }
 
 .my-work-loading,
 .my-work-empty {
@@ -6056,7 +6213,9 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 .my-work-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+	/* 同排卡片等高：内容多少不同也在同一条底线收尾。 */
+	align-items: stretch;
 	gap: 14px;
 }
 
@@ -6142,6 +6301,15 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .my-work-chip.is-open {
 	background: var(--manager-primary-light);
 	color: var(--manager-primary);
+}
+
+.my-work-chip.is-role {
+	max-width: 150px;
+	overflow: hidden;
+	border: 1px solid color-mix(in srgb, var(--manager-cyan) 18%, transparent);
+	background: color-mix(in srgb, var(--manager-cyan) 10%, transparent);
+	color: var(--manager-cyan);
+	text-overflow: ellipsis;
 }
 
 .my-work-chip.is-success {
@@ -6244,7 +6412,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	align-items: center;
 	flex-wrap: wrap;
 	gap: 5px 14px;
-	/* 顶到底部，同一行里高矮不一的卡片在事实区和操作区对齐。 */
+	/* 顶到底部，同一行里内容高矮不一的卡片在事实区和操作区对齐。 */
 	margin: 12px 0 0;
 	margin-top: auto;
 	padding-top: 11px;
@@ -6281,19 +6449,26 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	white-space: nowrap;
 }
 
-/* 操作按钮平时压到 55% 透明度，鼠标进入卡片才完全显影。 */
+/* 操作区保留两个轻量工具入口，主跳转用带文字的链接，避免只剩一排难辨认的图标。 */
 .my-work-card__actions {
 	display: flex;
 	align-items: center;
-	justify-content: flex-end;
-	gap: 2px;
+	justify-content: space-between;
+	/* 卡片窄的时候动作条会比一行长：允许换行，别把「跳转看板」挤出可视区。 */
+	flex-wrap: wrap;
+	gap: 8px;
 	margin: 8px -8px -4px 0;
-	opacity: .55;
-	transition: opacity var(--manager-t);
 }
 
-.my-work-card:hover .my-work-card__actions,
-.my-work-card:focus-within .my-work-card__actions { opacity: 1; }
+.my-work-card__utility-actions {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 2px;
+	border: 1px solid color-mix(in srgb, var(--manager-border) 72%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-bg-soft) 70%, var(--manager-surface));
+}
 
 .my-work-card__actions .ant-btn-text {
 	color: var(--manager-text-faint);
@@ -6304,10 +6479,30 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	background: var(--manager-primary-light) !important;
 }
 
+.my-work-card__board-link.ant-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	height: 26px;
+	padding: 0 9px;
+	border-radius: 999px;
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+	font-size: var(--manager-fs-xs);
+	font-weight: 650;
+}
+
+.my-work-card__board-link.ant-btn:hover {
+	background: color-mix(in srgb, var(--manager-primary) 18%, transparent) !important;
+	color: var(--manager-primary-hover) !important;
+}
+
 @media (max-width: 640px) {
 	.my-work-grid { grid-template-columns: minmax(0, 1fr); }
-	.my-work-stats { gap: 12px; padding: 12px 14px; }
-	.my-work-stats__tools { margin-left: 0; }
-	.my-work-stat { min-width: 76px; padding: 0 14px; }
-	.my-work-stat b { font-size: 20px; }
+	.my-work-hero { gap: 12px; padding: 12px 14px; }
+	.my-work-hero__tools { margin-left: 0; }
+	.my-work-hero__summary b { font-size: 20px; }
+	.my-work-roles { width: 100%; }
+	.my-work-filters__program.ant-select,
+	.my-work-filters__search.ant-input-affix-wrapper { flex: 1 1 140px; width: auto; min-width: 0; }
 }

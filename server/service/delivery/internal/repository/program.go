@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -109,6 +110,51 @@ func (r *DeliveryRepository) SaveProgramGitConfig(ctx context.Context, bizLine s
 	return &row, nil
 }
 
+// SaveProgramCloudSyncConfig 单独更新项目云端同步策略，避免覆盖项目正文和 Git 设置。
+func (r *DeliveryRepository) SaveProgramCloudSyncConfig(ctx context.Context, bizLine string, programID int64, values map[string]any) (*DeliveryProgram, error) {
+	var row DeliveryProgram
+	if err := r.Db.WithContext(ctx).Model(&DeliveryProgram{}).
+		Where("biz_line = ? AND id = ?", bizLine, programID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	if err := r.Db.WithContext(ctx).Model(&DeliveryProgram{}).
+		Where("biz_line = ? AND id = ?", bizLine, programID).Updates(values).Error; err != nil {
+		return nil, err
+	}
+	if err := r.Db.WithContext(ctx).Model(&DeliveryProgram{}).
+		Where("biz_line = ? AND id = ?", bizLine, programID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// UpsertCloudSyncFile 以项目、类别和相对路径作为稳定文件键，保留最后一次本机同步的快照。
+func (r *DeliveryRepository) UpsertCloudSyncFile(ctx context.Context, row *DeliveryCloudSyncFile) (*DeliveryCloudSyncFile, error) {
+	var existing DeliveryCloudSyncFile
+	err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).
+		Where("biz_line = ? AND program_id = ? AND category = ? AND relative_path = ?", row.BizLine, row.ProgramID, row.Category, row.RelativePath).
+		First(&existing).Error
+	if err == nil {
+		if err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).Where("id = ?", existing.Id).Updates(map[string]any{
+			"content_type": row.ContentType, "object_key": row.ObjectKey, "size": row.Size, "sha256": row.SHA256,
+			"updated_by": row.UpdatedBy, "updated_time": row.UpdatedTime,
+		}).Error; err != nil {
+			return nil, err
+		}
+		if err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).Where("id = ?", existing.Id).First(&existing).Error; err != nil {
+			return nil, err
+		}
+		return &existing, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if err := r.Db.WithContext(ctx).Create(row).Error; err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
 // MoveProgramBizLine 迁移项目及其全部交付数据。调用方必须包在同一事务中，
 // 这样任一表的唯一键冲突都会让整次迁移回滚。
 func (r *DeliveryRepository) MoveProgramBizLine(
@@ -128,7 +174,7 @@ func (r *DeliveryRepository) MoveProgramBizLine(
 	}
 
 	for _, entity := range []any{
-		&DeliveryStage{}, &DeliveryModule{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementCompletionNotification{}, &DeliveryRequirementPlanningSession{},
+		&DeliveryCloudSyncFile{}, &DeliveryStage{}, &DeliveryModule{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementCompletionNotification{}, &DeliveryRequirementPlanningSession{},
 		&DeliveryItem{}, &DeliveryItemExecutionSession{}, &DeliveryExecutionBatch{}, &DeliveryExecutionBatchItem{}, &DeliveryItemDependency{},
 		&DeliveryItemEvent{}, &DeliverySnapshot{},
 	} {

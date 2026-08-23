@@ -28,6 +28,8 @@ type DeliveryProgram struct {
 	GitRepositoryURL string `gorm:"column:git_repository_url;type:varchar(512)" description:"项目可选记录的 Git 仓库地址，仅供成员查看"`
 	GitRemoteName    string `gorm:"column:git_remote_name;type:varchar(64);default:'origin'" description:"用于校验和拉取的 Git 远端名称，默认 origin"`
 	GitBaseBranch    string `gorm:"column:git_base_branch;type:varchar(255)" description:"项目启用 Git 后的新需求默认基准分支"`
+	CloudSyncEnabled bool   `gorm:"column:cloud_sync_enabled;default:false" description:"是否将所选项目内容同步至服务端云端文件库"`
+	CloudSyncScopes  string `gorm:"column:cloud_sync_scopes;type:varchar(128)" description:"同步类别的规范化逗号列表：chat/requirement/design"`
 
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人"`
 	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`
@@ -37,6 +39,26 @@ type DeliveryProgram struct {
 
 func (d *DeliveryProgram) TableName() string { return "zt_delivery_program" }
 func (d *DeliveryProgram) Init()             {}
+
+// DeliveryCloudSyncFile 是项目工作目录中被明确选中同步到服务端的文件快照。
+// 相对路径而不是本机绝对路径，保证不同成员机器之间不会泄露目录结构。
+type DeliveryCloudSyncFile struct {
+	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_cloud_file,priority:1;index:idx_dlv_cloud_file_updated,priority:1" description:"业务线"`
+
+	ProgramID    int64     `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2" description:"所属项目"`
+	Category     string    `gorm:"column:category;type:varchar(16);uniqueIndex:uk_dlv_cloud_file,priority:3;index:idx_dlv_cloud_file_updated,priority:3" description:"同步类别：chat/requirement/design"`
+	RelativePath string    `gorm:"column:relative_path;type:varchar(1024);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"项目工作目录内的相对路径"`
+	ContentType  string    `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
+	ObjectKey    string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
+	Size         int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
+	SHA256       string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
+	UpdatedBy    string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
+	UpdatedTime  time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
+}
+
+func (d *DeliveryCloudSyncFile) TableName() string { return "zt_delivery_cloud_sync_file" }
+func (d *DeliveryCloudSyncFile) Init()             {}
 
 // DeliveryStage 推进阶段，对应原型 stages[]（现状 / 第一步 / 第二步 / 第三步 / 终局）。
 //

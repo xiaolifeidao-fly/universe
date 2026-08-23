@@ -2,6 +2,7 @@
 package programs
 
 import (
+	"encoding/base64"
 	"errors"
 	"strconv"
 
@@ -31,6 +32,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api := group.Group("/delivery", httpx.RequireUser())
 	api.POST("/program/save", h.saveProgram)
 	api.POST("/program/git-config", h.saveGitConfig)
+	api.POST("/program/cloud-sync-config", h.saveCloudSyncConfig)
+	api.POST("/cloud-sync/file", h.syncCloudFile)
 	api.POST("/program/migrate", h.migrateProgram)
 	api.POST("/stage/save", h.saveStage)
 	api.POST("/stage/delete", h.deleteStage)
@@ -124,6 +127,54 @@ func (h *Handler) saveGitConfig(context *gin.Context) {
 		view.CanAdminister = true
 		view.CanWrite = true
 	}
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) saveCloudSyncConfig(context *gin.Context) {
+	var req deliverydto.SaveProgramCloudSyncConfigRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveManagedProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.SaveProgramCloudSyncConfig(context.Request.Context(), req)
+	if err == nil {
+		view.CanAdminister = true
+		view.CanWrite = true
+	}
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) syncCloudFile(context *gin.Context) {
+	var raw struct {
+		deliverydto.UpsertCloudSyncFileRequest
+		ContentBase64 string `json:"contentBase64"`
+	}
+	if err := context.ShouldBindJSON(&raw); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, raw.ProgramID, &raw.BizLine) {
+		return
+	}
+	if !h.requireProgramWriter(context, raw.BizLine, raw.ProgramID) {
+		return
+	}
+	if len(raw.ContentBase64) > 12*1024*1024 {
+		httpx.Fail(context, "云端同步文件不能超过 8MB")
+		return
+	}
+	content, err := base64.StdEncoding.DecodeString(raw.ContentBase64)
+	if err != nil {
+		httpx.Fail(context, "云端同步正文不是有效 Base64")
+		return
+	}
+	raw.Content = content
+	raw.ActorID = httpx.CallerID(context)
+	view, err := h.service.UpsertCloudSyncFile(context.Request.Context(), raw.UpsertCloudSyncFileRequest)
 	httpx.JSON(context, view, err)
 }
 

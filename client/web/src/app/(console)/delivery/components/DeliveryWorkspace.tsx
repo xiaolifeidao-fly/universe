@@ -23,13 +23,12 @@ import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { getAuthUser } from "@/utils/auth";
 import {
 	DELIVERY_KINDS,
-	bindRequirementGitBranch,
 	DELIVERY_PHASES,
   DELIVERY_STATUSES,
   STATUS_COLORS,
   deleteRequirement,
 	fetchProgramMembers,
-  saveRequirement,
+  updateRequirementStatus,
   type BoardGroupBy,
   type DeliveryItemRecord,
   type DeliveryKind,
@@ -47,6 +46,8 @@ import { DeliveryTaskSessionModal } from "./DeliveryTaskSessionModal";
 import { DeliveryRequirementOutlineModal } from "./DeliveryTaskOutline";
 import { DeliveryTaskDocumentModal } from "./DeliveryTaskDocument";
 import { DeliveryRequirementList } from "./DeliveryRequirementList";
+import { DeliveryRequirementAssignModal } from "./DeliveryRequirementAssignModal";
+import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
 import { DeliveryOnboardingGuide } from "./DeliveryOnboardingGuide";
@@ -90,6 +91,10 @@ export function DeliveryWorkspace() {
   const focusFresh = focusToken > 0 && Date.now() - focusToken < FOCUS_TOKEN_TTL_MS;
   const focusTarget = focusItemKey || focusRequirementKey;
   const focusSignature = focusTarget && focusFresh ? `${focusToken}:${sharedProgramId}:${focusTarget}` : "";
+  // 工作台发起新需求时复用同一套时效令牌，避免用户刷新旧地址后反复弹出空白编辑器。
+  const newRequirementToken = Number(searchParams?.get("newRequirementToken")) || 0;
+  const newRequirementFresh = newRequirementToken > 0 && Date.now() - newRequirementToken < FOCUS_TOKEN_TTL_MS;
+  const newRequirementSignature = newRequirementFresh && sharedProgramId ? `${newRequirementToken}:${sharedProgramId}` : "";
 
   // 分享链接明确写入业务线和项目，打开时不受接收者本地记忆的上下文影响。
   useEffect(() => {
@@ -116,6 +121,7 @@ export function DeliveryWorkspace() {
     sharedRequirementOnly,
     queryAllRequirements,
     refreshRequirements,
+    refreshRequirement,
     board,
     allItems,
     filters,
@@ -137,7 +143,6 @@ export function DeliveryWorkspace() {
     remove,
     advancePhase,
     executeWithCodex,
-		prepareRequirementGitBranch,
     executeBatchWithCodex,
     executeSequenceWithCodex,
     stageName,
@@ -162,14 +167,13 @@ export function DeliveryWorkspace() {
   const [outlineRequirement, setOutlineRequirement] = useState<DeliveryRequirementRecord | null>(null);
   const [startTaskTestingCases, setStartTaskTestingCases] = useState(false);
   const [planningOpen, setPlanningOpen] = useState(false);
+  // 快速指派用独立弹窗，不复用需求编辑窗口，避免为了改个负责人整条需求都进编辑态。
+  const [assigningRequirement, setAssigningRequirement] = useState<DeliveryRequirementRecord | null>(null);
   // 新增需求时为 null，编辑需求时是那条需求；两种情况共用同一个弹窗。
   const [editingRequirement, setEditingRequirement] = useState<DeliveryRequirementRecord | null>(null);
   const [startRequirementTesting, setStartRequirementTesting] = useState(false);
 	const [timelineRequirement, setTimelineRequirement] = useState<DeliveryRequirementRecord | null>(null);
 	const [gitRequirement, setGitRequirement] = useState<DeliveryRequirementRecord | null>(null);
-	const [gitPrepareStrategy, setGitPrepareStrategy] = useState<"switch" | "commit" | "stash">("switch");
-	const [gitCommitMessage, setGitCommitMessage] = useState("");
-	const [gitPreparing, setGitPreparing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftModule, setDraftModule] = useState("");
@@ -186,9 +190,12 @@ export function DeliveryWorkspace() {
   // 消息中心定位的任务：高亮 + 滚动到可视区，滚一次就够，不随后续渲染反复跳。
   const [focusedItemKey, setFocusedItemKey] = useState("");
   const appliedFocusRef = useRef("");
+  const appliedNewRequirementRef = useRef("");
   // 待落地的定位放在 state 里而不是 ref：任务目录或需求列表可能本来就是现成的，
   // 用 ref 存的话这两个 effect 不会因为「有活要干」而重跑，弹窗就永远打不开。
   const [pendingFocus, setPendingFocus] = useState<{ itemKey: string; mode: FocusMode } | null>(null);
+  // 跳转过来只带了需求：还要等需求清单到位，才知道它的起始阶段该落在哪个阶段页。
+  const [pendingPhaseRequirementKey, setPendingPhaseRequirementKey] = useState("");
   const [pendingRequirementFocus, setPendingRequirementFocus] = useState<{
     requirementKey: string;
     action: "requirement" | "outline";
@@ -609,6 +616,18 @@ export function DeliveryWorkspace() {
     await Promise.all([refresh(), refreshProjectStructure(), refreshRequirements()]);
   }, [refresh, refreshProjectStructure, refreshRequirements]);
 
+  /**
+   * 需求创建/编辑窗口关闭后，刷新这条需求本身与右侧任务面板：
+   * 弹窗里可能改过需求属性、写入或调整任务，关闭时需要让列表和看板跟上。
+   */
+  const handleRequirementModalClosed = useCallback(async () => {
+    const requirementKey = editingRequirement?.requirementKey;
+    await Promise.all([
+      requirementKey ? refreshRequirement(requirementKey) : refreshRequirements(),
+      refresh(),
+    ]);
+  }, [editingRequirement?.requirementKey, refresh, refreshRequirement, refreshRequirements]);
+
   // 需求的起始阶段是任务面板的权威筛选起点。选中需求时一并切换，
   // 简易模式的任务便会直接落在「动作执行」，不再停留在默认的「梳理需求」。
   const handleRequirementSelect = useCallback((requirementKey: string) => {
@@ -634,6 +653,12 @@ export function DeliveryWorkspace() {
     if (!programId || (sharedProgramId && programId !== sharedProgramId)) return;
     appliedFocusRef.current = focusSignature;
     setPendingFocus(focusItemKey ? { itemKey: focusItemKey, mode: focusMode } : null);
+    // 带任务的跳转由 pendingFocus 按任务自身阶段切页，这里只管「只给了需求」的情况。
+    // 需求清单已经在手上就直接取起始阶段，只有还没加载到才挂起等下面那个 effect 补。
+    const focusedRequirement = focusItemKey || !focusRequirementKey
+      ? undefined
+      : requirements.find((record) => record.requirementKey === focusRequirementKey);
+    setPendingPhaseRequirementKey(!focusItemKey && focusRequirementKey && !focusedRequirement ? focusRequirementKey : "");
     setPendingRequirementFocus(
       focusRequirementKey && (focusMode === "requirement" || focusMode === "outline")
         ? { requirementKey: focusRequirementKey, action: focusMode }
@@ -646,11 +671,15 @@ export function DeliveryWorkspace() {
     setSelectedItemKeys([]);
     // 左侧列表可能还停在「只看我的」或某个关键词上，先恢复全量，跳过来的需求才一定在列表里。
     queryAllRequirements();
+    // 需求和阶段一次性设进筛选条件：拉取任务的副作用只会因此跑一遍，
+    // 不再出现「先按默认阶段拉一次、切完阶段又拉一次」的双重刷新。
     if (focusRequirementKey) {
-      setFilters((current) => ({ ...current, requirementKey: focusRequirementKey }));
+      setFilters((current) => ({
+        ...current,
+        requirementKey: focusRequirementKey,
+        phase: focusedRequirement?.startPhase || current.phase,
+      }));
     }
-    // 完成批次通知可能在用户离开看板后才抵达；跳回时立即刷新任务与需求状态。
-    void refresh();
 
     // 定位是一次性的：参数留在地址栏里，刷新页面会再弹一次需求编辑窗口。
     // 用 history.replaceState 就地抹掉（保留 programId），不触发路由跳转。
@@ -666,10 +695,40 @@ export function DeliveryWorkspace() {
     focusSignature,
     programId,
     queryAllRequirements,
-    refresh,
+    requirements,
     setFilters,
     sharedProgramId,
   ]);
+
+  // 工作台已先选好项目，到达看板并确认项目上下文后直接打开空白需求编辑器。
+  useEffect(() => {
+    if (!newRequirementSignature || appliedNewRequirementRef.current === newRequirementSignature) return;
+    if (!programId || programId !== sharedProgramId || !selectedProgram) return;
+    appliedNewRequirementRef.current = newRequirementSignature;
+    setRequirementsExpanded(true);
+    setEditingRequirement(null);
+    setStartRequirementTesting(false);
+    setPlanningOpen(true);
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete("newRequirementToken");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [newRequirementSignature, programId, selectedProgram, sharedProgramId]);
+
+  /**
+   * 跳转时需求清单还没加载完的兜底：等它到位后把阶段切到这条需求的起始阶段。
+   * 否则看板停在默认的「梳理需求」，任务都在开发阶段就会显示为空，只能靠用户自己再点刷新。
+   * 阶段没变就什么都不做，避免多发一次没有意义的请求。
+   */
+  useEffect(() => {
+    if (!pendingPhaseRequirementKey) return;
+    const requirement = requirements.find((record) => record.requirementKey === pendingPhaseRequirementKey);
+    if (!requirement) return;
+    setPendingPhaseRequirementKey("");
+    const nextPhase = requirement.startPhase;
+    if (!nextPhase) return;
+    setFilters((current) => (current.phase === nextPhase ? current : { ...current, phase: nextPhase }));
+  }, [pendingPhaseRequirementKey, requirements, setFilters]);
 
   // 第二步：任务目录到位后，把看板阶段切到这条任务所在的阶段；要看详情的直接开聊天。
   useEffect(() => {
@@ -783,79 +842,28 @@ export function DeliveryWorkspace() {
     }
   }, [filters, programId, refresh, refreshRequirements, setFilters, t]);
 
+  /**
+   * 快速改状态只提交状态字段。早先这里走的是整条需求保存，
+   * 请求里没带计划起止时间，改一次状态就把排期清空了。
+   */
   const handleRequirementStatusChange = useCallback(async (
     requirement: DeliveryRequirementRecord,
     status: RequirementStatus,
   ) => {
     if (!programId || requirement.status === status) return;
     try {
-      await saveRequirement({
-        programId,
-        requirementKey: requirement.requirementKey,
-        name: requirement.name,
-        detail: requirement.detail,
-        status,
-        mode: requirement.mode,
-        startPhase: requirement.startPhase,
-        splitTasks: requirement.splitTasks,
-        preGenerateTaskDocuments: requirement.preGenerateTaskDocuments,
-        generatePrototype: requirement.generatePrototype,
-        stageKey: requirement.stageKey,
-        moduleKey: requirement.moduleKey,
-        kind: requirement.kind,
-        owners: requirement.owners,
-        assistants: requirement.assistants,
-        version: requirement.version,
-      });
-      await Promise.all([refreshRequirements(), refresh()]);
+      await updateRequirementStatus(programId, requirement.requirementKey, status, requirement.version);
+      await Promise.all([refreshRequirement(requirement.requirementKey), refresh()]);
       message.success(t("delivery.requirement.statusUpdated"));
     } catch (error) {
       message.error((error as Error).message);
     }
-  }, [programId, refresh, refreshRequirements, t]);
+  }, [programId, refresh, refreshRequirement, t]);
 
 	const openGitCheck = useCallback((requirement: DeliveryRequirementRecord) => {
 		if (!selectedProgram?.gitEnabled) return;
 		setGitRequirement(requirement);
-		setGitPrepareStrategy(gitWorkspaceStatus?.dirty ? "stash" : "switch");
-		setGitCommitMessage(`chore: save work before ${requirement.gitBranch}`);
-		void refreshGitWorkspaceStatus().then((status) => {
-			// 弹窗打开前可能还是上一次需求的快照；真正确认的状态回来后再选默认策略。
-			setGitPrepareStrategy(status?.dirty ? "stash" : "switch");
-		});
-	}, [gitWorkspaceStatus?.dirty, refreshGitWorkspaceStatus, selectedProgram?.gitEnabled]);
-
-	const confirmGitPreparation = useCallback(async () => {
-		if (gitPreparing || !selectedProgram?.gitEnabled || !gitRequirement?.gitBranch) return;
-		setGitPreparing(true);
-		try {
-			const result = await prepareRequirementGitBranch(
-				gitRequirement.gitBranch,
-				gitPrepareStrategy,
-				gitCommitMessage.trim(),
-			);
-			// 从 origin/feature 关联时，本机实际分支会变成 feature；把这个规范化名称写回需求。
-			if (result.branch && result.branch !== gitRequirement.gitBranch) {
-				await bindRequirementGitBranch(
-					programId,
-					gitRequirement.requirementKey,
-					gitRequirement.gitBaseBranch,
-					result.branch,
-				);
-			}
-			await refreshRequirements();
-			setGitRequirement(null);
-			message.success(result.stashed
-				? t("delivery.requirement.gitPreparedStashed")
-				: result.committed
-					? t("delivery.requirement.gitPreparedCommitted")
-					: t("delivery.requirement.gitPrepared"));
-		} catch (error) {
-			message.error((error as Error).message);
-		} finally {
-			setGitPreparing(false);
-		}
-	}, [gitCommitMessage, gitPrepareStrategy, gitRequirement, prepareRequirementGitBranch, programId, refreshRequirements, selectedProgram?.gitEnabled, t]);
+	}, [selectedProgram?.gitEnabled]);
 
   const columns: ColumnsType<DeliveryItemRecord> = [
     {
@@ -954,17 +962,6 @@ export function DeliveryWorkspace() {
     },
     { title: t("delivery.field.dueDate"), dataIndex: "dueDate", width: 120 },
   ];
-
-  const gitAlreadyOnRequirementBranch = Boolean(
-    gitWorkspaceStatus?.currentBranch
-    && gitRequirement?.gitBranch
-    && gitWorkspaceStatus.currentBranch === gitRequirement.gitBranch,
-  );
-  const gitBranchesDiffer = Boolean(
-    gitWorkspaceStatus?.currentBranch
-    && gitRequirement?.gitBranch
-    && gitWorkspaceStatus.currentBranch !== gitRequirement.gitBranch,
-  );
 
   return (
     <div className="manager-page-stack manager-delivery">
@@ -1083,6 +1080,7 @@ export function DeliveryWorkspace() {
             setEditingRequirement(requirement);
             setPlanningOpen(true);
           }}
+          onAssign={(requirement) => setAssigningRequirement(requirement)}
           onTest={(requirement) => {
             setEditingRequirement(requirement);
             setStartRequirementTesting(true);
@@ -1387,6 +1385,7 @@ export function DeliveryWorkspace() {
         onClose={() => {
           setPlanningOpen(false);
           setStartRequirementTesting(false);
+          void handleRequirementModalClosed();
         }}
         onOpenItem={(item) => {
           setPlanningOpen(false);
@@ -1412,6 +1411,17 @@ export function DeliveryWorkspace() {
         onChanged={handleSessionChanged}
       />
 
+      <DeliveryRequirementAssignModal
+        open={Boolean(assigningRequirement)}
+        programId={programId}
+        requirement={assigningRequirement}
+        onClose={() => setAssigningRequirement(null)}
+        onAssigned={(requirement) => {
+          setEditingRequirement((current) => (current?.requirementKey === requirement.requirementKey ? requirement : current));
+          void refreshRequirement(requirement.requirementKey);
+        }}
+      />
+
       <DeliveryRequirementTimelineDrawer
         open={Boolean(timelineRequirement)}
         programId={programId}
@@ -1419,83 +1429,19 @@ export function DeliveryWorkspace() {
         onClose={() => setTimelineRequirement(null)}
       />
 
-		{selectedProgram?.gitEnabled ? <Modal
-			open={Boolean(gitRequirement)}
-			title={t("delivery.requirement.gitCheckTitle")}
-			okText={t("delivery.requirement.gitPrepare")}
-			confirmLoading={gitPreparing}
-			footer={gitAlreadyOnRequirementBranch ? (
-				<Button type="primary" onClick={() => setGitRequirement(null)}>
-					{t("common.close")}
-				</Button>
-			) : undefined}
-			okButtonProps={{
-				disabled: Boolean(gitPreparing || gitWorkspaceLoading || gitWorkspaceError || !gitRequirement?.gitBranch || gitWorkspaceStatus?.detached),
+		{selectedProgram?.gitEnabled ? <DeliveryRequirementGitCheckModal
+			requirement={gitRequirement}
+			programId={programId}
+			status={gitWorkspaceStatus}
+			statusError={gitWorkspaceError}
+			statusLoading={gitWorkspaceLoading}
+			onRefreshStatus={refreshGitWorkspaceStatus}
+			onClose={() => setGitRequirement(null)}
+			onPrepared={() => {
+				void refreshGitWorkspaceStatus();
+				void refreshRequirements();
 			}}
-			onCancel={() => setGitRequirement(null)}
-			onOk={() => void confirmGitPreparation()}
-		>
-			<div className="delivery-drawer">
-				{gitWorkspaceError ? <Alert type="warning" showIcon message={gitWorkspaceError} /> : null}
-				{gitWorkspaceStatus?.detached ? <Alert type="error" showIcon message={t("delivery.requirement.gitDetached")} /> : null}
-				{gitAlreadyOnRequirementBranch ? <Alert
-					type="success"
-					showIcon
-					message={t("delivery.requirement.gitAlreadyOnBranch")}
-				/> : null}
-				{gitWorkspaceStatus && !gitWorkspaceStatus.detached && gitWorkspaceStatus.currentBranch !== gitRequirement?.gitBranch ? <Alert
-					type="warning"
-					showIcon
-					message={t("delivery.requirement.gitBranchMismatch")
-						.replace("{current}", gitWorkspaceStatus.currentBranch || "HEAD")
-						.replace("{target}", gitRequirement?.gitBranch || "")}
-				/> : null}
-				<label>
-					{t("delivery.requirement.gitCurrentBranch")}
-					<Input readOnly value={gitWorkspaceStatus?.currentBranch || "HEAD"} className="manager-mono" />
-				</label>
-				<label>
-					{t("delivery.requirement.gitTargetBranch")}
-					<Input readOnly value={gitRequirement?.gitBranch || ""} className="manager-mono" />
-				</label>
-				{gitBranchesDiffer && gitWorkspaceStatus ? <Alert
-					type={gitWorkspaceStatus.dirty ? "warning" : "info"}
-					showIcon
-					message={t("delivery.requirement.gitPendingFiles")
-						.replace("{changed}", String(gitWorkspaceStatus.changed))
-						.replace("{staged}", String(gitWorkspaceStatus.staged))
-						.replace("{unstaged}", String(gitWorkspaceStatus.unstaged))
-						.replace("{untracked}", String(gitWorkspaceStatus.untracked))}
-					description={gitWorkspaceStatus.dirty ? t("delivery.requirement.gitDirtySwitchHint") : undefined}
-				/> : null}
-				{gitWorkspaceStatus?.dirty && !gitBranchesDiffer ? <Alert
-					type="warning"
-					showIcon
-					message={t("delivery.requirement.gitDirtySummary")
-						.replace("{staged}", String(gitWorkspaceStatus.staged))
-						.replace("{unstaged}", String(gitWorkspaceStatus.unstaged))
-						.replace("{untracked}", String(gitWorkspaceStatus.untracked))}
-					description={gitAlreadyOnRequirementBranch ? undefined : t("delivery.requirement.gitDirtySwitchHint")}
-				/> : null}
-				{gitWorkspaceStatus?.dirty && gitWorkspaceStatus.currentBranch !== gitRequirement?.gitBranch ? <>
-					<label>
-						{t("delivery.requirement.gitDirtyStrategy")}
-						<Segmented
-							value={gitPrepareStrategy}
-							onChange={(value) => setGitPrepareStrategy(value as "commit" | "stash")}
-							options={[
-								{ value: "stash", label: t("delivery.requirement.gitStrategy.stash") },
-								{ value: "commit", label: t("delivery.requirement.gitStrategy.commit") },
-							]}
-						/>
-					</label>
-					{gitPrepareStrategy === "commit" ? <label>
-						{t("delivery.requirement.gitCommitMessage")}
-						<Input value={gitCommitMessage} onChange={(event) => setGitCommitMessage(event.target.value)} />
-					</label> : null}
-				</> : null}
-			</div>
-		</Modal> : null}
+		/> : null}
 
       <Modal
         open={Boolean(pendingGroupedExecution)}

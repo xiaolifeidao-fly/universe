@@ -115,6 +115,40 @@ func TestNormalizeProgress(t *testing.T) {
 	}
 }
 
+func TestNormalizeCloudSyncScopesKeepsOnlyDeclaredScopesInStableOrder(t *testing.T) {
+	scopes, err := normalizeCloudSyncScopes([]string{"design", "chat", "design", "requirement"})
+	if err != nil {
+		t.Fatalf("合法云端同步类别不应报错：%v", err)
+	}
+	if got, want := strings.Join(scopes, ","), "chat,requirement,design"; got != want {
+		t.Fatalf("云端同步类别顺序或去重错误：got=%s want=%s", got, want)
+	}
+	if _, err := normalizeCloudSyncScopes([]string{"chat", "source"}); err == nil {
+		t.Fatal("未知云端同步类别必须拒绝")
+	}
+}
+
+func TestNormalizeCloudSyncRelativePathRejectsWorkspaceEscape(t *testing.T) {
+	if path, err := normalizeCloudSyncRelativePath("doc/core/文档.md"); err != nil || path != "doc/core/文档.md" {
+		t.Fatalf("合法项目相对路径不应被拒绝：%q %v", path, err)
+	}
+	for _, raw := range []string{"../secret.md", "/tmp/secret.md", "doc/../secret.md"} {
+		if _, err := normalizeCloudSyncRelativePath(raw); err == nil {
+			t.Fatalf("越界路径必须拒绝：%s", raw)
+		}
+	}
+}
+
+func TestCloudSyncObjectKeyIsStableAndDoesNotExposeWorkspacePath(t *testing.T) {
+	key := cloudSyncObjectKey("whatsapp", 7, "requirement", "doc/core/客户需求/文档.md")
+	if key != cloudSyncObjectKey("whatsapp", 7, "requirement", "doc/core/客户需求/文档.md") {
+		t.Fatal("同一个文件必须生成稳定 OSS 对象键")
+	}
+	if strings.Contains(key, "客户需求") || !strings.HasPrefix(key, "delivery-cloud-sync/whatsapp/7/requirement/") {
+		t.Fatalf("OSS 对象键不应泄露本机相对路径：%s", key)
+	}
+}
+
 func TestItemListRecentFirstAcceptsOnlyKnownSorts(t *testing.T) {
 	if recent, err := itemListRecentFirst("recent"); err != nil || !recent {
 		t.Fatalf("recent 应按创建时间倒序：%v, %v", recent, err)

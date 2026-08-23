@@ -159,6 +159,31 @@ type SaveRequirementRequest struct {
 	ActorName     string              `json:"actorName"`
 }
 
+// UpdateRequirementStatusRequest 只改需求状态。
+// 需求列表和工作台的快速改状态用它：整条保存接口会把没带上的字段（例如计划起止时间）一并覆盖。
+type UpdateRequirementStatusRequest struct {
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	Status         string           `json:"status"`
+	Version        int              `json:"version"`
+	ActorID        string           `json:"-"`
+	ActorName      string           `json:"actorName"`
+}
+
+// AssignRequirementMembersRequest 只改需求的主负责人与辅助人。
+// 需求列表和工作台的快速指派用它，避免用整条保存接口把详情、计划时间等字段一起覆盖掉。
+type AssignRequirementMembersRequest struct {
+	BizLine        contract.BizLine    `json:"-"`
+	ProgramID      int64               `json:"programId"`
+	RequirementKey string              `json:"requirementKey"`
+	Owners         []RequirementMember `json:"owners"`
+	Assistants     []RequirementMember `json:"assistants"`
+	Version        int                 `json:"version"`
+	ActorID        string              `json:"-"`
+	ActorName      string              `json:"actorName"`
+}
+
 // BindRequirementGitBranch 在本机成功创建分支后记录关联；不复用编辑版号，
 // 以免分支创建的异步确认和用户编辑需求正文互相造成版本冲突。
 type BindRequirementGitBranchRequest struct {

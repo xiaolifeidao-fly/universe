@@ -15,6 +15,7 @@ import {
   ShareAltOutlined,
 	SearchOutlined,
 	SwapOutlined,
+	UsergroupAddOutlined,
 	UserOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Empty, Input, Popconfirm, Segmented, Select, Spin, Tag, Tooltip } from "antd";
@@ -67,6 +68,8 @@ interface DeliveryRequirementListProps {
   onShare: (requirement: DeliveryRequirementRecord) => void;
   onCreate: () => void;
   onEdit: (requirement: DeliveryRequirementRecord) => void;
+  /** 快速指派负责人与协助人，不打开完整的需求编辑窗口。 */
+  onAssign: (requirement: DeliveryRequirementRecord) => void;
   onTest: (requirement: DeliveryRequirementRecord) => void;
   /** 需求级大纲弹窗，可直接改并保存回工作区。 */
   onOutline: (requirement: DeliveryRequirementRecord) => void;
@@ -104,6 +107,7 @@ export function DeliveryRequirementList({
   onShare,
   onCreate,
   onEdit,
+  onAssign,
   onTest,
 	onOutline,
 	onTimeline,
@@ -361,6 +365,20 @@ export function DeliveryRequirementList({
               onClick={(event) => {
                 event.stopPropagation();
                 onOutline(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.requirement.assign")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<UsergroupAddOutlined />}
+              disabled={disabled}
+              aria-label={t("delivery.requirement.assign")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onAssign(requirement);
               }}
             />
           </Tooltip>

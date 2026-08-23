@@ -5,6 +5,7 @@ import {
   CodexGitWorkspaceStatus,
   DeliveryItemRecord,
   DeliveryModuleRecord,
+  type DeliveryProgramRecord,
   DeliveryRequirementRecord,
   DeliveryStageRecord,
   fetchCodexBridgeHealth,
@@ -54,10 +55,16 @@ export interface MyWorkGitWorkspace {
   error: string;
 }
 
-async function fetchAllAssignedOpenRequirements(programId: number) {
+/** 工作台发起新需求时，只允许选择当前空间内可写的进行中项目。 */
+export async function fetchMyWorkPrograms(businessLine: BusinessLine): Promise<DeliveryProgramRecord[]> {
+  const programs = await fetchPrograms(businessLine.id);
+  return programs.filter((program) => program.status === "active" && program.canWrite);
+}
+
+async function fetchAllRelatedOpenRequirements(programId: number) {
   const first = await fetchRequirements({
     programId,
-    scope: "assigned",
+    scope: "mine",
     status: "open",
     pageIndex: 1,
   });
@@ -67,7 +74,7 @@ async function fetchAllAssignedOpenRequirements(programId: number) {
   for (let pageIndex = 2; pageIndex <= pageCount; pageIndex += 1) {
     const page = await fetchRequirements({
       programId,
-      scope: "assigned",
+      scope: "mine",
       status: "open",
       pageIndex,
     });
@@ -77,7 +84,7 @@ async function fetchAllAssignedOpenRequirements(programId: number) {
 }
 
 /**
- * 汇总当前选中空间中，进行中且明确指给当前用户的需求。
+ * 汇总当前选中空间中，进行中且与当前用户有关的需求（我提出 / 我负责 / 我协助）。
  * 空间切换由 BusinessLineProvider 统一管理；这里只读取当前空间下的项目，
  * 保留既有项目级权限校验，不由浏览器猜测项目归属。
  */
@@ -87,7 +94,7 @@ export async function fetchMyWorkRequirements(businessLine: BusinessLine): Promi
     programs
       .filter((program) => program.status === "active")
       .map(async (program) => {
-        const requirements = await fetchAllAssignedOpenRequirements(program.programId);
+        const requirements = await fetchAllRelatedOpenRequirements(program.programId);
         return requirements.map((requirement) => Object.assign(new MyWorkRequirement(), requirement, {
           programName: program.name,
           programCode: program.programCode,

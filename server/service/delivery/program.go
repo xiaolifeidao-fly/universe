@@ -4,8 +4,12 @@ package delivery
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +23,10 @@ var (
 	gitRemoteNameRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	gitReferenceRE  = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,255}$`)
 )
+
+const maxCloudSyncFileBytes = 8 * 1024 * 1024
+
+var cloudSyncScopeSet = map[string]struct{}{"chat": {}, "requirement": {}, "design": {}}
 
 // ---------- 项目 ----------
 
@@ -154,6 +162,138 @@ func (s *service) SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramG
 	return toProgramView(row), nil
 }
 
+// SaveProgramCloudSyncConfig 保存项目级云端同步范围。关闭时清空范围，避免配置重新开启后意外上传旧类别。
+func (s *service) SaveProgramCloudSyncConfig(ctx context.Context, req dto.SaveProgramCloudSyncConfigRequest) (dto.ProgramView, error) {
+	if !req.BizLine.Valid() {
+		return dto.ProgramView{}, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 {
+		return dto.ProgramView{}, errors.New("缺少项目标识")
+	}
+	scopes, err := normalizeCloudSyncScopes(req.CloudSyncScopes)
+	if err != nil {
+		return dto.ProgramView{}, err
+	}
+	if req.CloudSyncEnabled && len(scopes) == 0 {
+		return dto.ProgramView{}, errors.New("启用云端同步后至少选择一种内容")
+	}
+	if req.CloudSyncEnabled && s.cloudStorage == nil {
+		return dto.ProgramView{}, errors.New("服务器未配置 OSS 云存储，暂不能启用云端同步")
+	}
+	if !req.CloudSyncEnabled {
+		scopes = nil
+	}
+	row, err := s.repo.SaveProgramCloudSyncConfig(ctx, req.BizLine.String(), req.ProgramID, map[string]any{
+		"cloud_sync_enabled": req.CloudSyncEnabled,
+		"cloud_sync_scopes":  strings.Join(scopes, ","),
+		"updated_by":         actorOf(req.ActorID, req.ActorName),
+		"updated_time":       time.Now(),
+	})
+	if err != nil {
+		return dto.ProgramView{}, translate(err)
+	}
+	return toProgramView(row), nil
+}
+
+// UpsertCloudSyncFile 保存一个本机桥接上传的项目文件快照。项目配置是最终开关，桥接不能绕开它上传未选类别。
+func (s *service) UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSyncFileRequest) (dto.CloudSyncFileView, error) {
+	if !req.BizLine.Valid() {
+		return dto.CloudSyncFileView{}, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 {
+		return dto.CloudSyncFileView{}, errors.New("缺少项目标识")
+	}
+	if _, ok := cloudSyncScopeSet[req.Category]; !ok {
+		return dto.CloudSyncFileView{}, errors.New("云端同步类别无效")
+	}
+	relativePath, err := normalizeCloudSyncRelativePath(req.RelativePath)
+	if err != nil {
+		return dto.CloudSyncFileView{}, err
+	}
+	if len(req.Content) > maxCloudSyncFileBytes {
+		return dto.CloudSyncFileView{}, errors.New("云端同步文件不能超过 8MB")
+	}
+	contentType := strings.TrimSpace(req.ContentType)
+	if len(contentType) > 128 {
+		return dto.CloudSyncFileView{}, errors.New("云端同步文件类型无效")
+	}
+	program, err := s.repo.FindProgram(ctx, req.BizLine.String(), req.ProgramID)
+	if err != nil {
+		return dto.CloudSyncFileView{}, translate(err)
+	}
+	if !program.CloudSyncEnabled || !cloudSyncScopeEnabled(program.CloudSyncScopes, req.Category) {
+		return dto.CloudSyncFileView{}, errors.New("当前项目未启用该类云端同步")
+	}
+	if s.cloudStorage == nil {
+		return dto.CloudSyncFileView{}, errors.New("服务器未配置 OSS 云存储")
+	}
+	sum := sha256.Sum256(req.Content)
+	checksum := fmt.Sprintf("%x", sum)
+	objectKey, err := s.cloudStorage.Put(ctx, cloudSyncObjectKey(req.BizLine.String(), req.ProgramID, req.Category, relativePath), contentType, req.Content, checksum)
+	if err != nil {
+		return dto.CloudSyncFileView{}, err
+	}
+	if strings.TrimSpace(objectKey) == "" || len(objectKey) > 1536 {
+		return dto.CloudSyncFileView{}, errors.New("OSS 返回的对象键无效")
+	}
+	now := time.Now()
+	row, err := s.repo.UpsertCloudSyncFile(ctx, &repository.DeliveryCloudSyncFile{
+		BizLine: req.BizLine.String(), ProgramID: req.ProgramID, Category: req.Category,
+		RelativePath: relativePath, ContentType: contentType, ObjectKey: objectKey, Size: int64(len(req.Content)),
+		SHA256: checksum, UpdatedBy: actorOf(req.ActorID, req.ActorName), UpdatedTime: now,
+	})
+	if err != nil {
+		return dto.CloudSyncFileView{}, translate(err)
+	}
+	return toCloudSyncFileView(row), nil
+}
+
+func normalizeCloudSyncScopes(raw []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	for _, value := range raw {
+		scope := strings.TrimSpace(value)
+		if _, ok := cloudSyncScopeSet[scope]; !ok {
+			return nil, errors.New("云端同步类别无效")
+		}
+		seen[scope] = struct{}{}
+	}
+	scopes := make([]string, 0, len(seen))
+	for _, scope := range []string{"chat", "requirement", "design"} {
+		if _, ok := seen[scope]; ok {
+			scopes = append(scopes, scope)
+		}
+	}
+	return scopes, nil
+}
+
+func cloudSyncScopeEnabled(raw, wanted string) bool {
+	for _, scope := range strings.Split(raw, ",") {
+		if strings.TrimSpace(scope) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCloudSyncRelativePath(raw string) (string, error) {
+	value := strings.TrimSpace(strings.ReplaceAll(raw, "\\", "/"))
+	if value == "" || len(value) > 1024 || strings.HasPrefix(value, "/") {
+		return "", errors.New("云端同步文件路径无效")
+	}
+	cleaned := path.Clean(value)
+	if cleaned == "." || cleaned != value || strings.HasPrefix(cleaned, "../") {
+		return "", errors.New("云端同步文件路径无效")
+	}
+	return cleaned, nil
+}
+
+// cloudSyncObjectKey 用路径的 SHA-256 作为对象名，既保持同一项目文件的覆盖幂等，
+// 也避免中文或超长本机路径直接成为 OSS key；原始相对路径仍只作为项目元数据保存。
+func cloudSyncObjectKey(bizLine string, programID int64, category, relativePath string) string {
+	sum := sha256.Sum256([]byte(relativePath))
+	return path.Join("delivery-cloud-sync", bizLine, strconv.FormatInt(programID, 10), category, fmt.Sprintf("%x", sum))
+}
+
 func (s *service) MigrateProgram(ctx context.Context, req dto.MigrateProgramRequest) error {
 	if !req.SourceBizLine.Valid() || !req.TargetBizLine.Valid() {
 		return contract.ErrBizLineRequired
@@ -221,7 +361,17 @@ func toProgramView(row *repository.DeliveryProgram) dto.ProgramView {
 		GitRepositoryURL: row.GitRepositoryURL,
 		GitRemoteName:    row.GitRemoteName,
 		GitBaseBranch:    row.GitBaseBranch,
+		CloudSyncEnabled: row.CloudSyncEnabled,
+		CloudSyncScopes:  strings.FieldsFunc(row.CloudSyncScopes, func(r rune) bool { return r == ',' }),
 		UpdatedBy:        row.UpdatedBy,
 		UpdatedAt:        &updated,
+	}
+}
+
+func toCloudSyncFileView(row *repository.DeliveryCloudSyncFile) dto.CloudSyncFileView {
+	updated := row.UpdatedTime
+	return dto.CloudSyncFileView{
+		ProgramID: row.ProgramID, Category: row.Category, RelativePath: row.RelativePath,
+		ContentType: row.ContentType, Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated,
 	}
 }

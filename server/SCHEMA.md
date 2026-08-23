@@ -61,6 +61,7 @@
 | 表 | 作用 | 原型出处 |
 |---|---|---|
 | `zt_delivery_program` | 交付项目（印尼业务 = 一行） | `meta` |
+| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计文件的 OSS 对象索引；正文只在私有 OSS | 原型没有 |
 | `zt_delivery_stage` | 推进阶段（现状 / 第一步 … 终局） | `stages[]` |
 | `zt_delivery_module` | 能力模块 + 权重（数据回传 30% …） | `modules[]` |
 | `zt_delivery_requirement` | 需求：项目与任务之间的一层；含可选的计划开始/结束时间；专业模式可在任务拆解确认后生成关联 HTML 原型；需求测试用例与总体测试报告独立保存 | 原型没有 |
@@ -77,6 +78,25 @@
 `program_id` 是 `zt_delivery_program.id` 的数值主键；所有项目范围接口、交付子表和项目授权均据此关联并解析项目归属的 `biz_line`。`program_code` 仅用于展示、新建项目和导入幂等，不能用于项目范围关联。
 第二个甲方 / 第二个国家进来是**加一行 program**，不是拷一套表。`biz_line` 仍保留在每张交付表上，
 用于按业务线浏览、统计和与全局数据模型保持一致。
+
+### 云端同步 OSS 配置
+
+项目管理员启用“云端同步”后，本机桥接把选中的文件发送给服务端；服务端使用以下
+`web-api/configs/application.properties` 配置写入**私有**阿里云 OSS，数据库仅保存对象键和校验元数据：
+
+```properties
+oss.endpoint=https://oss-cn-hangzhou.aliyuncs.com
+oss.bucket=your-private-bucket
+oss.access_key_id=your-access-key-id
+oss.access_key_secret=your-access-key-secret
+oss.prefix=universe/delivery
+# 仅兼容 MinIO / 测试端点时设为 true；阿里云 OSS 保持 false 或省略。
+oss.path_style=false
+```
+
+存量库须执行 [`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。
+旧版已写入数据库正文的记录不会被迁移脚本删除；在 OSS 配置完成后点击“立即同步”即可安全地重新上传，
+后续数据库记录只保留对应的 `object_key`。
 
 索引一览：
 
@@ -189,6 +209,11 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 已有项目表升级到项目级 Git 能力时，执行
 [`migrations/20260820_delivery_program_git_enabled.sql`](migrations/20260820_delivery_program_git_enabled.sql)。
 该脚本可安全重复执行；Git 默认关闭，启用时项目设置必须提供默认基准分支，仓库地址仅作可选记录。
+
+已有项目表升级到项目级云端同步时，执行
+[`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。
+该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档和设计文档会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。
+服务端上传到私有 OSS 后，数据库仅保存对象键、大小和 SHA-256 校验值。
 
 已有需求表升级到支持需求详情里 @ 引用历史需求时，执行
 [`migrations/20260818_delivery_requirement_references.sql`](migrations/20260818_delivery_requirement_references.sql)。

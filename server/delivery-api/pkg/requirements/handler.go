@@ -32,6 +32,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 需求是人维护的，写一律 RequireUser；读放开到服务凭证，拆解插件要拿需求上下文。
 	api := group.Group("/delivery", httpx.RequireUser())
 	api.POST("/requirement/save", h.save)
+	api.POST("/requirement/members/assign", h.assignMembers)
+	api.POST("/requirement/status/update", h.updateStatus)
 	api.POST("/requirement/completion-notification/read", h.markCompletionNotificationRead)
 	api.POST("/requirement/git-branch/bind", h.bindGitBranch)
 	api.POST("/requirement/delete", h.delete)
@@ -216,6 +218,46 @@ func (h *Handler) save(context *gin.Context) {
 	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.SaveRequirement(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+// updateStatus 需求列表和工作台的快速改状态入口：只改状态，不整条覆盖。
+func (h *Handler) updateStatus(context *gin.Context) {
+	var req deliverydto.UpdateRequirementStatusRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.UpdateRequirementStatus(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+// assignMembers 需求列表和工作台的快速指派入口：只改负责人与协助人，
+// 不走整条需求保存，免得快速指派把没带上的字段清空。
+func (h *Handler) assignMembers(context *gin.Context) {
+	var req deliverydto.AssignRequirementMembersRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
+	if !h.normalizeRequirementMembers(context, req.ProgramID, req.Owners, req.Assistants) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.AssignRequirementMembers(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 

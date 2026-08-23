@@ -2,11 +2,13 @@ package routers
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"time"
 
 	"common/middleware/httpx"
 	commonrouters "common/middleware/routers"
+	"common/objectstore"
 
 	deliveryapi "delivery-api/pkg/delivery"
 	"service/bizline"
@@ -27,7 +29,23 @@ func registerHandlers(database *gorm.DB) []commonrouters.Handler {
 // —— resource / task / risk / strategy / aisched / orchestration ——
 // 随各层落地逐个加回来，形状照 delivery 这一段抄。
 func buildHandlers(_ context.Context, database *gorm.DB) []commonrouters.Handler {
-	deliveryService := delivery.New(database)
+	var cloudStorage delivery.CloudObjectStorage
+	if endpoint := httpx.Property("oss.endpoint"); endpoint != "" {
+		storage, err := objectstore.NewAliyunOSS(objectstore.OSSConfig{
+			Endpoint:        endpoint,
+			Bucket:          httpx.Property("oss.bucket"),
+			AccessKeyID:     httpx.Property("oss.access_key_id"),
+			AccessKeySecret: httpx.Property("oss.access_key_secret"),
+			Prefix:          httpx.Property("oss.prefix"),
+			PathStyle:       httpx.Property("oss.path_style") == "true",
+		})
+		if err != nil {
+			log.Printf("delivery cloud sync OSS is unavailable: %v", err)
+		} else {
+			cloudStorage = storage
+		}
+	}
+	deliveryService := delivery.New(database, cloudStorage)
 	bizLineService := bizline.New(database, deliveryService)
 	tokenTTL, _ := strconv.Atoi(httpx.Property("auth.token_ttl_seconds"))
 	identityService := identity.New(database, deliveryService, httpx.Property("auth.token_secret"), time.Duration(tokenTTL)*time.Second)

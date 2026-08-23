@@ -5,6 +5,7 @@ import {
 	BranchesOutlined,
 	CheckCircleOutlined,
 	CloudDownloadOutlined,
+	CloudUploadOutlined,
 	DeleteOutlined,
 	EditOutlined,
 	FlagOutlined,
@@ -21,6 +22,7 @@ import {
 	Alert,
 	AutoComplete,
 	Button,
+	Checkbox,
 	Drawer,
 	Empty,
 	Form,
@@ -47,6 +49,7 @@ import {
 	fetchModules,
 	fetchModulesPage,
 	checkCodexGitWorkspace,
+	CLOUD_SYNC_SCOPES,
 	fetchCodexGitBranches,
 	fetchCodexLocalProjects,
 	initializeCodexGitWorkspace,
@@ -56,10 +59,13 @@ import {
 	migrateProgram,
 	saveModule,
 	saveProgramAssignment,
+	saveProgramCloudSyncConfig,
 	saveProgramGitConfig,
 	saveProgram,
 	saveStage,
+	syncCodexCloudWorkspace,
 	validateCodexWorkspace,
+	type CloudSyncScope,
 	type CodexGitWorkspaceCheck,
 	type CodexLocalProjectRecord,
 	type DeliveryModuleRecord,
@@ -155,12 +161,15 @@ export function ProgramManagementWorkspace() {
 	const [gitEnabled, setGitEnabled] = useState(false);
 	const [gitRepositoryUrl, setGitRepositoryUrl] = useState("");
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
-	const [workspaceTab, setWorkspaceTab] = useState<"workspace" | "git">("workspace");
+	const [workspaceTab, setWorkspaceTab] = useState<"workspace" | "git" | "cloud">("workspace");
 	const [gitBranches, setGitBranches] = useState<string[]>([]);
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
 	const [gitWorkspaceCheck, setGitWorkspaceCheck] = useState<CodexGitWorkspaceCheck | null>(null);
 	const [gitWorkspaceChecking, setGitWorkspaceChecking] = useState(false);
 	const [gitInitializing, setGitInitializing] = useState(false);
+	const [cloudSyncEnabled, setCloudSyncEnabled] = useState(false);
+	const [cloudSyncScopes, setCloudSyncScopes] = useState<CloudSyncScope[]>([]);
+	const [cloudSyncing, setCloudSyncing] = useState(false);
 	/** 初始化完仓库后自增，让下面的 Git 状态 effect 重跑一遍。 */
 	const [gitStateVersion, setGitStateVersion] = useState(0);
 	// 只读成员建不了项目也编辑不了项目；系统管理员在空间维度不再有隐式权限。
@@ -546,6 +555,8 @@ export function ProgramManagementWorkspace() {
 		setGitEnabled(program.gitEnabled);
 		setGitRepositoryUrl(program.gitRepositoryUrl || "");
 		setGitBaseBranch(program.gitBaseBranch || "");
+		setCloudSyncEnabled(program.cloudSyncEnabled);
+		setCloudSyncScopes(program.cloudSyncScopes.filter((scope): scope is CloudSyncScope => CLOUD_SYNC_SCOPES.includes(scope)));
 		try {
 			const catalog = await fetchCodexLocalProjects(program.programId);
 			setWorkspaceProjects(catalog.projects);
@@ -577,7 +588,11 @@ export function ProgramManagementWorkspace() {
 				|| gitBaseBranch.trim() !== (workspaceProgram.gitBaseBranch || "")
 			))
 		);
-		if (!candidate && !gitConfigChanged) {
+		const cloudConfigChanged = workspaceProgram.canAdminister && (
+			cloudSyncEnabled !== workspaceProgram.cloudSyncEnabled
+			|| CLOUD_SYNC_SCOPES.some((scope) => cloudSyncScopes.includes(scope) !== workspaceProgram.cloudSyncScopes.includes(scope))
+		);
+		if (!candidate && !gitConfigChanged && !cloudConfigChanged) {
 			setWorkspaceTab("workspace");
 			message.error(t("programs.workspace.required"));
 			return;
@@ -585,6 +600,11 @@ export function ProgramManagementWorkspace() {
 		if (gitEnabled && !gitBaseBranch.trim()) {
 			setWorkspaceTab("git");
 			message.error(t("programs.git.baseBranchRequired"));
+			return;
+		}
+		if (cloudSyncEnabled && cloudSyncScopes.length === 0) {
+			setWorkspaceTab("cloud");
+			message.error(t("programs.cloud.scopeRequired"));
 			return;
 		}
 		setWorkspaceSaving(true);
@@ -603,12 +623,48 @@ export function ProgramManagementWorkspace() {
 				});
 				await refresh();
 			}
+			if (cloudConfigChanged) {
+				await saveProgramCloudSyncConfig({
+					programId: workspaceProgram.programId,
+					cloudSyncEnabled,
+					cloudSyncScopes,
+				});
+				await refresh();
+			}
 			message.success(t("programs.workspace.saved"));
 			setWorkspaceProgram(null);
 		} catch (error) {
 			message.error((error as Error).message);
 		} finally {
 			setWorkspaceSaving(false);
+		}
+	};
+
+	const syncCloudWorkspace = async () => {
+		if (!workspaceProgram) return;
+		if (!workspacePath.trim()) {
+			setWorkspaceTab("workspace");
+			message.error(t("programs.workspace.required"));
+			return;
+		}
+		const changed = cloudSyncEnabled !== workspaceProgram.cloudSyncEnabled
+			|| CLOUD_SYNC_SCOPES.some((scope) => cloudSyncScopes.includes(scope) !== workspaceProgram.cloudSyncScopes.includes(scope));
+		if (changed) {
+			message.error(t("programs.cloud.saveBeforeSync"));
+			return;
+		}
+		if (!cloudSyncEnabled || cloudSyncScopes.length === 0) {
+			message.error(t("programs.cloud.enableBeforeSync"));
+			return;
+		}
+		setCloudSyncing(true);
+		try {
+			const result = await syncCodexCloudWorkspace(workspaceProgram.programId);
+			message.success(t("programs.cloud.synced").replace("{count}", String(result.uploaded)));
+		} catch (error) {
+			message.error((error as Error).message);
+		} finally {
+			setCloudSyncing(false);
 		}
 	};
 
@@ -973,7 +1029,7 @@ export function ProgramManagementWorkspace() {
 					<Tabs
 						className="manager-codex-tabs"
 						activeKey={workspaceTab}
-						onChange={(key) => setWorkspaceTab(key as "workspace" | "git")}
+						onChange={(key) => setWorkspaceTab(key as "workspace" | "git" | "cloud")}
 						items={[
 							{
 								key: "workspace",
@@ -1097,6 +1153,56 @@ export function ProgramManagementWorkspace() {
 										{!workspaceProgram?.canAdminister ? (
 											<p className="manager-codex-foot">{t("programs.git.readonly")}</p>
 										) : null}
+									</div>
+								),
+							},
+							{
+								key: "cloud",
+								label: <><CloudUploadOutlined />{t("programs.workspace.tabCloud")}</>,
+								children: (
+									<div className="manager-codex-pane">
+										<div className={`manager-codex-toggle${cloudSyncEnabled ? " manager-codex-toggle--on" : ""}`}>
+											<div>
+												<strong>{t("programs.cloud.enabled")}</strong>
+												<p>{t("programs.cloud.enabledHint")}</p>
+											</div>
+											<Switch
+												checked={cloudSyncEnabled}
+												disabled={!workspaceProgram?.canAdminister}
+												aria-label={t("programs.cloud.enabled")}
+												onChange={setCloudSyncEnabled}
+											/>
+										</div>
+										{cloudSyncEnabled ? <>
+											<Form layout="vertical" style={{ width: "100%" }}>
+												<Form.Item label={t("programs.cloud.scopes")} required extra={t("programs.cloud.scopesHint")}>
+													<Checkbox.Group
+														disabled={!workspaceProgram?.canAdminister}
+														value={cloudSyncScopes}
+														options={CLOUD_SYNC_SCOPES.map((scope) => ({ value: scope, label: t(`programs.cloud.scope.${scope}`) }))}
+														onChange={(values) => setCloudSyncScopes(values.filter((scope): scope is CloudSyncScope => CLOUD_SYNC_SCOPES.includes(scope as CloudSyncScope)))}
+													/>
+												</Form.Item>
+											</Form>
+											<div className="manager-codex-note manager-codex-note--info">
+												<CloudUploadOutlined />
+												<div>
+													<strong>{t("programs.cloud.syncNow")}</strong>
+													<p>{t("programs.cloud.syncNowHint")}</p>
+													<Button
+														className="manager-codex-note__action"
+														type="primary"
+														size="small"
+														loading={cloudSyncing}
+														disabled={!workspaceProgram?.canWrite || !cloudSyncEnabled || cloudSyncScopes.length === 0}
+														onClick={() => void syncCloudWorkspace()}
+													>
+														{t("programs.cloud.syncNow")}
+													</Button>
+												</div>
+											</div>
+										</> : <div className="manager-codex-empty">{t("programs.cloud.disabledHint")}</div>}
+										{!workspaceProgram?.canAdminister ? <p className="manager-codex-foot">{t("programs.cloud.readonly")}</p> : null}
 									</div>
 								),
 							},
