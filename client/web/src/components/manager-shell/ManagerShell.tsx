@@ -27,7 +27,7 @@ import type { MenuProps } from "antd";
 import { usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { PropsWithChildren, type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
+import { TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
 import { useDeliveryTaskPlannerHeartbeat } from "@/project-workspaces/deliveryTaskPlannerHeartbeat";
@@ -184,7 +184,7 @@ function findGroupKey(path: string, groups: NavGroup[]): string | undefined {
 export function ManagerShell({ children }: ManagerShellProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const { locale, setLocale, t } = useLocale();
+  const { locale, t } = useLocale();
 	const { activeBusinessLine, businessLines, businessLinesLoaded, setActiveBusinessLine } = useBusinessLine();
 	const { preferences, setPreferences } = useAIPreferences();
 	const authUser = getAuthUser();
@@ -197,7 +197,6 @@ export function ManagerShell({ children }: ManagerShellProps) {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>(navGroups.map((group) => group.key));
-  const [clock, setClock] = useState("");
 	const [profileOpen, setProfileOpen] = useState(false);
 	const [passwordModalOpen, setPasswordModalOpen] = useState(false);
 	const [profile, setProfile] = useState<CurrentUserProfile | null>(null);
@@ -274,13 +273,6 @@ export function ManagerShell({ children }: ManagerShellProps) {
       setOpenKeys(navGroups.map((group) => group.key));
     }
   }, [navGroups, openGroupKey]);
-
-  useEffect(() => {
-    const updateClock = () => setClock(new Date().toLocaleTimeString(locale, { hour12: false }));
-    updateClock();
-    const timer = window.setInterval(updateClock, 1000);
-    return () => window.clearInterval(timer);
-  }, [locale]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 900px)");
@@ -705,14 +697,6 @@ export function ManagerShell({ children }: ManagerShellProps) {
 					{authUser?.displayName || authUser?.username} <DownOutlined />
 				  </Button>
 				</Dropdown>
-                <Select
-                  aria-label={t("locale.label")}
-                  className="manager-locale-select"
-                  value={locale}
-                  onChange={(value) => setLocale(value as AppLocale)}
-                  options={SUPPORTED_LOCALES.map((item) => ({ value: item, label: t(`locale.${item}`) }))}
-                />
-                <span className="manager-prototype-clock">{clock}</span>
               </Space>
             </Header>
 

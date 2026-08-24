@@ -219,7 +219,7 @@ export function DeliveryRequirementList({
 	const gitStateOf = (requirement: DeliveryRequirementRecord) => {
 		if (!projectGitEnabled || !requirement.gitEnabled || !requirement.gitBranch) return null;
 		// current 表示这条需求的分支正是项目此刻所处的分支，卡片上要单独标出来。
-		const base = { current: false, currentBranch: gitWorkspaceStatus?.currentBranch ?? "" };
+		const base = { current: false, dirty: false, currentBranch: gitWorkspaceStatus?.currentBranch ?? "" };
 		if (gitWorkspaceError) return { ...base, color: "default", label: t("delivery.requirement.gitState.unavailable") };
 		if (!gitWorkspaceStatus) return { ...base, color: "default", label: t("delivery.requirement.gitState.pending") };
 		if (gitWorkspaceStatus.detached) {
@@ -228,7 +228,7 @@ export function DeliveryRequirementList({
 		if (gitWorkspaceStatus.currentBranch !== requirement.gitBranch) {
 			return { ...base, color: "warning", label: t("delivery.requirement.gitState.mismatch") };
 		}
-		if (gitWorkspaceStatus.dirty) return { ...base, current: true, color: "warning", label: t("delivery.requirement.gitState.dirty") };
+		if (gitWorkspaceStatus.dirty) return { ...base, current: true, dirty: true, color: "warning", label: t("delivery.requirement.gitState.dirty") };
 		return { ...base, current: true, color: "success", label: t("delivery.requirement.gitState.ready") };
 	};
 
@@ -236,6 +236,8 @@ export function DeliveryRequirementList({
     const isSelected = requirement.requirementKey === selectedKey;
     const statusChanging = changingStatusKey === requirement.requirementKey;
 		const gitState = gitStateOf(requirement);
+		// 工作区正停在这条需求的分支上且还有未提交改动时不许删：改动会失去对应的需求上下文。
+		const deleteBlocked = Boolean(gitState?.current && gitState?.dirty);
     // 信息位省略了字段名、长值也会截断，悬停提示得把「字段名 + 完整取值」补回来。
     const ownerNames = (requirement.owners ?? []).map((member) => member.name).join("、") || t("delivery.requirement.unassigned");
 
@@ -395,23 +397,40 @@ export function DeliveryRequirementList({
               }}
             />
           </Tooltip>
-          <Popconfirm
-            title={t("delivery.requirement.deleteConfirm")}
-            okButtonProps={{ danger: true }}
-            onConfirm={() => onDelete(requirement.requirementKey)}
-          >
-            <Tooltip title={t("delivery.requirement.delete")}>
-              <Button
-                danger
-                type="text"
-                size="small"
-                shape="circle"
-                icon={<DeleteOutlined />}
-                aria-label={t("delivery.requirement.delete")}
-                onClick={(event) => event.stopPropagation()}
-              />
+          {deleteBlocked ? (
+            // 禁用态的按钮不触发 Tooltip，套一层容器把「为什么不能删」说清楚。
+            <Tooltip title={t("delivery.requirement.deleteBlockedDirty")}>
+              <span onClick={(event) => event.stopPropagation()}>
+                <Button
+                  danger
+                  disabled
+                  type="text"
+                  size="small"
+                  shape="circle"
+                  icon={<DeleteOutlined />}
+                  aria-label={t("delivery.requirement.delete")}
+                />
+              </span>
             </Tooltip>
-          </Popconfirm>
+          ) : (
+            <Popconfirm
+              title={t("delivery.requirement.deleteConfirm")}
+              okButtonProps={{ danger: true }}
+              onConfirm={() => onDelete(requirement.requirementKey)}
+            >
+              <Tooltip title={t("delivery.requirement.delete")}>
+                <Button
+                  danger
+                  type="text"
+                  size="small"
+                  shape="circle"
+                  icon={<DeleteOutlined />}
+                  aria-label={t("delivery.requirement.delete")}
+                  onClick={(event) => event.stopPropagation()}
+                />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </div>
 		<div className="delivery-requirement-card__details" aria-label={t("delivery.requirement.list")}>
 		  <span className="delivery-requirement-card__detail delivery-requirement-card__detail--owner" title={`${t("delivery.requirement.owners")}: ${ownerNames}`}>

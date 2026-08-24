@@ -647,6 +647,46 @@ export class CodexGitWorkspaceStatus {
   checkedAt = 0;
 }
 
+/** 工作区里的一条文件改动，用于「变更」面板列清单。 */
+export class CodexGitChangeFile {
+  path = "";
+
+  /** add / modify / delete / rename，与会话里的改动条目同一套叫法。 */
+  kind = "modify";
+
+  added = 0;
+
+  removed = 0;
+
+  staged = false;
+
+  untracked = false;
+}
+
+export class CodexGitChangeList {
+  workspace = "";
+
+  branch = "";
+
+  files: CodexGitChangeFile[] = [];
+
+  total = 0;
+
+  /** 文件太多时只回前一批，面板要提示还有更多。 */
+  truncated = false;
+}
+
+/** 单个文件改动前后的正文；二进制或超大文件不回正文，只回标记。 */
+export class CodexGitChangeDetail extends CodexGitChangeFile {
+  oldText = "";
+
+  newText = "";
+
+  binary = false;
+
+  truncated = false;
+}
+
 /** 工作目录的 Git 归属快照：用于判断项目偏好设置里要不要显示「初始化并关联」。 */
 export class CodexGitWorkspaceCheck {
   workspace = "";
@@ -1520,6 +1560,29 @@ export async function saveRequirement(payload: SaveRequirementPayload) {
   return requirement;
 }
 
+/**
+ * 条件更新需求名称。replaceName 是允许被替换的旧名称，避免后台自动命名覆盖用户手工编辑。
+ */
+export async function updateRequirementName(
+  programId: number,
+  requirementKey: string,
+  name: string,
+  replaceName: string,
+) {
+  const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/name/update", {
+    programId,
+    requirementKey,
+    name,
+    replaceName,
+  });
+  const requirement = plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  requirement.owners = plainToInstance(RequirementMember, requirement.owners ?? []);
+  requirement.assistants = plainToInstance(RequirementMember, requirement.assistants ?? []);
+  requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+  requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
+  return requirement;
+}
+
 export interface AssignRequirementMembersPayload {
   programId: number;
   requirementKey: string;
@@ -1965,6 +2028,23 @@ export async function fetchCodexGitWorkspaceStatus(programId: number) {
   return plainToInstance(CodexGitWorkspaceStatus, response.data);
 }
 
+/** 「变更」面板展开时读文件清单；只读本机工作区，不碰远端。 */
+export async function fetchCodexGitChanges(programId: number) {
+  const response = await instance.get<CodexGitChangeList>(`${CODEX_BRIDGE_URL}/v1/codex/git/changes`, {
+    params: bridgeWorkspaceParams(programId, { programId }),
+    timeout: 30000,
+  });
+  return plainToInstance(CodexGitChangeList, response.data);
+}
+
+export async function fetchCodexGitChangeDetail(programId: number, path: string) {
+  const response = await instance.get<CodexGitChangeDetail>(`${CODEX_BRIDGE_URL}/v1/codex/git/change`, {
+    params: bridgeWorkspaceParams(programId, { programId, path }),
+    timeout: 30000,
+  });
+  return plainToInstance(CodexGitChangeDetail, response.data);
+}
+
 export async function prepareCodexGitBranch(
   programId: number,
   branch: string,
@@ -2048,7 +2128,7 @@ export async function pushCodexGitBranch(
   programId: number,
   branch: string,
   message: string,
-  options: { provider?: AITool; model?: string; reasoningEffort?: AIReasoningEffort; fastMode?: boolean } = {},
+  options: { provider?: AITool; model?: string; reasoningEffort?: AIReasoningEffort; fastMode?: boolean; commitOnly?: boolean } = {},
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexGitPushResult>(
@@ -2058,6 +2138,8 @@ export async function pushCodexGitBranch(
       branch,
       message,
       provider,
+      // 仅提交只在本机落一个提交点，桥接层不会再起 AI 去修推送。
+      ...(options.commitOnly ? { commitOnly: true } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
       ...(provider === "claude" && options.fastMode ? { fastMode: true } : {}),

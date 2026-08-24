@@ -831,6 +831,20 @@ export function DeliveryWorkspace() {
   }, [activeBusinessLine.id, t]);
 
   const handleDeleteRequirement = useCallback(async (requirementKey: string) => {
+    // 兜底再判一次：列表已禁用按钮，但工作区状态可能在弹窗打开期间才变脏。
+    const target = requirements.find((item) => item.requirementKey === requirementKey);
+    if (
+      selectedProgram?.gitEnabled
+      && target?.gitEnabled
+      && target.gitBranch
+      && gitWorkspaceStatus
+      && !gitWorkspaceStatus.detached
+      && gitWorkspaceStatus.currentBranch === target.gitBranch
+      && gitWorkspaceStatus.dirty
+    ) {
+      message.warning(t("delivery.requirement.deleteBlockedDirty"));
+      return;
+    }
     try {
       await deleteRequirement(programId, requirementKey);
       // 需求没了但任务还在看板上，选中的筛选条件要一并清掉。
@@ -840,7 +854,7 @@ export function DeliveryWorkspace() {
     } catch (error) {
       message.error((error as Error).message);
     }
-  }, [filters, programId, refresh, refreshRequirements, setFilters, t]);
+  }, [filters, gitWorkspaceStatus, programId, refresh, refreshRequirements, requirements, selectedProgram?.gitEnabled, setFilters, t]);
 
   /**
    * 快速改状态只提交状态字段。早先这里走的是整条需求保存，

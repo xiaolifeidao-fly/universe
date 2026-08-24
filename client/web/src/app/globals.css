@@ -3416,8 +3416,9 @@ select {
 }
 
 .delivery-planning-session-title {
-	display: grid;
-	gap: 4px;
+	display: flex;
+	align-items: center;
+	gap: 14px;
 }
 
 .delivery-planning-session-title__heading {
@@ -3473,6 +3474,8 @@ select {
 }
 
 .delivery-planning-session-modal .delivery-planning-session-toolbar {
+	flex-direction: column;
+	align-items: stretch;
 	min-height: 64px;
 	padding-block: 8px;
 }
@@ -3480,15 +3483,40 @@ select {
 .delivery-planning-session-toolbar__summary {
 	display: flex;
 	min-width: 0;
+	width: 100%;
 	flex: 1;
 	align-items: center;
 	gap: 14px;
+	/* 右侧要留出弹窗自带的关闭按钮，展开/收起按钮就排在关闭左边。 */
+	padding-right: 56px;
+}
+
+/* 建分支、分享、刷新跟着标题走，图标按钮靠 Tooltip 解释自己。 */
+.delivery-planning-session-toolbar__quick {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 8px;
 }
 
 .delivery-planning-session-toolbar .delivery-planning-session-title {
 	min-width: 0;
+	flex: 1 1 auto;
 	padding-right: 0;
 }
+
+/* 第一行集中展示需求归属、创建时间和会话状态；其余操作按钮独占第二行，没按钮时整行收掉。 */
+.delivery-planning-session-toolbar > .delivery-session-toolbar__actions {
+	width: 100%;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+}
+
+.delivery-planning-session-toolbar > .delivery-session-toolbar__actions:empty { display: none; }
+
+/* 状态文案和右上角按钮之间留一段距离，别让「已连接」贴着关闭按钮。 */
+.delivery-planning-session-toolbar__summary > .delivery-planning-context-toggle { margin-left: 6px; }
+.delivery-planning-session-toolbar__state { margin-right: 4px; }
 
 .delivery-session-toolbar > span,
 .delivery-planning-session-toolbar__state {
@@ -3526,11 +3554,27 @@ select {
 
 /* 左：会话列表 · 中：聊天 · 右：需求详情。与任务会话弹窗的读法保持一致。 */
 .delivery-planning-shell {
+	position: relative;
 	display: grid;
 	min-height: 0;
 	height: 100%;
 	grid-template-columns: minmax(200px, 240px) minmax(420px, 1fr) var(--delivery-planning-context-width, 480px);
 }
+
+/* 需求信息栏可完全收起；切换按钮留在会话区右侧，收起后仍然可见。 */
+.delivery-planning-shell.is-context-collapsed {
+	grid-template-columns: minmax(200px, 240px) minmax(420px, 1fr) 0;
+}
+
+.delivery-planning-shell.is-context-collapsed .delivery-planning-context { display: none; }
+
+.delivery-planning-context-toggle {
+	position: static;
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+}
+
+.delivery-planning-context-toggle:hover { color: var(--manager-primary); background: var(--manager-primary-light); }
 
 .delivery-planning-shell.is-resizing-context,
 .delivery-planning-shell.is-resizing-context * { cursor: col-resize !important; user-select: none; }
@@ -4654,6 +4698,7 @@ select {
 .delivery-session-markdown li > input[type="checkbox"] { margin-right: 8px; vertical-align: middle; }
 
 .delivery-session-main {
+	position: relative;
 	display: grid;
 	min-width: 0;
 	min-height: 0;
@@ -4661,6 +4706,65 @@ select {
 	overflow: hidden;
 	background: var(--manager-bg);
 }
+
+/* 收起需求信息后右上角空出来的位置：分支、变更数量和推送入口浮在会话之上。 */
+.delivery-requirement-git-panel {
+	position: absolute;
+	z-index: 6;
+	/* 靠会话区右侧，垂直方向落在中线稍微偏上的位置。 */
+	top: 42%;
+	right: 40px;
+	transform: translateY(-50%);
+	display: grid;
+	align-content: start;
+	gap: 4px;
+	width: 420px;
+	height: 220px;
+	max-width: calc(100% - 64px);
+	overflow: auto;
+	padding: 12px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-md);
+	background: var(--manager-surface);
+	box-shadow: var(--manager-shadow-md, 0 10px 30px rgba(15, 23, 42, 0.12));
+}
+
+.delivery-requirement-git-panel > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 0 6px 4px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+}
+
+.delivery-requirement-git-panel__row {
+	display: flex;
+	width: 100%;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 6px;
+	border: 0;
+	border-radius: var(--manager-r-sm);
+	background: transparent;
+	color: var(--manager-text);
+	font-size: var(--manager-fs-xs);
+	text-align: left;
+	line-height: 1.6;
+}
+
+.delivery-requirement-git-panel__row .anticon { color: var(--manager-text-faint); }
+.delivery-requirement-git-panel__row > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-requirement-git-panel__row code { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-requirement-git-panel__row b { flex: 0 0 auto; font-weight: 600; }
+.delivery-requirement-git-panel__row b.is-clean { color: var(--manager-text-faint); }
+.delivery-requirement-git-panel__row b.is-dirty { color: var(--manager-warning); }
+.delivery-requirement-git-panel__row .is-mismatch { flex: 0 0 auto; color: var(--manager-danger); }
+
+.delivery-requirement-git-panel__row.is-action { cursor: pointer; }
+.delivery-requirement-git-panel__row.is-action:hover:not(.is-disabled) { background: var(--manager-bg-soft); }
+.delivery-requirement-git-panel__row.is-action.is-disabled { cursor: not-allowed; color: var(--manager-text-faint); background: transparent; }
 
 .delivery-session-history {
 	display: grid;
@@ -4872,6 +4976,68 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-requirement-git-status { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: 1.6; }
 .delivery-requirement-git-status code { color: var(--manager-text); }
 /* Git 失败原文常是多行输出，弹窗里保留换行、允许长行滚动，原文下面再跟操作指引。 */
+.delivery-requirement-git-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 320px; padding: 3px 10px; border: 1px solid var(--manager-border); border-radius: 999px; background: var(--manager-bg-soft); color: var(--manager-text-soft); font-size: var(--manager-fs-xs); line-height: 1.6; white-space: nowrap; }
+.delivery-requirement-git-chip .anticon { color: var(--manager-primary); }
+.delivery-requirement-git-chip code { overflow: hidden; max-width: 190px; color: var(--manager-text); text-overflow: ellipsis; }
+.delivery-requirement-git-chip .is-clean { color: var(--manager-text-faint); }
+.delivery-requirement-git-chip .is-dirty { color: var(--manager-warning); }
+.delivery-requirement-git-chip .is-mismatch { padding-left: 6px; border-left: 1px solid var(--manager-border); color: var(--manager-danger); }
+/* 变更明细弹窗：左边文件清单，右边 diff，两边各自滚动，弹窗本身不长高。 */
+.delivery-git-changes__title { display: flex; align-items: center; gap: 10px; }
+.delivery-git-changes__title code { overflow: hidden; max-width: 320px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+
+.delivery-git-changes {
+	display: grid;
+	gap: 12px;
+	grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+	height: min(62vh, 620px);
+}
+
+.delivery-git-changes__files {
+	display: grid;
+	align-content: start;
+	gap: 2px;
+	min-height: 0;
+	overflow: auto;
+	padding-right: 4px;
+	border-right: 1px solid var(--manager-border);
+}
+
+.delivery-git-changes__truncated { margin: 0 0 6px; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); }
+
+.delivery-git-changes__file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 7px 8px;
+	border: 0;
+	border-radius: var(--manager-r-sm);
+	background: transparent;
+	color: var(--manager-text);
+	cursor: pointer;
+	font-size: var(--manager-fs-xs);
+	text-align: left;
+}
+
+.delivery-git-changes__file:hover { background: var(--manager-bg-soft); }
+.delivery-git-changes__file.is-selected { background: var(--manager-primary-light); }
+.delivery-git-changes__file .anticon { flex: 0 0 auto; color: var(--manager-text-faint); }
+/* 路径按尾部对齐截断：同目录下的文件名比顶层目录名更能说明是哪个文件。 */
+.delivery-git-changes__file span { flex: 1 1 auto; min-width: 0; overflow: hidden; direction: rtl; text-align: left; text-overflow: ellipsis; white-space: nowrap; font-family: var(--manager-mono); }
+.delivery-git-changes__file em { flex: 0 0 auto; font-style: normal; color: var(--manager-text-faint); }
+.delivery-git-changes__file em.is-add { color: var(--manager-green); }
+.delivery-git-changes__file em.is-delete { color: var(--manager-danger); }
+.delivery-git-changes__file b { display: inline-flex; flex: 0 0 auto; gap: 6px; font-weight: 600; }
+.delivery-git-changes__file b i { font-style: normal; }
+.delivery-git-changes__file b i.is-added { color: var(--manager-green); }
+.delivery-git-changes__file b i.is-removed { color: var(--manager-danger); }
+
+.delivery-git-changes__diff { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; gap: 8px; }
+.delivery-git-changes__diff > header { overflow: hidden; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.delivery-git-changes__diff-body { min-height: 0; overflow: auto; border: 1px solid var(--manager-border); border-radius: var(--manager-r-md); background: var(--manager-surface); font-size: var(--manager-fs-xs); }
+.delivery-git-changes__diff-body pre { font-family: var(--manager-mono); }
+.delivery-git-changes__pending { display: grid; place-items: center; padding: 40px 0; }
+
 .delivery-requirement-git-error { display: grid; gap: 8px; font-size: var(--manager-fs-xs); line-height: 1.6; color: var(--manager-text); }
 .delivery-requirement-git-error pre { margin: 0; max-height: 240px; overflow: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--manager-border); background: var(--manager-bg-soft); white-space: pre-wrap; word-break: break-word; font-family: var(--manager-mono); }
 .delivery-requirement-git-error p { margin: 0; color: var(--manager-text-soft); }
@@ -6343,6 +6509,49 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .my-work-filters__search .ant-input-clear-icon { color: var(--manager-text-faint); }
 .my-work-filters__search .ant-input-clear-icon:hover { color: var(--manager-text-soft); }
 
+/* 当前分支筛选：静态是和搜索框同族的胶囊，选中后整枚点亮成品牌色。 */
+.my-work-filters__branch-wrap { display: inline-flex; }
+
+.my-work-filters__branch.ant-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 14px;
+	border: 1px solid var(--manager-border);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-bg-soft) 60%, var(--manager-surface));
+	box-shadow: none;
+	color: var(--manager-text-soft);
+	font-size: var(--manager-fs-xs);
+	transition: border-color var(--manager-t), background var(--manager-t), color var(--manager-t);
+}
+
+.my-work-filters__branch.ant-btn b {
+	padding: 0 6px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--manager-text-faint) 16%, transparent);
+	font-size: var(--manager-fs-xs);
+	line-height: 18px;
+}
+
+.my-work-filters__branch.ant-btn:not(:disabled):hover {
+	border-color: color-mix(in srgb, var(--manager-primary) 45%, var(--manager-border));
+	color: var(--manager-primary);
+}
+
+.my-work-filters__branch.ant-btn.is-active,
+.my-work-filters__branch.ant-btn.is-active:not(:disabled):hover {
+	border-color: var(--manager-primary);
+	background: color-mix(in srgb, var(--manager-primary) 14%, transparent);
+	color: var(--manager-primary);
+}
+
+.my-work-filters__branch.ant-btn.is-active b {
+	background: color-mix(in srgb, var(--manager-primary) 22%, transparent);
+	color: var(--manager-primary);
+}
+
 .my-work-loading,
 .my-work-empty {
 	display: grid;
@@ -6384,6 +6593,38 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	content: "";
 	transition: opacity var(--manager-t);
 }
+
+/* 需求被删除或改完状态后从工作台退场：先收起再消失，不走整页刷新。 */
+@keyframes my-work-card-exit {
+	0% { opacity: 1; transform: scale(1); }
+	100% { opacity: 0; transform: scale(0.94) translateY(-6px); }
+}
+
+.my-work-card.is-removing {
+	pointer-events: none;
+	transform-origin: 50% 40%;
+	animation: my-work-card-exit 320ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* 退场期间不再响应悬停，也别再点亮顶端描边。 */
+.my-work-card.is-removing:hover {
+	border-color: var(--manager-border);
+	box-shadow: none;
+}
+
+.my-work-card.is-removing::before { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+	.my-work-card.is-removing { animation-duration: 1ms; }
+}
+
+/* 命中当前分支的卡片：品牌色描边常亮，一眼能从列表里认出来。 */
+.my-work-card.is-current-branch {
+	border-color: var(--manager-primary);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--manager-primary) 32%, transparent);
+}
+
+.my-work-card.is-current-branch::before { opacity: 1; }
 
 .my-work-card:hover {
 	border-color: color-mix(in srgb, var(--manager-primary) 32%, var(--manager-border));
@@ -6647,4 +6888,6 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	.my-work-roles { width: 100%; }
 	.my-work-filters__program.ant-select,
 	.my-work-filters__search.ant-input-affix-wrapper { flex: 1 1 140px; width: auto; min-width: 0; }
+	.my-work-filters__branch-wrap { flex: 1 1 140px; }
+	.my-work-filters__branch.ant-btn { width: 100%; justify-content: center; }
 }

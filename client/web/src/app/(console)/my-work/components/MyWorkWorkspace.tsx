@@ -21,7 +21,7 @@ import {
 } from "@ant-design/icons";
 import { Button, Dropdown, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Tooltip, message } from "antd";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import {
   deleteItem,
@@ -66,6 +66,9 @@ function memberNames(record: MyWorkRequirement) {
   return Array.from(new Set(names)).join("、") || "-";
 }
 
+/** 卡片退场动画时长，必须与 globals.css 里的 my-work-card-exit 保持一致。 */
+const CARD_EXIT_MS = 320;
+
 type MyWorkType = "created" | "owner" | "assistant";
 type MyWorkProgram = Awaited<ReturnType<typeof fetchMyWorkPrograms>>[number];
 
@@ -105,6 +108,9 @@ export function MyWorkWorkspace() {
   const [gitRecord, setGitRecord] = useState<MyWorkRequirement | null>(null);
   // 正在改状态的需求键：同一张卡片上的状态按钮转圈，别把整页都锁住。
   const [changingStatusKey, setChangingStatusKey] = useState("");
+  // 正在退场的需求键：卡片先播一段收起动画，动画结束才从列表里真正拿掉。
+  const [removingKeys, setRemovingKeys] = useState<Set<string>>(new Set());
+  const removeTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   // 需求弹窗是否一打开就进总体测试：工作台的「开始测试」和需求列表同一个入口。
   const [sessionStartTesting, setSessionStartTesting] = useState(false);
   const [outlineBridgeReady, setOutlineBridgeReady] = useState(false);
@@ -112,6 +118,8 @@ export function MyWorkWorkspace() {
   // 列表筛选：项目默认「所有项目」，关键词按需求名称（含需求编号）模糊匹配。
   const [programFilter, setProgramFilter] = useState<number | "all">("all");
   const [keyword, setKeyword] = useState("");
+  // 当前分支筛选：只留下与本机工作区当前分支一致的需求，卡片同时高亮。
+  const [currentBranchOnly, setCurrentBranchOnly] = useState(false);
   const [sortBy, setSortBy] = useState<"created" | "program">("created");
   const [createRequirementOpen, setCreateRequirementOpen] = useState(false);
   const [createRequirementPrograms, setCreateRequirementPrograms] = useState<MyWorkProgram[]>([]);
@@ -152,6 +160,7 @@ export function MyWorkWorkspace() {
   useEffect(() => {
     setProgramFilter("all");
     setKeyword("");
+    setCurrentBranchOnly(false);
   }, [activeBusinessLine.id]);
 
   // 只有挂了 Git 的项目才去问本机桥接，避免为纯文档项目发无意义的请求。
@@ -184,7 +193,7 @@ export function MyWorkWorkspace() {
   const gitStateOf = useCallback((record: MyWorkRequirement) => {
     if (!record.programGitEnabled || !record.gitEnabled || !record.gitBranch) return null;
     const workspace = gitWorkspaces.get(record.programId);
-    const base = { current: false, currentBranch: workspace?.status?.currentBranch ?? "" };
+    const base = { current: false, dirty: false, currentBranch: workspace?.status?.currentBranch ?? "" };
     if (workspace?.error) return { ...base, tone: "is-idle", label: t("delivery.requirement.gitState.unavailable") };
     if (!workspace?.status) return { ...base, tone: "is-idle", label: t("delivery.requirement.gitState.pending") };
     if (workspace.status.detached) {
@@ -193,7 +202,7 @@ export function MyWorkWorkspace() {
     if (workspace.status.currentBranch !== record.gitBranch) {
       return { ...base, tone: "is-warning", label: t("delivery.requirement.gitState.mismatch") };
     }
-    if (workspace.status.dirty) return { ...base, current: true, tone: "is-warning", label: t("delivery.requirement.gitState.dirty") };
+    if (workspace.status.dirty) return { ...base, current: true, dirty: true, tone: "is-warning", label: t("delivery.requirement.gitState.dirty") };
     return { ...base, current: true, tone: "is-success", label: t("delivery.requirement.gitState.ready") };
   }, [gitWorkspaces, t]);
 
@@ -209,27 +218,53 @@ export function MyWorkWorkspace() {
       .sort((left, right) => left.label.localeCompare(right.label, locale));
   }, [locale, records]);
 
-  const filtering = programFilter !== "all" || Boolean(keyword.trim());
+  /** 与本机工作区当前分支一致的需求键：分支筛选和卡片高亮共用这一份判定。 */
+  const currentBranchKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const record of records) {
+      if (!record.programGitEnabled || !record.gitEnabled || !record.gitBranch) continue;
+      const status = gitWorkspaces.get(record.programId)?.status;
+      if (!status || status.detached) continue;
+      if (status.currentBranch === record.gitBranch) keys.add(record.requirementKey);
+    }
+    return keys;
+  }, [gitWorkspaces, records]);
+
+  // 一条都匹配不上时不让按钮进入选中态，否则点完只会得到一个空列表。
+  useEffect(() => {
+    if (currentBranchOnly && !currentBranchKeys.size) setCurrentBranchOnly(false);
+  }, [currentBranchKeys, currentBranchOnly]);
+
+  const filtering = programFilter !== "all" || Boolean(keyword.trim()) || currentBranchOnly;
 
   /** 项目与关键词是列表的统一入口条件：统计和身份分组都基于筛选后的这批需求。 */
   const filteredRecords = useMemo(() => {
     const query = keyword.trim().toLowerCase();
     return records.filter((record) => {
       if (programFilter !== "all" && record.programId !== programFilter) return false;
+      if (currentBranchOnly && !currentBranchKeys.has(record.requirementKey)) return false;
       if (!query) return true;
       return (record.name || "").toLowerCase().includes(query)
         || record.requirementKey.toLowerCase().includes(query);
     });
-  }, [keyword, programFilter, records]);
+  }, [currentBranchKeys, currentBranchOnly, keyword, programFilter, records]);
 
-  /** 顶部统计只描述当前空间已加载并通过筛选的这批需求，不额外请求聚合接口。 */
-  const stats = useMemo(() => ({
-    total: filteredRecords.length,
-    programs: new Set(filteredRecords.map((record) => record.programId)).size,
-    created: filteredRecords.filter((record) => record.createdBy === userId).length,
-    owner: filteredRecords.filter((record) => includesCurrentUser(record.owners, userId)).length,
-    assistant: filteredRecords.filter((record) => includesCurrentUser(record.assistants, userId)).length,
-  }), [filteredRecords, userId]);
+  /**
+   * 顶部统计只描述当前空间已加载并通过筛选的这批需求，不额外请求聚合接口。
+   * 正在退场的卡片先从统计里扣掉：数字随点击立刻变化，卡片再慢慢收起。
+   */
+  const stats = useMemo(() => {
+    const counted = removingKeys.size
+      ? filteredRecords.filter((record) => !removingKeys.has(record.requirementKey))
+      : filteredRecords;
+    return {
+      total: counted.length,
+      programs: new Set(counted.map((record) => record.programId)).size,
+      created: counted.filter((record) => record.createdBy === userId).length,
+      owner: counted.filter((record) => includesCurrentUser(record.owners, userId)).length,
+      assistant: counted.filter((record) => includesCurrentUser(record.assistants, userId)).length,
+    };
+  }, [filteredRecords, removingKeys, userId]);
 
   // 三类身份互不排斥：同一条需求可以既是我提出的，又由我负责或协助。
   const recordsOfCurrentType = useMemo(() => filteredRecords.filter((record) => {
@@ -343,8 +378,41 @@ export function MyWorkWorkspace() {
   }, [preferences.globalTool]);
 
   /**
+   * 让一条需求就地退场：先标记成退场态播动画，动画收尾再从本地列表拿掉。
+   * 不走整表重取，页面不会闪一下 loading，统计也是跟着这份本地数据走。
+   */
+  const dismissRecord = useCallback((requirementKey: string) => {
+    if (removeTimersRef.current.has(requirementKey)) return;
+    setRemovingKeys((current) => {
+      const next = new Set(current);
+      next.add(requirementKey);
+      return next;
+    });
+    const timer = setTimeout(() => {
+      removeTimersRef.current.delete(requirementKey);
+      setRecords((current) => current.filter((item) => item.requirementKey !== requirementKey));
+      setRemovingKeys((current) => {
+        if (!current.has(requirementKey)) return current;
+        const next = new Set(current);
+        next.delete(requirementKey);
+        return next;
+      });
+    }, CARD_EXIT_MS);
+    removeTimersRef.current.set(requirementKey, timer);
+  }, []);
+
+  // 卸载时把没跑完的退场定时器清掉，免得往已经不在的组件里写状态。
+  useEffect(() => {
+    const timers = removeTimersRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+
+  /**
    * 快速改状态走只改状态的接口：整条需求保存会把这里没带上的字段（例如计划起止时间）一并覆盖。
-   * 改完整表重取——需求可能因此不再是「进行中」，工作台就不该继续留着它。
+   * 工作台只收「进行中」的需求，所以改完直接让这张卡片退场，不再整表重取。
    */
   const handleStatusChange = useCallback(async (record: MyWorkRequirement, status: RequirementStatus) => {
     if (record.status === status) return;
@@ -352,23 +420,29 @@ export function MyWorkWorkspace() {
     try {
       await updateRequirementStatus(record.programId, record.requirementKey, status, record.version);
       message.success(t("delivery.requirement.statusUpdated"));
-      setReloadKey((value) => value + 1);
+      dismissRecord(record.requirementKey);
     } catch (error) {
       message.error((error as Error).message);
     } finally {
       setChangingStatusKey("");
     }
-  }, [t]);
+  }, [dismissRecord, t]);
 
   const handleDeleteRequirement = useCallback(async (record: MyWorkRequirement) => {
+    // 兜底再判一次：卡片上已禁用按钮，但确认框开着的时候工作区可能才变脏。
+    const gitState = gitStateOf(record);
+    if (gitState?.current && gitState.dirty) {
+      message.warning(t("delivery.requirement.deleteBlockedDirty"));
+      return;
+    }
     try {
       await deleteRequirement(record.programId, record.requirementKey);
       message.success(t("delivery.requirement.deleted"));
-      setReloadKey((value) => value + 1);
+      dismissRecord(record.requirementKey);
     } catch (error) {
       message.error((error as Error).message);
     }
-  }, [t]);
+  }, [dismissRecord, gitStateOf, t]);
 
   /** Git 弹窗要的是这条需求所属项目的最新工作区状态，顺带更新卡片上的分支提示。 */
   const refreshGitWorkspace = useCallback(async (programId: number) => {
@@ -524,18 +598,41 @@ export function MyWorkWorkspace() {
             placeholder={t("myWork.searchPlaceholder")}
             onChange={(event) => setKeyword(event.target.value)}
           />
+          <Tooltip
+            title={currentBranchKeys.size
+              ? t("myWork.currentBranchFilterHint")
+              : t("myWork.currentBranchFilterEmpty")}
+          >
+            {/* 禁用态的按钮不触发 Tooltip，套一层容器保证「没有匹配」也有解释。 */}
+            <span className="my-work-filters__branch-wrap">
+              <Button
+                className={`my-work-filters__branch${currentBranchOnly ? " is-active" : ""}`}
+                aria-pressed={currentBranchOnly}
+                disabled={!currentBranchKeys.size}
+                loading={gitLoading && !currentBranchKeys.size}
+                icon={<BranchesOutlined />}
+                onClick={() => setCurrentBranchOnly((value) => !value)}
+              >
+                {t("myWork.currentBranchFilter")}
+                <b className="manager-mono">{currentBranchKeys.size}</b>
+              </Button>
+            </span>
+          </Tooltip>
         </div>
       </header>
 
-      {loading ? (
+      {loading && !sortedRecords.length ? (
         <div className="my-work-loading"><Spin /></div>
       ) : sortedRecords.length ? (
         <section className="my-work-grid" aria-label={t("myWork.list")}>
           {sortedRecords.map((record) => {
             const gitState = gitStateOf(record);
+            // 工作区正停在这条需求的分支上且还有未提交改动时不许删：改动会失去对应的需求上下文。
+            const deleteBlocked = Boolean(gitState?.current && gitState?.dirty);
             return (
               <article
-                className="my-work-card"
+                className={`my-work-card${currentBranchOnly && currentBranchKeys.has(record.requirementKey) ? " is-current-branch" : ""}${removingKeys.has(record.requirementKey) ? " is-removing" : ""}`}
+                aria-hidden={removingKeys.has(record.requirementKey) || undefined}
                 key={`${record.bizLine}:${record.programId}:${record.requirementKey}`}
               >
                 <header className="my-work-card__head">
@@ -684,7 +781,22 @@ export function MyWorkWorkspace() {
                         />
                       </Tooltip>
                     ) : null}
-                    {record.canWrite ? (
+                    {record.canWrite && deleteBlocked ? (
+                      // 禁用态的按钮不触发 Tooltip，套一层容器把「为什么不能删」说清楚。
+                      <Tooltip title={t("delivery.requirement.deleteBlockedDirty")}>
+                        <span>
+                          <Button
+                            danger
+                            disabled
+                            aria-label={t("delivery.requirement.delete")}
+                            type="text"
+                            size="small"
+                            icon={<DeleteOutlined />}
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : null}
+                    {record.canWrite && !deleteBlocked ? (
                       <Popconfirm
                         title={t("delivery.requirement.deleteConfirm")}
                         okButtonProps={{ danger: true }}
@@ -718,7 +830,11 @@ export function MyWorkWorkspace() {
         </section>
       ) : (
         <section className="manager-data-card my-work-empty">
-          <Empty description={filtering ? t("myWork.emptyBySearch") : t(`myWork.empty.${workType}`)} />
+          <Empty
+            description={currentBranchOnly
+              ? t("myWork.currentBranchEmptyList")
+              : filtering ? t("myWork.emptyBySearch") : t(`myWork.empty.${workType}`)}
+          />
         </section>
       )}
 

@@ -3,6 +3,7 @@
 import {
 	BranchesOutlined,
 	CloudUploadOutlined,
+	LeftOutlined,
   CheckOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -19,7 +20,8 @@ import {
   PictureOutlined,
   DownOutlined,
   PlusOutlined,
-  ReloadOutlined,
+	ReloadOutlined,
+	RightOutlined,
   SaveOutlined,
   SendOutlined,
   ShareAltOutlined,
@@ -30,6 +32,7 @@ import { Button, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select,
 import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
+import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
 import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
@@ -55,6 +58,7 @@ import {
 	bindRequirementGitBranch,
 	createCodexGitBranch,
 	fetchCodexGitBranches,
+	fetchCodexGitWorkspaceStatus,
 	pushCodexGitBranch,
   fetchCodexRequirementPrototype,
   fetchCodexRequirementPrototypeConversation,
@@ -65,11 +69,13 @@ import {
   generateCodexRequirementPrototype,
   fetchRequirement,
   saveRequirement,
+  updateRequirementName,
   sendCodexRequirementPrototypeMessage,
   sendCodexPlanningMessage,
   stopCodexPlanningConversation,
   uploadCodexPlanningAttachments,
   type CodexConversationItem,
+  type CodexGitWorkspaceStatus,
   type CodexPlanningConversation,
   type CodexPlanningSessionSummary,
   type CodexRequirementPrototypeConversation,
@@ -149,6 +155,19 @@ function normalizedDateTime(value?: string | null) {
 
 function defaultRequirementGitBranch(requirementKey: string) {
   return requirementKey ? `feature/issue_${requirementKey}` : "";
+}
+
+let lastNewRequirementGitBranchTimestamp = 0;
+
+function defaultNewRequirementGitBranch(existingBranches: readonly string[] = []) {
+  let timestamp = Math.max(Date.now(), lastNewRequirementGitBranchTimestamp + 1);
+  let branch = `feature/issue_req-${timestamp}`;
+  while (existingBranches.includes(branch)) {
+    timestamp += 1;
+    branch = `feature/issue_req-${timestamp}`;
+  }
+  lastNewRequirementGitBranchTimestamp = timestamp;
+  return branch;
 }
 
 const progressState = (status: string) => {
@@ -250,16 +269,22 @@ export function DeliveryRequirementSessionModal({
   // 单任务模式下，唯一业务任务必须直接承接完整需求文档；不改写用户保存的开关值。
 	const taskDocumentPreGenerationRequired = preGenerateTaskDocuments || !splitTasks;
 	const [generatePrototype, setGeneratePrototype] = useState(false);
-	const [gitEnabled, setGitEnabled] = useState(false);
+	// 分支只在工具栏上建：下面这几个是「创建分支」弹窗的表单值，不参与需求表单的脏检查。
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
 	const [gitBranch, setGitBranch] = useState("");
 	const [gitBranches, setGitBranches] = useState<string[]>([]);
 	const [gitCurrentBranch, setGitCurrentBranch] = useState("");
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
 	const [gitCreating, setGitCreating] = useState(false);
+	const [gitBranchFormOpen, setGitBranchFormOpen] = useState(false);
+	const [gitStatus, setGitStatus] = useState<CodexGitWorkspaceStatus | null>(null);
 	const [gitPushOpen, setGitPushOpen] = useState(false);
 	const [gitPushMessage, setGitPushMessage] = useState("");
 	const [gitPushing, setGitPushing] = useState(false);
+	const [gitChangesOpen, setGitChangesOpen] = useState(false);
+	// 新建窗口即使在落库后收到父组件回传，也仍属于同一轮新建流程；Git 项目要据此持续拦截首轮对话。
+	const newRequirementFlowRef = useRef(false);
+	const modalOpenRef = useRef(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingAttachments, setDraggingAttachments] = useState(false);
@@ -285,6 +310,7 @@ export function DeliveryRequirementSessionModal({
   const [prototypeEditLoading, setPrototypeEditLoading] = useState(false);
   const [prototypeEditSending, setPrototypeEditSending] = useState(false);
   const [contextPanelWidth, setContextPanelWidth] = useState(defaultContextPanelWidth);
+	const [contextCollapsed, setContextCollapsed] = useState(false);
   const [resizingContext, setResizingContext] = useState(false);
   const planningShellRef = useRef<HTMLDivElement>(null);
   const contextResizePointerIdRef = useRef<number | null>(null);
@@ -389,7 +415,14 @@ export function DeliveryRequirementSessionModal({
 
   // 自动写进来的那个名字（先是占位名，随后是 AI 标题）；用户自己改过就不再跟着变。
   const autoNameRef = useRef("");
-  useEffect(() => {
+	useEffect(() => {
+		if (open && !modalOpenRef.current) {
+			newRequirementFlowRef.current = !requirement;
+			// 新增和编辑需求都一样：右侧详情默认收起，把宽度让给会话；确认写入跑完后再自动展开。
+			setContextCollapsed(true);
+		}
+		if (!open) newRequirementFlowRef.current = false;
+		modalOpenRef.current = open;
     if (!open) {
       setConversation(null);
       setSelectedThreadId("");
@@ -420,12 +453,16 @@ export function DeliveryRequirementSessionModal({
       setPrototypeEditLoading(false);
       setPrototypeEditSending(false);
       setResizingContext(false);
+		  setContextCollapsed(false);
       awaitingPlanningResultRef.current = "";
       return;
     }
     setSaved(requirement);
     // 换一条需求就重新认「哪个名字是自动写进来的」，否则上一条的占位名会被当成本条的。
-    autoNameRef.current = "";
+    // 需求编号是 Git 新需求首轮等待 AI 标题期间的临时名称，父组件回传时不能把它忘掉。
+    autoNameRef.current = requirement?.name && requirement.name === requirement.requirementKey
+      ? requirement.requirementKey
+      : "";
     setTestingWorkspaceOpen(Boolean(requirement && startTestingOnOpen));
     setTestingThreadId("");
     setStartNewTestingConversation(Boolean(requirement && startTestingOnOpen));
@@ -440,8 +477,9 @@ export function DeliveryRequirementSessionModal({
     setSplitTasks(requirement?.splitTasks ?? true);
     setPreGenerateTaskDocuments(Boolean(requirement?.preGenerateTaskDocuments));
     setGeneratePrototype(requirement?.generatePrototype ?? false);
-		// 项目 Git 是总开关；项目开启后，新需求默认关联独立分支，历史需求保留自己的选择。
-		setGitEnabled(projectGitEnabled && (requirement?.gitEnabled ?? true));
+		// 分支表单每次打开都按当前需求重置；已经建过分支的需求在工具栏上只读展示。
+		setGitBranchFormOpen(false);
+		setGitStatus(null);
 		setGitBaseBranch(requirement?.gitBaseBranch ?? projectGitBaseBranch);
 		setGitBranch(requirement?.gitBranch ?? "");
 		setGitBranches([]);
@@ -477,7 +515,7 @@ export function DeliveryRequirementSessionModal({
   }, [open, programId, t]);
 
 	useEffect(() => {
-		if (!open || !projectGitEnabled || !gitEnabled) return;
+		if (!open || !projectGitEnabled || !gitBranchFormOpen) return;
 		let cancelled = false;
 		setGitBranchesLoading(true);
 		void fetchCodexGitBranches(programId)
@@ -486,6 +524,10 @@ export function DeliveryRequirementSessionModal({
 				setGitBranches(catalog.branches);
 				setGitCurrentBranch(catalog.currentBranch || "");
 				setGitBaseBranch((current) => current || catalog.defaultBranch || catalog.branches[0] || "");
+				setGitBranch((current) => {
+					if (saved?.requirementKey || !current || !current.startsWith("feature/issue_req-") || !catalog.branches.includes(current)) return current;
+					return defaultNewRequirementGitBranch(catalog.branches);
+				});
 			})
 			.catch(() => {
 				if (cancelled) return;
@@ -498,12 +540,25 @@ export function DeliveryRequirementSessionModal({
 		return () => {
 			cancelled = true;
 		};
-	}, [gitEnabled, open, programId, projectGitEnabled, t]);
+	}, [gitBranchFormOpen, open, programId, projectGitEnabled, saved?.requirementKey, t]);
+
+	// 需求分支已经建好时，工具栏上要能看出它现在有多少待提交改动。
+	const refreshGitStatus = useCallback(async () => {
+		if (!open || !projectGitEnabled || !codexBridgeReady || !saved?.gitBranch) {
+			setGitStatus(null);
+			return;
+		}
+		try {
+			setGitStatus(await fetchCodexGitWorkspaceStatus(programId));
+		} catch {
+			// 工作区状态是附加信息，读不到就只显示分支名，不打扰用户。
+			setGitStatus(null);
+		}
+	}, [codexBridgeReady, open, programId, projectGitEnabled, saved?.gitBranch]);
 
 	useEffect(() => {
-		if (!open || !projectGitEnabled || !gitEnabled || !saved?.requirementKey || gitBranch) return;
-		setGitBranch(defaultRequirementGitBranch(saved.requirementKey));
-	}, [gitBranch, gitEnabled, open, projectGitEnabled, saved?.requirementKey]);
+		void refreshGitStatus();
+	}, [refreshGitStatus]);
 
   useEffect(() => {
     if (!open || !requirementKey) return;
@@ -634,6 +689,12 @@ export function DeliveryRequirementSessionModal({
 
   const active = Boolean(conversation?.active && !newConversation);
 
+	// 拆解回合结束时工作区多半刚被改过，待提交数要跟着更新。
+	useEffect(() => {
+		if (active) return;
+		void refreshGitStatus();
+	}, [active, refreshGitStatus]);
+
   // 需求名称留空时，桥接在开聊那一刻就先用首条消息的前十个字占位，再并行起一轮命名，
   // AI 的标题回来后把占位名换掉。名字在拆解跑着的过程中会变两次，所以运行期间一直取，
   // 回合结束后再补取一次。
@@ -750,7 +811,7 @@ export function DeliveryRequirementSessionModal({
   const dirty = useMemo(() => {
     const sameMembers = (ids: string[], list: RequirementMember[] | undefined) =>
       ids.join(",") === (list ?? []).map((member) => member.id).join(",");
-		if (!saved) return Boolean(name.trim() || detail.trim() || (projectGitEnabled && gitEnabled) || ownerIds.length || assistantIds.length);
+		if (!saved) return Boolean(name.trim() || detail.trim() || ownerIds.length || assistantIds.length);
     return (
       name !== (saved.name ?? "")
       || detail !== (saved.detail ?? "")
@@ -762,18 +823,13 @@ export function DeliveryRequirementSessionModal({
       || splitTasks !== (saved.splitTasks ?? true)
       || preGenerateTaskDocuments !== Boolean(saved.preGenerateTaskDocuments)
       || generatePrototype !== Boolean(saved.generatePrototype)
-			|| (projectGitEnabled && (
-				gitEnabled !== (saved.gitEnabled ?? true)
-				|| gitBaseBranch !== (saved.gitBaseBranch ?? "")
-				|| gitBranch !== (saved.gitBranch ?? "")
-			))
       || stageKey !== (saved.stageKey ?? "")
       || moduleKey !== (saved.moduleKey ?? "")
       || kind !== (saved.kind ?? "")
       || !sameMembers(ownerIds, saved.owners)
       || !sameMembers(assistantIds, saved.assistants)
     );
-  }, [assistantIds, detail, generatePrototype, gitBaseBranch, gitBranch, gitEnabled, preGenerateTaskDocuments, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, projectGitEnabled, saved, splitTasks, stageKey, startPhase, status]);
+  }, [assistantIds, detail, generatePrototype, preGenerateTaskDocuments, kind, mode, moduleKey, name, ownerIds, plannedEndAt, plannedStartAt, saved, splitTasks, stageKey, startPhase, status]);
 
 	// 弹窗在切换项目时也不能展示上一个项目的缓存成员。
 	const projectMembers = membersProgramId === programId ? members : [];
@@ -864,7 +920,7 @@ export function DeliveryRequirementSessionModal({
 		[projectMembers],
   );
 
-  const save = async () => {
+	const save = async (gitOverrides?: { gitEnabled?: boolean; gitBaseBranch?: string; gitBranch?: string }) => {
     // 名称允许留空：先和 AI 把需求聊清楚，标题由拆解会话结束后按聊天内容自动生成。
     setSaving(true);
     try {
@@ -888,10 +944,11 @@ export function DeliveryRequirementSessionModal({
         splitTasks,
         preGenerateTaskDocuments,
         generatePrototype,
+			// 分支由工具栏的创建入口单独绑定，需求保存只把已绑定的值原样带回，别覆盖成表单里的临时值。
 			...(projectGitEnabled ? {
-				gitEnabled,
-				gitBaseBranch: gitEnabled ? gitBaseBranch : "",
-				gitBranch: gitEnabled ? gitBranch.trim() : "",
+				gitEnabled: gitOverrides?.gitEnabled ?? saved?.gitEnabled ?? true,
+				gitBaseBranch: gitOverrides?.gitBaseBranch ?? saved?.gitBaseBranch ?? "",
+				gitBranch: gitOverrides?.gitBranch ?? saved?.gitBranch ?? "",
 			} : {}),
         stageKey,
         moduleKey,
@@ -912,6 +969,13 @@ export function DeliveryRequirementSessionModal({
     }
   };
 
+	const openGitBranchForm = async () => {
+		// 新需求不先保存：先在本机创建分支，成功后才创建需求并写入关联。
+		setGitBaseBranch(saved?.gitBaseBranch || projectGitBaseBranch || "");
+		setGitBranch(saved?.gitBranch || (saved?.requirementKey ? defaultRequirementGitBranch(saved.requirementKey) : defaultNewRequirementGitBranch()));
+		setGitBranchFormOpen(true);
+	};
+
 	const createGitBranch = async () => {
 		if (!projectGitEnabled) return;
 		if (!gitBaseBranch) {
@@ -920,19 +984,34 @@ export function DeliveryRequirementSessionModal({
 		}
 		setGitCreating(true);
 		try {
-			// 新需求先落库以取得业务编号，默认分支名必须以该编号生成。
-			const current = await save();
-			if (!current) return;
-			const nextBranch = gitBranch.trim() || defaultRequirementGitBranch(current.requirementKey);
+			const current = saved;
+			const needsTemporaryName = newRequirementFlowRef.current && !current?.name.trim();
+			const nextBranch = gitBranch.trim() || (current?.requirementKey ? defaultRequirementGitBranch(current.requirementKey) : defaultNewRequirementGitBranch());
 			if (!nextBranch) return;
+			// 新建流程严格按「先创建本机分支，再创建需求」执行；需求保存失败时不会提前落库。
 			const created = await createCodexGitBranch(programId, gitBaseBranch, nextBranch);
-			const next = await bindRequirementGitBranch(programId, current.requirementKey, created.baseBranch, created.branch);
+			let next = current
+				? await bindRequirementGitBranch(programId, current.requirementKey, created.baseBranch, created.branch)
+				: await save({ gitEnabled: true, gitBaseBranch: created.baseBranch, gitBranch: created.branch });
+			if (!next) return;
+			// 分支成功后才把需求编号作为临时名称；首轮 AI 标题只允许替换这个精确旧值。
+			if (needsTemporaryName) {
+				next = await updateRequirementName(programId, next.requirementKey, next.requirementKey, "");
+				autoNameRef.current = next.requirementKey;
+				setName(next.requirementKey);
+			}
+			// 新建需求要在拿到服务端编号后补记分支关联时间；已有需求已经在上一步完成绑定。
+			if (!current) {
+				next = await bindRequirementGitBranch(programId, next.requirementKey, created.baseBranch, created.branch);
+			}
 			setGitBaseBranch(next.gitBaseBranch);
 			setGitBranch(next.gitBranch);
 			setSaved(next);
 			onRequirementSaved(next);
 			// 创建（或切换）成功后项目就停在这条分支上，标注要立刻跟上。
 			setGitCurrentBranch(created.branch);
+			setGitBranchFormOpen(false);
+			void refreshGitStatus();
 			message.success(t("delivery.requirement.gitBranchCreated"));
 		} catch (error) {
 			// Git 的失败原因往往是多行输出，toast 会截断，这里用弹窗把服务端返回的原文完整交代。
@@ -959,14 +1038,19 @@ export function DeliveryRequirementSessionModal({
 	};
 
 	// 需求已经关联到本机的一条分支时才谈得上推送；只在面板上填了分支名（没真正建过）不算。
-	const gitPushReady = Boolean(projectGitEnabled && saved?.gitEnabled && saved?.gitBranch && saved?.gitBranchCreatedAt);
+	const gitLinked = Boolean(projectGitEnabled && saved?.gitBranch && saved?.gitBranchCreatedAt);
+	const gitPushReady = Boolean(gitLinked && saved?.gitEnabled);
+	const gitBranchRequiredBeforeConversation = Boolean(projectGitEnabled && newRequirementFlowRef.current && !gitLinked);
+	// 工具栏的分支区域跟着标题走：名字定下来之后才出现建分支入口。
+	const gitToolbarReady = Boolean(projectGitEnabled && (gitLinked || newRequirementFlowRef.current || (saved && name.trim())));
 
 	const openGitPush = () => {
 		setGitPushMessage(saved ? `feat: ${saved.name || saved.requirementKey}（${saved.requirementKey}）` : "");
 		setGitPushOpen(true);
 	};
 
-	const pushGitBranch = async () => {
+	// commitOnly：只在本机提交，不推远端。推送冲突要 AI 帮忙时才走完整推送。
+	const pushGitBranch = async (commitOnly = false) => {
 		if (!saved?.gitBranch) return;
 		setGitPushing(true);
 		try {
@@ -975,8 +1059,18 @@ export function DeliveryRequirementSessionModal({
 				model: modelForConfig(planningConfig),
 				reasoningEffort: effortForConfig(planningConfig),
 				fastMode: planningProvider === "claude" && planningConfig.claudeFastMode,
+				commitOnly,
 			});
 			setGitPushOpen(false);
+			void refreshGitStatus();
+			if (commitOnly) {
+				message.success(
+					result.committed
+						? t("delivery.requirement.gitCommitted").replace("{branch}", result.branch)
+						: t("delivery.requirement.gitCommitNothing"),
+				);
+				return;
+			}
 			if (result.repaired) {
 				// AI 介入过就把它的处理说明留在屏幕上，别用一闪而过的 toast 交代。
 				Modal.info({
@@ -1012,9 +1106,16 @@ export function DeliveryRequirementSessionModal({
       message.warning(t("delivery.execution.bridgeOffline"));
       return;
     }
+		if (gitBranchRequiredBeforeConversation) {
+			message.warning(t("delivery.requirement.gitBranchRequiredBeforeConversation"));
+			return;
+		}
     // 会话必须挂在一条已经落库的需求上，否则拆出来的任务无处归属，附件也没有归档的键。
     const current = saved ?? (await save());
     if (!current) return;
+    // 一次都没聊过的需求（不管是新增还是从编辑入口进来的）：首轮的标题由 AI 按用户的问题
+    // 重定，所以把此刻的名字当成「自动写进来的名字」，桥接回写之后本地才会跟着换。
+    if (!(conversation?.conversations ?? []).length) autoNameRef.current = current.name.trim();
     setSending(true);
     try {
       const uploaded = attachments.length
@@ -1123,7 +1224,7 @@ export function DeliveryRequirementSessionModal({
     if (!isFileDrag(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = codexBridgeReady && !sending ? "copy" : "none";
-    if (codexBridgeReady && !sending) setDraggingAttachments(true);
+		if (codexBridgeReady && !sending && !gitBranchRequiredBeforeConversation) setDraggingAttachments(true);
   };
 
   const handleAttachmentDragLeave = (event: DragEvent<HTMLElement>) => {
@@ -1135,7 +1236,7 @@ export function DeliveryRequirementSessionModal({
     if (!isFileDrag(event)) return;
     event.preventDefault();
     setDraggingAttachments(false);
-    if (!codexBridgeReady || sending) return;
+		if (!codexBridgeReady || sending || gitBranchRequiredBeforeConversation) return;
     selectAttachments(event.dataTransfer.files);
   };
 
@@ -1144,7 +1245,7 @@ export function DeliveryRequirementSessionModal({
     const files = clipboardAttachments(event.clipboardData);
     if (!files.length) return;
     event.preventDefault();
-    if (!codexBridgeReady || sending) return;
+		if (!codexBridgeReady || sending || gitBranchRequiredBeforeConversation) return;
     selectAttachments(files);
   };
 
@@ -1188,6 +1289,8 @@ export function DeliveryRequirementSessionModal({
     if (progressState(awaitedTurn.status) !== "success") return;
     setActivePhaseTab("requirement");
     setActiveRequirementTab("result");
+    // 写入跑完才有拆解结果可看，这时把默认收起的右侧详情展开。
+    setContextCollapsed(false);
     // 写入轮次刚落库了任务，看板上的列表也要跟着刷新。
     void onChanged();
     if (saved && (conversation?.result.items.length ?? 0) > 0) onTasksWritten?.(saved);
@@ -1243,10 +1346,10 @@ export function DeliveryRequirementSessionModal({
       ) : (
       <>
       <div
-        className={`delivery-planning-shell${resizingContext ? " is-resizing-context" : ""}`}
-        ref={planningShellRef}
-        style={{ "--delivery-planning-context-width": `${contextPanelWidth}px` } as CSSProperties}
-      >
+		className={`delivery-planning-shell${resizingContext ? " is-resizing-context" : ""}${contextCollapsed ? " is-context-collapsed" : ""}`}
+		ref={planningShellRef}
+		style={{ "--delivery-planning-context-width": `${contextPanelWidth}px` } as CSSProperties}
+		>
         {/* 左：会话列表。同一条需求可以开多轮拆解，追问和重开在这里切。 */}
         <aside className="delivery-planning-history">
           <header className="delivery-session-history__header">
@@ -1303,9 +1406,37 @@ export function DeliveryRequirementSessionModal({
                   </small>
                 ) : null}
               </div>
+              {/* 创建分支、分享、刷新提到标题行，且只留图标，靠 Tooltip 说明文案。 */}
+              <div className="delivery-planning-session-toolbar__quick">
+                {gitToolbarReady && !gitLinked ? (
+                  <Tooltip title={t("delivery.requirement.gitCreateBranch")}>
+                    <Button
+                      icon={<BranchesOutlined />}
+                      loading={saving}
+                      onClick={() => void openGitBranchForm()}
+                      aria-label={t("delivery.requirement.gitCreateBranch")}
+                    />
+                  </Tooltip>
+                ) : null}
+                <Tooltip title={requirementKey ? t("delivery.requirement.shareLink") : t("delivery.requirement.saveFirst")}>
+                  <Button
+                    icon={<ShareAltOutlined />}
+                    disabled={!saved}
+                    aria-label={t("delivery.requirement.shareLink")}
+                    onClick={() => {
+                      if (saved) onShare(saved);
+                    }}
+                  />
+                </Tooltip>
+                <Tooltip title={t("delivery.session.refresh")}>
+                  <Button icon={<ReloadOutlined />} loading={loading} disabled={!requirementKey} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />
+                </Tooltip>
+              </div>
               {/* 没有会话状态可说时仍保留位置，避免刷新按钮在不同状态下左右跳动。 */}
               {!requirementKey ? (
-                <span className="delivery-planning-session-toolbar__state delivery-planning-session-toolbar__state--save-required">{t("delivery.requirement.saveFirst")}</span>
+                <span className="delivery-planning-session-toolbar__state delivery-planning-session-toolbar__state--save-required">
+                  {t(gitBranchRequiredBeforeConversation ? "delivery.requirement.gitBranchRequiredBeforeConversation" : "delivery.requirement.saveFirst")}
+                </span>
               ) : newConversation ? (
                 <span className="delivery-planning-session-toolbar__state">{t("delivery.session.newConversation")}</span>
               ) : conversation?.threadId ? (
@@ -1313,37 +1444,104 @@ export function DeliveryRequirementSessionModal({
               ) : (
                 <span className="delivery-planning-session-toolbar__state" />
               )}
+              {/* 展开/收起跟弹窗的关闭按钮排在同一行，右上角只留这两个。 */}
+              <Tooltip title={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}>
+                <Button
+                  className="delivery-planning-context-toggle"
+                  type="text"
+                  shape="circle"
+                  icon={contextCollapsed ? <RightOutlined /> : <LeftOutlined />}
+                  aria-label={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}
+                  onClick={() => setContextCollapsed((collapsed) => !collapsed)}
+                />
+              </Tooltip>
             </div>
             <div className="delivery-session-toolbar__actions">
-              {gitPushReady ? (
-                <Tooltip title={t("delivery.requirement.gitPushHint").replace("{branch}", saved?.gitBranch ?? "")}>
-                  <Button icon={<CloudUploadOutlined />} loading={gitPushing} disabled={!codexBridgeReady} onClick={openGitPush}>
-                    {t("delivery.requirement.gitPush")}
-                  </Button>
-                </Tooltip>
-              ) : null}
-              <Tooltip title={requirementKey ? t("delivery.requirement.shareLink") : t("delivery.requirement.saveFirst")}>
-                <Button
-                  icon={<ShareAltOutlined />}
-                  disabled={!saved}
-                  onClick={() => {
-                    if (saved) onShare(saved);
-                  }}
-                >
-                  {t("delivery.requirement.shareLink")}
-                </Button>
-              </Tooltip>
+              {/* 分支与推送都搬到收起需求信息后出现的 Git 悬浮框里，这里不再重复。 */}
               {prototype?.exists ? (
                 <Button icon={<EditOutlined />} disabled={!codexBridgeReady} onClick={openPrototypeEditor}>
                   {t("delivery.prototype.edit")}
                 </Button>
               ) : null}
               {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.planning.stop")}</Button> : null}
-              <Tooltip title={t("delivery.session.refresh")}>
-                <Button icon={<ReloadOutlined />} loading={loading} disabled={!requirementKey} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />
-              </Tooltip>
             </div>
           </header>
+          {/* 需求信息收起后右边空出一块，Git 分支和推送就浮在这里；展开时这块被需求信息占用，直接隐藏。 */}
+          {contextCollapsed && gitLinked ? (
+            <aside className="delivery-requirement-git-panel">
+              <header>
+                <span>{t("delivery.requirement.gitPanelTitle")}</span>
+                <Tooltip title={t("delivery.requirement.gitPanelRefresh")}>
+                  <Button
+                    type="text"
+                    size="small"
+                    shape="circle"
+                    icon={<ReloadOutlined />}
+                    aria-label={t("delivery.requirement.gitPanelRefresh")}
+                    onClick={() => void refreshGitStatus()}
+                  />
+                </Tooltip>
+              </header>
+              <Tooltip
+                placement="left"
+                title={gitStatus
+                  ? `${t("delivery.requirement.gitPanelChangesDetail")
+                    .replace("{staged}", String(gitStatus.staged))
+                    .replace("{unstaged}", String(gitStatus.unstaged))
+                    .replace("{untracked}", String(gitStatus.untracked))}\n${t("delivery.requirement.gitPanelChangesOpen")}`
+                  : t("delivery.requirement.gitPanelChangesOpen")}
+              >
+                <button
+                  className="delivery-requirement-git-panel__row is-action"
+                  type="button"
+                  onClick={() => setGitChangesOpen(true)}
+                >
+                  <FileTextOutlined />
+                  <span>{t("delivery.requirement.gitPanelChanges")}</span>
+                  <b className={gitStatus?.changed ? "is-dirty" : "is-clean"}>
+                    {gitStatus
+                      ? gitStatus.changed
+                        ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(gitStatus.changed))
+                        : t("delivery.requirement.gitBranchClean")
+                      : "—"}
+                  </b>
+                </button>
+              </Tooltip>
+              <div className="delivery-requirement-git-panel__row">
+                <BranchesOutlined />
+                <Tooltip title={saved?.gitBranch} placement="left">
+                  <code className="manager-mono">{saved?.gitBranch}</code>
+                </Tooltip>
+                {gitStatus?.currentBranch && gitStatus.currentBranch !== saved?.gitBranch ? (
+                  <Tooltip title={t("delivery.requirement.gitBranchNotCurrent").replace("{current}", gitStatus.currentBranch)}>
+                    <span className="is-mismatch">{t("delivery.requirement.gitState.mismatch")}</span>
+                  </Tooltip>
+                ) : null}
+              </div>
+              {gitPushReady ? (
+                <Tooltip
+                  placement="left"
+                  title={codexBridgeReady
+                    ? t("delivery.requirement.gitPushHint").replace("{branch}", saved?.gitBranch ?? "")
+                    : t("delivery.requirement.gitPanelUnavailable")}
+                >
+                  <button
+                    // 用 aria-disabled 而不是 disabled：原生禁用按钮收不到 hover，Tooltip 里的原因就没人看得到。
+                    className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady || gitPushing ? " is-disabled" : ""}`}
+                    type="button"
+                    aria-disabled={!codexBridgeReady || gitPushing}
+                    onClick={() => {
+                      if (!codexBridgeReady || gitPushing) return;
+                      openGitPush();
+                    }}
+                  >
+                    {gitPushing ? <LoadingOutlined spin /> : <CloudUploadOutlined />}
+                    <span>{t("delivery.requirement.gitPanelPush")}</span>
+                  </button>
+                </Tooltip>
+              ) : null}
+            </aside>
+          ) : null}
           <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
             {/* 首次加载时只显示转圈，不要再叠一层空状态：两个「空」摞在一起像坏了。 */}
             {loading && !conversation ? (
@@ -1387,7 +1585,7 @@ export function DeliveryRequirementSessionModal({
               <Select
                 className="delivery-session-composer__model"
                 value={modelForConfig(planningConfig)}
-                disabled={!codexBridgeReady || sending}
+                disabled={!codexBridgeReady || sending || gitBranchRequiredBeforeConversation}
                 aria-label={t("delivery.execution.model")}
                 onChange={(value) => setSceneOverride("taskPlanning", {
                   ...(preferences.scenes.taskPlanning ?? {}),
@@ -1400,7 +1598,7 @@ export function DeliveryRequirementSessionModal({
               <Select
                 className="delivery-session-composer__effort"
                 value={effortForConfig(planningConfig)}
-                disabled={!codexBridgeReady || sending}
+                disabled={!codexBridgeReady || sending || gitBranchRequiredBeforeConversation}
                 aria-label={t(planningProvider === "codex" ? "aiPreferences.reasoningEffort" : "aiPreferences.claudeEffort")}
                 options={(planningProvider === "codex" ? CODEX_REASONING_EFFORTS : CLAUDE_EFFORTS).map((value) => ({ value, label: t(`aiPreferences.reasoning.${value}`) }))}
                 onChange={(value) => setSceneOverride("taskPlanning", {
@@ -1415,17 +1613,17 @@ export function DeliveryRequirementSessionModal({
                   <Switch
                     size="small"
                     checked={planningConfig.claudeFastMode}
-                    disabled={!codexBridgeReady || sending}
+                    disabled={!codexBridgeReady || sending || gitBranchRequiredBeforeConversation}
                     aria-label={t("aiPreferences.fastMode")}
                     onChange={(checked) => setSceneOverride("taskPlanning", { ...(preferences.scenes.taskPlanning ?? {}), claudeFastMode: checked })}
                   />
                 </Tooltip>
               ) : null}
               <Tooltip title={t("delivery.session.addImage")}>
-                <Button type="text" shape="circle" icon={<PictureOutlined />} aria-label={t("delivery.session.addImage")} disabled={!codexBridgeReady || sending} onClick={() => imageInputRef.current?.click()} />
+                <Button type="text" shape="circle" icon={<PictureOutlined />} aria-label={t("delivery.session.addImage")} disabled={!codexBridgeReady || sending || gitBranchRequiredBeforeConversation} onClick={() => imageInputRef.current?.click()} />
               </Tooltip>
               <Tooltip title={t("delivery.session.addFile")}>
-                <Button type="text" shape="circle" icon={<PaperClipOutlined />} aria-label={t("delivery.session.addFile")} disabled={!codexBridgeReady || sending} onClick={() => attachmentInputRef.current?.click()} />
+                <Button type="text" shape="circle" icon={<PaperClipOutlined />} aria-label={t("delivery.session.addFile")} disabled={!codexBridgeReady || sending || gitBranchRequiredBeforeConversation} onClick={() => attachmentInputRef.current?.click()} />
               </Tooltip>
             </div>
             {attachments.length ? (
@@ -1442,8 +1640,10 @@ export function DeliveryRequirementSessionModal({
             <div className="delivery-session-composer__input">
               <DeliveryConversationMentionInput
                 value={draft}
-                disabled={!codexBridgeReady || sending}
-                placeholder={t(newConversation ? "delivery.session.newPlaceholder" : "delivery.planning.placeholder")}
+				disabled={!codexBridgeReady || sending || gitBranchRequiredBeforeConversation}
+				placeholder={gitBranchRequiredBeforeConversation
+					? t("delivery.requirement.gitBranchRequiredBeforeConversation")
+					: t(newConversation ? "delivery.session.newPlaceholder" : "delivery.planning.placeholder")}
                 requirements={chatRequirements}
                 items={chatItems}
                 references={chatReferences}
@@ -1476,13 +1676,17 @@ export function DeliveryRequirementSessionModal({
                     shape="circle"
                     icon={<SendOutlined />}
                     loading={sending || saving}
-                    disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady}
+					disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady || gitBranchRequiredBeforeConversation}
                     onClick={() => void send()}
                   />
                 </Tooltip>
               </div>
             </div>
-            <small className="delivery-planning-composer__hint">{t("delivery.planning.previewHint")}</small>
+			<small className="delivery-planning-composer__hint">
+				{t(gitBranchRequiredBeforeConversation
+					? "delivery.requirement.gitBranchRequiredBeforeConversation"
+					: "delivery.planning.previewHint")}
+			</small>
             {draggingAttachments ? <div className="delivery-session-composer__drop-target">{t("delivery.session.dropAttachments")}</div> : null}
           </footer>
         </main>
@@ -1674,79 +1878,6 @@ export function DeliveryRequirementSessionModal({
                         ) : null}
                       </div>
 
-						{/* 项目 Git 开启后才允许为需求单独关联、创建分支。 */}
-						{projectGitEnabled ? <div className="delivery-planning-context__group">
-							<span className="delivery-planning-context__group-title">{t("delivery.requirement.groupGit")}</span>
-							<div className={`delivery-planning-context__toggle${gitEnabled ? " is-on" : ""}`}>
-								<div role="presentation" onClick={() => setGitEnabled((current) => !current)}>
-									<b>{t("delivery.requirement.gitEnabled")}</b>
-									<small>{t("delivery.requirement.gitEnabledHint")}</small>
-								</div>
-								<Switch
-									size="small"
-									checked={gitEnabled}
-									aria-label={t("delivery.requirement.gitEnabled")}
-									onChange={setGitEnabled}
-								/>
-							</div>
-							{gitEnabled ? (
-								<>
-									{/* 建分支前先把项目此刻所处的分支摆出来，基准分支选错的代价太高。 */}
-									<small className="delivery-requirement-git-status">
-										<span>{gitCurrentBranch ? t("delivery.requirement.gitCurrentBranch") : t("delivery.requirement.gitCurrentBranchDetached")}</span>
-										{gitCurrentBranch ? <code className="manager-mono">{gitCurrentBranch}</code> : null}
-									</small>
-									<label>
-										{t("delivery.requirement.gitBaseBranch")}
-										<Select
-											showSearch
-											optionFilterProp="label"
-											loading={gitBranchesLoading}
-											value={gitBaseBranch || undefined}
-											placeholder={t("delivery.requirement.gitBaseBranchEmpty")}
-											onChange={setGitBaseBranch}
-											options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
-										/>
-									</label>
-									<label>
-										{t("delivery.requirement.gitBranch")}
-										<Input
-											value={gitBranch}
-											placeholder={saved?.requirementKey
-												? t("delivery.requirement.gitBranchPlaceholder").replace("{key}", saved.requirementKey)
-												: t("delivery.requirement.gitBranchPlaceholderUnsaved")}
-											onChange={(event) => setGitBranch(event.target.value)}
-										/>
-									</label>
-									<label>
-										{t("delivery.requirement.gitExistingBranch")}
-										<Select
-											showSearch
-											optionFilterProp="label"
-											loading={gitBranchesLoading}
-											placeholder={t("delivery.requirement.gitExistingBranchPlaceholder")}
-											value={undefined}
-											onChange={setGitBranch}
-											options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
-										/>
-									</label>
-									<Button
-										block
-										icon={<BranchesOutlined />}
-										loading={gitCreating}
-										disabled={!gitBaseBranch || gitBranchesLoading || saving}
-										onClick={() => void createGitBranch()}
-									>
-										{t("delivery.requirement.gitCreateBranch")}
-									</Button>
-									{saved?.gitBranchCreatedAt ? (
-										<small className="delivery-requirement-git-status">
-											{t("delivery.requirement.gitBranchLinked").replace("{branch}", saved.gitBranch)}
-										</small>
-									) : null}
-								</>
-							) : null}
-						</div> : null}
 
                       {/* 其余字段收在「更多」里，默认不占版面。 */}
                       <Button
@@ -1815,6 +1946,7 @@ export function DeliveryRequirementSessionModal({
                         block
                         type="primary"
                         icon={<SaveOutlined />}
+                        disabled={saving || (saved ? !dirty : projectGitEnabled)}
                         loading={saving}
                         onClick={() => void save()}
                       >
@@ -2214,17 +2346,91 @@ export function DeliveryRequirementSessionModal({
       </>
       )}
 
+      {/* 建分支只问两件事：从哪条分支切出来、这条需求的分支叫什么。 */}
+      <Modal
+        wrapClassName="manager-form-skin"
+        open={gitBranchFormOpen}
+        destroyOnClose
+        title={t("delivery.requirement.gitBranchFormTitle")}
+        okText={t("delivery.requirement.gitCreateBranch")}
+        cancelText={t("common.cancel")}
+        confirmLoading={gitCreating}
+        okButtonProps={{ disabled: !gitBaseBranch || !gitBranch.trim() || gitBranchesLoading }}
+        onCancel={() => setGitBranchFormOpen(false)}
+        onOk={() => void createGitBranch()}
+      >
+        <div className="delivery-requirement-git-push">
+          {/* 建分支前先把项目此刻所处的分支摆出来，基准分支选错的代价太高。 */}
+          <small className="delivery-requirement-git-status">
+            <span>{gitCurrentBranch ? t("delivery.requirement.gitCurrentBranch") : t("delivery.requirement.gitCurrentBranchDetached")}</span>
+            {gitCurrentBranch ? <code className="manager-mono">{gitCurrentBranch}</code> : null}
+          </small>
+          <label>
+            {t("delivery.requirement.gitBaseBranch")}
+            <Select
+              showSearch
+              optionFilterProp="label"
+              loading={gitBranchesLoading}
+              value={gitBaseBranch || undefined}
+              placeholder={t("delivery.requirement.gitBaseBranchEmpty")}
+              onChange={setGitBaseBranch}
+              options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
+            />
+          </label>
+          <label>
+            {t("delivery.requirement.gitBranch")}
+            <Input
+              value={gitBranch}
+              placeholder={saved?.requirementKey
+                ? t("delivery.requirement.gitBranchPlaceholder").replace("{key}", saved.requirementKey)
+                : t("delivery.requirement.gitBranchPlaceholderUnsaved")}
+              onChange={(event) => setGitBranch(event.target.value)}
+            />
+          </label>
+          <label>
+            {t("delivery.requirement.gitExistingBranch")}
+            <Select
+              showSearch
+              optionFilterProp="label"
+              loading={gitBranchesLoading}
+              placeholder={t("delivery.requirement.gitExistingBranchPlaceholder")}
+              value={undefined}
+              onChange={setGitBranch}
+              options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
+            />
+          </label>
+        </div>
+      </Modal>
+
+      {/* 「变更」点开后的文件级明细，读的是本机工作区，跟推送用的是同一份状态。 */}
+      <DeliveryGitChangesModal
+        open={gitChangesOpen}
+        programId={programId}
+        branch={saved?.gitBranch}
+        onClose={() => setGitChangesOpen(false)}
+      />
+
       {/* 推送前让用户确认提交说明：这一步会把工作区改动整体提交到需求分支。 */}
       <Modal
         wrapClassName="manager-form-skin"
         open={gitPushOpen}
         destroyOnClose
         title={t("delivery.requirement.gitPush")}
-        okText={t("delivery.requirement.gitPushConfirm")}
-        cancelText={t("common.cancel")}
         confirmLoading={gitPushing}
         onCancel={() => setGitPushOpen(false)}
         onOk={() => void pushGitBranch()}
+        // 有人只想在本机留个提交点，别逼着他连远端一起推。
+        footer={[
+          <Button key="cancel" disabled={gitPushing} onClick={() => setGitPushOpen(false)}>
+            {t("common.cancel")}
+          </Button>,
+          <Button key="commit" loading={gitPushing} onClick={() => void pushGitBranch(true)}>
+            {t("delivery.requirement.gitCommitOnly")}
+          </Button>,
+          <Button key="push" type="primary" loading={gitPushing} onClick={() => void pushGitBranch()}>
+            {t("delivery.requirement.gitPushConfirm")}
+          </Button>,
+        ]}
       >
         <div className="delivery-requirement-git-push">
           <p>{t("delivery.requirement.gitPushDescription").replace("{branch}", saved?.gitBranch ?? "")}</p>
