@@ -96,6 +96,29 @@ func (r *DeliveryRepository) UpdateRequirement(
 	return tx.RowsAffected, tx.Error
 }
 
+// UpdateRequirementNameIfUnchanged 只在需求名称仍是 expected 时写入自动生成的标题。
+// expected 为空表示「名称仍为空才写」，非空表示「只换掉这个自动占位名」。
+// 条件写在 SQL 里而不是先查后写：拆解会话在后台结束，用户可能同时正在弹窗里补名字，
+// 谁先落库谁算。同样不递增编辑 version，避免和用户正在编辑的需求互相制造乐观锁冲突。
+func (r *DeliveryRepository) UpdateRequirementNameIfUnchanged(
+	ctx context.Context,
+	bizLine string, programID int64, requirementKey, name, expected, updatedBy string,
+) (int64, error) {
+	query := r.Db.WithContext(ctx).Model(&DeliveryRequirement{}).
+		Where("biz_line = ? AND program_id = ? AND requirement_key = ?", bizLine, programID, requirementKey)
+	if expected == "" {
+		query = query.Where("name IS NULL OR name = ?", "")
+	} else {
+		query = query.Where("name = ?", expected)
+	}
+	tx := query.Updates(map[string]any{
+		"name":         name,
+		"updated_by":   updatedBy,
+		"updated_time": time.Now(),
+	})
+	return tx.RowsAffected, tx.Error
+}
+
 // UpdateRequirementPrototype 由原型生成桥回写文件位置和生成时点。
 // 它不改变需求的编辑版本，避免后台生成和用户编辑需求互相制造乐观锁冲突。
 func (r *DeliveryRepository) UpdateRequirementPrototype(

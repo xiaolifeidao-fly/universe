@@ -105,10 +105,8 @@ func (s *service) SaveRequirement(ctx context.Context, req dto.SaveRequirementRe
 		(req.GitBranch != nil && strings.TrimSpace(*req.GitBranch) != "")) {
 		return dto.RequirementView{}, errors.New("当前项目未启用 Git，不能设置需求分支")
 	}
+	// 需求名称允许留空：新建时先聊需求，标题在拆解会话开聊时按首条消息自动生成（UpdateRequirementName）。
 	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		return dto.RequirementView{}, errors.New("需求名称不能为空")
-	}
 	if len(name) > 255 {
 		return dto.RequirementView{}, errors.New("需求名称不能超过 255 个字符")
 	}
@@ -374,6 +372,57 @@ func (s *service) UpdateRequirementStatus(ctx context.Context, req dto.UpdateReq
 			}
 		}
 		return tx.AppendRequirementEvents(ctx, events)
+	}); err != nil {
+		return dto.RequirementView{}, err
+	}
+	return s.GetRequirement(ctx, req.BizLine, req.ProgramID, requirementKey)
+}
+
+// UpdateRequirementName 只写需求名称：新建需求允许不填名字，桥接在拆解会话开聊那一刻
+// 先用首条消息的前几个字占位，AI 起好名再拿占位名换掉（首轮跑完还会兜底补一次）。
+// 覆盖范围由 ReplaceName 决定：留空只写空名称，非空只换掉这个占位名 ——
+// 两种情况都不会盖掉用户自己填的名字。
+func (s *service) UpdateRequirementName(ctx context.Context, req dto.UpdateRequirementNameRequest) (dto.RequirementView, error) {
+	if !req.BizLine.Valid() {
+		return dto.RequirementView{}, contract.ErrBizLineRequired
+	}
+	requirementKey := strings.TrimSpace(req.RequirementKey)
+	if req.ProgramID <= 0 || requirementKey == "" {
+		return dto.RequirementView{}, errors.New("缺少项目或需求标识")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return dto.RequirementView{}, errors.New("需求名称不能为空")
+	}
+	if len(name) > 255 {
+		return dto.RequirementView{}, errors.New("需求名称不能超过 255 个字符")
+	}
+	replace := strings.TrimSpace(req.ReplaceName)
+	current, err := s.repo.FindRequirement(ctx, req.BizLine.String(), req.ProgramID, requirementKey)
+	if err != nil {
+		return dto.RequirementView{}, translate(err)
+	}
+	// 名字已经不是预期的旧值：要么用户自己填过，要么占位名已被换掉，这次自动命名作废。
+	if strings.TrimSpace(current.Name) != replace {
+		return toRequirementView(current), nil
+	}
+	if name == replace {
+		return toRequirementView(current), nil
+	}
+	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
+		affected, updateErr := tx.UpdateRequirementNameIfUnchanged(ctx, current.BizLine, current.ProgramID, current.RequirementKey, name, replace, actorOf(req.ActorID, req.ActorName))
+		if updateErr != nil {
+			return updateErr
+		}
+		// 期间有人填了名字：这一次自动命名作废，不追事件，也不算失败。
+		if affected == 0 {
+			return nil
+		}
+		return tx.AppendRequirementEvents(ctx, []*repository.DeliveryRequirementEvent{{
+			BizLine: current.BizLine, ProgramID: current.ProgramID, RequirementKey: current.RequirementKey,
+			Kind: "field", Field: "name", FromValue: current.Name, ToValue: name,
+			ActorID: req.ActorID, ActorName: actorOf(req.ActorID, req.ActorName),
+		}})
 	}); err != nil {
 		return dto.RequirementView{}, err
 	}

@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
 	`git_repository_url` varchar(512) NOT NULL DEFAULT '',        -- 可选记录的 Git 仓库地址，不校验本机远端
 	`git_remote_name` varchar(64) NOT NULL DEFAULT 'origin',      -- 远端名
 	`git_base_branch` varchar(255) NOT NULL DEFAULT '',           -- 启用后新需求默认基准分支
+	`git_chat_sync_enabled` boolean NOT NULL DEFAULT FALSE,       -- 是否将结束的聊天记录归档到工作目录 chat/
 	`cloud_sync_enabled` boolean NOT NULL DEFAULT FALSE,          -- 是否启用选定内容的云端同步
 	`cloud_sync_scopes` varchar(128) NOT NULL DEFAULT '',         -- chat,requirement,design 的规范化逗号列表
   `created_by`   varchar(64)  NOT NULL,
@@ -116,7 +117,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   `biz_line`        varchar(32)  NOT NULL,
   `program_id`     bigint         NOT NULL,                     -- 所属项目
   `requirement_key` varchar(64)  NOT NULL,                     -- 需求业务键 如 req-1760000000000
-  `name`            varchar(255) NOT NULL,                     -- 需求名称
+  `name`            varchar(255) NOT NULL,                     -- 需求名称；可为空串，拆解会话结束后由 AI 按聊天内容补上
   `detail`          mediumtext   NOT NULL,                     -- 需求详细信息
   `reference_requirement_keys` varchar(1024) NOT NULL DEFAULT '', -- 详情里 @ 引用的历史需求键，存成 ,req-a,req-b,
   `reference_item_keys` varchar(2048) NOT NULL DEFAULT '',       -- 详情里 @ 引用的既有任务键，存成 ,task-a,task-b,

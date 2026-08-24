@@ -210,6 +210,10 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 [`migrations/20260820_delivery_program_git_enabled.sql`](migrations/20260820_delivery_program_git_enabled.sql)。
 该脚本可安全重复执行；Git 默认关闭，启用时项目设置必须提供默认基准分支，仓库地址仅作可选记录。
 
+已有项目表升级到 Git 聊天记录归档开关时，执行
+[`migrations/20260824_delivery_program_git_chat_sync.sql`](migrations/20260824_delivery_program_git_chat_sync.sql)。
+该脚本可安全重复执行；开关默认关闭。开启后，本机桥接会在每段需求或任务会话结束时把可见聊天正文写入项目工作目录的 `chat/`，供 Git 一并提交。
+
 已有项目表升级到项目级云端同步时，执行
 [`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。
 该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档和设计文档会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。

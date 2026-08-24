@@ -218,7 +218,7 @@ export function PanoramaWorkspace() {
       );
       return {
         kicker: t(`delivery.requirement.status.${requirement.status}`),
-        title: requirement.name,
+        title: requirement.name || requirement.requirementKey,
         subtitle: requirement.detail,
         accent: requirementAccent(requirement.status),
         progress: requirementProgress(requirement.status),
@@ -474,7 +474,7 @@ export function PanoramaWorkspace() {
                         <li key={requirement.requirementKey} onClick={() => setPicked({ kind: "requirement", key: requirement.requirementKey })}>
                           <i style={{ background: requirementAccent(requirement.status) }} />
                           <span>
-                            <b>{requirement.name}</b>
+                            <b>{requirement.name || requirement.requirementKey}</b>
                             <small>{requirement.detail}</small>
                           </span>
                           <em>{t(`delivery.requirement.status.${requirement.status}`)}</em>

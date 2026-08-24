@@ -1,13 +1,14 @@
 "use client";
 
 import { CopyOutlined, DownloadOutlined, EyeOutlined, FileOutlined, LoadingOutlined, PictureOutlined } from "@ant-design/icons";
-import { Button, Drawer, Empty, Spin, Tooltip, message } from "antd";
+import { Button, Empty, Modal, Segmented, Spin, Tooltip, message } from "antd";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { fetchCodexConversationAttachment, type CodexConversationAttachment } from "@/api/delivery.api";
 import { copyTextToClipboard } from "@/utils/clipboard";
+import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
 
 interface SessionAttachmentProps {
   attachment: CodexConversationAttachment;
@@ -22,10 +23,57 @@ const OFFICE_EXTENSIONS = new Set([
 ]);
 
 const TEXT_EXTENSIONS = new Set([
-  "txt", "md", "markdown", "mdx", "json", "jsonl", "yaml", "yml", "toml", "ini", "conf", "config", "log", "csv", "ts", "tsx", "js", "jsx", "mjs", "cjs", "css", "scss", "less", "html", "htm", "xml", "svg", "sql", "go", "py", "java", "kt", "rb", "php", "sh", "bash", "zsh", "fish", "dockerfile", "graphql", "gql", "proto", "properties",
+  "txt", "md", "markdown", "mdx", "json", "jsonl", "yaml", "yml", "toml", "ini", "conf", "config", "log", "csv", "tsv", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "css", "scss", "less", "html", "htm", "xml", "svg", "sql", "go", "py", "java", "kt", "kts", "rb", "php", "sh", "bash", "zsh", "fish", "dockerfile", "graphql", "gql", "proto", "properties",
+  // 常见源文件都要能按源码看：面板里点开的多半就是执行器刚写的代码。
+  "rs", "c", "h", "hpp", "hh", "cc", "cpp", "cxx", "cs", "swift", "m", "mm", "scala", "groovy", "dart", "lua", "pl", "pm", "r", "jl", "ex", "exs", "erl", "hs", "clj", "vue", "svelte", "astro", "tf", "tfvars", "gradle", "cmake", "mk", "makefile", "bat", "ps1", "patch", "diff", "sum", "mod", "editorconfig", "gitignore", "npmrc",
 ]);
 
 export type AttachmentPreviewKind = "image" | "pdf" | "video" | "audio" | "html" | "markdown" | "text" | "download";
+
+/** 预览的两种看法：render 是渲染后的效果，source 是源文件。 */
+export type FilePreviewMode = "render" | "source";
+
+/** 只有渲染出来和源码不是一回事的类型，才需要给两种看法：HTML 和 Markdown。 */
+export function supportsPreviewModes(kind: AttachmentPreviewKind) {
+  return kind === "html" || kind === "markdown";
+}
+
+/** 源码视图上标出来的语言，纯展示用，认不出来就按扩展名原样显示。 */
+const SOURCE_LANGUAGE_NAMES: Record<string, string> = {
+  ts: "TypeScript", tsx: "TypeScript", mts: "TypeScript", cts: "TypeScript",
+  js: "JavaScript", jsx: "JavaScript", mjs: "JavaScript", cjs: "JavaScript",
+  go: "Go", rs: "Rust", java: "Java", kt: "Kotlin", py: "Python", rb: "Ruby", php: "PHP",
+  sql: "SQL", sh: "Shell", bash: "Shell", zsh: "Shell", fish: "Shell",
+  css: "CSS", scss: "SCSS", less: "Less", html: "HTML", htm: "HTML", xml: "XML", svg: "SVG",
+  json: "JSON", jsonl: "JSON Lines", yaml: "YAML", yml: "YAML", toml: "TOML", ini: "INI",
+  md: "Markdown", markdown: "Markdown", mdx: "MDX", txt: "Text", log: "Log", csv: "CSV",
+  proto: "Protobuf", graphql: "GraphQL", gql: "GraphQL", dockerfile: "Dockerfile",
+  c: "C", h: "C", cpp: "C++", cc: "C++", cxx: "C++", hpp: "C++", cs: "C#", swift: "Swift",
+  m: "Objective-C", mm: "Objective-C++", scala: "Scala", dart: "Dart", lua: "Lua", r: "R",
+  vue: "Vue", svelte: "Svelte", astro: "Astro", tf: "Terraform", patch: "Diff", diff: "Diff",
+};
+
+/** 行号是 CSS 计数器画的；超过这个行数就退回不带行号的纯文本，避免上万个 li 拖垮页面。 */
+const MAX_NUMBERED_SOURCE_LINES = 5000;
+
+export function sourceLanguageOf(name: string) {
+  const extension = fileExtension(name);
+  return SOURCE_LANGUAGE_NAMES[extension] || extension.toUpperCase();
+}
+
+/** 源文件视图：等宽 + 行号，.java / .sql / .go / .ts 这类都走这里。 */
+export function FileSourceView({ text, name }: { text: string; name: string }) {
+  const lines = useMemo(() => text.replace(/\n$/, "").split("\n"), [text]);
+  if (lines.length > MAX_NUMBERED_SOURCE_LINES) return <pre className="delivery-file-preview__text">{text}</pre>;
+  return (
+    <ol className="delivery-file-source" aria-label={name}>
+      {lines.map((line, index) => (
+        // 行号靠 CSS 计数器，复制正文时不会把行号一起带走。
+        <li key={`${index}-${line}`}><code>{line || " "}</code></li>
+      ))}
+    </ol>
+  );
+}
 
 function fileExtension(name: string) {
   const extension = name.trim().split(".").pop();
@@ -50,23 +98,39 @@ export function canPreviewConversationAttachment(attachment: CodexConversationAt
   return attachmentPreviewKind(attachment) !== "download";
 }
 
+/** 链接看着像项目里的文件（不是站外地址、锚点）时的工作区相对路径，认不出来给空串。 */
+export function workspacePathOfMarkdownLink(href: string) {
+  const rawPath = href.trim();
+  if (!rawPath || rawPath.startsWith("#") || rawPath.startsWith("//") || /^[a-z][a-z\d+.-]*:/i.test(rawPath)) return "";
+  let path = rawPath.split(/[?#]/, 1)[0];
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    return "";
+  }
+  // 回复里的文件链接常带行号（`Foo.kt:42`、`Foo.kt:42:8`），指的还是同一份文件。
+  path = path.replace(/(?::\d+){1,2}$/, "");
+  const normalized = path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "").replace(/^\/+/, "");
+  if (!normalized || normalized.split("/").includes("..")) return "";
+  return normalized;
+}
+
 /** 仅在链接明确指向这条消息已登记的工作区产物时，拦截并打开预览。 */
 export function attachmentForMarkdownLink(
   href: string,
   attachments: CodexConversationAttachment[],
 ) {
-  const rawPath = href.trim();
-  if (!rawPath || rawPath.startsWith("#") || rawPath.startsWith("//") || /^[a-z][a-z\d+.-]*:/i.test(rawPath)) return null;
-  let path = rawPath.split(/[?#]/, 1)[0];
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    return null;
-  }
-  const normalized = path.replaceAll("\\", "/").replace(/^(?:\.\/)+/, "").replace(/^\/+/, "");
-  if (!normalized || normalized.split("/").includes("..")) return null;
+  const normalized = workspacePathOfMarkdownLink(href);
+  if (!normalized) return null;
   const exact = attachments.find((attachment) => (attachment.relativePath || "").replaceAll("\\", "/") === normalized);
   if (exact) return exact;
+  // 回复里的链接常写成绝对路径（`/Users/…/工作区/子目录/Foo.kt`），附件记的是工作区相对路径：
+  // 只要链接以某个附件的相对路径收尾，就是同一份文件，命中唯一一条才认。
+  const suffix = attachments.filter((attachment) => {
+    const relative = (attachment.relativePath || "").replaceAll("\\", "/");
+    return Boolean(relative) && normalized.endsWith(`/${relative}`);
+  });
+  if (suffix.length === 1) return suffix[0];
   const sameName = attachments.filter((attachment) => attachment.name === normalized.split("/").at(-1));
   return sameName.length === 1 ? sameName[0] : null;
 }
@@ -148,20 +212,39 @@ function ConversationFile({ attachment, programId, onPreview }: SessionAttachmen
   );
 }
 
-function PreviewBody({ attachment, blobUrl, text }: { attachment: CodexConversationAttachment; blobUrl: string; text: string }) {
+function PreviewBody({
+  attachment,
+  blobUrl,
+  text,
+  mode,
+}: {
+  attachment: CodexConversationAttachment;
+  blobUrl: string;
+  text: string;
+  mode: FilePreviewMode;
+}) {
   const kind = attachmentPreviewKind(attachment);
+  // 选了「源码」就一律按源文件看，HTML 和 Markdown 都不再渲染。
+  if (mode === "source" && supportsPreviewModes(kind)) return <FileSourceView text={text} name={attachment.name} />;
   if (kind === "image") return <img className="delivery-file-preview__image" src={blobUrl} alt={attachment.name} />;
   if (kind === "pdf") return <iframe className="delivery-file-preview__frame" title={attachment.name} src={blobUrl} />;
   if (kind === "video") return <video className="delivery-file-preview__media" controls src={blobUrl} />;
   if (kind === "audio") return <audio className="delivery-file-preview__audio" controls src={blobUrl} />;
-  if (kind === "html") return <iframe className="delivery-file-preview__frame" title={attachment.name} sandbox="" srcDoc={text} />;
+  // 走 blob 地址的 iframe：页内锚点、目录跳转都正常，且始终不带 allow-same-origin。
+  if (kind === "html") return <DeliveryHtmlFrame className="delivery-file-preview__frame" html={text} title={attachment.name} />;
   if (kind === "markdown") {
     return <div className="delivery-session-markdown is-document"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div>;
   }
-  return <pre className="delivery-file-preview__text">{text}</pre>;
+  return <FileSourceView text={text} name={attachment.name} />;
 }
 
-export function SessionFilePreviewDrawer({
+/**
+ * 文件预览弹窗：聊天附件和「本次改动」里的文件都走这一个surface。
+ *
+ * HTML 和 Markdown 给「效果 / 源码」两种看法，其余源文件（.ts / .go / .sql / .java ...）
+ * 直接按带行号的源码显示；图片、PDF、音视频各用各自的组件。
+ */
+export function SessionFilePreviewModal({
   attachment,
   programId,
   open,
@@ -180,12 +263,18 @@ export function SessionFilePreviewDrawer({
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
   const [textLoaded, setTextLoaded] = useState(false);
+  const [mode, setMode] = useState<FilePreviewMode>("render");
   const kind = attachment ? attachmentPreviewKind(attachment) : "download";
   const copyable = ["text", "markdown", "html"].includes(kind);
   const metadata = useMemo(
-    () => attachment ? [attachment.contentType || "-", readableAttachmentSize(attachment.size)] : [],
+    () => attachment
+      ? [attachment.contentType || "-", readableAttachmentSize(attachment.size), sourceLanguageOf(attachment.name)].filter(Boolean)
+      : [],
     [attachment],
   );
+
+  // 换一份文件就回到默认看法，别把上一份选的「源码」带过来。
+  useEffect(() => setMode("render"), [attachment?.id]);
 
   useEffect(() => {
     if (!attachment || !open || kind === "download") return undefined;
@@ -224,52 +313,65 @@ export function SessionFilePreviewDrawer({
 
   if (!attachment) return null;
   return (
-    <Drawer
-      className="delivery-file-preview-drawer"
+    <Modal
+      className="delivery-file-preview-modal"
+      wrapClassName="manager-form-skin"
       title={<span className="delivery-file-preview__title"><FileOutlined />{attachment.name}</span>}
-      placement="right"
-      width="min(720px, calc(100vw - 16px))"
+      width="min(1100px, calc(100vw - 32px))"
       open={open}
-      onClose={onClose}
+      onCancel={onClose}
+      footer={null}
       destroyOnClose
-      extra={(
-        <>
-          {copyable && (
-            <Tooltip title={t("delivery.session.copyFileContent")}>
-              <Button
-                type="text"
-                icon={<CopyOutlined />}
-                loading={copying}
-                disabled={loading || failed || !textLoaded}
-                onClick={() => {
-                  setCopying(true);
-                  void copyPreviewText(text)
-                    .then(() => message.success(t("delivery.session.copyFileContentSuccess")))
-                    .catch(() => message.error(t("delivery.session.copyFileContentFailed")))
-                    .finally(() => setCopying(false));
-                }}
-              />
-            </Tooltip>
-          )}
-          <Button
-            type="text"
-            icon={<DownloadOutlined />}
-            loading={downloading}
-            onClick={() => {
-              setDownloading(true);
-              void downloadConversationAttachment(programId, attachment)
-                .catch((error) => message.error((error as Error).message))
-                .finally(() => setDownloading(false));
-            }}
-          >
-            {t("delivery.session.download")}
-          </Button>
-        </>
-      )}
+      centered
     >
       <div className="delivery-file-preview">
-        <div className="delivery-file-preview__meta">
-          {metadata.map((value) => <span key={value}>{value}</span>)}
+        <div className="delivery-file-preview__toolbar">
+          <div className="delivery-file-preview__meta">
+            {metadata.map((value) => <span key={value}>{value}</span>)}
+          </div>
+          <div className="delivery-file-preview__actions">
+            {supportsPreviewModes(kind) && !failed ? (
+              <Segmented
+                size="small"
+                value={mode}
+                onChange={(value) => setMode(value as FilePreviewMode)}
+                options={[
+                  { value: "render", label: t("delivery.session.filePreviewRendered") },
+                  { value: "source", label: t("delivery.session.filePreviewSource") },
+                ]}
+              />
+            ) : null}
+            {copyable && (
+              <Tooltip title={t("delivery.session.copyFileContent")}>
+                <Button
+                  type="text"
+                  icon={<CopyOutlined />}
+                  loading={copying}
+                  disabled={loading || failed || !textLoaded}
+                  onClick={() => {
+                    setCopying(true);
+                    void copyPreviewText(text)
+                      .then(() => message.success(t("delivery.session.copyFileContentSuccess")))
+                      .catch(() => message.error(t("delivery.session.copyFileContentFailed")))
+                      .finally(() => setCopying(false));
+                  }}
+                />
+              </Tooltip>
+            )}
+            <Button
+              type="text"
+              icon={<DownloadOutlined />}
+              loading={downloading}
+              onClick={() => {
+                setDownloading(true);
+                void downloadConversationAttachment(programId, attachment)
+                  .catch((error) => message.error((error as Error).message))
+                  .finally(() => setDownloading(false));
+              }}
+            >
+              {t("delivery.session.download")}
+            </Button>
+          </div>
         </div>
         {kind === "download" ? (
           <Empty
@@ -280,9 +382,9 @@ export function SessionFilePreviewDrawer({
           />
         ) : loading ? <div className="delivery-file-preview__loading"><Spin /></div>
           : failed ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.session.filePreviewFailed")} />
-            : <PreviewBody attachment={attachment} blobUrl={blobUrl} text={text} />}
+            : <div className="delivery-file-preview__body"><PreviewBody attachment={attachment} blobUrl={blobUrl} text={text} mode={mode} /></div>}
       </div>
-    </Drawer>
+    </Modal>
   );
 }
 

@@ -6,8 +6,12 @@ import {
   CheckOutlined,
   DeleteOutlined,
   EditOutlined,
+  ExpandOutlined,
+  ExportOutlined,
   FileOutlined,
   FileTextOutlined,
+  FullscreenExitOutlined,
+  FullscreenOutlined,
   LoadingOutlined,
   MessageOutlined,
   PaperClipOutlined,
@@ -33,6 +37,8 @@ import {
   CLAUDE_MODEL_OPTIONS,
   CODEX_MODEL_OPTIONS,
   CODEX_REASONING_EFFORTS,
+  type AIExecutionConfig,
+  type AITool,
   type ClaudeEffort,
   type ClaudeModel,
   type CodexModel,
@@ -57,6 +63,7 @@ import {
   fetchDeliveryConversationMentionCatalog,
 	fetchProgramMembers,
   generateCodexRequirementPrototype,
+  fetchRequirement,
   saveRequirement,
   sendCodexRequirementPrototypeMessage,
   sendCodexPlanningMessage,
@@ -83,7 +90,7 @@ import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { DeliveryRequirementDetailInput, requirementMentionKeys, requirementMentionReferences } from "./DeliveryRequirementDetailInput";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
 import { useStickToBottom } from "../hooks/useStickToBottom";
-import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
 import {
   MAX_ATTACHMENTS,
@@ -196,7 +203,13 @@ export function DeliveryRequirementSessionModal({
 }: DeliveryRequirementSessionModalProps) {
   const { t } = useLocale();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
-  const planningConfig = configFor("taskPlanning");
+  const planningPreference = configFor("taskPlanning");
+  const [planningExecutorType, setPlanningExecutorType] = useState<AITool | "">("");
+  // 续已有拆解会话时跟着这条线程自己的工具走：正文在那个执行器的缓存里，模型选项也要对齐。
+  const planningConfig = useMemo<AIExecutionConfig>(
+    () => ({ ...planningPreference, tool: planningExecutorType || planningPreference.tool }),
+    [planningExecutorType, planningPreference],
+  );
   const planningProvider = planningConfig.tool;
   const testingProvider = configFor("productTesting").tool;
   // 会话里所有露出工具名的地方都跟着场景选的 provider 走，不再写死 Codex。
@@ -260,6 +273,8 @@ export function DeliveryRequirementSessionModal({
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
   const [outlineFullscreen, setOutlineFullscreen] = useState(false);
   const [testingFullscreen, setTestingFullscreen] = useState(false);
+  const [prototypeFullscreen, setPrototypeFullscreen] = useState(false);
+  const [prototypeViewportFullscreen, setPrototypeViewportFullscreen] = useState(false);
   const [prototype, setPrototype] = useState<CodexRequirementPrototype | null>(null);
   const [prototypeFilePath, setPrototypeFilePath] = useState("");
   const [prototypeLoading, setPrototypeLoading] = useState(false);
@@ -339,12 +354,16 @@ export function DeliveryRequirementSessionModal({
     }
   };
 
-  const load = useCallback(async (threadId = "", preserveSelected = false) => {
-    if (!programId || !requirementKey) return null;
+  // key 允许显式传入：需求是在「发送」那一刻才落库的，这一轮里 requirementKey 还是上一次渲染
+  // 留下的空值，不带着新键调用就会被下面这行挡掉，聊天要等重新打开弹窗才出得来。
+  const load = useCallback(async (threadId = "", preserveSelected = false, key = "") => {
+    const targetKey = key || requirementKey;
+    if (!programId || !targetKey) return null;
     setLoading(true);
     try {
-      const next = await fetchCodexPlanningConversation(programId, threadId, requirementKey, planningProvider);
+      const next = await fetchCodexPlanningConversation(programId, threadId, targetKey, planningPreference.tool);
       setConversation(next);
+      setPlanningExecutorType(next.threadId ? next.executorType : "");
       if (!newConversation && !preserveSelected) setSelectedThreadId(next.threadId);
       return next;
     } catch (error) {
@@ -353,7 +372,7 @@ export function DeliveryRequirementSessionModal({
     } finally {
       setLoading(false);
     }
-  }, [newConversation, planningProvider, programId, requirementKey]);
+  }, [newConversation, planningPreference.tool, programId, requirementKey]);
 
   const loadTestingHistory = useCallback(async () => {
     if (!programId || !requirementKey || !codexBridgeReady) {
@@ -368,6 +387,8 @@ export function DeliveryRequirementSessionModal({
     }
   }, [codexBridgeReady, programId, requirementKey, testingProvider]);
 
+  // 自动写进来的那个名字（先是占位名，随后是 AI 标题）；用户自己改过就不再跟着变。
+  const autoNameRef = useRef("");
   useEffect(() => {
     if (!open) {
       setConversation(null);
@@ -387,6 +408,8 @@ export function DeliveryRequirementSessionModal({
       setStartNewTestingConversation(false);
       setOutlineFullscreen(false);
       setTestingFullscreen(false);
+      setPrototypeFullscreen(false);
+      setPrototypeViewportFullscreen(false);
       setPrototype(null);
       setPrototypeFilePath("");
       setPrototypeLoading(false);
@@ -401,6 +424,8 @@ export function DeliveryRequirementSessionModal({
       return;
     }
     setSaved(requirement);
+    // 换一条需求就重新认「哪个名字是自动写进来的」，否则上一条的占位名会被当成本条的。
+    autoNameRef.current = "";
     setTestingWorkspaceOpen(Boolean(requirement && startTestingOnOpen));
     setTestingThreadId("");
     setStartNewTestingConversation(Boolean(requirement && startTestingOnOpen));
@@ -547,7 +572,7 @@ export function DeliveryRequirementSessionModal({
     if (!open || !requirementKey || !threadId || !codexBridgeReady) return null;
     setPrototypeEditLoading(true);
     try {
-      const next = await fetchCodexRequirementPrototypeConversation(programId, requirementKey, threadId, planningProvider);
+      const next = await fetchCodexRequirementPrototypeConversation(programId, requirementKey, threadId, planningPreference.tool);
       setPrototypeEditConversation(next);
       return next;
     } catch (error) {
@@ -556,7 +581,7 @@ export function DeliveryRequirementSessionModal({
     } finally {
       setPrototypeEditLoading(false);
     }
-  }, [codexBridgeReady, open, planningProvider, programId, requirementKey]);
+  }, [codexBridgeReady, open, planningPreference.tool, programId, requirementKey]);
 
   const openPrototypeEditor = () => {
     setPrototypeEditorOpen(true);
@@ -567,12 +592,17 @@ export function DeliveryRequirementSessionModal({
     if (!text || !codexBridgeReady || !requirementKey) return;
     setPrototypeEditSending(true);
     try {
+      // 原型会话另有自己的线程归属，模型和工具都跟着它走。
+      const prototypeConfig: AIExecutionConfig = {
+        ...planningPreference,
+        tool: prototypeEditConversation?.threadId ? prototypeEditConversation.executorType : planningPreference.tool,
+      };
       const action = await sendCodexRequirementPrototypeMessage(programId, requirementKey, text, {
         threadId: prototypeEditConversation?.threadId || undefined,
-        provider: planningProvider,
-        model: modelForConfig(planningConfig),
-        reasoningEffort: effortForConfig(planningConfig),
-        fastMode: planningProvider === "claude" && planningConfig.claudeFastMode,
+        provider: prototypeConfig.tool,
+        model: modelForConfig(prototypeConfig),
+        reasoningEffort: effortForConfig(prototypeConfig),
+        fastMode: prototypeConfig.tool === "claude" && prototypeConfig.claudeFastMode,
       });
       setPrototypeEditDraft("");
       await loadPrototypeEditConversation(action.threadId);
@@ -603,6 +633,42 @@ export function DeliveryRequirementSessionModal({
   }, [loadPrototype, loadPrototypeEditConversation, onChanged, prototypeEditActive, prototypeEditConversation?.threadId, prototypeEditorOpen, t]);
 
   const active = Boolean(conversation?.active && !newConversation);
+
+  // 需求名称留空时，桥接在开聊那一刻就先用首条消息的前十个字占位，再并行起一轮命名，
+  // AI 的标题回来后把占位名换掉。名字在拆解跑着的过程中会变两次，所以运行期间一直取，
+  // 回合结束后再补取一次。
+  // 只在本地名字还是自动写进来的那个（或仍为空）时采用，免得盖掉用户自己敲的名字。
+  const planningActiveRef = useRef(false);
+  useEffect(() => {
+    const finished = planningActiveRef.current && !active;
+    planningActiveRef.current = active;
+    const local = name.trim();
+    if (!open || !saved?.requirementKey || (local && local !== autoNameRef.current)) return undefined;
+    if (!active && !finished) return undefined;
+    let cancelled = false;
+    const requirementKeyToName = saved.requirementKey;
+    const pullName = async () => {
+      try {
+        const next = await fetchRequirement(programId, requirementKeyToName);
+        const nextName = (next.name ?? "").trim();
+        if (cancelled || !nextName || nextName === autoNameRef.current) return;
+        autoNameRef.current = nextName;
+        setSaved(next);
+        setName(next.name);
+        onRequirementSaved(next);
+      } catch {
+        // 名字是补充信息，取不到就等下一轮，不能打断正在跑的拆解。
+      }
+    };
+    void pullName();
+    if (!active) return undefined;
+    // 名字在一轮里会变两次（占位名 → AI 标题），取得勤一点，用户才觉得是「立刻」变的。
+    const timer = window.setInterval(() => void pullName(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [active, name, onRequirementSaved, open, programId, saved]);
   const flattenedItems = useMemo(
     () => (conversation?.turns ?? []).flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id }))),
     [conversation],
@@ -624,6 +690,15 @@ export function DeliveryRequirementSessionModal({
     () => prototype?.files.find((file) => file.path === prototypeFilePath) ?? prototype?.files[0] ?? null,
     [prototype, prototypeFilePath],
   );
+
+  const openPrototypeInBrowser = () => {
+    const html = selectedPrototypeFile?.html ?? "";
+    if (!html.trim()) return;
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    const opened = window.open(url, "_blank", "noopener");
+    if (!opened) message.warning(t("delivery.docset.openBlocked"));
+    window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
 
   useEffect(() => {
     if (!open || !active) return undefined;
@@ -669,7 +744,7 @@ export function DeliveryRequirementSessionModal({
 
   // 确认写入只在「已经出过一轮预览、当前没有回合在跑」时可用：没有方案可确认，或方案还在生成中都不放行。
   const canConfirmWrite =
-    codexBridgeReady && !sending && !saving && !active && !newConversation && Boolean(conversation?.threadId) && Boolean(name.trim());
+    codexBridgeReady && !sending && !saving && !active && !newConversation && Boolean(conversation?.threadId);
 
   // 拆解会话读的是已落库的那份需求，表单改了没存必须在保存条上说出来。
   const dirty = useMemo(() => {
@@ -790,10 +865,7 @@ export function DeliveryRequirementSessionModal({
   );
 
   const save = async () => {
-    if (!name.trim()) {
-      message.warning(t("delivery.requirement.nameRequired"));
-      return null;
-    }
+    // 名称允许留空：先和 AI 把需求聊清楚，标题由拆解会话结束后按聊天内容自动生成。
     setSaving(true);
     try {
       const next = await saveRequirement({
@@ -980,7 +1052,7 @@ export function DeliveryRequirementSessionModal({
       setSelectedThreadId(action.threadId);
       // 只有写入轮次结束后才跳到「拆解结果」：预览轮次没有产出，跳过去只会看到一片空。
       awaitingPlanningResultRef.current = confirmWrite ? action.turnId : "";
-      await load(action.threadId);
+      await load(action.threadId, false, current.requirementKey);
     } catch (error) {
       message.error((error as Error).message);
     } finally {
@@ -1079,6 +1151,8 @@ export function DeliveryRequirementSessionModal({
   const startNewConversation = () => {
     if (active) return;
     setNewConversation(true);
+    // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
+    setPlanningExecutorType("");
     setSelectedThreadId("");
     setDraft("");
     setChatReferences([]);
@@ -1203,7 +1277,7 @@ export function DeliveryRequirementSessionModal({
                 onClick={() => kind === "planning" ? selectConversation(entry.threadId) : openTestingConversation(entry.threadId)}
               >
                 <MessageOutlined />
-                <div><Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>
+                <div><Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), toolDisplayName(entry.executorType), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>
                 {entry.active ? <i /> : null}
               </button>
             ))}
@@ -1220,8 +1294,8 @@ export function DeliveryRequirementSessionModal({
               <div className="delivery-session-title delivery-planning-session-title">
                 <div className="delivery-planning-session-title__heading">
                   <span>{saved ? t("delivery.requirement.edit") : t("delivery.requirement.new")}</span>
-                  <b>{name.trim() || programName || programId}</b>
-                  {name.trim() ? <small>{programName || programId}</small> : null}
+                  <b>{name.trim() || saved?.requirementKey || programName || programId}</b>
+                  {name.trim() || saved?.requirementKey ? <small>{programName || programId}</small> : null}
                 </div>
                 {saved?.createdAt ? (
                   <small className="delivery-planning-session-title__created-at">
@@ -1278,10 +1352,12 @@ export function DeliveryRequirementSessionModal({
               // 按回合渲染：每个回合末尾补一份「本次改动」，对齐直接用 Codex / Claude 时看到的改动清单。
               (conversation?.turns ?? []).map((turn) => (
                 <Fragment key={turn.id}>
-                  {turn.items.map((item) => (
-                    <PlanningTranscriptItem item={item} programId={programId} toolName={toolName} key={`${turn.id}-${item.id}-${item.type}`} />
-                  ))}
-                  <SessionChangeSummary changes={changesOfTurn(turn.items)} />
+                  {groupSessionItems(turn.items).map((group) => (group.kind === "process" ? (
+                    <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
+                  ) : (
+                    <PlanningTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />
+                  )))}
+                  <SessionChangeSummary items={turn.items} programId={programId} />
                 </Fragment>
               ))
             ) : (
@@ -1400,7 +1476,7 @@ export function DeliveryRequirementSessionModal({
                     shape="circle"
                     icon={<SendOutlined />}
                     loading={sending || saving}
-                    disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady || !name.trim()}
+                    disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady}
                     onClick={() => void send()}
                   />
                 </Tooltip>
@@ -1466,10 +1542,9 @@ export function DeliveryRequirementSessionModal({
                       <div className="delivery-planning-context__group">
                         <span className="delivery-planning-context__group-title">{t("delivery.requirement.groupBasic")}</span>
                         <label>
-                          <span className="delivery-field-label">{t("delivery.requirement.name")}<em aria-hidden="true">*</em></span>
+                          <span className="delivery-field-label">{t("delivery.requirement.name")}</span>
                           <Input
                             value={name}
-                            status={name.trim() ? undefined : "warning"}
                             placeholder={t("delivery.requirement.namePlaceholder")}
                             onChange={(event) => setName(event.target.value)}
                           />
@@ -1741,7 +1816,6 @@ export function DeliveryRequirementSessionModal({
                         type="primary"
                         icon={<SaveOutlined />}
                         loading={saving}
-                        disabled={!name.trim()}
                         onClick={() => void save()}
                       >
                         {t("delivery.requirement.save")}
@@ -1827,6 +1901,8 @@ export function DeliveryRequirementSessionModal({
                       subjectKey={requirementKey}
                       codexBridgeReady={codexBridgeReady}
                       emptyText={t("delivery.requirement.testingCasesEmpty")}
+                      browserContent={saved?.testingCases || requirement?.testingCases || ""}
+                      browserTitle={t("delivery.requirement.testingCases")}
                       onExpand={() => setTestingFullscreen(true)}
                       refreshToken={active ? "running" : "idle"}
                       fallback={(
@@ -1894,9 +1970,17 @@ export function DeliveryRequirementSessionModal({
                         <div className="delivery-prototype-preview">
                           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                             <small>{t("delivery.prototype.path")}: <code>{prototype.path}</code>{prototype.generatedAt ? ` · ${dayjs(prototype.generatedAt).format("YYYY-MM-DD HH:mm")}` : ""}</small>
-                            <Tooltip title={t("delivery.prototype.previewRefresh")}>
-                              <Button type="text" shape="circle" icon={<ReloadOutlined />} onClick={() => void loadPrototype()} aria-label={t("delivery.prototype.previewRefresh")} />
-                            </Tooltip>
+                            <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                              <Tooltip title={t("delivery.prototype.previewRefresh")}>
+                                <Button type="text" shape="circle" icon={<ReloadOutlined />} onClick={() => void loadPrototype()} aria-label={t("delivery.prototype.previewRefresh")} />
+                              </Tooltip>
+                              <Tooltip title={t("delivery.docset.openInBrowser")}>
+                                <Button type="text" shape="circle" icon={<ExportOutlined />} onClick={openPrototypeInBrowser} aria-label={t("delivery.docset.openInBrowser")} />
+                              </Tooltip>
+                              <Tooltip title={t("delivery.docset.expand")}>
+                                <Button type="text" shape="circle" icon={<ExpandOutlined />} onClick={() => setPrototypeFullscreen(true)} aria-label={t("delivery.docset.expand")} />
+                              </Tooltip>
+                            </div>
                           </div>
                           {prototype.files.length > 1 ? (
                             <Select
@@ -1907,7 +1991,7 @@ export function DeliveryRequirementSessionModal({
                               style={{ width: "100%", margin: "12px 0" }}
                             />
                           ) : null}
-                          {selectedPrototypeFile ? <DeliveryHtmlFrame title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
+                          {selectedPrototypeFile ? <DeliveryHtmlFrame autoHeight title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
                         </div>
                       ) : (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={prototypeGenerating ? t("delivery.prototype.generating") : t("delivery.prototype.notGenerated")} />
@@ -1940,8 +2024,95 @@ export function DeliveryRequirementSessionModal({
         codexBridgeReady={codexBridgeReady}
         title={`${t("delivery.requirement.testingCases")} · ${requirement?.name || requirementKey}`}
         emptyText={t("delivery.requirement.testingCasesEmpty")}
+        browserContent={saved?.testingCases || requirement?.testingCases || ""}
+        browserTitle={t("delivery.requirement.testingCases")}
         onClose={() => setTestingFullscreen(false)}
       />
+      <Modal
+        className={`delivery-document-set-modal delivery-prototype-preview-modal${prototypeViewportFullscreen ? " is-fullscreen" : ""}`}
+        open={prototypeFullscreen}
+        title={null}
+        width={prototypeViewportFullscreen ? "100vw" : "min(1240px, calc(100vw - 32px))"}
+        footer={null}
+        destroyOnClose
+        onCancel={() => {
+          setPrototypeFullscreen(false);
+          setPrototypeViewportFullscreen(false);
+        }}
+      >
+        {prototype?.exists ? (
+          <div className="delivery-document-set">
+            <aside className="delivery-document-set__files" aria-label={t("delivery.docset.files")}>
+              <header>{t("delivery.docset.files")}</header>
+              <ul>
+                {prototype.files.map((file) => (
+                  <li key={file.path}>
+                    <button
+                      type="button"
+                      className={file.path === selectedPrototypeFile?.path ? "is-active" : ""}
+                      onClick={() => setPrototypeFilePath(file.path)}
+                    >
+                      <FileTextOutlined />
+                      <span className="delivery-document-set__name" title={file.name}>{file.name}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </aside>
+            <section className="delivery-document-panel">
+              <header className="delivery-outline-panel__bar">
+                <b className="delivery-outline-panel__title">{`${t("delivery.prototype.tab")} · ${requirement?.name || requirementKey}`}</b>
+                <span className="delivery-outline-panel__actions">
+                  <Tooltip title={t("delivery.prototype.previewRefresh")}>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<ReloadOutlined />}
+                      loading={prototypeLoading}
+                      onClick={() => void loadPrototype()}
+                      aria-label={t("delivery.prototype.previewRefresh")}
+                    />
+                  </Tooltip>
+                  <Tooltip title={t("delivery.docset.openInBrowser")}>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={<ExportOutlined />}
+                      onClick={openPrototypeInBrowser}
+                      aria-label={t("delivery.docset.openInBrowser")}
+                    />
+                  </Tooltip>
+                  <Tooltip title={t(prototypeViewportFullscreen ? "delivery.docset.exitFullscreen" : "delivery.docset.fullscreen")}>
+                    <Button
+                      size="small"
+                      type="text"
+                      icon={prototypeViewportFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                      onClick={() => setPrototypeViewportFullscreen((value) => !value)}
+                      aria-label={t(prototypeViewportFullscreen ? "delivery.docset.exitFullscreen" : "delivery.docset.fullscreen")}
+                    />
+                  </Tooltip>
+                </span>
+              </header>
+              {selectedPrototypeFile ? (
+                <>
+                  <div className="delivery-document-panel__path" title={selectedPrototypeFile.path}>
+                    <FileTextOutlined className="delivery-document-panel__path-icon" />
+                    <span className="delivery-document-panel__path-text">
+                      <span className="delivery-document-panel__path-name">{selectedPrototypeFile.path}</span>
+                    </span>
+                  </div>
+                  <DeliveryHtmlFrame
+                    autoHeight
+                    className="delivery-prototype-preview-modal__frame"
+                    title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
+                    html={selectedPrototypeFile.html}
+                  />
+                </>
+              ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}
+            </section>
+          </div>
+        ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}
+      </Modal>
       <Modal
         open={prototypeEditorOpen}
         footer={null}
@@ -1974,7 +2145,7 @@ export function DeliveryRequirementSessionModal({
               {prototypeEditItems.length ? prototypeEditItems.map((item, index) => (
                 <Fragment key={`${item.turnId}-${item.id || index}`}>
                   <PlanningTranscriptItem item={item} programId={programId} toolName={toolName} />
-                  {index === prototypeEditItems.length - 1 ? <SessionChangeSummary changes={changesOfTurn(prototypeEditConversation?.turns.find((turn) => turn.id === item.turnId)?.items ?? [])} /> : null}
+                  {index === prototypeEditItems.length - 1 ? <SessionChangeSummary items={prototypeEditConversation?.turns.find((turn) => turn.id === item.turnId)?.items ?? []} programId={programId} /> : null}
                 </Fragment>
               )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.editEmpty")} />}
               {prototypeEditActive ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
@@ -2011,9 +2182,14 @@ export function DeliveryRequirementSessionModal({
           <section style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
             <header style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
               <b>{t("delivery.prototype.preview")}</b>
-              <Tooltip title={t("delivery.prototype.previewRefresh")}>
-                <Button type="text" shape="circle" icon={<ReloadOutlined />} loading={prototypeLoading} onClick={() => void loadPrototype()} aria-label={t("delivery.prototype.previewRefresh")} />
-              </Tooltip>
+              <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <Tooltip title={t("delivery.prototype.previewRefresh")}>
+                  <Button type="text" shape="circle" icon={<ReloadOutlined />} loading={prototypeLoading} onClick={() => void loadPrototype()} aria-label={t("delivery.prototype.previewRefresh")} />
+                </Tooltip>
+                <Tooltip title={t("delivery.docset.openInBrowser")}>
+                  <Button type="text" shape="circle" icon={<ExportOutlined />} onClick={openPrototypeInBrowser} aria-label={t("delivery.docset.openInBrowser")} />
+                </Tooltip>
+              </div>
             </header>
             {prototype?.files.length && prototype.files.length > 1 ? (
               <Select
@@ -2026,9 +2202,10 @@ export function DeliveryRequirementSessionModal({
             ) : null}
             {selectedPrototypeFile ? (
               <DeliveryHtmlFrame
+                autoHeight
                 title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
                 html={selectedPrototypeFile.html}
-                style={{ width: "100%", flex: 1, minHeight: 540, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }}
+                style={{ width: "100%", flex: "0 0 auto", minHeight: 540, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }}
               />
             ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}
           </section>

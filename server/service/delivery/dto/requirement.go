@@ -171,6 +171,23 @@ type UpdateRequirementStatusRequest struct {
 	ActorName      string           `json:"actorName"`
 }
 
+// UpdateRequirementNameRequest 只写需求名称，用于名称留空时由 AI 按聊天内容补标题。
+// 不带 version：拆解会话在后台结束，写入时用户可能正开着需求弹窗，
+// 服务端只在名称仍是预期的旧值时落库，谁先写谁算，不与用户编辑抢乐观锁。
+//
+// ReplaceName 是这次写入允许覆盖的旧名称：桥接开聊时先用首条消息的前几个字占个位，
+// 等 AI 起好名再拿占位名换掉。留空表示只在名称仍为空时写入 —— 用户自己填过的名字，
+// 两种情况都不覆盖。
+type UpdateRequirementNameRequest struct {
+	BizLine        contract.BizLine `json:"-"`
+	ProgramID      int64            `json:"programId"`
+	RequirementKey string           `json:"requirementKey"`
+	Name           string           `json:"name"`
+	ReplaceName    string           `json:"replaceName"`
+	ActorID        string           `json:"-"`
+	ActorName      string           `json:"actorName"`
+}
+
 // AssignRequirementMembersRequest 只改需求的主负责人与辅助人。
 // 需求列表和工作台的快速指派用它，避免用整条保存接口把详情、计划时间等字段一起覆盖掉。
 type AssignRequirementMembersRequest struct {

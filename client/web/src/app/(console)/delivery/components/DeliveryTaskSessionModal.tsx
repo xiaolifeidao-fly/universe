@@ -41,6 +41,8 @@ import {
   modelForConfig,
   sceneForPhase,
   toolDisplayName,
+  type AIExecutionConfig,
+  type AITool,
   type ClaudeEffort,
   type ClaudeModel,
   type CodexModel,
@@ -74,7 +76,7 @@ import {
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
 import { useStickToBottom } from "../hooks/useStickToBottom";
-import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
 
@@ -168,7 +170,13 @@ export function DeliveryTaskSessionModal({
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
   const [detail, setDetail] = useState<DeliveryItemRecord | null>(null);
   const activeScene = sceneForPhase((detail || item)?.phase || "requirement");
-  const activeConfig = configFor(activeScene);
+  const scenePreference = configFor(activeScene);
+  const [conversationExecutorType, setConversationExecutorType] = useState<AITool | "">("");
+  // 续已有会话时跟着这条线程自己的工具走：正文在那个执行器的缓存里，模型选项也要对齐。
+  const activeConfig = useMemo<AIExecutionConfig>(
+    () => ({ ...scenePreference, tool: conversationExecutorType || scenePreference.tool }),
+    [conversationExecutorType, scenePreference],
+  );
   const activeProvider = activeConfig.tool;
   const taskTestingProvider = configFor("productTesting").tool;
   // 会话里所有露出工具名的地方都跟着该阶段选的 provider 走，不再写死 Codex。
@@ -258,11 +266,12 @@ export function DeliveryTaskSessionModal({
     try {
       const [nextDetail, nextConversation, nextTestingConversation] = await Promise.all([
         fetchItemDetail(programId, item.itemKey),
-        codexBridgeReady ? fetchCodexConversation(programId, item.itemKey, threadId, activeProvider) : Promise.resolve(null),
+        codexBridgeReady ? fetchCodexConversation(programId, item.itemKey, threadId, scenePreference.tool) : Promise.resolve(null),
         codexBridgeReady ? fetchCodexTaskTestingCasesConversation(programId, item.itemKey, "", taskTestingProvider) : Promise.resolve(null),
       ]);
       setDetail(nextDetail);
       setConversation(nextConversation);
+      setConversationExecutorType(nextConversation?.threadId ? nextConversation.executorType : "");
       setTestingConversations(nextTestingConversation?.conversations ?? []);
       if (terminalConversationReady(nextConversation)) setLiveEvents([]);
       if (nextConversation?.threadId) setSelectedThreadId(nextConversation.threadId);
@@ -273,7 +282,7 @@ export function DeliveryTaskSessionModal({
     } finally {
       setLoading(false);
     }
-  }, [activeProvider, codexBridgeReady, item, programId, selectedThreadId, taskTestingProvider]);
+  }, [codexBridgeReady, item, programId, scenePreference.tool, selectedThreadId, taskTestingProvider]);
 
   const loadRequirementDocument = useCallback(async () => {
     if (!item || !programId || !codexBridgeReady) {
@@ -459,6 +468,8 @@ export function DeliveryTaskSessionModal({
   const startNewConversation = () => {
     if (taskHasActiveConversation) return;
     setNewConversation(true);
+    // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
+    setConversationExecutorType("");
     setSelectedThreadId("");
     setLiveEvents([]);
     setDraft("");
@@ -651,7 +662,7 @@ export function DeliveryTaskSessionModal({
                   <MessageOutlined />
                   <div>
                     <Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip>
-                    <span>{kind === "task" ? `${t(`delivery.phase.${entry.phase}`)} · ${entry.progress}%` : t("delivery.testingCases.status")}{entry.updatedAt ? ` · ${dayjs(entry.updatedAt).format("MM-DD HH:mm")}` : ""}</span>
+                    <span>{kind === "task" ? `${t(`delivery.phase.${entry.phase}`)} · ${entry.progress}%` : t("delivery.testingCases.status")}{` · ${toolDisplayName(entry.executorType)}`}{entry.updatedAt ? ` · ${dayjs(entry.updatedAt).format("MM-DD HH:mm")}` : ""}</span>
                   </div>
                   {entry.active ? <i aria-label={t("delivery.session.running")} /> : null}
                 </button>
@@ -692,10 +703,12 @@ export function DeliveryTaskSessionModal({
                   // 按回合渲染：每个回合末尾补一份「本次改动」，对齐直接用 Codex / Claude 时看到的改动清单。
                   (conversation?.turns ?? []).map((turn) => (
                     <Fragment key={turn.id}>
-                      {turn.items.map((entry) => (
-                        <TranscriptItem item={entry} programId={programId} toolName={toolName} key={`${turn.id}-${entry.id}-${entry.type}`} />
-                      ))}
-                      <SessionChangeSummary changes={changesOfTurn(turn.items)} />
+                      {groupSessionItems(turn.items).map((group) => (group.kind === "process" ? (
+                        <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
+                      ) : (
+                        <TranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />
+                      )))}
+                      <SessionChangeSummary items={turn.items} programId={programId} />
                     </Fragment>
                   ))
                 ) : (

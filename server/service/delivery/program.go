@@ -148,13 +148,17 @@ func (s *service) SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramG
 	if req.GitEnabled && baseBranch == "" {
 		return dto.ProgramView{}, errors.New("启用项目 Git 后必须填写默认基准分支")
 	}
+	// 聊天归档属于项目 Git 工作流；关闭 Git 时一并关闭，避免本机桥接留下
+	// 不会随项目版本管理的聊天副本。
+	gitChatSyncEnabled := req.GitEnabled && req.GitChatSyncEnabled
 	row, err := s.repo.SaveProgramGitConfig(ctx, req.BizLine.String(), req.ProgramID, map[string]any{
-		"git_enabled":        req.GitEnabled,
-		"git_repository_url": repositoryURL,
-		"git_remote_name":    remoteName,
-		"git_base_branch":    baseBranch,
-		"updated_by":         actorOf(req.ActorID, req.ActorName),
-		"updated_time":       time.Now(),
+		"git_enabled":           req.GitEnabled,
+		"git_repository_url":    repositoryURL,
+		"git_remote_name":       remoteName,
+		"git_base_branch":       baseBranch,
+		"git_chat_sync_enabled": gitChatSyncEnabled,
+		"updated_by":            actorOf(req.ActorID, req.ActorName),
+		"updated_time":          time.Now(),
 	})
 	if err != nil {
 		return dto.ProgramView{}, translate(err)
@@ -351,20 +355,21 @@ func (s *service) MigrateProgram(ctx context.Context, req dto.MigrateProgramRequ
 func toProgramView(row *repository.DeliveryProgram) dto.ProgramView {
 	updated := row.UpdatedTime
 	return dto.ProgramView{
-		ProgramID:        row.Id,
-		ProgramCode:      row.ProgramCode,
-		BizLine:          contract.BizLine(row.BizLine),
-		Name:             row.Name,
-		Summary:          row.Summary,
-		Status:           row.Status,
-		GitEnabled:       row.GitEnabled,
-		GitRepositoryURL: row.GitRepositoryURL,
-		GitRemoteName:    row.GitRemoteName,
-		GitBaseBranch:    row.GitBaseBranch,
-		CloudSyncEnabled: row.CloudSyncEnabled,
-		CloudSyncScopes:  strings.FieldsFunc(row.CloudSyncScopes, func(r rune) bool { return r == ',' }),
-		UpdatedBy:        row.UpdatedBy,
-		UpdatedAt:        &updated,
+		ProgramID:          row.Id,
+		ProgramCode:        row.ProgramCode,
+		BizLine:            contract.BizLine(row.BizLine),
+		Name:               row.Name,
+		Summary:            row.Summary,
+		Status:             row.Status,
+		GitEnabled:         row.GitEnabled,
+		GitRepositoryURL:   row.GitRepositoryURL,
+		GitRemoteName:      row.GitRemoteName,
+		GitBaseBranch:      row.GitBaseBranch,
+		GitChatSyncEnabled: row.GitChatSyncEnabled,
+		CloudSyncEnabled:   row.CloudSyncEnabled,
+		CloudSyncScopes:    strings.FieldsFunc(row.CloudSyncScopes, func(r rune) bool { return r == ',' }),
+		UpdatedBy:          row.UpdatedBy,
+		UpdatedAt:          &updated,
 	}
 }
 

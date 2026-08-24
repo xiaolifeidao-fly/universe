@@ -70,6 +70,9 @@ export class DeliveryProgramRecord {
   /** 新需求创建分支时优先采用的基准分支。 */
   gitBaseBranch = "";
 
+  /** 已结束的需求、任务聊天是否归档到项目工作目录 chat/。 */
+  gitChatSyncEnabled = false;
+
   /** 项目管理员选择后，本机桥接才会把对应类别上传到服务端云端文件库。 */
   cloudSyncEnabled = false;
 
@@ -878,6 +881,9 @@ export class CodexRequirementPrototypeConversation {
 
   threadId = "";
 
+  /** 当前选中的这条会话属于哪个 AI 工具：读写都跟着它走，面板据此对齐模型下拉。 */
+  executorType: AITool = "codex";
+
   turns: CodexConversationTurn[] = [];
 
   active = false;
@@ -950,6 +956,15 @@ export class CodexConversationItem {
 
   phase = "";
 
+  /**
+   * 工具调用的语义：read / search，Claude 用的是具名工具（Read、Grep），
+   * 命令行里没有可解析的字面量，只能由桥接层标出来。Codex 的命令条目为空。
+   */
+  action = "";
+
+  /** action 对应的对象：读的文件、检索的目录。 */
+  target = "";
+
   attachments: CodexConversationAttachment[] = [];
 
   /** 文件变更条目的结构化清单，用来在回合末尾汇总「本次改动」。 */
@@ -961,6 +976,11 @@ export class CodexConversationChange {
 
   /** add / modify / delete / rename，桥接层已经把两个执行器的叫法归一。 */
   kind = "modify";
+
+  /** 该文件这次改了多少行，桥接层从 unified diff 数出来；拿不到 diff 时是 0。 */
+  added = 0;
+
+  removed = 0;
 }
 
 export class CodexConversationAttachment {
@@ -1003,6 +1023,9 @@ export class CodexConversationSummary {
 
   status = "";
 
+  /** 这条会话是哪个 AI 工具留下的：切换工具后旧会话仍然列出，读写都跟着它自己的执行器。 */
+  executorType: AITool = "codex";
+
   active = false;
 
   phase: DeliveryPhase = "requirement";
@@ -1016,6 +1039,9 @@ export class CodexConversation {
   itemKey = "";
 
   threadId = "";
+
+  /** 当前选中的这条会话属于哪个 AI 工具：读写都跟着它走，面板据此对齐模型下拉。 */
+  executorType: AITool = "codex";
 
   turns: CodexConversationTurn[] = [];
 
@@ -1070,6 +1096,9 @@ export class CodexPlanningSessionSummary {
 
   status = "";
 
+  /** 这条会话是哪个 AI 工具留下的：切换工具后旧会话仍然列出，读写都跟着它自己的执行器。 */
+  executorType: AITool = "codex";
+
   active = false;
 }
 
@@ -1095,6 +1124,9 @@ export class CodexPlanningConversation {
   requirementKey = "";
 
   threadId = "";
+
+  /** 当前选中的这条会话属于哪个 AI 工具：读写都跟着它走，面板据此对齐模型下拉。 */
+  executorType: AITool = "codex";
 
   turns: CodexConversationTurn[] = [];
 
@@ -1132,6 +1164,9 @@ export class CodexRequirementTestingConversation {
   requirementKey = "";
 
   threadId = "";
+
+  /** 当前选中的这条会话属于哪个 AI 工具：读写都跟着它走，面板据此对齐模型下拉。 */
+  executorType: AITool = "codex";
 
   turns: CodexConversationTurn[] = [];
 
@@ -1176,6 +1211,9 @@ export class CodexTaskTestingCasesConversation {
 
   threadId = "";
 
+  /** 当前选中的这条会话属于哪个 AI 工具：读写都跟着它走，面板据此对齐模型下拉。 */
+  executorType: AITool = "codex";
+
   turns: CodexConversationTurn[] = [];
 
   conversations: CodexConversationSummary[] = [];
@@ -1219,6 +1257,7 @@ export interface SaveProgramGitConfigPayload {
   gitRepositoryUrl?: string;
   gitRemoteName?: string;
   gitBaseBranch?: string;
+  gitChatSyncEnabled: boolean;
 }
 
 export interface SaveProgramCloudSyncConfigPayload {

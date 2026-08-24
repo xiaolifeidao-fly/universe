@@ -24,12 +24,13 @@ type DeliveryProgram struct {
 	Status      string `gorm:"column:status;type:varchar(16);default:'active'" description:"active 进行中 / archived 已归档"`
 	// Git 配置是项目共享的可选能力；它不校验或改写本机 remote，
 	// 实际工作区和当前分支仍由本地桥接读取。
-	GitEnabled       bool   `gorm:"column:git_enabled;default:false" description:"项目是否启用 Git 需求分支能力"`
-	GitRepositoryURL string `gorm:"column:git_repository_url;type:varchar(512)" description:"项目可选记录的 Git 仓库地址，仅供成员查看"`
-	GitRemoteName    string `gorm:"column:git_remote_name;type:varchar(64);default:'origin'" description:"用于校验和拉取的 Git 远端名称，默认 origin"`
-	GitBaseBranch    string `gorm:"column:git_base_branch;type:varchar(255)" description:"项目启用 Git 后的新需求默认基准分支"`
-	CloudSyncEnabled bool   `gorm:"column:cloud_sync_enabled;default:false" description:"是否将所选项目内容同步至服务端云端文件库"`
-	CloudSyncScopes  string `gorm:"column:cloud_sync_scopes;type:varchar(128)" description:"同步类别的规范化逗号列表：chat/requirement/design"`
+	GitEnabled         bool   `gorm:"column:git_enabled;default:false" description:"项目是否启用 Git 需求分支能力"`
+	GitRepositoryURL   string `gorm:"column:git_repository_url;type:varchar(512)" description:"项目可选记录的 Git 仓库地址，仅供成员查看"`
+	GitRemoteName      string `gorm:"column:git_remote_name;type:varchar(64);default:'origin'" description:"用于校验和拉取的 Git 远端名称，默认 origin"`
+	GitBaseBranch      string `gorm:"column:git_base_branch;type:varchar(255)" description:"项目启用 Git 后的新需求默认基准分支"`
+	GitChatSyncEnabled bool   `gorm:"column:git_chat_sync_enabled;default:false" description:"是否将已结束的需求和任务聊天记录归档到项目工作目录 chat/"`
+	CloudSyncEnabled   bool   `gorm:"column:cloud_sync_enabled;default:false" description:"是否将所选项目内容同步至服务端云端文件库"`
+	CloudSyncScopes    string `gorm:"column:cloud_sync_scopes;type:varchar(128)" description:"同步类别的规范化逗号列表：chat/requirement/design"`
 
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人"`
 	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`

@@ -25,6 +25,28 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
 import { SessionDocumentText } from "./DeliverySessionMessage";
 
+const HTML_ENTITIES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  "\"": "&quot;",
+};
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"]/g, (character) => HTML_ENTITIES[character] ?? character);
+}
+
+/** 非 HTML 文档在新标签页用本地只读页承载，避免 Markdown 被浏览器当纯文本下载。 */
+function browserDocument(content: string, title: string, isHtml: boolean) {
+  if (isHtml) return content;
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
+body { margin: 0; background: #f2f5f9; color: #101828; font: 14px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+main { box-sizing: border-box; width: min(960px, calc(100% - 32px)); margin: 24px auto; padding: 24px; border: 1px solid rgba(16,24,40,.09); border-radius: 12px; background: #fff; box-shadow: 0 8px 24px rgba(16,24,40,.08); }
+pre { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+</style></head><body><main><pre>${escapeHtml(content)}</pre></main></body></html>`;
+}
+
 /**
  * 需求大纲、任务文档、设计文档、测试用例都各自对应工作区里的一个目录，目录里可以有多份文档。
  * 面板只负责选择和编辑已有文档：新增文档一律由会话产出，避免面板造出执行器不认识的文件。
@@ -38,6 +60,9 @@ export interface DeliveryDocumentSetProps {
   title?: ReactNode;
   /** 目录里一份文档都没有时的兜底内容，例如仍留在库里的旧产物正文。 */
   fallback?: ReactNode;
+  /** 兜底正文也允许在本地浏览器中打开，给尚未迁移为工作区文件的历史产物使用。 */
+  browserContent?: string;
+  browserTitle?: string;
   emptyText?: string;
   /** 只读栏目（例如仅供查看的测试报告）传 false。 */
   editable?: boolean;
@@ -148,6 +173,8 @@ function DocumentSetView({
   codexBridgeReady,
   title,
   fallback,
+  browserContent,
+  browserTitle,
   emptyText,
   editable = true,
   onExpand,
@@ -187,6 +214,7 @@ function DocumentSetView({
     [files],
   );
   const canEdit = editable && Boolean(document?.exists) && !loading;
+  const contentForBrowser = document?.content ?? browserContent ?? "";
 
   const submit = async () => {
     if (!path) return;
@@ -203,17 +231,14 @@ function DocumentSetView({
     }
   };
 
-  /**
-   * 在浏览器新标签页打开这份 HTML：面板里的 iframe 受沙箱限制，
-   * 真要点交互、按浏览器自己的打印导出，还是独立标签页顺手。
-   *
-   * 走 blob 地址而不是把正文再传一次：正文已经在手里，也不必让后端多开一个能直出 HTML 的地址。
-   * 注意这个标签页跟控制台同源，只适合打开自己工作区里产出的文档。
-   */
+  /** 在浏览器新标签页打开当前文档；HTML 保持交互，文本类文档用本地只读页展示。 */
   const openInBrowser = () => {
-    const content = document?.content ?? "";
+    const content = contentForBrowser;
     if (!content.trim()) return;
-    const url = URL.createObjectURL(new Blob([content], { type: "text/html;charset=utf-8" }));
+    const isHtmlDocument = Boolean(document?.content) && /\.html?$/i.test(path);
+    const url = URL.createObjectURL(new Blob([
+      browserDocument(content, path.slice(path.lastIndexOf("/") + 1) || browserTitle || t("delivery.docset.file"), isHtmlDocument),
+    ], { type: "text/html;charset=utf-8" }));
     const opened = window.open(url, "_blank", "noopener");
     if (!opened) message.warning(t("delivery.docset.openBlocked"));
     // 新标签页加载完就不再需要这个地址了，留着只会一直占内存。
@@ -277,7 +302,7 @@ function DocumentSetView({
           />
         </Tooltip>
       ) : null}
-      {isHtml && (document?.content ?? "").trim() ? (
+      {contentForBrowser.trim() ? (
         <Tooltip title={t("delivery.docset.openInBrowser")}>
           <Button
             size="small"
@@ -337,6 +362,7 @@ function DocumentSetView({
   ) : isHtml && (document?.content ?? "").trim() ? (
     // HTML 文档（例如原型页）按渲染结果预览，源码只在编辑态出现。
     <DeliveryHtmlFrame
+      autoHeight
       className="delivery-document-panel__frame"
       title={pathName || t("delivery.docset.file")}
       html={document?.content ?? ""}

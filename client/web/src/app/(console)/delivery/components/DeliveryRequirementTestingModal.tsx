@@ -22,6 +22,8 @@ import {
   CLAUDE_MODEL_OPTIONS,
   CODEX_MODEL_OPTIONS,
   CODEX_REASONING_EFFORTS,
+  type AIExecutionConfig,
+  type AITool,
   type ClaudeEffort,
   type ClaudeModel,
   type CodexModel,
@@ -43,7 +45,7 @@ import {
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useStickToBottom } from "../hooks/useStickToBottom";
-import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, changesOfTurn } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -108,7 +110,13 @@ export function DeliveryRequirementTestingModal({
 }: DeliveryRequirementTestingModalProps) {
   const { t } = useLocale();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
-  const testingConfig = configFor("productTesting");
+  const testingPreference = configFor("productTesting");
+  const [conversationExecutorType, setConversationExecutorType] = useState<AITool | "">("");
+  // 续已有会话时跟着这条线程自己的工具走：正文在那个执行器的缓存里，模型选项也要对齐。
+  const testingConfig = useMemo<AIExecutionConfig>(
+    () => ({ ...testingPreference, tool: conversationExecutorType || testingPreference.tool }),
+    [conversationExecutorType, testingPreference],
+  );
   const provider = testingConfig.tool;
   const toolName = toolDisplayName(provider);
   const requirementKey = requirement?.requirementKey ?? "";
@@ -132,8 +140,9 @@ export function DeliveryRequirementTestingModal({
     if (!programId || !requirementKey) return null;
     setLoading(true);
     try {
-      const next = await fetchCodexRequirementTestingConversation(programId, requirementKey, threadId, provider);
+      const next = await fetchCodexRequirementTestingConversation(programId, requirementKey, threadId, testingPreference.tool);
       setConversation(next);
+      setConversationExecutorType(next.threadId ? next.executorType : "");
       if (!newConversation && !preserveSelected) setSelectedThreadId(next.threadId);
       if (wasActiveRef.current && !next.active) await onChanged();
       wasActiveRef.current = Boolean(next.active);
@@ -144,7 +153,7 @@ export function DeliveryRequirementTestingModal({
     } finally {
       setLoading(false);
     }
-  }, [newConversation, onChanged, programId, provider, requirementKey]);
+  }, [newConversation, onChanged, programId, requirementKey, testingPreference.tool]);
 
   useEffect(() => {
     if (!open) {
@@ -291,6 +300,8 @@ export function DeliveryRequirementTestingModal({
   const startNewConversation = () => {
     if (active || !requirementKey) return;
     setNewConversation(true);
+    // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
+    setConversationExecutorType("");
     setSelectedThreadId("");
     setDraft("");
     setAttachments([]);
@@ -317,7 +328,7 @@ export function DeliveryRequirementTestingModal({
             {newConversation ? <div className="delivery-session-history__item is-selected is-draft"><MessageOutlined /><div><b>{testingConversationTitle}</b><span>{t("delivery.testingCases.status")} · {t("delivery.requirement.testingDraft")}</span></div></div> : null}
             {historyEntries.map(({ kind, entry }) => (
               <button className={`delivery-session-history__item${kind === "testing" && entry.threadId === conversation?.threadId && !newConversation ? " is-selected" : ""}`} key={`${kind}-${entry.threadId}`} type="button" onClick={() => kind === "testing" ? selectConversation(entry.threadId) : onOpenPlanningConversation?.(entry.threadId)}>
-                <MessageOutlined /><div><b>{entry.title || (kind === "testing" ? testingConversationTitle : t("delivery.session.untitled"))}</b><span>{[kind === "testing" ? t("delivery.testingCases.status") : t("delivery.planning.title"), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>{entry.active ? <i /> : null}
+                <MessageOutlined /><div><b>{entry.title || (kind === "testing" ? testingConversationTitle : t("delivery.session.untitled"))}</b><span>{[kind === "testing" ? t("delivery.testingCases.status") : t("delivery.planning.title"), toolDisplayName(entry.executorType), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>{entry.active ? <i /> : null}
               </button>
             ))}
             {!newConversation && !historyEntries.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.session.historyEmpty")} /> : null}
@@ -346,7 +357,9 @@ export function DeliveryRequirementTestingModal({
                 key: "chat", label: t("delivery.requirement.testingChat"),
                 children: <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                   <Alert className="delivery-testing-cases-chat-hint" type="info" showIcon message={t("delivery.testingCases.chatHint.title")} description={t("delivery.testingCases.chatHint.description")} />
-                  {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{turn.items.map((item) => <TestingTranscriptItem item={item} programId={programId} toolName={toolName} key={`${turn.id}-${item.id}-${item.type}`} />)}<SessionChangeSummary changes={changesOfTurn(turn.items)} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.requirement.testingEmpty").replace("{tool}", toolName)} />}
+                  {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{groupSessionItems(turn.items).map((group) => (group.kind === "process"
+                    ? <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
+                    : <TestingTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />))}<SessionChangeSummary items={turn.items} programId={programId} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.requirement.testingEmpty").replace("{tool}", toolName)} />}
                   {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
                 </div>,
               },

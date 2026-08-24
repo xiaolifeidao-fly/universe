@@ -11,16 +11,17 @@ import (
 // ---------- 项目 ----------
 
 type ProgramView struct {
-	ProgramID        int64            `json:"programId"`
-	ProgramCode      string           `json:"programCode"`
-	BizLine          contract.BizLine `json:"bizLine"`
-	Name             string           `json:"name"`
-	Summary          string           `json:"summary"`
-	Status           string           `json:"status"`
-	GitEnabled       bool             `json:"gitEnabled"`
-	GitRepositoryURL string           `json:"gitRepositoryUrl"`
-	GitRemoteName    string           `json:"gitRemoteName"`
-	GitBaseBranch    string           `json:"gitBaseBranch"`
+	ProgramID          int64            `json:"programId"`
+	ProgramCode        string           `json:"programCode"`
+	BizLine            contract.BizLine `json:"bizLine"`
+	Name               string           `json:"name"`
+	Summary            string           `json:"summary"`
+	Status             string           `json:"status"`
+	GitEnabled         bool             `json:"gitEnabled"`
+	GitRepositoryURL   string           `json:"gitRepositoryUrl"`
+	GitRemoteName      string           `json:"gitRemoteName"`
+	GitBaseBranch      string           `json:"gitBaseBranch"`
+	GitChatSyncEnabled bool             `json:"gitChatSyncEnabled"`
 	// 云端同步配置由项目管理员维护；正文由本机桥接按类别上传到项目云端文件库。
 	CloudSyncEnabled bool       `json:"cloudSyncEnabled"`
 	CloudSyncScopes  []string   `json:"cloudSyncScopes"`
@@ -53,8 +54,11 @@ type SaveProgramGitConfigRequest struct {
 	GitRepositoryURL string           `json:"gitRepositoryUrl"`
 	GitRemoteName    string           `json:"gitRemoteName"`
 	GitBaseBranch    string           `json:"gitBaseBranch"`
-	ActorID          string           `json:"-"`
-	ActorName        string           `json:"actorName"`
+	// GitChatSyncEnabled 开启后，本机桥接会将已结束的聊天写入工作目录 chat/。
+	// Git 未启用时服务端会强制关闭，避免产生无法随项目提交的本地副本。
+	GitChatSyncEnabled bool   `json:"gitChatSyncEnabled"`
+	ActorID            string `json:"-"`
+	ActorName          string `json:"actorName"`
 }
 
 // SaveProgramCloudSyncConfigRequest 只更新项目级云端同步策略；本机工作目录仍只保存在用户浏览器中。

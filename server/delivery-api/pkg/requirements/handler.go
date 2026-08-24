@@ -34,6 +34,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/requirement/save", h.save)
 	api.POST("/requirement/members/assign", h.assignMembers)
 	api.POST("/requirement/status/update", h.updateStatus)
+	api.POST("/requirement/name/update", h.updateName)
 	api.POST("/requirement/completion-notification/read", h.markCompletionNotificationRead)
 	api.POST("/requirement/git-branch/bind", h.bindGitBranch)
 	api.POST("/requirement/delete", h.delete)
@@ -236,6 +237,25 @@ func (h *Handler) updateStatus(context *gin.Context) {
 	}
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.UpdateRequirementStatus(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+// updateName 需求名称留空时的自动命名入口：桥接在拆解会话开聊时按首条消息回写标题，
+// 名称已经有值时服务端原样保留，不覆盖用户自己填的名字。
+func (h *Handler) updateName(context *gin.Context) {
+	var req deliverydto.UpdateRequirementNameRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.UpdateRequirementName(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 

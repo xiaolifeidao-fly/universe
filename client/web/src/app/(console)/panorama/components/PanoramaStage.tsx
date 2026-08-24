@@ -414,7 +414,7 @@ export function PanoramaStage({
         const ang = (requirementIndex / count) * Math.PI * 2 + index;
         const rr = radius + 2.5 + (requirementIndex % 3) * 1.05 + Math.floor(requirementIndex / 12) * 0.85;
         const dot = ball(0.48, REQUIREMENT_HEX[requirement.status] ?? C.slate, requirement.status === "open" ? 0.9 : 0.72);
-        dot.userData = { kind: "requirement", key: requirement.requirementKey, name: requirement.name };
+        dot.userData = { kind: "requirement", key: requirement.requirementKey, name: requirement.name || requirement.requirementKey };
         group.add(dot);
         pickables.push(dot);
         orbiters.push({
@@ -426,7 +426,7 @@ export function PanoramaStage({
         });
         addLabel(
           dot,
-          escapeHtml(requirement.name),
+          escapeHtml(requirement.name || requirement.requirementKey),
           `sm${requirement.status === "done" ? " done" : ""}`,
           new THREE.Vector3(0, 0.95, 0),
           node.key,

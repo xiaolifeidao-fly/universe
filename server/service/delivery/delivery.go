@@ -50,6 +50,8 @@ type Service interface {
 	SaveRequirement(ctx context.Context, req dto.SaveRequirementRequest) (dto.RequirementView, error)
 	AssignRequirementMembers(ctx context.Context, req dto.AssignRequirementMembersRequest) (dto.RequirementView, error)
 	UpdateRequirementStatus(ctx context.Context, req dto.UpdateRequirementStatusRequest) (dto.RequirementView, error)
+	// 需求名称留空时由拆解会话按聊天内容自动生成；只在名称仍为空时写入。
+	UpdateRequirementName(ctx context.Context, req dto.UpdateRequirementNameRequest) (dto.RequirementView, error)
 	ListRequirementCompletionNotifications(ctx context.Context, query dto.RequirementCompletionNotificationQuery) ([]dto.RequirementCompletionNotificationView, error)
 	MarkRequirementCompletionNotificationRead(ctx context.Context, req dto.MarkRequirementCompletionNotificationReadRequest) (dto.RequirementCompletionNotificationView, error)
 	BindRequirementGitBranch(ctx context.Context, req dto.BindRequirementGitBranchRequest) (dto.RequirementView, error)

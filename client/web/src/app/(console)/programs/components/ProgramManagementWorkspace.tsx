@@ -161,6 +161,7 @@ export function ProgramManagementWorkspace() {
 	const [gitEnabled, setGitEnabled] = useState(false);
 	const [gitRepositoryUrl, setGitRepositoryUrl] = useState("");
 	const [gitBaseBranch, setGitBaseBranch] = useState("");
+	const [gitChatSyncEnabled, setGitChatSyncEnabled] = useState(false);
 	const [workspaceTab, setWorkspaceTab] = useState<"workspace" | "git" | "cloud">("workspace");
 	const [gitBranches, setGitBranches] = useState<string[]>([]);
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
@@ -555,6 +556,7 @@ export function ProgramManagementWorkspace() {
 		setGitEnabled(program.gitEnabled);
 		setGitRepositoryUrl(program.gitRepositoryUrl || "");
 		setGitBaseBranch(program.gitBaseBranch || "");
+		setGitChatSyncEnabled(program.gitChatSyncEnabled);
 		setCloudSyncEnabled(program.cloudSyncEnabled);
 		setCloudSyncScopes(program.cloudSyncScopes.filter((scope): scope is CloudSyncScope => CLOUD_SYNC_SCOPES.includes(scope)));
 		try {
@@ -583,6 +585,7 @@ export function ProgramManagementWorkspace() {
 		const candidate = workspacePath.trim();
 		const gitConfigChanged = workspaceProgram.canAdminister && (
 			gitEnabled !== workspaceProgram.gitEnabled
+			|| gitChatSyncEnabled !== workspaceProgram.gitChatSyncEnabled
 			|| (gitEnabled && (
 				gitRepositoryUrl.trim() !== (workspaceProgram.gitRepositoryUrl || "")
 				|| gitBaseBranch.trim() !== (workspaceProgram.gitBaseBranch || "")
@@ -620,6 +623,7 @@ export function ProgramManagementWorkspace() {
 					gitRepositoryUrl: gitRepositoryUrl.trim(),
 					gitRemoteName: workspaceProgram.gitRemoteName || "origin",
 					gitBaseBranch: gitBaseBranch.trim(),
+					gitChatSyncEnabled,
 				});
 				await refresh();
 			}
@@ -1094,7 +1098,10 @@ export function ProgramManagementWorkspace() {
 												checked={gitEnabled}
 												disabled={!workspaceProgram?.canAdminister}
 												aria-label={t("programs.git.enabled")}
-												onChange={setGitEnabled}
+												onChange={(enabled) => {
+													setGitEnabled(enabled);
+													if (!enabled) setGitChatSyncEnabled(false);
+												}}
 											/>
 										</div>
 										{gitEnabled ? (
@@ -1124,8 +1131,20 @@ export function ProgramManagementWorkspace() {
 															suffix={gitBranchesLoading ? <LoadingOutlined /> : undefined}
 														/>
 													</AutoComplete>
-												</Form.Item>
-											</Form>
+											</Form.Item>
+											<div className={`manager-codex-toggle${gitChatSyncEnabled ? " manager-codex-toggle--on" : ""}`}>
+												<div>
+													<strong>{t("programs.git.chatSync")}</strong>
+													<p>{t("programs.git.chatSyncHint")}</p>
+												</div>
+												<Switch
+													checked={gitChatSyncEnabled}
+													disabled={!workspaceProgram?.canAdminister}
+													aria-label={t("programs.git.chatSync")}
+													onChange={setGitChatSyncEnabled}
+												/>
+											</div>
+										</Form>
 										) : (
 											<div className="manager-codex-empty">{t("programs.git.disabledHint")}</div>
 										)}
