@@ -4,6 +4,46 @@ import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 
 
 const FRAME_HEIGHT_MESSAGE = "delivery-html-frame-height";
 
+/** HTML 文档引用的同目录样式或脚本，name 就是 HTML 里原样写的相对路径。 */
+export interface DeliveryHtmlAsset {
+  name: string;
+  content: string;
+}
+
+/** 内联正文里不能出现结束标签，否则解析器会在这里提前收尾。 */
+function guardInlineText(text: string, tag: "style" | "script") {
+  return text.replace(new RegExp(`</(${tag})`, "gi"), "<\\/$1");
+}
+
+function attributeValue(tag: string, attribute: "href" | "src") {
+  const matched = new RegExp(`\\b${attribute}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i").exec(tag);
+  if (!matched) return "";
+  return (matched[2] ?? matched[3] ?? matched[4] ?? "").trim();
+}
+
+/**
+ * 把 <link href> / <script src> 引用的同目录样式脚本换成内联正文。
+ *
+ * 预览是 blob 地址，页面没有所在目录，相对路径在 iframe 里一律解析失败；服务端已经按引用把这些文件读了出来，
+ * 这里按原样的引用串对上号直接内联，样式和脚本才跟着文档一起生效。
+ */
+export function inlineHtmlAssets(html: string, assets: DeliveryHtmlAsset[] = []) {
+  if (!assets.length) return html;
+  const byReference = new Map(assets.map((asset) => [asset.name, asset.content]));
+  return html
+    .replace(/<link\b[^>]*>/gi, (tag) => {
+      const content = byReference.get(attributeValue(tag, "href"));
+      return content === undefined ? tag : `<style>${guardInlineText(content, "style")}</style>`;
+    })
+    .replace(/<script\b([^>]*)>\s*<\/script\s*>/gi, (tag, rawAttributes: string) => {
+      const content = byReference.get(attributeValue(`<script${rawAttributes}>`, "src"));
+      if (content === undefined) return tag;
+      // src 之外的属性保留下来，type、defer 这些还会影响脚本怎么跑。
+      const attributes = rawAttributes.replace(/\bsrc\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+)/i, "").trim();
+      return `<script${attributes ? ` ${attributes}` : ""}>${guardInlineText(content, "script")}</script>`;
+    });
+}
+
 function withHeightReporter(html: string, frameId: string) {
   // sandbox 没有 allow-same-origin，父页面不能直接读取 iframe 文档高度；由预览页主动上报，
   // 外层仍只接受来自当前 iframe 且带同一实例标识的消息。
@@ -49,12 +89,15 @@ function withHeightReporter(html: string, frameId: string) {
  */
 export function DeliveryHtmlFrame({
   html,
+  assets,
   title,
   className,
   style,
   autoHeight = false,
 }: {
   html: string;
+  /** 文档引用的同目录样式、脚本，预览前内联进正文。 */
+  assets?: DeliveryHtmlAsset[];
   title: string;
   className?: string;
   style?: CSSProperties;
@@ -65,10 +108,10 @@ export function DeliveryHtmlFrame({
   const [contentHeight, setContentHeight] = useState<number | null>(null);
   const frameId = useId();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const previewHtml = useMemo(
-    () => autoHeight ? withHeightReporter(html, frameId) : html,
-    [autoHeight, frameId, html],
-  );
+  const previewHtml = useMemo(() => {
+    const inlined = inlineHtmlAssets(html, assets);
+    return autoHeight ? withHeightReporter(inlined, frameId) : inlined;
+  }, [assets, autoHeight, frameId, html]);
 
   useEffect(() => {
     setContentHeight(null);

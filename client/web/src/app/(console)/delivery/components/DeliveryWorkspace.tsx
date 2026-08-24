@@ -71,7 +71,7 @@ const BOARD_WHEEL_SCALE_FACTOR = 0.05;
 
 export function DeliveryWorkspace() {
   const searchParams = useSearchParams();
-  const { activeBusinessLine, setActiveBusinessLine } = useBusinessLine();
+  const { activeBusinessLine, businessLines, businessLinesLoaded, setActiveBusinessLine } = useBusinessLine();
   const { preferences } = useAIPreferences();
   const { t } = useLocale();
   const userId = getAuthUser()?.id ?? 0;
@@ -97,11 +97,19 @@ export function DeliveryWorkspace() {
   const newRequirementSignature = newRequirementFresh && sharedProgramId ? `${newRequirementToken}:${sharedProgramId}` : "";
 
   // 分享链接明确写入业务线和项目，打开时不受接收者本地记忆的上下文影响。
+  // 只在链接首次落地时对齐一次：地址栏里的 bizLine 会一直留着，若每次渲染都强行对齐，
+  // 用户在顶部切换业务线会被立刻拉回分享链接里的那条，看起来就是“切换没作用”。
+  const appliedSharedBizLineRef = useRef("");
   useEffect(() => {
-    if (sharedBizLine && sharedBizLine !== activeBusinessLine.id) {
+    if (!sharedBizLine || !businessLinesLoaded) return;
+    if (appliedSharedBizLineRef.current === sharedBizLine) return;
+    // 业务线列表还没包含这条（无权限或编码已失效）时不记账，避免把一次有效对齐吞掉。
+    if (!businessLines.some((line) => line.id === sharedBizLine)) return;
+    appliedSharedBizLineRef.current = sharedBizLine;
+    if (sharedBizLine !== activeBusinessLine.id) {
       setActiveBusinessLine(sharedBizLine);
     }
-  }, [activeBusinessLine.id, setActiveBusinessLine, sharedBizLine]);
+  }, [activeBusinessLine.id, businessLines, businessLinesLoaded, setActiveBusinessLine, sharedBizLine]);
 
   const {
     bizLine,

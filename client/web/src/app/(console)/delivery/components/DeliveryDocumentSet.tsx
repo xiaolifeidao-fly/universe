@@ -22,7 +22,7 @@ import {
   type DeliveryDocumentScope,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
+import { DeliveryHtmlFrame, inlineHtmlAssets } from "./DeliveryHtmlFrame";
 import { SessionDocumentText } from "./DeliverySessionMessage";
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -236,8 +236,10 @@ function DocumentSetView({
     const content = contentForBrowser;
     if (!content.trim()) return;
     const isHtmlDocument = Boolean(document?.content) && /\.html?$/i.test(path);
+    // 新标签页同样是 blob 地址，样式脚本得先内联，否则打开的是一份没有样式的裸页面。
+    const body = isHtmlDocument ? inlineHtmlAssets(content, document?.assets) : content;
     const url = URL.createObjectURL(new Blob([
-      browserDocument(content, path.slice(path.lastIndexOf("/") + 1) || browserTitle || t("delivery.docset.file"), isHtmlDocument),
+      browserDocument(body, path.slice(path.lastIndexOf("/") + 1) || browserTitle || t("delivery.docset.file"), isHtmlDocument),
     ], { type: "text/html;charset=utf-8" }));
     const opened = window.open(url, "_blank", "noopener");
     if (!opened) message.warning(t("delivery.docset.openBlocked"));
@@ -366,6 +368,7 @@ function DocumentSetView({
       className="delivery-document-panel__frame"
       title={pathName || t("delivery.docset.file")}
       html={document?.content ?? ""}
+      assets={document?.assets}
     />
   ) : (
     <SessionDocumentText value={document?.content ?? ""} fallback={emptyText || t("delivery.docset.empty")} />

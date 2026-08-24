@@ -33,7 +33,7 @@ import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
-import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
+import { DeliveryHtmlFrame, inlineHtmlAssets } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   CLAUDE_EFFORTS,
@@ -755,7 +755,10 @@ export function DeliveryRequirementSessionModal({
   const openPrototypeInBrowser = () => {
     const html = selectedPrototypeFile?.html ?? "";
     if (!html.trim()) return;
-    const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    // 新标签页也是 blob 地址，同目录的样式脚本先内联，否则打开的原型没有样式。
+    const url = URL.createObjectURL(new Blob([
+      inlineHtmlAssets(html, selectedPrototypeFile?.assets),
+    ], { type: "text/html;charset=utf-8" }));
     const opened = window.open(url, "_blank", "noopener");
     if (!opened) message.warning(t("delivery.docset.openBlocked"));
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -2123,7 +2126,7 @@ export function DeliveryRequirementSessionModal({
                               style={{ width: "100%", margin: "12px 0" }}
                             />
                           ) : null}
-                          {selectedPrototypeFile ? <DeliveryHtmlFrame autoHeight title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
+                          {selectedPrototypeFile ? <DeliveryHtmlFrame autoHeight title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} assets={selectedPrototypeFile.assets} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
                         </div>
                       ) : (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={prototypeGenerating ? t("delivery.prototype.generating") : t("delivery.prototype.notGenerated")} />
@@ -2238,6 +2241,7 @@ export function DeliveryRequirementSessionModal({
                     className="delivery-prototype-preview-modal__frame"
                     title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
                     html={selectedPrototypeFile.html}
+                    assets={selectedPrototypeFile.assets}
                   />
                 </>
               ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}
@@ -2337,6 +2341,7 @@ export function DeliveryRequirementSessionModal({
                 autoHeight
                 title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
                 html={selectedPrototypeFile.html}
+                assets={selectedPrototypeFile.assets}
                 style={{ width: "100%", flex: "0 0 auto", minHeight: 540, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }}
               />
             ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}

@@ -847,6 +847,13 @@ export class DeliveryDocumentSet {
   files: DeliveryDocumentFile[] = [];
 }
 
+/** HTML 预览用的同目录附属文件，name 是 HTML 里原样写的相对引用串。 */
+export class DeliveryHtmlAsset {
+  name = "";
+
+  content = "";
+}
+
 /** 栏目里一份文档的正文。 */
 export class DeliveryDocumentContent {
   path = "";
@@ -858,6 +865,9 @@ export class DeliveryDocumentContent {
   size = 0;
 
   modifiedAt = "";
+
+  /** HTML 文档引用的同目录样式与脚本，预览时内联，编辑仍只改正文。 */
+  assets: DeliveryHtmlAsset[] = [];
 }
 
 /** 需求拆解沉淀下来的需求大纲。正文从项目工作区经本地桥接受控读取。 */
@@ -882,6 +892,9 @@ export class CodexRequirementPrototypeFile {
   name = "";
 
   html = "";
+
+  /** 原型页引用的同目录样式与脚本，预览时内联。 */
+  assets: DeliveryHtmlAsset[] = [];
 }
 
 /** 需求级 HTML 原型目录。正文从项目工作区经本地桥接受控读取。 */
