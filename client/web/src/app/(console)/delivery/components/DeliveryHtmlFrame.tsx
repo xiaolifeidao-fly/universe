@@ -3,6 +3,28 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 
 const FRAME_HEIGHT_MESSAGE = "delivery-html-frame-height";
+const FRAME_NAVIGATE_MESSAGE = "delivery-html-frame-navigate";
+
+/**
+ * 把预览页里的相对链接换算成工作区路径，用来在同一套文档里找到被点开的那一页。
+ *
+ * 多页原型的顶部导航写的都是 `collection-flow.html` 这种同目录相对地址，blob 地址没有目录，
+ * iframe 里点一下就跳成空白页；换算出真实路径后交给外层切换选中的文件，导航才跟本地打开一样。
+ */
+export function resolveFrameHref(currentPath: string, href: string) {
+  const target = href.split("#")[0].split("?")[0].trim();
+  if (!target) return "";
+  const segments = currentPath.split("/").slice(0, -1);
+  for (const part of target.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+  return segments.join("/");
+}
 
 /** HTML 文档引用的同目录样式或脚本，name 就是 HTML 里原样写的相对路径。 */
 export interface DeliveryHtmlAsset {
@@ -44,12 +66,13 @@ export function inlineHtmlAssets(html: string, assets: DeliveryHtmlAsset[] = [])
     });
 }
 
-function withHeightReporter(html: string, frameId: string) {
-  // sandbox 没有 allow-same-origin，父页面不能直接读取 iframe 文档高度；由预览页主动上报，
-  // 外层仍只接受来自当前 iframe 且带同一实例标识的消息。
+function withFrameBridge(html: string, frameId: string, reportHeight: boolean) {
+  // sandbox 没有 allow-same-origin，父页面不能直接读取 iframe 文档高度，页内也无法自己跳到同目录的另一页；
+  // 两件事都由预览页主动上报，外层仍只接受来自当前 iframe 且带同一实例标识的消息。
   const reporter = `<script>
 (() => {
   const frameId = ${JSON.stringify(frameId)};
+  const reportHeight = ${JSON.stringify(reportHeight)};
   const report = () => {
     const root = document.documentElement;
     const body = document.body;
@@ -64,15 +87,29 @@ function withHeightReporter(html: string, frameId: string) {
     window.parent.postMessage({ type: ${JSON.stringify(FRAME_HEIGHT_MESSAGE)}, frameId, height }, "*");
   };
   const scheduleReport = () => window.requestAnimationFrame(report);
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", scheduleReport, { once: true });
-  else scheduleReport();
-  window.addEventListener("load", scheduleReport);
-  if (typeof ResizeObserver !== "undefined") {
-    const observer = new ResizeObserver(scheduleReport);
-    observer.observe(document.documentElement);
-    if (document.body) observer.observe(document.body);
+  if (reportHeight) {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", scheduleReport, { once: true });
+    else scheduleReport();
+    window.addEventListener("load", scheduleReport);
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(scheduleReport);
+      observer.observe(document.documentElement);
+      if (document.body) observer.observe(document.body);
+    }
+    new MutationObserver(scheduleReport).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
   }
-  new MutationObserver(scheduleReport).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+  // 指向同一套文档里另一个页面的相对链接自己跳会跳成空白，交给外层换页；
+  // 页内锚点、外链和下载链接都保持浏览器原本的行为。
+  document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    if (!anchor) return;
+    const href = anchor.getAttribute("href") || "";
+    if (!href || href.charAt(0) === "#" || href.slice(0, 2) === "//" || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    if (!/\.html?($|[?#])/i.test(href)) return;
+    event.preventDefault();
+    window.parent.postMessage({ type: ${JSON.stringify(FRAME_NAVIGATE_MESSAGE)}, frameId, href }, "*");
+  }, true);
 })();
 </script>`;
   return /<\/body\s*>/i.test(html) ? html.replace(/<\/body\s*>/i, `${reporter}</body>`) : `${html}${reporter}`;
@@ -90,6 +127,7 @@ function withHeightReporter(html: string, frameId: string) {
 export function DeliveryHtmlFrame({
   html,
   assets,
+  onNavigate,
   title,
   className,
   style,
@@ -98,6 +136,8 @@ export function DeliveryHtmlFrame({
   html: string;
   /** 文档引用的同目录样式、脚本，预览前内联进正文。 */
   assets?: DeliveryHtmlAsset[];
+  /** 页内点了指向另一个页面的相对链接时回调，由外层切换当前预览的文件。 */
+  onNavigate?: (href: string) => void;
   title: string;
   className?: string;
   style?: CSSProperties;
@@ -108,10 +148,10 @@ export function DeliveryHtmlFrame({
   const [contentHeight, setContentHeight] = useState<number | null>(null);
   const frameId = useId();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const previewHtml = useMemo(() => {
-    const inlined = inlineHtmlAssets(html, assets);
-    return autoHeight ? withHeightReporter(inlined, frameId) : inlined;
-  }, [assets, autoHeight, frameId, html]);
+  const previewHtml = useMemo(
+    () => withFrameBridge(inlineHtmlAssets(html, assets), frameId, autoHeight),
+    [assets, autoHeight, frameId, html],
+  );
 
   useEffect(() => {
     setContentHeight(null);
@@ -125,8 +165,7 @@ export function DeliveryHtmlFrame({
   }, [previewHtml]);
 
   useEffect(() => {
-    if (!autoHeight) return;
-    const receiveHeight = (event: MessageEvent<unknown>) => {
+    const receive = (event: MessageEvent<unknown>) => {
       const payload = event.data;
       if (
         event.source !== frameRef.current?.contentWindow
@@ -134,17 +173,20 @@ export function DeliveryHtmlFrame({
         || typeof payload !== "object"
         || !("type" in payload)
         || !("frameId" in payload)
-        || !("height" in payload)
-        || payload.type !== FRAME_HEIGHT_MESSAGE
         || payload.frameId !== frameId
-        || typeof payload.height !== "number"
-        || !Number.isFinite(payload.height)
       ) return;
-      setContentHeight(Math.max(1, Math.ceil(payload.height)));
+      if (payload.type === FRAME_HEIGHT_MESSAGE) {
+        if (!autoHeight || !("height" in payload) || typeof payload.height !== "number" || !Number.isFinite(payload.height)) return;
+        setContentHeight(Math.max(1, Math.ceil(payload.height)));
+        return;
+      }
+      if (payload.type !== FRAME_NAVIGATE_MESSAGE) return;
+      if (!("href" in payload) || typeof payload.href !== "string") return;
+      onNavigate?.(payload.href);
     };
-    window.addEventListener("message", receiveHeight);
-    return () => window.removeEventListener("message", receiveHeight);
-  }, [autoHeight, frameId]);
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [autoHeight, frameId, onNavigate]);
 
   if (!url) return null;
   return (

@@ -33,7 +33,7 @@ import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
-import { DeliveryHtmlFrame, inlineHtmlAssets } from "./DeliveryHtmlFrame";
+import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   CLAUDE_EFFORTS,
@@ -751,6 +751,16 @@ export function DeliveryRequirementSessionModal({
     () => prototype?.files.find((file) => file.path === prototypeFilePath) ?? prototype?.files[0] ?? null,
     [prototype, prototypeFilePath],
   );
+
+  // 多页原型的导航是同目录的相对链接，iframe 里自己跳会跳成空白，改成切换选中的原型页。
+  const navigatePrototype = useCallback((href: string) => {
+    const current = selectedPrototypeFile?.path ?? "";
+    if (!current) return;
+    const resolved = resolveFrameHref(current, href);
+    const target = prototype?.files.find((file) => file.path === resolved);
+    if (target) setPrototypeFilePath(target.path);
+    else message.warning(`${t("delivery.prototype.missingPage")}：${href}`);
+  }, [prototype, selectedPrototypeFile, t]);
 
   const openPrototypeInBrowser = () => {
     const html = selectedPrototypeFile?.html ?? "";
@@ -2126,7 +2136,7 @@ export function DeliveryRequirementSessionModal({
                               style={{ width: "100%", margin: "12px 0" }}
                             />
                           ) : null}
-                          {selectedPrototypeFile ? <DeliveryHtmlFrame autoHeight title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} assets={selectedPrototypeFile.assets} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
+                          {selectedPrototypeFile ? <DeliveryHtmlFrame autoHeight title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`} html={selectedPrototypeFile.html} assets={selectedPrototypeFile.assets} onNavigate={navigatePrototype} style={{ width: "100%", minHeight: 560, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }} /> : null}
                         </div>
                       ) : (
                         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={prototypeGenerating ? t("delivery.prototype.generating") : t("delivery.prototype.notGenerated")} />
@@ -2242,6 +2252,7 @@ export function DeliveryRequirementSessionModal({
                     title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
                     html={selectedPrototypeFile.html}
                     assets={selectedPrototypeFile.assets}
+                    onNavigate={navigatePrototype}
                   />
                 </>
               ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}
@@ -2342,6 +2353,7 @@ export function DeliveryRequirementSessionModal({
                 title={`${t("delivery.prototype.preview")} · ${selectedPrototypeFile.name}`}
                 html={selectedPrototypeFile.html}
                 assets={selectedPrototypeFile.assets}
+                onNavigate={navigatePrototype}
                 style={{ width: "100%", flex: "0 0 auto", minHeight: 540, border: "1px solid var(--manager-border)", borderRadius: 8, background: "#fff" }}
               />
             ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.notGenerated")} />}

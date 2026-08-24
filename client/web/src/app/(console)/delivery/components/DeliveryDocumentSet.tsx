@@ -22,7 +22,7 @@ import {
   type DeliveryDocumentScope,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { DeliveryHtmlFrame, inlineHtmlAssets } from "./DeliveryHtmlFrame";
+import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { SessionDocumentText } from "./DeliverySessionMessage";
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -231,6 +231,14 @@ function DocumentSetView({
     }
   };
 
+  // 多页 HTML 之间的相对链接在 blob 预览里跳不动，换成切换栏目里对应的那份文档。
+  const navigate = (href: string) => {
+    const resolved = resolveFrameHref(path, href);
+    const target = files.find((file) => file.path === resolved);
+    if (target) setPath(target.path);
+    else message.warning(`${t("delivery.docset.missingPage")}：${href}`);
+  };
+
   /** 在浏览器新标签页打开当前文档；HTML 保持交互，文本类文档用本地只读页展示。 */
   const openInBrowser = () => {
     const content = contentForBrowser;
@@ -369,6 +377,7 @@ function DocumentSetView({
       title={pathName || t("delivery.docset.file")}
       html={document?.content ?? ""}
       assets={document?.assets}
+      onNavigate={navigate}
     />
   ) : (
     <SessionDocumentText value={document?.content ?? ""} fallback={emptyText || t("delivery.docset.empty")} />
