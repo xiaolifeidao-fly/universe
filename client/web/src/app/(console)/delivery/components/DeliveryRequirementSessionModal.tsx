@@ -537,6 +537,8 @@ export function DeliveryRequirementSessionModal({
 				if (cancelled) return;
 				setGitBranches(catalog.branches);
 				setGitCurrentBranch(catalog.currentBranch || "");
+				// 拉不到远端时列表只有本机已知的分支，别人刚推的分支会缺；这一点必须说出来。
+				if (catalog.fetchError) message.warning(t("delivery.requirement.gitFetchBranchesFailed"));
 				setGitBaseBranch((current) => current || catalog.defaultBranch || catalog.branches[0] || "");
 				setGitBranch((current) => {
 					if (saved?.requirementKey || !current || !current.startsWith("feature/issue_req-") || !catalog.branches.includes(current)) return current;
@@ -1124,7 +1126,9 @@ export function DeliveryRequirementSessionModal({
 			message.success(
 				result.upToDate
 					? t("delivery.requirement.gitPushUpToDate").replace("{branch}", result.branch)
-					: t("delivery.requirement.gitPushed").replace("{branch}", `${result.remote}/${result.branch}`),
+					: (result.synced === "rebased"
+						? t("delivery.requirement.gitPushedRebased")
+						: t("delivery.requirement.gitPushed")).replace("{branch}", `${result.remote}/${result.branch}`),
 			);
 		} catch (error) {
 			message.error((error as Error).message);

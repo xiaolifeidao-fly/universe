@@ -6,9 +6,13 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import {
   bindRequirementGitBranch,
   prepareCodexGitBranch,
+  pushCodexGitBranch,
   type CodexGitWorkspaceStatus,
   type DeliveryRequirementRecord,
 } from "@/api/delivery.api";
+
+/** 失败原因是当前分支还有没提交的改动时，直接在弹窗里给一个提交并推送的出口。 */
+const PREPARE_PUSH_HINTS = ["未提交改动", "未提交", "请先提交"];
 
 interface DeliveryRequirementGitCheckModalProps {
   /** 为空表示弹窗关闭；需求自带目标分支，不再单独传分支名。 */
@@ -43,11 +47,15 @@ export function DeliveryRequirementGitCheckModal({
   const [strategy, setStrategy] = useState<"switch" | "commit">("switch");
   const [commitMessage, setCommitMessage] = useState("");
   const [preparing, setPreparing] = useState(false);
+  // 切换失败的原因常是多行 git 输出，toast 会截断，留在弹窗里用户看完就能接着处理。
+  const [prepareError, setPrepareError] = useState("");
+  const [pushing, setPushing] = useState(false);
 
   useEffect(() => {
     if (!requirement) return;
     setStrategy(status?.dirty ? "commit" : "switch");
     setCommitMessage(`chore: save work before ${requirement.gitBranch}`);
+    setPrepareError("");
     // 打开时的状态可能还是上一次的快照；真正确认的结果回来后再定默认策略。
     void onRefreshStatus().then((next) => setStrategy(next?.dirty ? "commit" : "switch"));
     // 只在需求变化时重置，用户改过的提交说明不能被状态刷新覆盖。
@@ -64,21 +72,44 @@ export function DeliveryRequirementGitCheckModal({
   const confirm = async () => {
     if (preparing || !requirement?.gitBranch) return;
     setPreparing(true);
+    setPrepareError("");
     try {
       const result = await prepareCodexGitBranch(programId, requirement.gitBranch, strategy, commitMessage.trim());
       // 从 origin/feature 关联时，本机实际分支会变成 feature；把这个规范化名称写回需求。
       if (result.branch && result.branch !== requirement.gitBranch) {
         await bindRequirementGitBranch(programId, requirement.requirementKey, requirement.gitBaseBranch, result.branch);
       }
-      message.success(result.committed
-        ? t("delivery.requirement.gitPreparedCommitted")
-        : t("delivery.requirement.gitPrepared"));
+      if (alreadyOnBranch) {
+        message.success(result.pulled ? t("delivery.requirement.gitPulled") : t("delivery.requirement.gitPrepared"));
+      } else {
+        message.success(result.committed
+          ? t("delivery.requirement.gitPreparedCommitted")
+          : t("delivery.requirement.gitPrepared"));
+      }
       onPrepared();
       onClose();
     } catch (error) {
-      message.error((error as Error).message);
+      // 拉取或切换失败的原文要原样留给用户：是冲突还是没推送，只有 git 的输出说得清。
+      setPrepareError((error as Error).message);
     } finally {
       setPreparing(false);
+    }
+  };
+
+  /** 拉不动多半是当前分支还有没提交、没推送的改动；就地提交并推送，省得退出去找入口。 */
+  const pushCurrentBranch = async () => {
+    const branch = status?.currentBranch || "";
+    if (pushing || !branch) return;
+    setPushing(true);
+    try {
+      await pushCodexGitBranch(programId, branch, commitMessage.trim() || `chore: ${branch}`);
+      setPrepareError("");
+      await onRefreshStatus();
+      message.success(t("delivery.requirement.gitPreparePushed").replace("{branch}", branch));
+    } catch (error) {
+      setPrepareError((error as Error).message);
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -86,6 +117,12 @@ export function DeliveryRequirementGitCheckModal({
   const targetBranch = requirement?.gitBranch || "";
   // 有改动又要换分支：必须先把改动提交到当前分支，提交说明不能留空。
   const needsCommit = Boolean(status?.dirty && branchesDiffer);
+  // 失败原因指向本机改动，或者工作区本来就是脏的，才给提交并推送按钮。
+  const canPushCurrent = Boolean(
+    prepareError
+    && status?.currentBranch
+    && (status.dirty || PREPARE_PUSH_HINTS.some((hint) => prepareError.includes(hint))),
+  );
 
   return (
     <Modal
@@ -95,14 +132,25 @@ export function DeliveryRequirementGitCheckModal({
       confirmLoading={preparing}
       width={520}
       className="git-check-modal"
-      footer={alreadyOnBranch ? (
-        <Button type="primary" onClick={onClose}>
+      /* 已经在需求分支上也留一个拉取入口：分支对了不代表代码是最新的。 */
+      footer={alreadyOnBranch ? [
+        <Button key="close" disabled={preparing || pushing} onClick={onClose}>
           {t("common.close")}
-        </Button>
-      ) : undefined}
+        </Button>,
+        <Button
+          key="pull"
+          type="primary"
+          loading={preparing}
+          disabled={Boolean(pushing || statusLoading || status?.dirty)}
+          onClick={() => void confirm()}
+        >
+          {t("delivery.requirement.gitPullLatest")}
+        </Button>,
+      ] : undefined}
       okButtonProps={{
         disabled: Boolean(
           preparing
+          || pushing
           || statusLoading
           || statusError
           || !requirement?.gitBranch
@@ -167,6 +215,23 @@ export function DeliveryRequirementGitCheckModal({
             onChange={(event) => setCommitMessage(event.target.value)}
           />
         </div> : null}
+
+        {prepareError ? <Alert
+          type="error"
+          showIcon
+          message={t("delivery.requirement.gitPrepareFailed")}
+          description={<div className="git-check__failure">
+            <pre>{prepareError}</pre>
+            {canPushCurrent ? <>
+              <p>
+                {t("delivery.requirement.gitPrepareFailedPushHint").replace("{branch}", status?.currentBranch || "")}
+              </p>
+              <Button type="primary" loading={pushing} onClick={() => void pushCurrentBranch()}>
+                {t("delivery.requirement.gitPreparePush")}
+              </Button>
+            </> : null}
+          </div>}
+        /> : null}
       </div>
     </Modal>
   );

@@ -618,6 +618,9 @@ export class CodexGitBranchCatalog {
 
   /** 工作目录此刻所处的分支；游离 HEAD 时为空串。 */
   currentBranch = "";
+
+  /** 列分支前同步远端失败的原因；非空表示列表可能不含别人刚推的分支。 */
+  fetchError = "";
 }
 
 /** 本机桥接读取的工作目录 Git 快照；不含远端地址或差异内容。 */
@@ -740,6 +743,9 @@ export class CodexGitPrepareResult {
 
   previousBranch = "";
 
+  /** 切换前是否真的从远端拉到了新提交。 */
+  pulled = false;
+
   committed = false;
 
   stashed = false;
@@ -768,6 +774,9 @@ export class CodexGitPushResult {
   commitMessage = "";
 
   upToDate = false;
+
+  /** 推送前并远端最新的方式："pulled" 快进、"rebased" 变基、"repaired" 由 AI 处理、空串没动过。 */
+  synced = "";
 
   /** 直接推送失败后交给 AI 处理过一轮；处理说明放在 repairSummary 里。 */
   repaired = false;
@@ -2081,14 +2090,17 @@ export async function validateCodexWorkspace(programId: number, workspace: strin
   return plainToInstance(CodexWorkspaceValidation, response.data);
 }
 
-/** workspace 传值时使用该目录读取分支，用于工作目录尚未保存到浏览器的场景。 */
+/**
+ * workspace 传值时使用该目录读取分支，用于工作目录尚未保存到浏览器的场景。
+ * 桥接层会先同步远端引用，别人刚推的分支才能选到，超时按一次 fetch 的量级给。
+ */
 export async function fetchCodexGitBranches(programId: number, workspace = "") {
   const params = workspace.trim()
     ? { programId, workspace: workspace.trim() }
     : bridgeWorkspaceParams(programId, { programId });
   const response = await instance.get<CodexGitBranchCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/git/branches`, {
     params,
-    timeout: 15000,
+    timeout: 200000,
   });
   const catalog = plainToInstance(CodexGitBranchCatalog, response.data);
   catalog.branches = (response.data.branches ?? []).map((branch) => String(branch || "")).filter(Boolean);

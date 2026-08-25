@@ -7603,3 +7603,25 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   font-size: var(--manager-fs-xs);
   letter-spacing: 0.04em;
 }
+
+/* 切换失败时把 git 的原始输出摆出来：多行、可滚动，不截断也不撑破弹窗。 */
+.git-check__failure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.git-check__failure pre {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--manager-font-mono, monospace);
+  font-size: var(--manager-fs-xs);
+  line-height: 1.6;
+}
+
+.git-check__failure p { margin: 0; }
