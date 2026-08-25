@@ -61,11 +61,36 @@ func (r *DeliveryRepository) ListExecutionBatches(ctx context.Context, bizLine s
 	return rows, err
 }
 
+// ListRequirementExecutionBatches 返回需求最近的执行批次，运行中的批次始终排在最前。
+// 进度总览需要看到所有启动者的批次，因此这里不按 created_by 过滤。
+func (r *DeliveryRepository) ListRequirementExecutionBatches(ctx context.Context, bizLine string, programID int64, requirementKey string) ([]*DeliveryExecutionBatch, error) {
+	var rows []*DeliveryExecutionBatch
+	err := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatch{}).
+		Where("biz_line = ? AND program_id = ? AND requirement_key = ?", bizLine, programID, requirementKey).
+		Order("CASE WHEN status = 'running' THEN 0 WHEN status = 'blocked' THEN 1 ELSE 2 END ASC").
+		Order("started_at desc, id desc").
+		Limit(50).
+		Find(&rows).Error
+	return rows, err
+}
+
 func (r *DeliveryRepository) ListExecutionBatchItems(ctx context.Context, bizLine string, programID int64, batchID string) ([]*DeliveryExecutionBatchItem, error) {
 	var rows []*DeliveryExecutionBatchItem
 	err := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatchItem{}).
 		Where("biz_line = ? AND program_id = ? AND batch_id = ?", bizLine, programID, batchID).
 		Order("sequence asc, id asc").Find(&rows).Error
+	return rows, err
+}
+
+func (r *DeliveryRepository) ListExecutionBatchItemsByBatchIDs(ctx context.Context, bizLine string, programID int64, batchIDs []string) ([]*DeliveryExecutionBatchItem, error) {
+	if len(batchIDs) == 0 {
+		return []*DeliveryExecutionBatchItem{}, nil
+	}
+	var rows []*DeliveryExecutionBatchItem
+	err := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatchItem{}).
+		Where("biz_line = ? AND program_id = ? AND batch_id IN ?", bizLine, programID, batchIDs).
+		Order("batch_id asc, sequence asc, id asc").
+		Find(&rows).Error
 	return rows, err
 }
 

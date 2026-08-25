@@ -4,10 +4,10 @@ import {
 	BranchesOutlined,
 	ClockCircleOutlined,
   DeleteOutlined,
-  EditOutlined,
   ExperimentOutlined,
   FileTextOutlined,
 	HistoryOutlined,
+  MessageOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
   PlusOutlined,
@@ -386,10 +386,11 @@ export function DeliveryRequirementList({
           </Tooltip>
           <Tooltip title={t("delivery.requirement.edit")}>
             <Button
+              className="delivery-requirement-action--chat"
               type="text"
               size="small"
               shape="circle"
-              icon={<EditOutlined />}
+              icon={<MessageOutlined />}
               aria-label={t("delivery.requirement.edit")}
               onClick={(event) => {
                 event.stopPropagation();

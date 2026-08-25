@@ -48,9 +48,23 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	group.GET("/delivery/requirements", httpx.RequireUserOrService(), h.list)
 	group.GET("/delivery/requirement", httpx.RequireUserOrService(), h.get)
 	group.GET("/delivery/requirement/timeline", httpx.RequireUserOrService(), h.timeline)
+	group.GET("/delivery/requirement/progress", httpx.RequireUserOrService(), h.progress)
 	group.GET("/delivery/requirement/prototype", httpx.RequireUserOrService(), h.getPrototype)
 	group.GET("/delivery/requirement/planning-sessions", httpx.RequireUserOrService(), h.listPlanningSessions)
 	group.GET("/delivery/requirement/testing-sessions", httpx.RequireUserOrService(), h.listTestingSessions)
+}
+
+func (h *Handler) progress(context *gin.Context) {
+	var query deliverydto.RequirementProgressQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, query.ProgramID, &query.BizLine) {
+		return
+	}
+	view, err := h.service.GetRequirementProgress(context.Request.Context(), query)
+	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) bindGitBranch(context *gin.Context) {

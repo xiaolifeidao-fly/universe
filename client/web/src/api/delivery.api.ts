@@ -1129,6 +1129,9 @@ export class CodexConversationActionResult {
   turnId = "";
 
   active = false;
+
+  /** 停止请求到得比回合结束还晚：不是失败，只是没什么可中断的了。 */
+  alreadyFinished = false;
 }
 
 /** 聊天输入中通过 @ 选中的交付对象；桥接层会按键重新读取权威详情。 */
@@ -1756,6 +1759,44 @@ export class DeliveryExecutionBatchRecord {
   startedAt?: string;
 
   finishedAt?: string;
+
+  items: DeliveryExecutionBatchItemRecord[] = [];
+}
+
+export class DeliveryExecutionBatchItemRecord {
+  itemKey = "";
+
+  sequence = 0;
+
+  status = "pending";
+
+  message = "";
+
+  updatedAt?: string;
+}
+
+export class DeliveryRequirementProgressRecord {
+  requirementKey = "";
+
+  requirementName = "";
+
+  totalCount = 0;
+
+  countedCount = 0;
+
+  progress = 0;
+
+  statusCounts: Record<DeliveryStatus, number> = {
+    todo: 0,
+    doing: 0,
+    done: 0,
+    blocked: 0,
+    dropped: 0,
+  };
+
+  items: DeliveryItemRecord[] = [];
+
+  batches: DeliveryExecutionBatchRecord[] = [];
 }
 
 export interface DeliveryExecutionBatchNotification extends DeliveryExecutionBatchRecord {
@@ -1941,6 +1982,19 @@ export async function fetchRequirementTimeline(
   );
 }
 
+export async function fetchRequirementProgress(programId: number, requirementKey: string) {
+  const progress = await getData(
+    DeliveryRequirementProgressRecord,
+    "/delivery/requirement/progress",
+    { programId, requirementKey },
+  );
+  progress.items = (progress.items ?? []).map((item) => normalizeItemPhase(Object.assign(new DeliveryItemRecord(), item)));
+  progress.batches = (progress.batches ?? []).map((batch) => Object.assign(new DeliveryExecutionBatchRecord(), batch, {
+    items: (batch.items ?? []).map((item) => Object.assign(new DeliveryExecutionBatchItemRecord(), item)),
+  }));
+  return progress;
+}
+
 export async function fetchSnapshots(programId: number, moduleKey = "") {
   return getDataList(
     DeliverySnapshotRecord,
@@ -2061,7 +2115,8 @@ export async function fetchCodexGitChangeDetail(programId: number, path: string)
 export async function prepareCodexGitBranch(
   programId: number,
   branch: string,
-  strategy: "switch" | "commit" | "stash" = "switch",
+  // 暂存后切换已经下线：脏工作区只能先提交再切，避免 stash 不自动恢复留下的隐性丢改动。
+  strategy: "switch" | "commit" = "switch",
   commitMessage = "",
 ) {
   const response = await instance.post<CodexGitPrepareResult>(
@@ -2639,6 +2694,31 @@ export async function stopCodexConversation(programId: number, itemKey: string, 
     { timeout: 20000 },
   );
   return plainToInstance(CodexConversationActionResult, response.data);
+}
+
+export class CodexStopAllResult {
+  accepted = false;
+
+  programId = 0;
+
+  /** 真正被中断的任务；排队中的任务只是被取消，不会出现在这里。 */
+  itemKeys: string[] = [];
+
+  /** 点下去时回合已经跑完的任务。 */
+  finishedItemKeys: string[] = [];
+
+  /** 被取消的批量 / 串行队列。 */
+  queueIds: string[] = [];
+}
+
+/** 停掉一个项目下所有任务执行：在跑的中断，排队的取消。 */
+export async function stopAllCodexExecutions(programId: number, provider: AITool = "codex") {
+  const response = await instance.post<CodexStopAllResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/stop-all`,
+    bridgeWorkspaceParams(programId, { programId, provider }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexStopAllResult, response.data);
 }
 
 export interface SendCodexPlanningMessageOptions {

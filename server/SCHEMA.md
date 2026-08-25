@@ -223,6 +223,12 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 [`migrations/20260818_delivery_requirement_references.sql`](migrations/20260818_delivery_requirement_references.sql)。
 该脚本可安全重复执行；它补齐的 `reference_requirement_keys` 默认为空串，存量需求没有引用。
 
+存量库升级到任务面板的批量/串行执行批次时，执行
+[`migrations/20260825_delivery_execution_batch.sql`](migrations/20260825_delivery_execution_batch.sql)。
+该脚本可安全重复执行；它建 `zt_delivery_execution_batch` 和 `zt_delivery_execution_batch_item` 两张表，
+分别记录一次批次的启动事实和批次内每条任务的进度快照。缺这两张表时，任务面板批量执行会直接报
+`Table 'xxx.zt_delivery_execution_batch' doesn't exist`。
+
 已有需求表升级到支持需求详情里 @ 引用既有任务时，执行
 [`migrations/20260818_delivery_requirement_task_references.sql`](migrations/20260818_delivery_requirement_task_references.sql)。
 该脚本可安全重复执行；它补齐的 `reference_item_keys` 默认为空串，存量需求没有任务关联。

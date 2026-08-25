@@ -662,7 +662,9 @@ export function DeliveryTaskSessionModal({
                   <MessageOutlined />
                   <div>
                     <Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip>
-                    <span>{kind === "task" ? `${t(`delivery.phase.${entry.phase}`)} · ${entry.progress}%` : t("delivery.testingCases.status")}{` · ${toolDisplayName(entry.executorType)}`}{entry.updatedAt ? ` · ${dayjs(entry.updatedAt).format("MM-DD HH:mm")}` : ""}</span>
+                    <span>{kind === "task" ? `${t(`delivery.phase.${entry.phase}`)} · ${entry.progress}%` : t("delivery.testingCases.status")}{` · ${toolDisplayName(entry.executorType)}`}</span>
+                    {/* 时间单独占一行：跟阶段、工具挤在一行时窄侧栏里必被省略号吃掉。 */}
+                    {entry.updatedAt ? <span className="delivery-session-history__item-time">{dayjs(entry.updatedAt).format("MM-DD HH:mm")}</span> : null}
                   </div>
                   {entry.active ? <i aria-label={t("delivery.session.running")} /> : null}
                 </button>

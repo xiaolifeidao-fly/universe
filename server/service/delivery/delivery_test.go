@@ -377,6 +377,33 @@ func TestExecutionBatchStateTransitions(t *testing.T) {
 	}
 }
 
+func TestBuildRequirementProgressViewKeepsAllTaskStatesAndBatchContext(t *testing.T) {
+	requirement := &repository.DeliveryRequirement{RequirementKey: "req-1", Name: "进度总览"}
+	rows := []*repository.DeliveryItem{
+		{ItemKey: "done", Status: StatusDone, Progress: 10},
+		{ItemKey: "doing", Status: StatusDoing, Progress: 50},
+		{ItemKey: "blocked", Status: StatusBlocked, Progress: 25},
+		{ItemKey: "dropped", Status: StatusDropped, Progress: 0},
+	}
+	batches := []*repository.DeliveryExecutionBatch{{BatchID: "batch-1", Status: ExecutionBatchStatusRunning}}
+	batchItems := []*repository.DeliveryExecutionBatchItem{{BatchID: "batch-1", ItemKey: "doing", Status: ExecutionBatchItemRunning}}
+	dependencies := []*repository.DeliveryItemDependency{{PredecessorItemKey: "done", SuccessorItemKey: "doing"}}
+
+	view := buildRequirementProgressView(requirement, rows, dependencies, batches, batchItems)
+	if view.TotalCount != 4 || view.CountedCount != 3 || view.Progress != 58.33 {
+		t.Fatalf("需求进度汇总不正确：%#v", view)
+	}
+	if view.StatusCounts[StatusDone] != 1 || view.StatusCounts[StatusDoing] != 1 || view.StatusCounts[StatusBlocked] != 1 || view.StatusCounts[StatusDropped] != 1 {
+		t.Fatalf("任务状态计数不完整：%#v", view.StatusCounts)
+	}
+	if len(view.Items) != 4 || len(view.Items[1].DependsOnItemKeys) != 1 || view.Items[1].DependsOnItemKeys[0] != "done" {
+		t.Fatalf("任务依赖没有进入进度视图：%#v", view.Items)
+	}
+	if len(view.Batches) != 1 || len(view.Batches[0].Items) != 1 || view.Batches[0].Items[0].ItemKey != "doing" {
+		t.Fatalf("执行批次上下文不完整：%#v", view.Batches)
+	}
+}
+
 func TestNormalizeRequirementPlannedPeriod(t *testing.T) {
 	startAt := time.Date(2026, time.August, 17, 9, 0, 0, 0, time.UTC)
 	endAt := time.Date(2026, time.August, 18, 18, 0, 0, 0, time.UTC)

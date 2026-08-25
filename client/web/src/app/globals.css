@@ -4205,6 +4205,20 @@ select {
 	font-size: var(--manager-fs-xs);
 }
 
+/* 需求会话是高频入口，用聊天图标和亮蓝色从其他工具操作中区分出来。 */
+.delivery-requirement-card__actions .ant-btn.delivery-requirement-action--chat {
+	border: 1px solid color-mix(in srgb, var(--manager-blue) 42%, transparent);
+	background: color-mix(in srgb, var(--manager-blue) 16%, transparent);
+	color: var(--manager-blue);
+	font-size: 14px;
+}
+
+.delivery-requirement-card__actions .ant-btn.delivery-requirement-action--chat:hover {
+	border-color: var(--manager-blue) !important;
+	background: color-mix(in srgb, var(--manager-blue) 26%, transparent) !important;
+	color: var(--manager-blue) !important;
+}
+
 /* 主负责人 / 需求状态 / 时间 / 分支各自一枚彩色胶囊，按内容占宽而不是等分格子，同样高度里能塞下更多信息。 */
 .delivery-requirement-card__details {
 	display: flex;
@@ -4713,20 +4727,25 @@ select {
 	z-index: 6;
 	/* 靠会话区右侧，垂直方向落在中线稍微偏上的位置。 */
 	top: 42%;
-	right: 40px;
+	right: 20px;
 	transform: translateY(-50%);
 	display: grid;
 	align-content: start;
-	gap: 4px;
-	width: 420px;
-	height: 220px;
+	gap: 2px;
+	width: 330px;
+	/* 宽度固定，高度跟着内容走：每行拆成标题 + 取值两行后不能再被 220px 截断。 */
+	height: auto;
+	min-height: 160px;
+	max-height: calc(100% - 64px);
 	max-width: calc(100% - 64px);
 	overflow: auto;
-	padding: 12px;
+	padding: 10px;
 	border: 1px solid var(--manager-border);
-	border-radius: var(--manager-r-md);
+	border-radius: var(--manager-r-lg);
+	/* 浮在会话之上，底色比会话区更实一点，才不会跟消息气泡糊在一起。 */
 	background: var(--manager-surface);
 	box-shadow: var(--manager-shadow-md, 0 10px 30px rgba(15, 23, 42, 0.12));
+	transition: width 180ms ease, height 180ms ease, padding 180ms ease;
 }
 
 .delivery-requirement-git-panel > header {
@@ -4734,37 +4753,123 @@ select {
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
-	padding: 0 6px 4px;
+	margin-bottom: 4px;
+	padding: 2px 6px 8px;
+	border-bottom: 1px solid var(--manager-border);
 	color: var(--manager-text-faint);
-	font-size: var(--manager-fs-xs);
+	font-size: var(--manager-fs-micro);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.delivery-requirement-git-panel__header-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.delivery-requirement-git-panel.is-collapsed {
+	width: 34px;
+	height: 34px;
+	min-height: 0;
+	padding: 4px;
+	overflow: hidden;
+}
+
+.delivery-requirement-git-panel.is-collapsed > header {
+	justify-content: center;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border-bottom: 0;
 }
 
 .delivery-requirement-git-panel__row {
 	display: flex;
 	width: 100%;
-	align-items: center;
-	gap: 8px;
-	padding: 8px 6px;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 8px;
 	border: 0;
 	border-radius: var(--manager-r-sm);
 	background: transparent;
 	color: var(--manager-text);
-	font-size: var(--manager-fs-xs);
+	font-size: var(--manager-fs-sm);
 	text-align: left;
-	line-height: 1.6;
+	line-height: 1.5;
+	transition: background 140ms ease;
 }
 
-.delivery-requirement-git-panel__row .anticon { color: var(--manager-text-faint); }
+/* 图标不跟着标题行走：放大到能占满两行的高度，并在整行里上下居中。 */
+.delivery-requirement-git-panel__row > .anticon {
+	flex: 0 0 auto;
+	align-self: center;
+	color: var(--manager-text-faint);
+	font-size: 18px;
+	line-height: 1;
+}
 .delivery-requirement-git-panel__row > span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.delivery-requirement-git-panel__row code { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.delivery-requirement-git-panel__row b { flex: 0 0 auto; font-weight: 600; }
+/* 标题一行、取值一行：两行都各自省略号收尾，面板宽度不会被分支名或提示撑开。 */
+.delivery-requirement-git-panel__row-body { display: grid; gap: 1px; overflow: visible; }
+.delivery-requirement-git-panel__row-body > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 第一行是标题、第二行是取值：靠字号和颜色分主次，不再靠加粗硬拉。 */
+.delivery-requirement-git-panel__row-label { color: var(--manager-text); font-weight: 500; }
+.delivery-requirement-git-panel__row code {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--manager-text);
+	font-size: var(--manager-fs-xs);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.delivery-requirement-git-panel__row b { font-size: var(--manager-fs-xs); font-weight: 500; }
 .delivery-requirement-git-panel__row b.is-clean { color: var(--manager-text-faint); }
 .delivery-requirement-git-panel__row b.is-dirty { color: var(--manager-warning); }
-.delivery-requirement-git-panel__row .is-mismatch { flex: 0 0 auto; color: var(--manager-danger); }
+/* 分支下面的说明字：只是给上一行取值做注解，压到最淡。 */
+.delivery-requirement-git-panel__row-caption { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); }
+
+/* 一行里放分支名 + 状态标签：分支名吃掉剩余宽度并省略，标签永远完整。 */
+.delivery-requirement-git-panel__branch { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.delivery-requirement-git-panel__branch code { flex: 1 1 auto; }
+.delivery-requirement-git-panel__branch .delivery-requirement-git-panel__tag { flex: 0 0 auto; }
+
+/* 分支状态标签：一致给成功色、不一致给告警色，都用浅底 + 深字，避免整块变红。 */
+.delivery-requirement-git-panel__tag {
+	justify-self: start;
+	padding: 1px 8px;
+	border-radius: 999px;
+	font-size: var(--manager-fs-micro);
+	font-weight: 500;
+	line-height: 1.6;
+	white-space: nowrap;
+}
+/* 「当前分支」是事实标注，用绿色跟上一行的告警色分开，一眼看出人在哪条分支。 */
+.delivery-requirement-git-panel__tag.is-current {
+	color: var(--manager-success);
+	background: color-mix(in srgb, var(--manager-success) 12%, transparent);
+}
+.delivery-requirement-git-panel__tag.is-ready {
+	color: var(--manager-success);
+	background: color-mix(in srgb, var(--manager-success) 12%, transparent);
+}
+.delivery-requirement-git-panel__tag.is-mismatch {
+	color: var(--manager-warning);
+	background: color-mix(in srgb, var(--manager-warning) 14%, transparent);
+}
 
 .delivery-requirement-git-panel__row.is-action { cursor: pointer; }
 .delivery-requirement-git-panel__row.is-action:hover:not(.is-disabled) { background: var(--manager-bg-soft); }
+.delivery-requirement-git-panel__row.is-action:hover:not(.is-disabled) > .anticon { color: var(--manager-primary); }
 .delivery-requirement-git-panel__row.is-action.is-disabled { cursor: not-allowed; color: var(--manager-text-faint); background: transparent; }
+/* 分支不一致的切换入口：用告警色而不是报错红——这是待办，不是故障。 */
+.delivery-requirement-git-panel__row.is-warning {
+	color: var(--manager-warning);
+	background: color-mix(in srgb, var(--manager-warning) 8%, transparent);
+}
+.delivery-requirement-git-panel__row.is-warning > .anticon { color: var(--manager-warning); }
+.delivery-requirement-git-panel__row.is-warning:hover:not(.is-disabled) { background: color-mix(in srgb, var(--manager-warning) 16%, transparent); }
+.delivery-requirement-git-panel__row.is-warning:hover:not(.is-disabled) > .anticon { color: var(--manager-warning); }
 
 .delivery-session-history {
 	display: grid;
@@ -4824,6 +4929,8 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-session-history__item b { overflow: hidden; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-session-history__item.is-selected b { color: var(--manager-text); }
 .delivery-session-history__item span { overflow: hidden; color: var(--manager-text-faint); font-family: var(--manager-mono); font-size: var(--manager-fs-micro); text-overflow: ellipsis; white-space: nowrap; }
+/* 时间行排在最后，颜色再淡一档，标题和阶段信息优先被读到。 */
+.delivery-session-history__item-time { color: var(--manager-text-faint); opacity: 0.85; }
 .delivery-session-history__item i { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: var(--manager-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--manager-green) 16%, transparent); }
 
 .delivery-session-toolbar {
@@ -4982,65 +5089,139 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-requirement-git-chip .is-clean { color: var(--manager-text-faint); }
 .delivery-requirement-git-chip .is-dirty { color: var(--manager-warning); }
 .delivery-requirement-git-chip .is-mismatch { padding-left: 6px; border-left: 1px solid var(--manager-border); color: var(--manager-danger); }
-/* 变更明细弹窗：左边文件清单，右边 diff，两边各自滚动，弹窗本身不长高。 */
-.delivery-git-changes__title { display: flex; align-items: center; gap: 10px; }
-.delivery-git-changes__title code { overflow: hidden; max-width: 320px; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+/* Git 变更明细是高频的工程工具：文件导航和 diff 各自滚动，标题、筛选和统计始终可见。 */
+.delivery-git-changes-modal .ant-modal-content { overflow: hidden; }
+.delivery-git-changes-modal .ant-modal-header { padding-bottom: 14px; border-bottom: 1px solid var(--manager-border); }
+.delivery-git-changes-modal .ant-modal-body { padding: 0; }
+.delivery-git-changes__title { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; }
+.delivery-git-changes__title > span { color: var(--manager-text); font-size: var(--manager-fs-lg); font-weight: 650; }
+.delivery-git-changes__title-actions { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.delivery-git-changes__title code { overflow: hidden; max-width: min(38vw, 360px); color: var(--manager-text-faint); font-size: var(--manager-fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 
 .delivery-git-changes {
 	display: grid;
-	gap: 12px;
-	grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-	height: min(62vh, 620px);
+	grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+	min-height: min(66vh, 660px);
+	max-height: min(66vh, 660px);
+	background: var(--manager-surface);
 }
 
 .delivery-git-changes__files {
 	display: grid;
-	align-content: start;
-	gap: 2px;
+	grid-template-rows: auto minmax(0, 1fr);
+	min-width: 0;
 	min-height: 0;
-	overflow: auto;
-	padding-right: 4px;
 	border-right: 1px solid var(--manager-border);
+	background: var(--manager-bg-soft);
 }
 
-.delivery-git-changes__truncated { margin: 0 0 6px; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); }
+.delivery-git-changes__files-header { display: grid; gap: 10px; padding: 16px; border-bottom: 1px solid var(--manager-border); background: color-mix(in srgb, var(--manager-surface) 76%, var(--manager-bg-soft)); }
+.delivery-git-changes__files-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.delivery-git-changes__files-heading > span { color: var(--manager-text); font-size: var(--manager-fs-sm); font-weight: 650; }
+.delivery-git-changes__files-heading b { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+.delivery-git-changes__files-summary { display: flex; align-items: center; gap: 10px; font-family: var(--manager-mono); font-size: var(--manager-fs-xs); font-weight: 650; font-variant-numeric: tabular-nums; }
+.delivery-git-changes__files-summary .is-added,
+.delivery-git-changes__file-meta .is-added,
+.delivery-git-changes__preview-meta .is-added { color: var(--manager-green); }
+.delivery-git-changes__files-summary .is-removed,
+.delivery-git-changes__file-meta .is-removed,
+.delivery-git-changes__preview-meta .is-removed { color: var(--manager-danger); }
+.delivery-git-changes__search.ant-input-affix-wrapper { border-color: var(--manager-border-strong); box-shadow: none; }
+.delivery-git-changes__search.ant-input-affix-wrapper:focus-within { border-color: var(--manager-primary); box-shadow: var(--manager-ring); }
+.delivery-git-changes__search .anticon { color: var(--manager-text-faint); }
+.delivery-git-changes__filter { padding: 3px; border: 1px solid var(--manager-border); background: var(--manager-panel); }
+.delivery-git-changes__filter .ant-segmented-item { min-width: 0; color: var(--manager-text-faint); font-size: var(--manager-fs-micro); }
+.delivery-git-changes__filter .ant-segmented-item-label { overflow: hidden; padding-inline: 5px; text-overflow: ellipsis; }
+.delivery-git-changes__filter .ant-segmented-item-selected { color: var(--manager-primary); font-weight: 600; }
+
+.delivery-git-changes__file-list { display: grid; align-content: start; gap: 2px; min-height: 0; overflow: auto; padding: 8px; }
+.delivery-git-changes__file-list > .ant-empty { margin: 56px 0; }
+.delivery-git-changes__truncated { margin: 2px 4px 8px; color: var(--manager-warning); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-base); }
 
 .delivery-git-changes__file {
-	display: flex;
-	align-items: center;
+	display: grid;
+	grid-template-columns: 24px minmax(0, 1fr) auto;
 	gap: 8px;
-	padding: 7px 8px;
-	border: 0;
+	width: 100%;
+	align-items: center;
+	padding: 9px 8px;
+	border: 1px solid transparent;
 	border-radius: var(--manager-r-sm);
 	background: transparent;
 	color: var(--manager-text);
 	cursor: pointer;
 	font-size: var(--manager-fs-xs);
 	text-align: left;
+	transition: background var(--manager-t), border-color var(--manager-t), box-shadow var(--manager-t);
 }
 
-.delivery-git-changes__file:hover { background: var(--manager-bg-soft); }
-.delivery-git-changes__file.is-selected { background: var(--manager-primary-light); }
-.delivery-git-changes__file .anticon { flex: 0 0 auto; color: var(--manager-text-faint); }
-/* 路径按尾部对齐截断：同目录下的文件名比顶层目录名更能说明是哪个文件。 */
-.delivery-git-changes__file span { flex: 1 1 auto; min-width: 0; overflow: hidden; direction: rtl; text-align: left; text-overflow: ellipsis; white-space: nowrap; font-family: var(--manager-mono); }
-.delivery-git-changes__file em { flex: 0 0 auto; font-style: normal; color: var(--manager-text-faint); }
-.delivery-git-changes__file em.is-add { color: var(--manager-green); }
-.delivery-git-changes__file em.is-delete { color: var(--manager-danger); }
-.delivery-git-changes__file b { display: inline-flex; flex: 0 0 auto; gap: 6px; font-weight: 600; }
-.delivery-git-changes__file b i { font-style: normal; }
-.delivery-git-changes__file b i.is-added { color: var(--manager-green); }
-.delivery-git-changes__file b i.is-removed { color: var(--manager-danger); }
+.delivery-git-changes__file:hover { border-color: var(--manager-border); background: var(--manager-surface); }
+.delivery-git-changes__file:focus-visible { outline: 0; box-shadow: var(--manager-ring); }
+.delivery-git-changes__file.is-selected { border-color: color-mix(in srgb, var(--manager-primary) 30%, var(--manager-border)); background: var(--manager-surface); box-shadow: inset 3px 0 0 var(--manager-primary), var(--manager-shadow-sm); }
+.delivery-git-changes__file-icon { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: color-mix(in srgb, var(--manager-text-faint) 11%, transparent); color: var(--manager-text-faint); }
+.delivery-git-changes__file.is-add .delivery-git-changes__file-icon { background: color-mix(in srgb, var(--manager-green) 13%, transparent); color: var(--manager-green); }
+.delivery-git-changes__file.is-delete .delivery-git-changes__file-icon { background: color-mix(in srgb, var(--manager-danger) 11%, transparent); color: var(--manager-danger); }
+.delivery-git-changes__file.is-rename .delivery-git-changes__file-icon { background: color-mix(in srgb, var(--manager-amber) 13%, transparent); color: var(--manager-amber); }
+/* 路径按尾部截断：同目录下文件名通常比顶层目录更有辨识度。 */
+.delivery-git-changes__file-path { min-width: 0; overflow: hidden; direction: rtl; color: var(--manager-text-soft); font-family: var(--manager-mono); line-height: var(--manager-lh-snug); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-git-changes__file.is-selected .delivery-git-changes__file-path { color: var(--manager-text); font-weight: 600; }
+.delivery-git-changes__file-meta { display: grid; justify-items: end; gap: 3px; min-width: 46px; font-size: var(--manager-fs-micro); font-variant-numeric: tabular-nums; }
+.delivery-git-changes__file-meta em,
+.delivery-git-changes__preview-meta em { font-style: normal; color: var(--manager-text-faint); }
+.delivery-git-changes__file-meta em { font-size: var(--manager-fs-micro); }
+.delivery-git-changes__file-meta b { display: inline-flex; gap: 5px; font-family: var(--manager-mono); font-weight: 650; }
+.delivery-git-changes__file-meta b i { font-style: normal; }
 
-.delivery-git-changes__diff { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; gap: 8px; }
-.delivery-git-changes__diff > header { overflow: hidden; color: var(--manager-text-soft); font-size: var(--manager-fs-xs); text-overflow: ellipsis; white-space: nowrap; }
-.delivery-git-changes__diff-body { min-height: 0; overflow: auto; border: 1px solid var(--manager-border); border-radius: var(--manager-r-md); background: var(--manager-surface); font-size: var(--manager-fs-xs); }
+.delivery-git-changes__diff { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--manager-surface); }
+.delivery-git-changes__preview-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; min-height: 82px; padding: 16px 20px; border-bottom: 1px solid var(--manager-border); }
+.delivery-git-changes__preview-header > div:first-child { display: grid; min-width: 0; gap: 5px; }
+.delivery-git-changes__preview-header > div:first-child > span { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+.delivery-git-changes__preview-header code { overflow: hidden; color: var(--manager-text); font-size: var(--manager-fs-sm); text-overflow: ellipsis; white-space: nowrap; }
+.delivery-git-changes__preview-meta { display: inline-flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; font-family: var(--manager-mono); font-size: var(--manager-fs-xs); font-variant-numeric: tabular-nums; }
+.delivery-git-changes__preview-meta em { align-self: center; padding-right: 8px; border-right: 1px solid var(--manager-border); font-family: var(--manager-sans); }
+.delivery-git-changes__diff-body { display: grid; min-height: 0; overflow: auto; background: var(--manager-surface); font-size: var(--manager-fs-xs); }
+.delivery-git-changes__diff-body > .ant-alert { align-self: start; margin: 20px; }
 .delivery-git-changes__diff-body pre { font-family: var(--manager-mono); }
-.delivery-git-changes__pending { display: grid; place-items: center; padding: 40px 0; }
+.delivery-git-changes__diff-body .diff-viewer { min-width: max-content; }
+.delivery-git-changes__diff-body .diff-viewer table { font-family: var(--manager-mono); font-size: var(--manager-fs-xs); }
+.delivery-git-changes__pending { display: grid; place-items: center; min-height: 180px; padding: 40px 0; }
+.delivery-git-changes__preview-empty { display: grid; grid-template-columns: 40px minmax(0, 360px); place-content: center; align-items: start; gap: 14px; min-height: 100%; padding: 32px; color: var(--manager-text-soft); }
+.delivery-git-changes__preview-empty-icon { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--manager-r-sm); background: var(--manager-primary-light); color: var(--manager-primary); font-size: 18px; }
+.delivery-git-changes__preview-empty[data-tone="warning"] .delivery-git-changes__preview-empty-icon { background: color-mix(in srgb, var(--manager-warning) 14%, transparent); color: var(--manager-warning); }
+.delivery-git-changes__preview-empty strong { display: block; color: var(--manager-text); font-size: var(--manager-fs-base); font-weight: 650; line-height: var(--manager-lh-snug); }
+.delivery-git-changes__preview-empty p { margin: 5px 0 0; color: var(--manager-text-faint); font-size: var(--manager-fs-sm); line-height: var(--manager-lh-base); }
+
+@media (max-width: 760px) {
+  .delivery-git-changes-modal .ant-modal { max-width: calc(100vw - 24px); margin: 12px auto; }
+  .delivery-git-changes-modal .ant-modal-content { height: calc(100dvh - 24px); }
+  .delivery-git-changes-modal .ant-modal-header { padding: 16px 48px 14px 16px; }
+  .delivery-git-changes__title-actions code { max-width: 42vw; }
+  .delivery-git-changes { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); min-height: calc(100dvh - 106px); max-height: calc(100dvh - 106px); }
+  .delivery-git-changes__files { border-right: 0; border-bottom: 1px solid var(--manager-border); }
+  .delivery-git-changes__files-header { gap: 8px; padding: 12px 14px; }
+  .delivery-git-changes__file-list { grid-auto-flow: column; grid-auto-columns: minmax(230px, 70%); align-content: stretch; overflow-x: auto; overflow-y: hidden; padding: 8px 14px; }
+  .delivery-git-changes__file { min-height: 58px; }
+  .delivery-git-changes__file-list > .ant-empty { grid-row: 1; width: 100%; margin: 30px 0; }
+  .delivery-git-changes__preview-header { min-height: 70px; padding: 12px 14px; }
+  .delivery-git-changes__preview-meta { gap: 6px; font-size: var(--manager-fs-micro); }
+  .delivery-git-changes__preview-meta em { display: none; }
+  .delivery-git-changes__preview-empty { grid-template-columns: 36px minmax(0, 1fr); gap: 12px; padding: 24px; }
+  .delivery-git-changes__preview-empty-icon { width: 36px; height: 36px; }
+}
 
 .delivery-requirement-git-error { display: grid; gap: 8px; font-size: var(--manager-fs-xs); line-height: 1.6; color: var(--manager-text); }
 .delivery-requirement-git-error pre { margin: 0; max-height: 240px; overflow: auto; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--manager-border); background: var(--manager-bg-soft); white-space: pre-wrap; word-break: break-word; font-family: var(--manager-mono); }
 .delivery-requirement-git-error p { margin: 0; color: var(--manager-text-soft); }
+/* 创建分支表单里的失败提示：留在表单内，用告警底色跟上面的字段区分开。 */
+.delivery-requirement-git-push > .delivery-requirement-git-error {
+	padding: 10px 12px;
+	border: 1px solid color-mix(in srgb, var(--manager-danger) 32%, var(--manager-border));
+	border-radius: var(--manager-r-md, 8px);
+	background: color-mix(in srgb, var(--manager-danger) 6%, transparent);
+}
+.delivery-requirement-git-push > .delivery-requirement-git-error > b { color: var(--manager-danger); font-size: var(--manager-fs-sm); }
+/* 提交按钮跟着内容宽度走，别撑满整块提示。 */
+.delivery-requirement-git-push > .delivery-requirement-git-error .ant-btn { justify-self: start; }
 .delivery-requirement-git-push { display: grid; gap: 12px; }
 .delivery-requirement-git-push p { margin: 0; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: 1.6; }
 .delivery-requirement-git-push label { display: grid; gap: 6px; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); }
@@ -5237,6 +5418,14 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-session-changes__kind { min-width: 34px; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--manager-primary) 12%, transparent); color: var(--manager-primary); font-size: var(--manager-fs-xs); font-style: normal; text-align: center; }
 .delivery-session-changes__kind.is-add { background: color-mix(in srgb, var(--manager-green, #12a150) 14%, transparent); color: var(--manager-green, #12a150); }
 .delivery-session-changes__kind.is-delete { background: color-mix(in srgb, #dc2626 12%, transparent); color: #dc2626; }
+
+/* 收起右侧需求详情、让聊天区展开时，仍要为浮动 Git 信息留出空间；消息本身可比常规双栏状态更宽。 */
+.delivery-planning-shell.is-context-collapsed .delivery-session-message:not(.is-command),
+.delivery-planning-shell.is-context-collapsed .delivery-session-process,
+.delivery-planning-shell.is-context-collapsed .delivery-session-changes,
+.delivery-planning-shell.is-context-collapsed .delivery-session-live-event {
+	max-width: min(1080px, 92%);
+}
 
 .delivery-session-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
 .delivery-session-attachment { display: inline-flex; min-width: 0; max-width: 230px; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--manager-border); border-radius: var(--manager-r-sm); background: transparent; color: var(--manager-primary); cursor: pointer; font: inherit; font-size: var(--manager-fs-xs); text-align: left; text-decoration: none; }
@@ -5461,6 +5650,368 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-requirement-timeline__event-head code {
 	color: var(--manager-text-faint);
 	font-size: var(--manager-fs-xs);
+}
+
+/* 需求级任务进度：依赖图是主视图，执行批次与异常状态作为下方辅助信息。 */
+.delivery-progress-modal .ant-modal-body {
+	max-height: min(78vh, 860px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.delivery-progress-title {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+	padding-right: 28px;
+}
+
+.delivery-progress-title > span {
+	flex: 0 0 auto;
+	padding: 2px 8px;
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+	font-size: var(--manager-fs-xs);
+	font-weight: 600;
+}
+
+.delivery-progress-title > b {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--manager-text);
+	font-size: var(--manager-fs-lg);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.delivery-progress-title > code {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.delivery-progress {
+	display: grid;
+	gap: 22px;
+}
+
+.delivery-progress__summary {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 20px;
+	padding-bottom: 20px;
+	border-bottom: 1px solid var(--manager-border);
+}
+
+.delivery-progress__meter {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.delivery-progress__meter > span:last-child {
+	display: grid;
+	gap: 2px;
+}
+
+.delivery-progress__meter b { color: var(--manager-text); font-size: var(--manager-fs-sm); }
+.delivery-progress__meter small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); white-space: nowrap; }
+
+.delivery-progress__stats {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(84px, 1fr));
+	gap: 8px;
+}
+
+.delivery-progress-stat {
+	display: grid;
+	grid-template-columns: auto auto;
+	align-items: center;
+	justify-content: start;
+	gap: 2px 8px;
+	min-height: 56px;
+	padding: 8px 10px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-surface);
+}
+
+.delivery-progress-stat > span { grid-row: 1 / span 2; color: var(--manager-text-faint); font-size: 16px; }
+.delivery-progress-stat > b { color: var(--manager-text); font-size: var(--manager-fs-lg); line-height: 1; }
+.delivery-progress-stat > small { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); white-space: nowrap; }
+.delivery-progress-stat.is-doing > span { color: var(--manager-cyan); }
+.delivery-progress-stat.is-done > span { color: var(--manager-success); }
+.delivery-progress-stat.is-blocked > span { color: var(--manager-danger); }
+.delivery-progress-stat.is-dropped > span { color: var(--manager-text-faint); }
+
+.delivery-progress__section {
+	display: grid;
+	gap: 12px;
+}
+
+.delivery-progress__section-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.delivery-progress__section-head > span {
+	display: inline-grid;
+	width: 30px;
+	height: 30px;
+	place-items: center;
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+}
+
+.delivery-progress__section-head > div { display: grid; gap: 1px; }
+/* 选择与执行单独一条工具条：标题行只放标题，操作不跟标题挤在一起。 */
+.delivery-progress__toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	align-items: center;
+	gap: 10px;
+	padding: 8px 12px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-panel-muted);
+}
+
+.delivery-progress__toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.delivery-progress__section-head b { color: var(--manager-text); font-size: var(--manager-fs-sm); }
+.delivery-progress__section-head small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); }
+
+.delivery-progress-flow-scroll {
+	overflow-x: auto;
+	padding: 2px 2px 12px;
+	border-top: 1px solid var(--manager-border);
+	border-bottom: 1px solid var(--manager-border);
+	background: var(--manager-bg-soft);
+}
+
+.delivery-progress-flow {
+	position: relative;
+	display: grid;
+	grid-auto-columns: 248px;
+	grid-auto-flow: column;
+	align-items: start;
+	gap: 60px;
+	width: max-content;
+	min-width: 100%;
+	padding: 16px;
+}
+
+.delivery-progress-flow__column {
+	position: relative;
+	z-index: 3;
+	display: grid;
+	gap: 10px;
+}
+
+.delivery-progress-flow__column > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 2px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+	font-weight: 600;
+}
+
+.delivery-progress-flow__column > header b {
+	display: inline-grid;
+	min-width: 22px;
+	height: 22px;
+	place-items: center;
+	border-radius: 50%;
+	background: var(--manager-panel-muted);
+	font-size: var(--manager-fs-micro);
+}
+
+.delivery-progress-flow__column > div { display: grid; gap: 10px; }
+
+.delivery-progress-node {
+	position: relative;
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: start;
+	gap: 9px;
+	width: 248px;
+	min-height: 98px;
+	padding: 11px;
+	border: 1px solid var(--manager-border-strong);
+	border-left: 3px solid var(--manager-text-faint);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-surface);
+	box-shadow: var(--manager-shadow-sm);
+	color: var(--manager-text);
+	font: inherit;
+	text-align: left;
+	transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.delivery-progress-node:hover { border-color: var(--manager-primary); box-shadow: var(--manager-shadow); transform: translateY(-1px); }
+.delivery-progress-node__lead { display: grid; justify-items: center; gap: 6px; }
+.delivery-progress-node__actions { display: grid; align-content: start; gap: 2px; }
+
+/* 卡片正文本身就是打开任务的按钮，去掉浏览器默认按钮外观。 */
+.delivery-progress-node__body {
+	border: 0;
+	background: none;
+	padding: 0;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+}
+
+.delivery-progress-node__body:not(:disabled) { cursor: pointer; }
+.delivery-progress-node__body:focus-visible { outline: none; border-radius: var(--manager-r-sm); box-shadow: var(--manager-ring); }
+.delivery-progress-node.is-doing { border-left-color: var(--manager-cyan); background: color-mix(in srgb, var(--manager-cyan) 5%, var(--manager-surface)); }
+.delivery-progress-node.is-done { border-left-color: var(--manager-success); }
+.delivery-progress-node.is-blocked { border-left-color: var(--manager-danger); background: color-mix(in srgb, var(--manager-danger) 4%, var(--manager-surface)); }
+.delivery-progress-node.is-dropped { border-left-color: var(--manager-text-faint); opacity: .78; }
+
+.delivery-progress-node__status { color: var(--manager-text-faint); font-size: 15px; line-height: 1.5; }
+.delivery-progress-node.is-doing .delivery-progress-node__status { color: var(--manager-cyan); }
+.delivery-progress-node.is-done .delivery-progress-node__status { color: var(--manager-success); }
+.delivery-progress-node.is-blocked .delivery-progress-node__status { color: var(--manager-danger); }
+.delivery-progress-node__body { display: grid; min-width: 0; gap: 6px; }
+.delivery-progress-node__body > b { overflow-wrap: anywhere; font-size: var(--manager-fs-sm); line-height: 1.45; }
+
+.delivery-progress-node__meta,
+.delivery-progress-node__batch {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+}
+
+.delivery-progress-node__meta code,
+.delivery-progress-node__batch code {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.delivery-progress-node__meta em { flex: 0 0 auto; font-style: normal; }
+.delivery-progress-node__batch { color: var(--manager-cyan); }
+.delivery-progress-node__open { align-self: center; color: var(--manager-text-faint); font-size: 10px; }
+
+.delivery-progress-batches {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: 10px;
+}
+
+.delivery-progress-batch {
+	display: grid;
+	gap: 8px;
+	padding: 11px 12px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-surface);
+}
+
+.delivery-progress-batch > header { display: flex; min-width: 0; align-items: center; gap: 7px; }
+.delivery-progress-batch > header code { min-width: 0; flex: 1; overflow: hidden; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+.delivery-progress-batch > header em { flex: 0 0 auto; color: var(--manager-cyan); font-size: var(--manager-fs-xs); font-style: normal; }
+.delivery-progress-batch > b { color: var(--manager-text-soft); font-size: var(--manager-fs-xs); font-weight: 500; }
+.delivery-progress__quiet { margin: 0; padding: 10px 0; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); }
+
+.delivery-progress__groups {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px 20px;
+	padding-top: 2px;
+}
+
+.delivery-progress-group {
+	min-width: 0;
+	border-top: 2px solid var(--manager-border-strong);
+}
+
+.delivery-progress-group.is-doing { border-top-color: var(--manager-cyan); }
+.delivery-progress-group.is-blocked { border-top-color: var(--manager-danger); }
+.delivery-progress-group.is-dropped { border-top-color: var(--manager-text-faint); }
+
+.delivery-progress-group > header {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 2px 8px;
+}
+
+.delivery-progress-group > header span { color: var(--manager-text-faint); }
+.delivery-progress-group.is-doing > header span { color: var(--manager-cyan); }
+.delivery-progress-group.is-blocked > header span { color: var(--manager-danger); }
+.delivery-progress-group > header b { color: var(--manager-text); font-size: var(--manager-fs-sm); }
+.delivery-progress-group > header em { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-style: normal; }
+.delivery-progress-group > p { margin: 0; padding: 8px 2px; color: var(--manager-text-faint); font-size: var(--manager-fs-xs); }
+.delivery-progress-group__items { display: grid; }
+
+.delivery-progress-group__items > button {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(100px, 42%) auto;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 9px 2px;
+	border: 0;
+	border-top: 1px solid var(--manager-border);
+	background: transparent;
+	color: var(--manager-text);
+	font: inherit;
+	text-align: left;
+}
+
+.delivery-progress-group__items > button:not(:disabled) { cursor: pointer; }
+.delivery-progress-group__items > button:disabled { cursor: default; opacity: 1; }
+.delivery-progress-group__items > button:not(:disabled):hover b { color: var(--manager-primary); }
+.delivery-progress-group__items > button:focus-visible { outline: none; box-shadow: var(--manager-ring); }
+.delivery-progress-group__items > button > span { display: grid; min-width: 0; gap: 2px; }
+.delivery-progress-group__items b,
+.delivery-progress-group__items code,
+.delivery-progress-group__items small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-progress-group__items b { font-size: var(--manager-fs-xs); }
+.delivery-progress-group__items code,
+.delivery-progress-group__items small { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); }
+.delivery-progress-group__items > button > .anticon { color: var(--manager-text-faint); font-size: 10px; }
+
+@media (max-width: 820px) {
+	.delivery-progress-modal { max-width: calc(100vw - 16px); margin: 8px auto; }
+	.delivery-progress-modal .ant-modal-body { max-height: calc(100vh - 112px); }
+	.delivery-progress-title { flex-wrap: wrap; }
+	.delivery-progress-title > b { flex-basis: calc(100% - 74px); }
+	.delivery-progress-title > code { flex-basis: 100%; }
+	.delivery-progress__summary { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+	.delivery-progress__meter { grid-column: 1; }
+	.delivery-progress__summary > .ant-btn { grid-column: 2; grid-row: 1; }
+	.delivery-progress__stats { grid-column: 1 / -1; grid-template-columns: repeat(5, minmax(78px, 1fr)); overflow-x: auto; padding-bottom: 4px; }
+	.delivery-progress__groups { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 480px) {
+	.delivery-progress-modal { width: calc(100vw - 12px) !important; max-width: none; }
+	.delivery-progress-modal .ant-modal-content { padding-inline: 14px; }
+	.delivery-progress__summary { gap: 14px; }
+	.delivery-progress__stats { margin-inline: -2px; }
+	.delivery-progress-stat { min-width: 82px; }
+	.delivery-progress-flow { padding-inline: 10px; }
+	.delivery-progress-group__items > button { grid-template-columns: minmax(0, 1fr) auto; }
+	.delivery-progress-group__items > button > small { grid-column: 1 / -1; grid-row: 2; }
 }
 
 @media (max-width: 900px) {
@@ -6832,12 +7383,12 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	white-space: nowrap;
 }
 
-/* 操作区保留两个轻量工具入口，主跳转用带文字的链接，避免只剩一排难辨认的图标。 */
+/* 操作区集中保留轻量工具入口；看板跳转收敛到卡片右上角箭头。 */
 .my-work-card__actions {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	/* 卡片窄的时候动作条会比一行长：允许换行，别把「跳转看板」挤出可视区。 */
+	/* 卡片窄的时候动作条会比一行长，允许换行避免工具被挤出可视区。 */
 	flex-wrap: wrap;
 	gap: 8px;
 	margin: 8px -8px -4px 0;
@@ -6862,23 +7413,23 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	background: var(--manager-primary-light) !important;
 }
 
-.my-work-card__board-link.ant-btn {
-	display: inline-flex;
-	align-items: center;
-	gap: 3px;
-	height: 26px;
-	padding: 0 9px;
-	border-radius: 999px;
-	background: var(--manager-primary-light);
-	color: var(--manager-primary);
-	font-size: var(--manager-fs-xs);
-	font-weight: 650;
+/* 聊天、任务进度、需求大纲、切换分支是高频入口：各自一个颜色，从灰色的次要操作里跳出来。 */
+.my-work-card__actions .ant-btn-text.my-work-action {
+	background: color-mix(in srgb, var(--action-tone) 12%, transparent);
+	color: var(--action-tone);
+	font-weight: 600;
 }
 
-.my-work-card__board-link.ant-btn:hover {
-	background: color-mix(in srgb, var(--manager-primary) 18%, transparent) !important;
-	color: var(--manager-primary-hover) !important;
+/* 上面那条通用 hover 带 !important，这里得同样标记才压得住，否则四个颜色一 hover 就全变紫。 */
+.my-work-card__actions .ant-btn-text.my-work-action:hover {
+	background: color-mix(in srgb, var(--action-tone) 22%, transparent) !important;
+	color: var(--action-tone) !important;
 }
+
+.my-work-card__actions .my-work-action.is-chat { --action-tone: var(--manager-primary); }
+.my-work-card__actions .my-work-action.is-progress { --action-tone: var(--manager-cyan); }
+.my-work-card__actions .my-work-action.is-outline { --action-tone: var(--manager-violet); }
+.my-work-card__actions .my-work-action.is-branch { --action-tone: var(--manager-success); }
 
 @media (max-width: 640px) {
 	.my-work-grid { grid-template-columns: minmax(0, 1fr); }
@@ -6890,4 +7441,93 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	.my-work-filters__search.ant-input-affix-wrapper { flex: 1 1 140px; width: auto; min-width: 0; }
 	.my-work-filters__branch-wrap { flex: 1 1 140px; }
 	.my-work-filters__branch.ant-btn { width: 100%; justify-content: center; }
+}
+
+/* ─── 需求分支检查弹窗 ─── */
+
+.git-check-modal .ant-modal-body { padding-top: 4px; }
+
+.git-check {
+  display: flex;
+  flex-direction: column;
+  gap: var(--manager-sp-3);
+}
+
+.git-check .ant-alert {
+  border-radius: var(--manager-r-sm);
+  padding: 10px 12px;
+  font-size: var(--manager-fs-sm);
+  line-height: var(--manager-lh-snug);
+}
+
+.git-check .ant-alert .ant-alert-message { font-size: var(--manager-fs-sm); }
+
+.git-check .ant-alert .ant-alert-description {
+  margin-top: 2px;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+}
+
+/* 当前分支 → 需求分支：上下对照，整行留给分支名，长分支名不用截断 */
+.git-check__compare {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.git-check__branch {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r-sm);
+  background: var(--manager-panel);
+}
+
+.git-check__branch--target {
+  border-color: color-mix(in srgb, var(--manager-primary) 34%, var(--manager-border));
+  background: var(--manager-primary-light);
+}
+
+.git-check__branch-label {
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  letter-spacing: 0.04em;
+}
+
+.git-check__branch-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-sm);
+  line-height: var(--manager-lh-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-check__branch--target .git-check__branch-name { color: var(--manager-primary); }
+
+.git-check__arrow {
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  transform: rotate(90deg);
+  color: var(--manager-text-faint);
+  background: currentColor;
+  -webkit-mask: no-repeat center / 16px 16px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E");
+  mask: no-repeat center / 16px 16px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12h14M13 6l6 6-6 6'/%3E%3C/svg%3E");
+}
+
+.git-check__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.git-check__field-label {
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  letter-spacing: 0.04em;
 }

@@ -80,6 +80,25 @@ type ExecutionBatchNotificationQuery struct {
 	ActorID   string           `form:"-"`
 }
 
+// RequirementProgressQuery 查询一条需求当前的完整任务推进情况。
+type RequirementProgressQuery struct {
+	BizLine        contract.BizLine `form:"-"`
+	ProgramID      int64            `form:"programId"`
+	RequirementKey string           `form:"requirementKey"`
+}
+
+// RequirementProgressView 同时返回任务图和执行批次。任务是完整计划，批次只说明当前或历史运行上下文。
+type RequirementProgressView struct {
+	RequirementKey  string               `json:"requirementKey"`
+	RequirementName string               `json:"requirementName"`
+	TotalCount      int                  `json:"totalCount"`
+	CountedCount    int                  `json:"countedCount"`
+	Progress        float64              `json:"progress"`
+	StatusCounts    map[string]int       `json:"statusCounts"`
+	Items           []ItemView           `json:"items"`
+	Batches         []ExecutionBatchView `json:"batches"`
+}
+
 type MarkExecutionBatchNotificationReadRequest struct {
 	BizLine   contract.BizLine `json:"-"`
 	ProgramID int64            `json:"programId"`

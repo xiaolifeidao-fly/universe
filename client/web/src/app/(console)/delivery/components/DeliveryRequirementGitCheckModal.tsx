@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Button, Input, Modal, Segmented, message } from "antd";
+import { Alert, Button, Input, Modal, message } from "antd";
 import { useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
@@ -39,17 +39,18 @@ export function DeliveryRequirementGitCheckModal({
   onPrepared,
 }: DeliveryRequirementGitCheckModalProps) {
   const { t } = useLocale();
-  const [strategy, setStrategy] = useState<"switch" | "commit" | "stash">("switch");
+  // 脏工作区只保留「提交后切换」：暂存不会自动恢复，改动很容易被忘在 stash 里。
+  const [strategy, setStrategy] = useState<"switch" | "commit">("switch");
   const [commitMessage, setCommitMessage] = useState("");
   const [preparing, setPreparing] = useState(false);
 
   useEffect(() => {
     if (!requirement) return;
-    setStrategy(status?.dirty ? "stash" : "switch");
+    setStrategy(status?.dirty ? "commit" : "switch");
     setCommitMessage(`chore: save work before ${requirement.gitBranch}`);
     // 打开时的状态可能还是上一次的快照；真正确认的结果回来后再定默认策略。
-    void onRefreshStatus().then((next) => setStrategy(next?.dirty ? "stash" : "switch"));
-    // 只在需求变化时重置，用户改过的策略不能被状态刷新覆盖。
+    void onRefreshStatus().then((next) => setStrategy(next?.dirty ? "commit" : "switch"));
+    // 只在需求变化时重置，用户改过的提交说明不能被状态刷新覆盖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requirement]);
 
@@ -69,11 +70,9 @@ export function DeliveryRequirementGitCheckModal({
       if (result.branch && result.branch !== requirement.gitBranch) {
         await bindRequirementGitBranch(programId, requirement.requirementKey, requirement.gitBaseBranch, result.branch);
       }
-      message.success(result.stashed
-        ? t("delivery.requirement.gitPreparedStashed")
-        : result.committed
-          ? t("delivery.requirement.gitPreparedCommitted")
-          : t("delivery.requirement.gitPrepared"));
+      message.success(result.committed
+        ? t("delivery.requirement.gitPreparedCommitted")
+        : t("delivery.requirement.gitPrepared"));
       onPrepared();
       onClose();
     } catch (error) {
@@ -83,24 +82,38 @@ export function DeliveryRequirementGitCheckModal({
     }
   };
 
+  const currentBranch = status?.currentBranch || "HEAD";
+  const targetBranch = requirement?.gitBranch || "";
+  // 有改动又要换分支：必须先把改动提交到当前分支，提交说明不能留空。
+  const needsCommit = Boolean(status?.dirty && branchesDiffer);
+
   return (
     <Modal
       open={Boolean(requirement)}
       title={t("delivery.requirement.gitCheckTitle")}
       okText={t("delivery.requirement.gitPrepare")}
       confirmLoading={preparing}
+      width={520}
+      className="git-check-modal"
       footer={alreadyOnBranch ? (
         <Button type="primary" onClick={onClose}>
           {t("common.close")}
         </Button>
       ) : undefined}
       okButtonProps={{
-        disabled: Boolean(preparing || statusLoading || statusError || !requirement?.gitBranch || status?.detached),
+        disabled: Boolean(
+          preparing
+          || statusLoading
+          || statusError
+          || !requirement?.gitBranch
+          || status?.detached
+          || (needsCommit && !commitMessage.trim()),
+        ),
       }}
       onCancel={onClose}
       onOk={() => void confirm()}
     >
-      <div className="delivery-drawer">
+      <div className="git-check">
         {statusError ? <Alert type="warning" showIcon message={statusError} /> : null}
         {status?.detached ? <Alert type="error" showIcon message={t("delivery.requirement.gitDetached")} /> : null}
         {alreadyOnBranch ? <Alert
@@ -108,21 +121,24 @@ export function DeliveryRequirementGitCheckModal({
           showIcon
           message={t("delivery.requirement.gitAlreadyOnBranch")}
         /> : null}
-        {status && !status.detached && status.currentBranch !== requirement?.gitBranch ? <Alert
+        {status && !status.detached && branchesDiffer ? <Alert
           type="warning"
           showIcon
-          message={t("delivery.requirement.gitBranchMismatch")
-            .replace("{current}", status.currentBranch || "HEAD")
-            .replace("{target}", requirement?.gitBranch || "")}
+          message={t("delivery.requirement.gitBranchMismatchShort")}
         /> : null}
-        <label>
-          {t("delivery.requirement.gitCurrentBranch")}
-          <Input readOnly value={status?.currentBranch || "HEAD"} className="manager-mono" />
-        </label>
-        <label>
-          {t("delivery.requirement.gitTargetBranch")}
-          <Input readOnly value={requirement?.gitBranch || ""} className="manager-mono" />
-        </label>
+
+        <div className="git-check__compare">
+          <div className="git-check__branch">
+            <span className="git-check__branch-label">{t("delivery.requirement.gitCurrentBranch")}</span>
+            <span className="git-check__branch-name manager-mono" title={currentBranch}>{currentBranch}</span>
+          </div>
+          <span className="git-check__arrow" aria-hidden="true" />
+          <div className="git-check__branch git-check__branch--target">
+            <span className="git-check__branch-label">{t("delivery.requirement.gitTargetBranch")}</span>
+            <span className="git-check__branch-name manager-mono" title={targetBranch}>{targetBranch || "—"}</span>
+          </div>
+        </div>
+
         {branchesDiffer && status ? <Alert
           type={status.dirty ? "warning" : "info"}
           showIcon
@@ -142,23 +158,15 @@ export function DeliveryRequirementGitCheckModal({
             .replace("{untracked}", String(status.untracked))}
           description={alreadyOnBranch ? undefined : t("delivery.requirement.gitDirtySwitchHint")}
         /> : null}
-        {status?.dirty && branchesDiffer ? <>
-          <label>
-            {t("delivery.requirement.gitDirtyStrategy")}
-            <Segmented
-              value={strategy}
-              onChange={(value) => setStrategy(value as "commit" | "stash")}
-              options={[
-                { value: "stash", label: t("delivery.requirement.gitStrategy.stash") },
-                { value: "commit", label: t("delivery.requirement.gitStrategy.commit") },
-              ]}
-            />
-          </label>
-          {strategy === "commit" ? <label>
-            {t("delivery.requirement.gitCommitMessage")}
-            <Input value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} />
-          </label> : null}
-        </> : null}
+
+        {needsCommit ? <div className="git-check__field">
+          <span className="git-check__field-label">{t("delivery.requirement.gitCommitMessage")}</span>
+          <Input
+            value={commitMessage}
+            status={commitMessage.trim() ? undefined : "error"}
+            onChange={(event) => setCommitMessage(event.target.value)}
+          />
+        </div> : null}
       </div>
     </Modal>
   );

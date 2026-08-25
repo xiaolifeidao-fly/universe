@@ -3,6 +3,7 @@
 import {
 	BranchesOutlined,
 	CloudUploadOutlined,
+	SwapOutlined,
 	LeftOutlined,
   CheckOutlined,
   DeleteOutlined,
@@ -33,6 +34,7 @@ import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
+import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
 import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
@@ -277,11 +279,18 @@ export function DeliveryRequirementSessionModal({
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
 	const [gitCreating, setGitCreating] = useState(false);
 	const [gitBranchFormOpen, setGitBranchFormOpen] = useState(false);
+	// 创建分支失败的原因直接留在表单里：多行原文加上处理指引，比弹一层 Modal 更好接着操作。
+	const [gitBranchError, setGitBranchError] = useState<{ detail: string; dirty: boolean; branch: string } | null>(null);
 	const [gitStatus, setGitStatus] = useState<CodexGitWorkspaceStatus | null>(null);
+	const [gitStatusRefreshing, setGitStatusRefreshing] = useState(false);
 	const [gitPushOpen, setGitPushOpen] = useState(false);
+	// 提交/推送的目标分支：默认是需求分支，创建分支被脏工作区拦下时改成当前所处的那条。
+	const [gitPushBranch, setGitPushBranch] = useState("");
 	const [gitPushMessage, setGitPushMessage] = useState("");
 	const [gitPushing, setGitPushing] = useState(false);
 	const [gitChangesOpen, setGitChangesOpen] = useState(false);
+	// 分支不一致时从 Git 面板直接进检查并切换弹窗，不用退回需求列表。
+	const [gitCheckOpen, setGitCheckOpen] = useState(false);
 	// 新建窗口即使在落库后收到父组件回传，也仍属于同一轮新建流程；Git 项目要据此持续拦截首轮对话。
 	const newRequirementFlowRef = useRef(false);
 	const modalOpenRef = useRef(false);
@@ -311,6 +320,7 @@ export function DeliveryRequirementSessionModal({
   const [prototypeEditSending, setPrototypeEditSending] = useState(false);
   const [contextPanelWidth, setContextPanelWidth] = useState(defaultContextPanelWidth);
 	const [contextCollapsed, setContextCollapsed] = useState(false);
+	const [gitPanelCollapsed, setGitPanelCollapsed] = useState(false);
   const [resizingContext, setResizingContext] = useState(false);
   const planningShellRef = useRef<HTMLDivElement>(null);
   const contextResizePointerIdRef = useRef<number | null>(null);
@@ -420,6 +430,7 @@ export function DeliveryRequirementSessionModal({
 			newRequirementFlowRef.current = !requirement;
 			// 新增和编辑需求都一样：右侧详情默认收起，把宽度让给会话；确认写入跑完后再自动展开。
 			setContextCollapsed(true);
+			setGitPanelCollapsed(false);
 		}
 		if (!open) newRequirementFlowRef.current = false;
 		modalOpenRef.current = open;
@@ -454,6 +465,7 @@ export function DeliveryRequirementSessionModal({
       setPrototypeEditSending(false);
       setResizingContext(false);
 		  setContextCollapsed(false);
+		  setGitPanelCollapsed(false);
       awaitingPlanningResultRef.current = "";
       return;
     }
@@ -483,6 +495,8 @@ export function DeliveryRequirementSessionModal({
 		setGitBaseBranch(requirement?.gitBaseBranch ?? projectGitBaseBranch);
 		setGitBranch(requirement?.gitBranch ?? "");
 		setGitBranches([]);
+		// 打开时需求信息是展开的：已建分支的 Git 框先收成小圆点，别一进来就压住会话。
+		setGitPanelCollapsed(Boolean(requirement?.gitBranch && requirement?.gitBranchCreatedAt));
     setStageKey(requirement?.stageKey ?? "");
     setModuleKey(requirement?.moduleKey ?? "");
     setKind(requirement?.kind ?? "");
@@ -546,15 +560,30 @@ export function DeliveryRequirementSessionModal({
 	const refreshGitStatus = useCallback(async () => {
 		if (!open || !projectGitEnabled || !codexBridgeReady || !saved?.gitBranch) {
 			setGitStatus(null);
-			return;
+			return null;
 		}
+		// 状态常常几十毫秒就回来了，转一圈都看不见；这里兜一个最短时长，让手动刷新一定有画面反馈。
+		const startedAt = Date.now();
+		setGitStatusRefreshing(true);
+		let next: CodexGitWorkspaceStatus | null = null;
 		try {
-			setGitStatus(await fetchCodexGitWorkspaceStatus(programId));
+			next = await fetchCodexGitWorkspaceStatus(programId);
+			setGitStatus(next);
 		} catch {
 			// 工作区状态是附加信息，读不到就只显示分支名，不打扰用户。
 			setGitStatus(null);
+		} finally {
+			const rest = 480 - (Date.now() - startedAt);
+			if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
+			setGitStatusRefreshing(false);
 		}
+		return next;
 	}, [codexBridgeReady, open, programId, projectGitEnabled, saved?.gitBranch]);
+
+	// 工作目录停在别的分支上：Git 面板要同时给出提示和切换入口。
+	const gitBranchMismatched = Boolean(
+		gitStatus?.currentBranch && saved?.gitBranch && gitStatus.currentBranch !== saved.gitBranch,
+	);
 
 	useEffect(() => {
 		void refreshGitStatus();
@@ -986,6 +1015,7 @@ export function DeliveryRequirementSessionModal({
 		// 新需求不先保存：先在本机创建分支，成功后才创建需求并写入关联。
 		setGitBaseBranch(saved?.gitBaseBranch || projectGitBaseBranch || "");
 		setGitBranch(saved?.gitBranch || (saved?.requirementKey ? defaultRequirementGitBranch(saved.requirementKey) : defaultNewRequirementGitBranch()));
+		setGitBranchError(null);
 		setGitBranchFormOpen(true);
 	};
 
@@ -996,6 +1026,7 @@ export function DeliveryRequirementSessionModal({
 			return;
 		}
 		setGitCreating(true);
+		setGitBranchError(null);
 		try {
 			const current = saved;
 			const needsTemporaryName = newRequirementFlowRef.current && !current?.name.trim();
@@ -1027,24 +1058,10 @@ export function DeliveryRequirementSessionModal({
 			void refreshGitStatus();
 			message.success(t("delivery.requirement.gitBranchCreated"));
 		} catch (error) {
-			// Git 的失败原因往往是多行输出，toast 会截断，这里用弹窗把服务端返回的原文完整交代。
+			// Git 的失败原因往往是多行输出，toast 会截断，直接留在表单里，用户看完就能接着处理。
 			const detail = (error as Error).message;
-			// 未提交改动是最常见的失败原因，光给原文不够，得说清楚去哪里、用什么方式处理。
-			const dirty = detail.includes("未提交改动");
-			Modal.error({
-				title: t("delivery.requirement.gitBranchCreateFailed"),
-				content: (
-					<div className="delivery-requirement-git-error">
-						<pre>{detail}</pre>
-						{dirty ? (
-							<p>{t("delivery.requirement.gitBranchCreateDirtyHint").replace("{workspace}", getProjectWorkspace(programId) || "")}</p>
-						) : null}
-						<p>{t("delivery.requirement.gitBranchCreateRetryHint")}</p>
-					</div>
-				),
-				okText: t("common.close"),
-				wrapClassName: "manager-form-skin",
-			});
+			// 未提交改动是最常见的失败原因，光给原文不够，得说清楚是哪条分支、去哪里提交。
+			setGitBranchError({ detail, dirty: detail.includes("未提交改动"), branch: gitCurrentBranch });
 		} finally {
 			setGitCreating(false);
 		}
@@ -1057,17 +1074,25 @@ export function DeliveryRequirementSessionModal({
 	// 工具栏的分支区域跟着标题走：名字定下来之后才出现建分支入口。
 	const gitToolbarReady = Boolean(projectGitEnabled && (gitLinked || newRequirementFlowRef.current || (saved && name.trim())));
 
-	const openGitPush = () => {
-		setGitPushMessage(saved ? `feat: ${saved.name || saved.requirementKey}（${saved.requirementKey}）` : "");
+	// 当前所处分支往往是别的需求的分支：提交说明要按那条需求写，找不到就退回分支名。
+	const requirementOfBranch = (branch: string) =>
+		branch ? requirements.find((entry) => entry.gitBranch === branch) ?? null : null;
+
+	const openGitPush = (branch = "") => {
+		const target = branch || saved?.gitBranch || "";
+		const owner = target && target === saved?.gitBranch ? saved : requirementOfBranch(target);
+		setGitPushBranch(target);
+		setGitPushMessage(owner ? `feat: ${owner.name || owner.requirementKey}（${owner.requirementKey}）` : target ? `chore: ${target}` : "");
 		setGitPushOpen(true);
 	};
 
 	// commitOnly：只在本机提交，不推远端。推送冲突要 AI 帮忙时才走完整推送。
 	const pushGitBranch = async (commitOnly = false) => {
-		if (!saved?.gitBranch) return;
+		const branch = gitPushBranch || saved?.gitBranch || "";
+		if (!branch) return;
 		setGitPushing(true);
 		try {
-			const result = await pushCodexGitBranch(programId, saved.gitBranch, gitPushMessage.trim(), {
+			const result = await pushCodexGitBranch(programId, branch, gitPushMessage.trim(), {
 				provider: planningProvider,
 				model: modelForConfig(planningConfig),
 				reasoningEffort: effortForConfig(planningConfig),
@@ -1075,6 +1100,8 @@ export function DeliveryRequirementSessionModal({
 				commitOnly,
 			});
 			setGitPushOpen(false);
+			// 挡住创建分支的那点未提交改动已经落成提交，表单里的错误提示跟着清掉，直接重试即可。
+			setGitBranchError(null);
 			void refreshGitStatus();
 			if (commitOnly) {
 				message.success(
@@ -1393,7 +1420,7 @@ export function DeliveryRequirementSessionModal({
                 onClick={() => kind === "planning" ? selectConversation(entry.threadId) : openTestingConversation(entry.threadId)}
               >
                 <MessageOutlined />
-                <div><Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), toolDisplayName(entry.executorType), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>
+                <div><Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), toolDisplayName(entry.executorType)].filter(Boolean).join(" · ")}</span>{/* 时间单独占一行：跟阶段、工具挤在一行时窄侧栏里必被省略号吃掉。 */}{entry.updatedAt ? <span className="delivery-session-history__item-time">{dayjs(entry.updatedAt).format("MM-DD HH:mm")}</span> : null}</div>
                 {entry.active ? <i /> : null}
               </button>
             ))}
@@ -1419,18 +1446,8 @@ export function DeliveryRequirementSessionModal({
                   </small>
                 ) : null}
               </div>
-              {/* 创建分支、分享、刷新提到标题行，且只留图标，靠 Tooltip 说明文案。 */}
+              {/* 分享、刷新提到标题行，且只留图标，靠 Tooltip 说明文案；创建分支归到 Git 悬浮框。 */}
               <div className="delivery-planning-session-toolbar__quick">
-                {gitToolbarReady && !gitLinked ? (
-                  <Tooltip title={t("delivery.requirement.gitCreateBranch")}>
-                    <Button
-                      icon={<BranchesOutlined />}
-                      loading={saving}
-                      onClick={() => void openGitBranchForm()}
-                      aria-label={t("delivery.requirement.gitCreateBranch")}
-                    />
-                  </Tooltip>
-                ) : null}
                 <Tooltip title={requirementKey ? t("delivery.requirement.shareLink") : t("delivery.requirement.saveFirst")}>
                   <Button
                     icon={<ShareAltOutlined />}
@@ -1465,7 +1482,12 @@ export function DeliveryRequirementSessionModal({
                   shape="circle"
                   icon={contextCollapsed ? <RightOutlined /> : <LeftOutlined />}
                   aria-label={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}
-                  onClick={() => setContextCollapsed((collapsed) => !collapsed)}
+                  onClick={() => {
+                    const nextCollapsed = !contextCollapsed;
+                    setContextCollapsed(nextCollapsed);
+                    // 需求信息展开时会话区变窄，已建分支的 Git 框先缩成小圆点让位；还没建分支的要一直露着入口。
+                    setGitPanelCollapsed(nextCollapsed ? false : gitLinked);
+                  }}
                 />
               </Tooltip>
             </div>
@@ -1479,79 +1501,171 @@ export function DeliveryRequirementSessionModal({
               {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.planning.stop")}</Button> : null}
             </div>
           </header>
-          {/* 需求信息收起后右边空出一块，Git 分支和推送就浮在这里；展开时这块被需求信息占用，直接隐藏。 */}
-          {contextCollapsed && gitLinked ? (
-            <aside className="delivery-requirement-git-panel">
+          {/* Git 相关入口全部收在这个悬浮框里：还没建分支时给创建入口，建好后是分支、变更和推送。 */}
+          {gitLinked || gitToolbarReady ? (
+            <aside className={`delivery-requirement-git-panel${gitPanelCollapsed ? " is-collapsed" : ""}`}>
               <header>
-                <span>{t("delivery.requirement.gitPanelTitle")}</span>
-                <Tooltip title={t("delivery.requirement.gitPanelRefresh")}>
-                  <Button
-                    type="text"
-                    size="small"
-                    shape="circle"
-                    icon={<ReloadOutlined />}
-                    aria-label={t("delivery.requirement.gitPanelRefresh")}
-                    onClick={() => void refreshGitStatus()}
-                  />
-                </Tooltip>
-              </header>
-              <Tooltip
-                placement="left"
-                title={gitStatus
-                  ? `${t("delivery.requirement.gitPanelChangesDetail")
-                    .replace("{staged}", String(gitStatus.staged))
-                    .replace("{unstaged}", String(gitStatus.unstaged))
-                    .replace("{untracked}", String(gitStatus.untracked))}\n${t("delivery.requirement.gitPanelChangesOpen")}`
-                  : t("delivery.requirement.gitPanelChangesOpen")}
-              >
-                <button
-                  className="delivery-requirement-git-panel__row is-action"
-                  type="button"
-                  onClick={() => setGitChangesOpen(true)}
-                >
-                  <FileTextOutlined />
-                  <span>{t("delivery.requirement.gitPanelChanges")}</span>
-                  <b className={gitStatus?.changed ? "is-dirty" : "is-clean"}>
-                    {gitStatus
-                      ? gitStatus.changed
-                        ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(gitStatus.changed))
-                        : t("delivery.requirement.gitBranchClean")
-                      : "—"}
-                  </b>
-                </button>
-              </Tooltip>
-              <div className="delivery-requirement-git-panel__row">
-                <BranchesOutlined />
-                <Tooltip title={saved?.gitBranch} placement="left">
-                  <code className="manager-mono">{saved?.gitBranch}</code>
-                </Tooltip>
-                {gitStatus?.currentBranch && gitStatus.currentBranch !== saved?.gitBranch ? (
-                  <Tooltip title={t("delivery.requirement.gitBranchNotCurrent").replace("{current}", gitStatus.currentBranch)}>
-                    <span className="is-mismatch">{t("delivery.requirement.gitState.mismatch")}</span>
+                {!gitPanelCollapsed ? <span>{t("delivery.requirement.gitPanelTitle")}</span> : null}
+                <div className="delivery-requirement-git-panel__header-actions">
+                  {!gitPanelCollapsed && gitLinked ? (
+                    <Tooltip title={t("delivery.requirement.gitPanelRefresh")}>
+                      <Button
+                        type="text"
+                        size="small"
+                        shape="circle"
+                        icon={<ReloadOutlined spin={gitStatusRefreshing} />}
+                        aria-label={t("delivery.requirement.gitPanelRefresh")}
+                        disabled={gitStatusRefreshing}
+                        onClick={() => void refreshGitStatus()}
+                      />
+                    </Tooltip>
+                  ) : null}
+                  <Tooltip title={t(gitPanelCollapsed ? "delivery.requirement.gitPanelExpand" : "delivery.requirement.gitPanelCollapse")}>
+                    <Button
+                      className="delivery-requirement-git-panel__toggle"
+                      type="text"
+                      size="small"
+                      shape="circle"
+                      icon={gitPanelCollapsed ? <LeftOutlined /> : <RightOutlined />}
+                      aria-label={t(gitPanelCollapsed ? "delivery.requirement.gitPanelExpand" : "delivery.requirement.gitPanelCollapse")}
+                      aria-expanded={!gitPanelCollapsed}
+                      onClick={() => setGitPanelCollapsed((collapsed) => !collapsed)}
+                    />
                   </Tooltip>
-                ) : null}
-              </div>
-              {gitPushReady ? (
-                <Tooltip
-                  placement="left"
-                  title={codexBridgeReady
-                    ? t("delivery.requirement.gitPushHint").replace("{branch}", saved?.gitBranch ?? "")
-                    : t("delivery.requirement.gitPanelUnavailable")}
-                >
+                </div>
+              </header>
+              {/* 还没建分支：面板里只放创建入口，顺带把「先建分支再对话」的原因说清楚。 */}
+              {!gitPanelCollapsed && !gitLinked ? (
+                <>
                   <button
-                    // 用 aria-disabled 而不是 disabled：原生禁用按钮收不到 hover，Tooltip 里的原因就没人看得到。
-                    className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady || gitPushing ? " is-disabled" : ""}`}
+                    className={`delivery-requirement-git-panel__row is-action${saving ? " is-disabled" : ""}`}
                     type="button"
-                    aria-disabled={!codexBridgeReady || gitPushing}
+                    aria-disabled={saving}
                     onClick={() => {
-                      if (!codexBridgeReady || gitPushing) return;
-                      openGitPush();
+                      if (saving) return;
+                      void openGitBranchForm();
                     }}
                   >
-                    {gitPushing ? <LoadingOutlined spin /> : <CloudUploadOutlined />}
-                    <span>{t("delivery.requirement.gitPanelPush")}</span>
+                    {saving ? <LoadingOutlined spin /> : <BranchesOutlined />}
+                    <span>{t("delivery.requirement.gitCreateBranch")}</span>
                   </button>
-                </Tooltip>
+                  {gitBranchRequiredBeforeConversation ? (
+                    <div className="delivery-requirement-git-panel__row">
+                      <span className="delivery-requirement-git-panel__row-caption">
+                        {t("delivery.requirement.gitBranchRequiredBeforeConversation")}
+                      </span>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+              {!gitPanelCollapsed && gitLinked ? (
+                <>
+                  <Tooltip
+                    placement="left"
+                    title={gitStatus
+                      ? `${t("delivery.requirement.gitPanelChangesDetail")
+                        .replace("{staged}", String(gitStatus.staged))
+                        .replace("{unstaged}", String(gitStatus.unstaged))
+                        .replace("{untracked}", String(gitStatus.untracked))}\n${t("delivery.requirement.gitPanelChangesOpen")}`
+                      : t("delivery.requirement.gitPanelChangesOpen")}
+                  >
+                    <button
+                      className="delivery-requirement-git-panel__row is-action"
+                      type="button"
+                      onClick={() => setGitChangesOpen(true)}
+                    >
+                      <FileTextOutlined />
+                      {/* 面板宽度固定，标题和取值分两行放，长文案就不会互相挤掉。 */}
+                      <span className="delivery-requirement-git-panel__row-body">
+                        <span className="delivery-requirement-git-panel__row-label">{t("delivery.requirement.gitPanelChanges")}</span>
+                        <b className={gitStatus?.changed ? "is-dirty" : "is-clean"}>
+                          {gitStatus
+                            ? gitStatus.changed
+                              ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(gitStatus.changed))
+                              : t("delivery.requirement.gitBranchClean")
+                            : "—"}
+                        </b>
+                      </span>
+                    </button>
+                  </Tooltip>
+                  {/* 需求分支和工作目录分支合成一行：一致时只有一条，不一致时第二条标出「当前分支」。 */}
+                  <div className="delivery-requirement-git-panel__row">
+                    <BranchesOutlined />
+                    <span className="delivery-requirement-git-panel__row-body">
+                      <span className="delivery-requirement-git-panel__branch">
+                        <Tooltip title={saved?.gitBranch} placement="left">
+                          <code className="manager-mono">{saved?.gitBranch}</code>
+                        </Tooltip>
+                        {gitStatus?.currentBranch ? (
+                          <Tooltip
+                            placement="left"
+                            title={gitBranchMismatched
+                              ? t("delivery.requirement.gitBranchNotCurrent").replace("{current}", gitStatus.currentBranch)
+                              : t("delivery.requirement.gitAlreadyOnBranch")}
+                          >
+                            <span className={`delivery-requirement-git-panel__tag${gitBranchMismatched ? " is-mismatch" : " is-ready"}`}>
+                              {t(gitBranchMismatched ? "delivery.requirement.gitState.mismatch" : "delivery.requirement.gitState.ready")}
+                            </span>
+                          </Tooltip>
+                        ) : null}
+                      </span>
+                      {gitBranchMismatched ? (
+                        <span className="delivery-requirement-git-panel__branch">
+                          <Tooltip title={gitStatus?.currentBranch} placement="left">
+                            <code className="manager-mono">{gitStatus?.currentBranch}</code>
+                          </Tooltip>
+                          <span className="delivery-requirement-git-panel__tag is-current">
+                            {t("delivery.requirement.gitCurrentBranchTag")}
+                          </span>
+                        </span>
+                      ) : null}
+                      {gitStatus && !gitStatus.currentBranch ? (
+                        <span className="delivery-requirement-git-panel__row-caption">
+                          {t("delivery.requirement.gitCurrentBranchDetached")}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                  {/* 分支不一致时给出直达入口：切换动作交给共用的检查弹窗，脏工作区的暂存/提交策略都在那里选。 */}
+                  {gitBranchMismatched ? (
+                    <Tooltip placement="left" title={codexBridgeReady ? t("delivery.requirement.gitCheckTitle") : t("delivery.requirement.gitPanelUnavailable")}>
+                      <button
+                        className={`delivery-requirement-git-panel__row is-action is-warning${!codexBridgeReady ? " is-disabled" : ""}`}
+                        type="button"
+                        aria-disabled={!codexBridgeReady}
+                        onClick={() => {
+                          if (!codexBridgeReady) return;
+                          setGitCheckOpen(true);
+                        }}
+                      >
+                        <SwapOutlined />
+                        <span>{t("delivery.requirement.gitCheck")}</span>
+                      </button>
+                    </Tooltip>
+                  ) : null}
+                  {gitPushReady ? (
+                    <Tooltip
+                      placement="left"
+                      title={codexBridgeReady
+                        ? t("delivery.requirement.gitPushHint").replace("{branch}", saved?.gitBranch ?? "")
+                        : t("delivery.requirement.gitPanelUnavailable")}
+                    >
+                      <button
+                        // 用 aria-disabled 而不是 disabled：原生禁用按钮收不到 hover，Tooltip 里的原因就没人看得到。
+                        className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady || gitPushing ? " is-disabled" : ""}`}
+                        type="button"
+                        aria-disabled={!codexBridgeReady || gitPushing}
+                        onClick={() => {
+                          if (!codexBridgeReady || gitPushing) return;
+                          openGitPush();
+                        }}
+                      >
+                        {gitPushing ? <LoadingOutlined spin /> : <CloudUploadOutlined />}
+                        <span>{t("delivery.requirement.gitPanelPush")}</span>
+                      </button>
+                    </Tooltip>
+                  ) : null}
+                </>
               ) : null}
             </aside>
           ) : null}
@@ -2416,10 +2530,59 @@ export function DeliveryRequirementSessionModal({
               options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
             />
           </label>
+          {/* 失败原因留在表单里，脏工作区还顺手给一个提交入口，不用退出去重新找。 */}
+          {gitBranchError ? (
+            <div className="delivery-requirement-git-error">
+              <b>{t("delivery.requirement.gitBranchCreateFailed")}</b>
+              <pre>{gitBranchError.detail}</pre>
+              {gitBranchError.dirty ? (
+                <>
+                  <p>
+                    {t("delivery.requirement.gitBranchCreateDirtyBranch")
+                      .replace("{branch}", gitBranchError.branch || t("delivery.requirement.gitCurrentBranchDetached"))
+                      .replace(
+                        "{requirement}",
+                        (() => {
+                          const owner = requirementOfBranch(gitBranchError.branch);
+                          return owner
+                            ? `${owner.name || owner.requirementKey}（${owner.requirementKey}）`
+                            : t("delivery.requirement.gitBranchCreateDirtyNoRequirement");
+                        })(),
+                      )}
+                  </p>
+                  <p>{t("delivery.requirement.gitBranchCreateDirtyHint").replace("{workspace}", getProjectWorkspace(programId) || "")}</p>
+                  <Button
+                    type="primary"
+                    icon={<CloudUploadOutlined />}
+                    disabled={!codexBridgeReady || !gitBranchError.branch}
+                    onClick={() => openGitPush(gitBranchError.branch)}
+                  >
+                    {t("delivery.requirement.gitBranchCreateCommit")}
+                  </Button>
+                </>
+              ) : null}
+              <p>{t("delivery.requirement.gitBranchCreateRetryHint")}</p>
+            </div>
+          ) : null}
         </div>
       </Modal>
 
       {/* 「变更」点开后的文件级明细，读的是本机工作区，跟推送用的是同一份状态。 */}
+      {projectGitEnabled && saved?.gitBranch ? (
+        <DeliveryRequirementGitCheckModal
+          requirement={gitCheckOpen ? saved : null}
+          programId={programId}
+          status={gitStatus}
+          statusError=""
+          statusLoading={gitStatusRefreshing}
+          onRefreshStatus={refreshGitStatus}
+          onClose={() => setGitCheckOpen(false)}
+          onPrepared={() => {
+            void refreshGitStatus();
+          }}
+        />
+      ) : null}
+
       <DeliveryGitChangesModal
         open={gitChangesOpen}
         programId={programId}
@@ -2450,7 +2613,7 @@ export function DeliveryRequirementSessionModal({
         ]}
       >
         <div className="delivery-requirement-git-push">
-          <p>{t("delivery.requirement.gitPushDescription").replace("{branch}", saved?.gitBranch ?? "")}</p>
+          <p>{t("delivery.requirement.gitPushDescription").replace("{branch}", gitPushBranch || saved?.gitBranch || "")}</p>
           <label>
             {t("delivery.requirement.gitPushMessage")}
             <Input.TextArea

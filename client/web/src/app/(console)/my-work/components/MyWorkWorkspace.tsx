@@ -4,6 +4,7 @@ import {
   AppstoreOutlined,
   ArrowRightOutlined,
   BranchesOutlined,
+  CheckSquareOutlined,
   ClockCircleOutlined,
   DeleteOutlined,
   ExperimentOutlined,
@@ -41,6 +42,7 @@ import { requirementMentionPlainText } from "../../delivery/components/DeliveryR
 import { DeliveryRequirementAssignModal } from "../../delivery/components/DeliveryRequirementAssignModal";
 import { DeliveryRequirementGitCheckModal } from "../../delivery/components/DeliveryRequirementGitCheckModal";
 import { DeliveryRequirementTimelineDrawer } from "../../delivery/components/DeliveryRequirementTimelineDrawer";
+import { DeliveryRequirementProgressModal } from "../../delivery/components/DeliveryRequirementProgressModal";
 import { DeliveryRequirementOutlineModal } from "../../delivery/components/DeliveryTaskOutline";
 import { DeliveryRequirementSessionModal } from "../../delivery/components/DeliveryRequirementSessionModal";
 import {
@@ -105,6 +107,7 @@ export function MyWorkWorkspace() {
   // 快速指派：只改负责人与协助人，不进需求编辑窗口。
   const [assignRecord, setAssignRecord] = useState<MyWorkRequirement | null>(null);
   const [timelineRecord, setTimelineRecord] = useState<MyWorkRequirement | null>(null);
+	const [progressRecord, setProgressRecord] = useState<MyWorkRequirement | null>(null);
   const [gitRecord, setGitRecord] = useState<MyWorkRequirement | null>(null);
   // 正在改状态的需求键：同一张卡片上的状态按钮转圈，别把整页都锁住。
   const [changingStatusKey, setChangingStatusKey] = useState("");
@@ -695,9 +698,11 @@ export function MyWorkWorkspace() {
 
                 <footer className="my-work-card__actions">
                   <div className="my-work-card__utility-actions">
+                    {/* 前四个是每天都在点的入口，各给一个颜色，和后面的次要操作分开。 */}
                     <Tooltip title={t("myWork.chat")}>
                       <Button
                         aria-label={t("myWork.chat")}
+                        className="my-work-action is-chat"
                         type="text"
                         size="small"
                         icon={<MessageOutlined />}
@@ -705,10 +710,31 @@ export function MyWorkWorkspace() {
                         onClick={() => void openSession(record)}
                       />
                     </Tooltip>
+                    <Tooltip title={t("delivery.progress.view")}>
+                      <Button
+                        aria-label={t("delivery.progress.view")}
+                        className="my-work-action is-progress"
+                        type="text"
+                        size="small"
+                        icon={<CheckSquareOutlined />}
+                        onClick={() => setProgressRecord(record)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t("delivery.requirement.outline")}>
+                      <Button
+                        aria-label={t("delivery.requirement.outline")}
+                        className="my-work-action is-outline"
+                        type="text"
+                        size="small"
+                        icon={<FileTextOutlined />}
+                        onClick={() => void openOutline(record)}
+                      />
+                    </Tooltip>
                     {gitState ? (
                       <Tooltip title={t("delivery.requirement.gitCheck")}>
                         <Button
                           aria-label={t("delivery.requirement.gitCheck")}
+                          className="my-work-action is-branch"
                           type="text"
                           size="small"
                           icon={<BranchesOutlined />}
@@ -717,6 +743,44 @@ export function MyWorkWorkspace() {
                         />
                       </Tooltip>
                     ) : null}
+                    {record.canWrite ? (
+                      <Tooltip title={t("delivery.requirement.assign")}>
+                        <Button
+                          aria-label={t("delivery.requirement.assign")}
+                          type="text"
+                          size="small"
+                          icon={<UsergroupAddOutlined />}
+                          onClick={() => setAssignRecord(record)}
+                        />
+                      </Tooltip>
+                    ) : null}
+                    <Tooltip title={t("delivery.requirement.shareLink")}>
+                      <Button
+                        aria-label={t("delivery.requirement.shareLink")}
+                        type="text"
+                        size="small"
+                        icon={<ShareAltOutlined />}
+                        onClick={() => void handleShare(record)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t("delivery.requirement.startTesting")}>
+                      <Button
+                        aria-label={t("delivery.requirement.startTesting")}
+                        type="text"
+                        size="small"
+                        icon={<ExperimentOutlined />}
+                        onClick={() => void openSession(record, true)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t("delivery.requirement.viewTimeline")}>
+                      <Button
+                        aria-label={t("delivery.requirement.viewTimeline")}
+                        type="text"
+                        size="small"
+                        icon={<HistoryOutlined />}
+                        onClick={() => setTimelineRecord(record)}
+                      />
+                    </Tooltip>
                     {record.canWrite ? (
                       <Dropdown
                         trigger={["click"]}
@@ -739,47 +803,6 @@ export function MyWorkWorkspace() {
                           />
                         </Tooltip>
                       </Dropdown>
-                    ) : null}
-                    <Tooltip title={t("delivery.requirement.startTesting")}>
-                      <Button
-                        aria-label={t("delivery.requirement.startTesting")}
-                        type="text"
-                        size="small"
-                        icon={<ExperimentOutlined />}
-                        onClick={() => void openSession(record, true)}
-                      />
-                    </Tooltip>
-                    <Tooltip title={t("delivery.requirement.viewTimeline")}>
-                      <Button
-                        aria-label={t("delivery.requirement.viewTimeline")}
-                        type="text"
-                        size="small"
-                        icon={<HistoryOutlined />}
-                        onClick={() => setTimelineRecord(record)}
-                      />
-                    </Tooltip>
-                    <Tooltip title={t("delivery.requirement.shareLink")}>
-                      <Button
-                        aria-label={t("delivery.requirement.shareLink")}
-                        type="text"
-                        size="small"
-                        icon={<ShareAltOutlined />}
-                        onClick={() => void handleShare(record)}
-                      />
-                    </Tooltip>
-                    <Tooltip title={t("delivery.requirement.outline")}>
-                      <Button aria-label={t("delivery.requirement.outline")} type="text" size="small" icon={<FileTextOutlined />} onClick={() => void openOutline(record)} />
-                    </Tooltip>
-                    {record.canWrite ? (
-                      <Tooltip title={t("delivery.requirement.assign")}>
-                        <Button
-                          aria-label={t("delivery.requirement.assign")}
-                          type="text"
-                          size="small"
-                          icon={<UsergroupAddOutlined />}
-                          onClick={() => setAssignRecord(record)}
-                        />
-                      </Tooltip>
                     ) : null}
                     {record.canWrite && deleteBlocked ? (
                       // 禁用态的按钮不触发 Tooltip，套一层容器把「为什么不能删」说清楚。
@@ -814,15 +837,6 @@ export function MyWorkWorkspace() {
                       </Popconfirm>
                     ) : null}
                   </div>
-                  <Button
-                    className="my-work-card__board-link"
-                    type="link"
-                    size="small"
-                    icon={<ArrowRightOutlined />}
-                    onClick={() => openBoard(record)}
-                  >
-                    {t("myWork.openBoard")}
-                  </Button>
                 </footer>
               </article>
             );
@@ -852,6 +866,18 @@ export function MyWorkWorkspace() {
         programId={timelineRecord?.programId ?? 0}
         requirement={timelineRecord}
         onClose={() => setTimelineRecord(null)}
+      />
+
+      <DeliveryRequirementProgressModal
+        open={Boolean(progressRecord)}
+        programId={progressRecord?.programId ?? 0}
+        bizLine={progressRecord?.bizLine ?? activeBusinessLine.id}
+        requirement={progressRecord}
+        onClose={() => setProgressRecord(null)}
+        onOpenItem={(item) => {
+          const target = progressRecord;
+          if (target) openBoard(target, item.itemKey);
+        }}
       />
 
       <DeliveryRequirementGitCheckModal

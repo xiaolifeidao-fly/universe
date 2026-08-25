@@ -66,6 +66,8 @@ type Service interface {
 	BindRequirementTestingSession(ctx context.Context, req dto.BindRequirementTestingSessionRequest) (dto.RequirementTestingSessionView, error)
 	// ListRequirementTimeline 合并需求自身与其下任务的变更流水，供需求管理查看完整上下文。
 	ListRequirementTimeline(ctx context.Context, query dto.RequirementTimelineQuery) (dto.RequirementTimelinePage, error)
+	// GetRequirementProgress 汇总需求任务图、状态和执行批次，供工作台与需求列表共用。
+	GetRequirementProgress(ctx context.Context, query dto.RequirementProgressQuery) (dto.RequirementProgressView, error)
 
 	// ---------- 任务 ----------
 	ListItems(ctx context.Context, query dto.ItemQuery) (dto.ItemPage, error)
