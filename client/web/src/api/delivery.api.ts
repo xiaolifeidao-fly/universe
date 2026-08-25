@@ -832,6 +832,11 @@ export class DeliveryDocumentFile {
   size = 0;
 
   updatedAt = "";
+
+  /** 文本类文档才能在面板里直接预览编辑；上传进来的 PDF、Word、图片走附件预览与下载。 */
+  previewable = true;
+
+  contentType = "";
 }
 
 /** 一个栏目下的全部文档，primaryPath 是面板默认选中的那份。 */
@@ -845,6 +850,9 @@ export class DeliveryDocumentSet {
   primaryPath = "";
 
   files: DeliveryDocumentFile[] = [];
+
+  /** 本次上传落盘的文档路径，仅上传接口返回。 */
+  uploaded: string[] = [];
 }
 
 /** HTML 预览用的同目录附属文件，name 是 HTML 里原样写的相对引用串。 */
@@ -2182,11 +2190,12 @@ export async function syncCodexCloudWorkspace(programId: number) {
   return result;
 }
 
+/** 建分支要先把基准分支拉到最新，超时按一次 fetch 的量级给，不按普通接口给。 */
 export async function createCodexGitBranch(programId: number, baseBranch: string, branch: string) {
   const response = await instance.post<CodexGitBranchResult>(
     `${CODEX_BRIDGE_URL}/v1/codex/git/branch`,
     bridgeWorkspaceParams(programId, { programId, baseBranch, branch }),
-    { timeout: 30000 },
+    { timeout: 300000 },
   );
   return plainToInstance(CodexGitBranchResult, response.data);
 }
@@ -2345,6 +2354,52 @@ export async function saveDeliveryDocumentFile(
     { timeout: 20000 },
   );
   return plainToInstance(DeliveryDocumentContent, response.data);
+}
+
+/** 一次最多往栏目目录里放几份文档，与本地桥接的上限保持一致。 */
+export const MAX_DOCUMENT_UPLOADS = 10;
+
+export const MAX_DOCUMENT_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+/**
+ * 往栏目目录里直接放文档：本地选的文件原样上传，粘贴的正文由调用方先包成一个文本文件。
+ * 重名不会覆盖已有文档，桥接层会顺延成「名字-2.后缀」，最终落盘路径以 uploaded 为准。
+ */
+export async function uploadDeliveryDocuments(
+  programId: number,
+  scope: DeliveryDocumentScope,
+  key: string,
+  files: File[],
+) {
+  const form = new FormData();
+  form.append("programId", String(programId));
+  form.append("scope", scope);
+  form.append("key", key);
+  form.append("workspace", requiredProjectWorkspace(programId));
+  files.forEach((file) => form.append("files", file, file.name));
+  const response = await instance.post<DeliveryDocumentSet>(
+    `${CODEX_BRIDGE_URL}/v1/codex/document-upload`,
+    form,
+    { timeout: 120000 },
+  );
+  const documentSet = plainToInstance(DeliveryDocumentSet, response.data);
+  documentSet.files = plainToInstance(DeliveryDocumentFile, response.data.files ?? []);
+  return documentSet;
+}
+
+/** 把栏目里一份不能当文本读的文档登记成产物，交给附件预览弹窗打开或下载。 */
+export async function fetchDeliveryDocumentAttachment(
+  programId: number,
+  scope: DeliveryDocumentScope,
+  key: string,
+  path: string,
+) {
+  const response = await instance.post<CodexConversationAttachment>(
+    `${CODEX_BRIDGE_URL}/v1/codex/document-attachment`,
+    bridgeWorkspaceParams(programId, { programId, scope, key, path }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexConversationAttachment, response.data);
 }
 
 export async function fetchCodexRequirementOutline(programId: number, requirementKey: string) {

@@ -3042,6 +3042,74 @@ select {
 
 .delivery-document-set-modal .delivery-document-panel__frame { min-height: 520px; }
 
+/* 上传进来的 PDF、Word、图片没有正文可渲染：给一张说明卡片，去附件预览里打开或下载。 */
+.delivery-document-panel__binary {
+	display: grid;
+	justify-items: center;
+	gap: 8px;
+	padding: 48px 16px;
+	border: 1px dashed var(--manager-border);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-bg-soft);
+	color: var(--manager-text-soft);
+	text-align: center;
+}
+
+/* 图片、视频、音频、PDF 直接在栏目里看，底下一条说明加「打开文档」去弹窗里放大或下载。 */
+.delivery-document-panel__media {
+	display: grid;
+	gap: 10px;
+	padding: 12px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-bg-soft);
+}
+
+.delivery-document-panel__media-image {
+	display: block;
+	max-width: 100%;
+	max-height: 70vh;
+	margin: 0 auto;
+	border-radius: var(--manager-r-sm);
+	background: #fff;
+	cursor: zoom-in;
+	object-fit: contain;
+}
+
+.delivery-document-panel__media-player {
+	display: block;
+	width: 100%;
+	max-height: 70vh;
+	border-radius: var(--manager-r-sm);
+	background: #000;
+}
+
+.delivery-document-panel__media-audio { width: 100%; }
+.delivery-document-panel__media-placeholder { min-height: 220px; }
+
+.delivery-document-panel__media-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+}
+
+.delivery-document-panel__binary-icon { color: var(--manager-text-faint); font-size: 28px; }
+.delivery-document-panel__binary b { color: var(--manager-text); font-size: var(--manager-fs-md); word-break: break-all; }
+.delivery-document-panel__binary span { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); }
+.delivery-document-panel__binary p { max-width: 420px; margin: 0 0 8px; font-size: var(--manager-fs-sm); }
+
+.delivery-document-upload__hint {
+	margin: 0;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+	word-break: break-all;
+}
+
+.delivery-document-upload__paste { display: grid; gap: 12px; }
+
 .delivery-execution-process { display: grid; gap: 24px; }
 .delivery-execution-process__summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--manager-border); border-radius: 6px; background: var(--manager-panel); }
 .delivery-execution-timeline { padding: 4px 6px; }
@@ -5101,8 +5169,12 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-git-changes {
 	display: grid;
 	grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+	/* 显式给一行 minmax(0, 1fr)：隐式行是 auto，会被 diff 正文撑高而顶穿 max-height，
+	   两侧就都失去了自己的滚动条。 */
+	grid-template-rows: minmax(0, 1fr);
 	min-height: min(66vh, 660px);
 	max-height: min(66vh, 660px);
+	overflow: hidden;
 	background: var(--manager-surface);
 }
 
@@ -5196,7 +5268,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   .delivery-git-changes-modal .ant-modal-content { height: calc(100dvh - 24px); }
   .delivery-git-changes-modal .ant-modal-header { padding: 16px 48px 14px 16px; }
   .delivery-git-changes__title-actions code { max-width: 42vw; }
-  .delivery-git-changes { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 42%) minmax(0, 1fr); min-height: calc(100dvh - 106px); max-height: calc(100dvh - 106px); }
+  .delivery-git-changes { grid-template-columns: 1fr; grid-template-rows: minmax(0, 42%) minmax(0, 1fr); min-height: calc(100dvh - 106px); max-height: calc(100dvh - 106px); }
   .delivery-git-changes__files { border-right: 0; border-bottom: 1px solid var(--manager-border); }
   .delivery-git-changes__files-header { gap: 8px; padding: 12px 14px; }
   .delivery-git-changes__file-list { grid-auto-flow: column; grid-auto-columns: minmax(230px, 70%); align-content: stretch; overflow-x: auto; overflow-y: hidden; padding: 8px 14px; }

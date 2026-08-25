@@ -495,8 +495,8 @@ export function DeliveryRequirementSessionModal({
 		setGitBaseBranch(requirement?.gitBaseBranch ?? projectGitBaseBranch);
 		setGitBranch(requirement?.gitBranch ?? "");
 		setGitBranches([]);
-		// 打开时需求信息是展开的：已建分支的 Git 框先收成小圆点，别一进来就压住会话。
-		setGitPanelCollapsed(Boolean(requirement?.gitBranch && requirement?.gitBranchCreatedAt));
+		// 打开需求聊天就要能直接看到 Git 信息，别让用户先去点开小圆点。
+		setGitPanelCollapsed(false);
     setStageKey(requirement?.stageKey ?? "");
     setModuleKey(requirement?.moduleKey ?? "");
     setKind(requirement?.kind ?? "");
@@ -1485,8 +1485,7 @@ export function DeliveryRequirementSessionModal({
                   onClick={() => {
                     const nextCollapsed = !contextCollapsed;
                     setContextCollapsed(nextCollapsed);
-                    // 需求信息展开时会话区变窄，已建分支的 Git 框先缩成小圆点让位；还没建分支的要一直露着入口。
-                    setGitPanelCollapsed(nextCollapsed ? false : gitLinked);
+                    setGitPanelCollapsed(false);
                   }}
                 />
               </Tooltip>
@@ -2199,6 +2198,7 @@ export function DeliveryRequirementSessionModal({
                     scope="requirement-outline"
                     subjectKey={requirementKey}
                     codexBridgeReady={codexBridgeReady}
+                    uploadable
                     emptyText={t("delivery.outline.requirementEmpty")}
                     onExpand={() => setOutlineFullscreen(true)}
                     refreshToken={active ? "running" : "idle"}
@@ -2272,6 +2272,7 @@ export function DeliveryRequirementSessionModal({
         subjectKey={requirementKey}
         codexBridgeReady={codexBridgeReady}
         title={`${t("delivery.outline.tab")} · ${requirement?.name || requirementKey}`}
+        uploadable
         emptyText={t("delivery.outline.requirementEmpty")}
         onClose={() => setOutlineFullscreen(false)}
       />

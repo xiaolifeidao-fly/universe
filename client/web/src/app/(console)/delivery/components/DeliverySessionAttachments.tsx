@@ -81,10 +81,20 @@ function fileExtension(name: string) {
 }
 
 export function attachmentPreviewKind(attachment: CodexConversationAttachment): AttachmentPreviewKind {
-  const contentType = attachment.contentType.toLowerCase().split(";", 1)[0] ?? "";
-  const extension = fileExtension(attachment.name);
-  if (attachment.size > MAX_INLINE_PREVIEW_BYTES || OFFICE_EXTENSIONS.has(extension)) return "download";
-  if (attachment.isImage || contentType.startsWith("image/")) return "image";
+  return filePreviewKind(attachment.name, attachment.contentType, attachment.size, attachment.isImage);
+}
+
+/** 只看文件名、类型和大小就能定的预览方式，登记成附件之前也用得上（例如文档栏目里的文件清单）。 */
+export function filePreviewKind(
+  name: string,
+  rawContentType: string,
+  size: number,
+  isImage = false,
+): AttachmentPreviewKind {
+  const contentType = (rawContentType || "").toLowerCase().split(";", 1)[0] ?? "";
+  const extension = fileExtension(name);
+  if (size > MAX_INLINE_PREVIEW_BYTES || OFFICE_EXTENSIONS.has(extension)) return "download";
+  if (isImage || contentType.startsWith("image/")) return "image";
   if (contentType === "application/pdf" || extension === "pdf") return "pdf";
   if (contentType.startsWith("video/")) return "video";
   if (contentType.startsWith("audio/")) return "audio";

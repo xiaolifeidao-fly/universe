@@ -4,19 +4,28 @@ import {
   EditOutlined,
   ExpandOutlined,
   ExportOutlined,
+  FileOutlined,
   FileTextOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
+  InboxOutlined,
   ReloadOutlined,
   SaveOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
-import { Button, Empty, Input, Modal, Select, Spin, Tooltip, message } from "antd";
+import { Button, Empty, Input, Modal, Select, Spin, Tabs, Tooltip, Upload, message } from "antd";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  MAX_DOCUMENT_UPLOADS,
+  MAX_DOCUMENT_UPLOAD_BYTES,
+  fetchCodexConversationAttachment,
+  fetchDeliveryDocumentAttachment,
   fetchDeliveryDocumentFile,
   fetchDeliveryDocumentSet,
   saveDeliveryDocumentFile,
+  uploadDeliveryDocuments,
+  type CodexConversationAttachment,
   type DeliveryDocumentContent,
   type DeliveryDocumentFile,
   type DeliveryDocumentScope,
@@ -24,6 +33,12 @@ import {
 import { useLocale } from "@/i18n/LocaleProvider";
 import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { SessionDocumentText } from "./DeliverySessionMessage";
+import {
+  SessionFilePreviewModal,
+  clipboardAttachments,
+  filePreviewKind,
+  readableAttachmentSize,
+} from "./DeliverySessionAttachments";
 
 const HTML_ENTITIES: Record<string, string> = {
   "&": "&amp;",
@@ -48,6 +63,21 @@ pre { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font: 13px/1.7 
 }
 
 /**
+ * 栏目里一份非文本文档该怎么看。图片、视频、音频、PDF 直接在面板里预览，
+ * 其余（Word、Excel、压缩包这类）只给下载。上传本身就限死 20 MB，
+ * 所以这里不套聊天附件那条 8 MB 内联上限，免得一段视频白白退化成下载卡片。
+ */
+function documentPreviewKind(file: DeliveryDocumentFile) {
+  const kind = filePreviewKind(file.name, file.contentType, file.size);
+  if (kind !== "download") return kind;
+  const contentType = (file.contentType || "").toLowerCase();
+  if (contentType.startsWith("image/")) return "image" as const;
+  if (contentType.startsWith("video/")) return "video" as const;
+  if (contentType.startsWith("audio/")) return "audio" as const;
+  return kind;
+}
+
+/**
  * 需求大纲、任务文档、设计文档、测试用例都各自对应工作区里的一个目录，目录里可以有多份文档。
  * 面板只负责选择和编辑已有文档：新增文档一律由会话产出，避免面板造出执行器不认识的文件。
  */
@@ -66,6 +96,11 @@ export interface DeliveryDocumentSetProps {
   emptyText?: string;
   /** 只读栏目（例如仅供查看的测试报告）传 false。 */
   editable?: boolean;
+  /**
+   * 允许把本地文件或粘贴的正文直接放进这个栏目的目录，需求文档栏目用得上：
+   * 需求资料常常是人手里的 PDF、Word、截图，不该只能等会话去生成。
+   */
+  uploadable?: boolean;
   /** 传了就在操作区显示「全屏预览」，交给调用方打开左右分栏弹窗。 */
   onExpand?: () => void;
   /** 值变了就重新拉一次目录：文档是会话写进工作区的，面板自己不会知道它变了。 */
@@ -136,6 +171,11 @@ function useDocumentSet(
       setDocument(null);
       return;
     }
+    // 上传进来的 PDF、Word、图片当文本读一定失败，它们交给附件预览，这里干脆不发这次请求。
+    if (files.some((file) => file.path === path && !file.previewable)) {
+      setDocument(null);
+      return;
+    }
     let cancelled = false;
     setReading(true);
     fetchDeliveryDocumentFile(programId, scope, subjectKey, path)
@@ -153,9 +193,179 @@ function useDocumentSet(
     return () => {
       cancelled = true;
     };
-  }, [path, programId, ready, scope, subjectKey]);
+  }, [files, path, programId, ready, scope, subjectKey]);
 
   return { files, directory, path, setPath, document, setDocument, loading: listing || reading, reload };
+}
+
+/**
+ * 往栏目目录里放文档的弹窗：一边是选本地文件（拖进来、点开选、或者直接粘贴），
+ * 一边是把手里的正文粘过来另存成一份文档。两条路最后都是往目录里写文件，走同一个上传接口。
+ */
+function DocumentUploadModal({
+  open,
+  programId,
+  scope,
+  subjectKey,
+  directory,
+  onClose,
+  onUploaded,
+}: {
+  open: boolean;
+  programId: number;
+  scope: DeliveryDocumentScope;
+  subjectKey: string;
+  directory: string;
+  onClose: () => void;
+  onUploaded: (path: string) => void;
+}) {
+  const { t } = useLocale();
+  const [tab, setTab] = useState("file");
+  const [files, setFiles] = useState<File[]>([]);
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  // 关掉再打开是「再放一份」，不该把上一次选的文件和正文带回来。
+  useEffect(() => {
+    if (open) return;
+    setTab("file");
+    setFiles([]);
+    setName("");
+    setText("");
+  }, [open]);
+
+  const addFiles = useCallback((picked: File[]) => {
+    const accepted = picked.filter((file) => {
+      if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+        message.error(`${file.name}：${t("delivery.docset.uploadTooLarge")}`);
+        return false;
+      }
+      return true;
+    });
+    setFiles((current) => {
+      const merged = [...current];
+      accepted.forEach((file) => {
+        if (!merged.some((item) => item.name === file.name && item.size === file.size)) merged.push(file);
+      });
+      if (merged.length > MAX_DOCUMENT_UPLOADS) message.warning(t("delivery.docset.uploadTooMany"));
+      return merged.slice(0, MAX_DOCUMENT_UPLOADS);
+    });
+  }, [t]);
+
+  /**
+   * 直接 Cmd/Ctrl+V 把复制的图片或文件放进待上传列表：截图、从访达复制的文件都走这条路，
+   * 不用先存到本地再点开选择。粘的是纯文本就不拦，交给「粘贴正文」页签。
+   */
+  useEffect(() => {
+    if (!open || tab !== "file") return undefined;
+    const onPaste = (event: ClipboardEvent) => {
+      const pasted = clipboardAttachments(event.clipboardData);
+      if (!pasted.length) return;
+      event.preventDefault();
+      addFiles(pasted);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addFiles, open, tab]);
+
+  /** 粘贴的正文本身就是一份文档，包成文件后和本地选的文件走同一条上传路径。 */
+  const pastedFile = () => {
+    const trimmed = name.trim() || t("delivery.docset.pastedDefaultName");
+    // 没写后缀就按 Markdown 存：粘过来的多半是一段需求说明。
+    const fileName = /\.[A-Za-z0-9]{1,20}$/.test(trimmed) ? trimmed : `${trimmed}.md`;
+    return new File([text.endsWith("\n") ? text : `${text}\n`], fileName, { type: "text/markdown" });
+  };
+
+  const submit = async () => {
+    const payload = tab === "file" ? files : text.trim() ? [pastedFile()] : [];
+    if (!payload.length) {
+      message.warning(t(tab === "file" ? "delivery.docset.uploadPickFirst" : "delivery.docset.uploadEmptyText"));
+      return;
+    }
+    setUploading(true);
+    try {
+      const documentSet = await uploadDeliveryDocuments(programId, scope, subjectKey, payload);
+      message.success(`${t("delivery.docset.uploaded")}${documentSet.uploaded.length}`);
+      onUploaded(documentSet.uploaded[0] ?? "");
+      onClose();
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={t("delivery.docset.upload")}
+      okText={t("delivery.docset.uploadSubmit")}
+      cancelText={t("common.cancel")}
+      confirmLoading={uploading}
+      width={640}
+      destroyOnClose
+      onOk={() => void submit()}
+      onCancel={onClose}
+    >
+      <p className="delivery-document-upload__hint">{`${t("delivery.docset.uploadTarget")}${directory || "-"}`}</p>
+      <Tabs
+        activeKey={tab}
+        onChange={setTab}
+        items={[
+          {
+            key: "file",
+            label: t("delivery.docset.uploadLocal"),
+            children: (
+              <Upload.Dragger
+                multiple
+                fileList={files.map((file) => ({
+                  uid: `${file.name}-${file.size}-${file.lastModified}`,
+                  name: file.name,
+                  size: file.size,
+                  status: "done" as const,
+                }))}
+                // 交给上传按钮统一提交，选完文件不立刻发请求。
+                beforeUpload={(_file, picked) => {
+                  addFiles(picked);
+                  return Upload.LIST_IGNORE;
+                }}
+                onRemove={(item) => {
+                  setFiles((current) => current.filter(
+                    (file) => `${file.name}-${file.size}-${file.lastModified}` !== item.uid,
+                  ));
+                  return false;
+                }}
+              >
+                <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+                <p className="ant-upload-text">{t("delivery.docset.uploadDrag")}</p>
+                <p className="ant-upload-hint">{t("delivery.docset.uploadLimit")}</p>
+              </Upload.Dragger>
+            ),
+          },
+          {
+            key: "text",
+            label: t("delivery.docset.uploadPaste"),
+            children: (
+              <div className="delivery-document-upload__paste">
+                <Input
+                  value={name}
+                  placeholder={t("delivery.docset.uploadNamePlaceholder")}
+                  onChange={(event) => setName(event.target.value)}
+                />
+                <Input.TextArea
+                  autoSize={{ minRows: 10, maxRows: 20 }}
+                  value={text}
+                  placeholder={t("delivery.docset.uploadTextPlaceholder")}
+                  onChange={(event) => setText(event.target.value)}
+                />
+              </div>
+            ),
+          },
+        ]}
+      />
+    </Modal>
+  );
 }
 
 interface DocumentSetViewProps extends DeliveryDocumentSetProps {
@@ -177,6 +387,7 @@ function DocumentSetView({
   browserTitle,
   emptyText,
   editable = true,
+  uploadable = false,
   onExpand,
   refreshToken,
   scroll,
@@ -185,7 +396,7 @@ function DocumentSetView({
   onToggleFullscreen,
 }: DocumentSetViewProps) {
   const { t } = useLocale();
-  const { files, path, setPath, document, setDocument, loading, reload } = useDocumentSet(
+  const { files, directory, path, setPath, document, setDocument, loading, reload } = useDocumentSet(
     programId,
     scope,
     subjectKey,
@@ -195,6 +406,11 @@ function DocumentSetView({
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [attachment, setAttachment] = useState<CodexConversationAttachment | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaLoading, setMediaLoading] = useState(false);
 
   useEffect(() => {
     setEditing(false);
@@ -213,8 +429,58 @@ function DocumentSetView({
     () => files.map((file) => ({ value: file.path, label: file.name })),
     [files],
   );
-  const canEdit = editable && Boolean(document?.exists) && !loading;
-  const contentForBrowser = document?.content ?? browserContent ?? "";
+  const selectedFile = useMemo(() => files.find((file) => file.path === path) ?? null, [files, path]);
+  // 不能当文本读的文档（图片、视频、PDF、Word）不参与编辑和「用浏览器打开」，走各自的预览或下载。
+  const previewable = !selectedFile || selectedFile.previewable;
+  const mediaKind = selectedFile && !previewable ? documentPreviewKind(selectedFile) : "download";
+  const canEdit = editable && previewable && Boolean(document?.exists) && !loading;
+  const contentForBrowser = previewable ? document?.content ?? browserContent ?? "" : "";
+
+  /** 把选中的这份非文本文档登记成产物，登记完就能按它的地址取正文。 */
+  const registerAttachment = useCallback(
+    () => fetchDeliveryDocumentAttachment(programId, scope, subjectKey, selectedFile?.path ?? ""),
+    [programId, scope, selectedFile?.path, subjectKey],
+  );
+
+  /** 图片、视频、音频、PDF 直接在面板里放出来：取回正文做成本地地址交给对应的标签。 */
+  useEffect(() => {
+    setMediaUrl("");
+    if (!selectedFile || previewable || mediaKind === "download") return undefined;
+    let disposed = false;
+    let objectUrl = "";
+    setMediaLoading(true);
+    void registerAttachment()
+      .then((registered) => fetchCodexConversationAttachment(programId, registered.url))
+      .then((blob) => {
+        if (disposed) return;
+        objectUrl = URL.createObjectURL(blob);
+        setMediaUrl(objectUrl);
+      })
+      .catch((error) => {
+        if (!disposed) message.error((error as Error).message);
+      })
+      .finally(() => {
+        if (!disposed) setMediaLoading(false);
+      });
+    return () => {
+      disposed = true;
+      // 换一份文档就把上一份的本地地址还回去，别一直占着内存。
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [mediaKind, previewable, programId, registerAttachment, selectedFile]);
+
+  /** 交给聊天里同一套文件预览弹窗打开：那里有下载、放大和源码几种看法。 */
+  const openAttachment = async () => {
+    if (!selectedFile) return;
+    setOpening(true);
+    try {
+      setAttachment(await registerAttachment());
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setOpening(false);
+    }
+  };
 
   const submit = async () => {
     if (!path) return;
@@ -291,6 +557,18 @@ function DocumentSetView({
           onChange={(value) => setPath(value)}
         />
       ) : null}
+      {uploadable ? (
+        <Tooltip title={t("delivery.docset.uploadHint")}>
+          <Button
+            size="small"
+            icon={<UploadOutlined />}
+            disabled={editing || !subjectKey}
+            onClick={() => setUploadOpen(true)}
+          >
+            {t("delivery.docset.upload")}
+          </Button>
+        </Tooltip>
+      ) : null}
       <Tooltip title={t("delivery.session.refresh")}>
         <Button
           size="small"
@@ -359,7 +637,53 @@ function DocumentSetView({
     </span>
   );
 
-  const body = editing ? (
+  const mediaMeta = selectedFile
+    ? [selectedFile.contentType, readableAttachmentSize(selectedFile.size)].filter(Boolean).join(" · ")
+    : "";
+
+  const body = !previewable && selectedFile ? (
+    mediaKind === "download" ? (
+      <div className="delivery-document-panel__binary">
+        <FileOutlined className="delivery-document-panel__binary-icon" />
+        <b>{selectedFile.name}</b>
+        <span>{mediaMeta}</span>
+        <p>{t("delivery.docset.binaryHint")}</p>
+        <Button type="primary" loading={opening} onClick={() => void openAttachment()}>
+          {t("delivery.docset.binaryOpen")}
+        </Button>
+      </div>
+    ) : (
+      <div className="delivery-document-panel__media">
+        <Spin spinning={mediaLoading}>
+          {mediaUrl ? (
+            mediaKind === "image" ? (
+              // 点图片放大到预览弹窗里看，面板里先按适配宽度铺开。
+              <img
+                className="delivery-document-panel__media-image"
+                src={mediaUrl}
+                alt={selectedFile.name}
+                onClick={() => void openAttachment()}
+              />
+            ) : mediaKind === "video" ? (
+              <video className="delivery-document-panel__media-player" controls src={mediaUrl} />
+            ) : mediaKind === "audio" ? (
+              <audio className="delivery-document-panel__media-audio" controls src={mediaUrl} />
+            ) : (
+              <iframe className="delivery-document-panel__frame" title={selectedFile.name} src={mediaUrl} />
+            )
+          ) : (
+            <div className="delivery-document-panel__media-placeholder" />
+          )}
+        </Spin>
+        <footer className="delivery-document-panel__media-bar">
+          <span>{mediaMeta}</span>
+          <Button size="small" loading={opening} onClick={() => void openAttachment()}>
+            {t("delivery.docset.binaryOpen")}
+          </Button>
+        </footer>
+      </div>
+    )
+  ) : editing ? (
     <Input.TextArea
       autoSize={{ minRows: layout === "split" ? 20 : 12, maxRows: 40 }}
       value={draft}
@@ -398,6 +722,28 @@ function DocumentSetView({
     </div>
   ) : null;
 
+  const overlays = (
+    <>
+      {uploadable ? (
+        <DocumentUploadModal
+          open={uploadOpen}
+          programId={programId}
+          scope={scope}
+          subjectKey={subjectKey}
+          directory={directory}
+          onClose={() => setUploadOpen(false)}
+          onUploaded={(uploadedPath) => void reload(uploadedPath)}
+        />
+      ) : null}
+      <SessionFilePreviewModal
+        attachment={attachment}
+        programId={programId}
+        open={Boolean(attachment)}
+        onClose={() => setAttachment(null)}
+      />
+    </>
+  );
+
   if (layout === "split") {
     return (
       <div className="delivery-document-set">
@@ -413,7 +759,7 @@ function DocumentSetView({
                     disabled={editing}
                     onClick={() => setPath(file.path)}
                   >
-                    <FileTextOutlined />
+                    {file.previewable ? <FileTextOutlined /> : <FileOutlined />}
                     <span className="delivery-document-set__name" title={file.name}>{file.name}</span>
                     <small>{file.updatedAt ? dayjs(file.updatedAt).format("MM-DD HH:mm") : ""}</small>
                   </button>
@@ -432,6 +778,7 @@ function DocumentSetView({
           {meta}
           <Spin spinning={loading}>{body}</Spin>
         </section>
+        {overlays}
       </div>
     );
   }
@@ -444,6 +791,7 @@ function DocumentSetView({
       </header>
       {meta}
       <Spin spinning={loading}>{body}</Spin>
+      {overlays}
     </section>
   );
 }

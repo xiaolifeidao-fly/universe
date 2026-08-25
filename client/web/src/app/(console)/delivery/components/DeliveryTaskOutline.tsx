@@ -43,6 +43,7 @@ export function DeliveryRequirementOutlinePanel({
         codexBridgeReady={codexBridgeReady}
         title={title}
         scroll={scroll}
+        uploadable
         emptyText={t("delivery.outline.requirementEmpty")}
         onExpand={() => setExpanded(true)}
       />
@@ -53,6 +54,7 @@ export function DeliveryRequirementOutlinePanel({
         subjectKey={subjectKey}
         codexBridgeReady={codexBridgeReady}
         title={outlineTitle(requirement, t("delivery.outline.tab"))}
+        uploadable
         emptyText={t("delivery.outline.requirementEmpty")}
         onClose={() => setExpanded(false)}
       />
@@ -77,6 +79,7 @@ export function DeliveryRequirementOutlineModal({
       subjectKey={requirement?.requirementKey ?? ""}
       codexBridgeReady={codexBridgeReady}
       title={outlineTitle(requirement, t("delivery.outline.tab"))}
+      uploadable
       emptyText={t("delivery.outline.requirementEmpty")}
       onClose={onClose}
     />
