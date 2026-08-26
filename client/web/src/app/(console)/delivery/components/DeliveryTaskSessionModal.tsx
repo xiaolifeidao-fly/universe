@@ -75,6 +75,7 @@ import {
   clipboardAttachments,
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
+import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
@@ -196,6 +197,7 @@ export function DeliveryTaskSessionModal({
   const [draggingAttachments, setDraggingAttachments] = useState(false);
   const [liveEvents, setLiveEvents] = useState<ExecutionProgressEvent[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [switchingThreadId, setSwitchingThreadId] = useState("");
   const [newConversation, setNewConversation] = useState(false);
   const [testingConversations, setTestingConversations] = useState<CodexConversationSummary[]>([]);
   const [testingWorkspaceOpen, setTestingWorkspaceOpen] = useState(false);
@@ -209,6 +211,8 @@ export function DeliveryTaskSessionModal({
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const documentResizePointerIdRef = useRef<number | null>(null);
+  const newConversationRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
 
   const activeItem = detail ?? item;
   const active = Boolean(conversation?.active && !newConversation);
@@ -262,6 +266,7 @@ export function DeliveryTaskSessionModal({
   }, [activeItem?.itemKey, activeItem?.requirementKey, programId]);
   const load = useCallback(async (threadId = selectedThreadId) => {
     if (!item || !programId) return null;
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     try {
       const [nextDetail, nextConversation, nextTestingConversation] = await Promise.all([
@@ -269,18 +274,24 @@ export function DeliveryTaskSessionModal({
         codexBridgeReady ? fetchCodexConversation(programId, item.itemKey, threadId, scenePreference.tool) : Promise.resolve(null),
         codexBridgeReady ? fetchCodexTaskTestingCasesConversation(programId, item.itemKey, "", taskTestingProvider) : Promise.resolve(null),
       ]);
+      if (requestId !== loadRequestIdRef.current) return null;
       setDetail(nextDetail);
       setConversation(nextConversation);
-      setConversationExecutorType(nextConversation?.threadId ? nextConversation.executorType : "");
+      if (!newConversationRef.current) {
+        setConversationExecutorType(nextConversation?.threadId ? nextConversation.executorType : "");
+        if (nextConversation?.threadId) setSelectedThreadId(nextConversation.threadId);
+      }
       setTestingConversations(nextTestingConversation?.conversations ?? []);
       if (terminalConversationReady(nextConversation)) setLiveEvents([]);
-      if (nextConversation?.threadId) setSelectedThreadId(nextConversation.threadId);
       return nextConversation;
     } catch (error) {
       message.error((error as Error).message);
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+        setSwitchingThreadId("");
+      }
     }
   }, [codexBridgeReady, item, programId, scenePreference.tool, selectedThreadId, taskTestingProvider]);
 
@@ -336,6 +347,8 @@ export function DeliveryTaskSessionModal({
 
   useEffect(() => {
     if (!open) {
+      newConversationRef.current = false;
+      loadRequestIdRef.current += 1;
       setDetail(null);
       setConversation(null);
       setRequirementDocument("");
@@ -347,6 +360,7 @@ export function DeliveryTaskSessionModal({
       setAttachments([]);
       setDraggingAttachments(false);
       setSelectedThreadId("");
+      setSwitchingThreadId("");
       setNewConversation(false);
       setTestingConversations([]);
       setTestingWorkspaceOpen(false);
@@ -392,19 +406,18 @@ export function DeliveryTaskSessionModal({
     };
   }, [resizingDocuments, resizeDocumentPanel]);
 
-  useEffect(() => {
-    if (!open || (!active && !awaitingTerminalResult)) return undefined;
-    const timer = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(timer);
-  }, [active, awaitingTerminalResult, load, open]);
+  usePollingLoop(open && (active || awaitingTerminalResult), 5000, load);
 
   const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([
     flattenedItems.length,
     liveEvents.length,
     active,
-  ]);
+  ], !switchingThreadId && conversation?.threadId && activeItem?.itemKey
+    ? `zb.delivery.scroll.task.${programId}.${activeItem.itemKey}.${conversation.threadId}`
+    : "");
 
   const send = async () => {
+    if (switchingThreadId) return;
     const text = draft.trim() || (chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
     if (!activeItem || (!text && !attachments.length)) return;
     if (historicalConversation) return;
@@ -430,8 +443,10 @@ export function DeliveryTaskSessionModal({
       setDraft("");
       setChatReferences([]);
       setAttachments([]);
+      newConversationRef.current = false;
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
+      setSwitchingThreadId("");
       await Promise.all([load(action.threadId), onChanged()]);
     } catch (error) {
       message.error((error as Error).message);
@@ -456,8 +471,10 @@ export function DeliveryTaskSessionModal({
 
   const selectConversation = (threadId: string) => {
     if (threadId === selectedThreadId && !newConversation) return;
+    newConversationRef.current = false;
     setNewConversation(false);
     setSelectedThreadId(threadId);
+    setSwitchingThreadId(threadId);
     setLiveEvents([]);
     setDraft("");
     setChatReferences([]);
@@ -467,10 +484,14 @@ export function DeliveryTaskSessionModal({
 
   const startNewConversation = () => {
     if (taskHasActiveConversation) return;
+    newConversationRef.current = true;
+    loadRequestIdRef.current += 1;
+    setLoading(false);
     setNewConversation(true);
     // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
     setConversationExecutorType("");
     setSelectedThreadId("");
+    setSwitchingThreadId("");
     setLiveEvents([]);
     setDraft("");
     setChatReferences([]);
@@ -654,7 +675,7 @@ export function DeliveryTaskSessionModal({
               ) : null}
               {taskHistory.map(({ kind, entry }) => (
                 <button
-                  className={`delivery-session-history__item${kind === "task" && entry.threadId === conversation?.threadId && !newConversation ? " is-selected" : ""}`}
+                  className={`delivery-session-history__item${kind === "task" && entry.threadId === (switchingThreadId || conversation?.threadId) && !newConversation ? " is-selected" : ""}`}
                   key={`${kind}-${entry.threadId}`}
                   type="button"
                   onClick={() => kind === "task" ? selectConversation(entry.threadId) : openTestingConversation(entry.threadId)}
@@ -700,7 +721,9 @@ export function DeliveryTaskSessionModal({
               </div>
             </header>
             <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
-              <Spin spinning={loading && !detail}>
+              {switchingThreadId ? (
+                <div className="delivery-session-transcript__loading"><Spin /></div>
+              ) : <Spin spinning={loading && !detail}>
                 {!newConversation && flattenedItems.length ? (
                   // 按回合渲染：每个回合末尾补一份「本次改动」，对齐直接用 Codex / Claude 时看到的改动清单。
                   (conversation?.turns ?? []).map((turn) => (
@@ -732,7 +755,7 @@ export function DeliveryTaskSessionModal({
                   </div>
                 ) : null}
                 {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
-              </Spin>
+              </Spin>}
             </div>
             <footer
               className={`delivery-session-composer${draggingAttachments ? " is-dragging" : ""}`}

@@ -44,6 +44,7 @@ import {
   type RequirementTestingStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import {
@@ -122,6 +123,7 @@ export function DeliveryRequirementTestingModal({
   const requirementKey = requirement?.requirementKey ?? "";
   const [conversation, setConversation] = useState<Awaited<ReturnType<typeof fetchCodexRequirementTestingConversation>> | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [switchingThreadId, setSwitchingThreadId] = useState("");
   const [newConversation, setNewConversation] = useState(false);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
@@ -135,15 +137,21 @@ export function DeliveryRequirementTestingModal({
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const wasActiveRef = useRef(false);
   const initializedRef = useRef(false);
+  const newConversationRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
 
   const load = useCallback(async (threadId = "", preserveSelected = false) => {
     if (!programId || !requirementKey) return null;
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     try {
       const next = await fetchCodexRequirementTestingConversation(programId, requirementKey, threadId, testingPreference.tool);
+      if (requestId !== loadRequestIdRef.current) return null;
       setConversation(next);
-      setConversationExecutorType(next.threadId ? next.executorType : "");
-      if (!newConversation && !preserveSelected) setSelectedThreadId(next.threadId);
+      if (!newConversationRef.current) {
+        setConversationExecutorType(next.threadId ? next.executorType : "");
+        if (!preserveSelected) setSelectedThreadId(next.threadId);
+      }
       if (wasActiveRef.current && !next.active) await onChanged();
       wasActiveRef.current = Boolean(next.active);
       return next;
@@ -151,14 +159,20 @@ export function DeliveryRequirementTestingModal({
       message.error((error as Error).message);
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+        setSwitchingThreadId("");
+      }
     }
-  }, [newConversation, onChanged, programId, requirementKey, testingPreference.tool]);
+  }, [onChanged, programId, requirementKey, testingPreference.tool]);
 
   useEffect(() => {
     if (!open) {
+      newConversationRef.current = false;
+      loadRequestIdRef.current += 1;
       setConversation(null);
       setSelectedThreadId("");
+      setSwitchingThreadId("");
       setNewConversation(false);
       setDraft("");
       setAttachments([]);
@@ -171,6 +185,7 @@ export function DeliveryRequirementTestingModal({
     }
     if (!requirementKey || initializedRef.current) return;
     initializedRef.current = true;
+    newConversationRef.current = startNewConversationOnOpen;
     setNewConversation(startNewConversationOnOpen);
     setSelectedThreadId(initialThreadId);
     setDraft("");
@@ -194,15 +209,17 @@ export function DeliveryRequirementTestingModal({
     [conversation],
   );
 
-  useEffect(() => {
-    if (!open || !active) return undefined;
-    const timer = window.setInterval(() => void load(), 4000);
-    return () => window.clearInterval(timer);
-  }, [active, load, open]);
+  usePollingLoop(open && active, 4000, load);
 
-  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, flattenedItems.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>(
+    [active, flattenedItems.length],
+    !switchingThreadId && conversation?.threadId
+      ? `zb.delivery.scroll.requirement-testing.${programId}.${requirementKey}.${conversation.threadId}`
+      : "",
+  );
 
   const send = async (requestedText?: string, requestedTestCaseOnly = testCaseOnly) => {
+    if (switchingThreadId) return;
     const text = (requestedText ?? draft).trim();
     if ((!text && !attachments.length) || !codexBridgeReady || !requirementKey) return;
     setSending(true);
@@ -222,8 +239,10 @@ export function DeliveryRequirementTestingModal({
       });
       setDraft("");
       setAttachments([]);
+      newConversationRef.current = false;
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
+      setSwitchingThreadId("");
       await onChanged();
       await load(action.threadId, true);
     } catch (error) {
@@ -299,18 +318,24 @@ export function DeliveryRequirementTestingModal({
 
   const startNewConversation = () => {
     if (active || !requirementKey) return;
+    newConversationRef.current = true;
+    loadRequestIdRef.current += 1;
+    setLoading(false);
     setNewConversation(true);
     // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
     setConversationExecutorType("");
     setSelectedThreadId("");
+    setSwitchingThreadId("");
     setDraft("");
     setAttachments([]);
   };
 
   const selectConversation = (threadId: string) => {
     if (threadId === selectedThreadId && !newConversation) return;
+    newConversationRef.current = false;
     setNewConversation(false);
     setSelectedThreadId(threadId);
+    setSwitchingThreadId(threadId);
     setAttachments([]);
     void load(threadId, true);
   };
@@ -327,7 +352,7 @@ export function DeliveryRequirementTestingModal({
           <div className="delivery-session-history__list">
             {newConversation ? <div className="delivery-session-history__item is-selected is-draft"><MessageOutlined /><div><b>{testingConversationTitle}</b><span>{t("delivery.testingCases.status")} · {t("delivery.requirement.testingDraft")}</span></div></div> : null}
             {historyEntries.map(({ kind, entry }) => (
-              <button className={`delivery-session-history__item${kind === "testing" && entry.threadId === conversation?.threadId && !newConversation ? " is-selected" : ""}`} key={`${kind}-${entry.threadId}`} type="button" onClick={() => kind === "testing" ? selectConversation(entry.threadId) : onOpenPlanningConversation?.(entry.threadId)}>
+              <button className={`delivery-session-history__item${kind === "testing" && entry.threadId === (switchingThreadId || conversation?.threadId) && !newConversation ? " is-selected" : ""}`} key={`${kind}-${entry.threadId}`} type="button" onClick={() => kind === "testing" ? selectConversation(entry.threadId) : onOpenPlanningConversation?.(entry.threadId)}>
                 <MessageOutlined /><div><b>{entry.title || (kind === "testing" ? testingConversationTitle : t("delivery.session.untitled"))}</b><span>{[kind === "testing" ? t("delivery.testingCases.status") : t("delivery.planning.title"), toolDisplayName(entry.executorType), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>{entry.active ? <i /> : null}
               </button>
             ))}
@@ -357,10 +382,10 @@ export function DeliveryRequirementTestingModal({
                 key: "chat", label: t("delivery.requirement.testingChat"),
                 children: <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                   <Alert className="delivery-testing-cases-chat-hint" type="info" showIcon message={t("delivery.testingCases.chatHint.title")} description={t("delivery.testingCases.chatHint.description")} />
-                  {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{groupSessionItems(turn.items).map((group) => (group.kind === "process"
+                  {switchingThreadId || (loading && !conversation) ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{groupSessionItems(turn.items).map((group) => (group.kind === "process"
                     ? <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
                     : <TestingTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />))}<SessionChangeSummary items={turn.items} programId={programId} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.requirement.testingEmpty").replace("{tool}", toolName)} />}
-                  {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
+                  {active && !switchingThreadId ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
                 </div>,
               },
               { key: "cases", label: t("delivery.requirement.testingCases"), children: <div className="delivery-session-document">{testingCasesPath ? <code className="delivery-session-document__path">{testingCasesPath}</code> : null}<SessionDocumentText value={testingCases} fallback={t("delivery.requirement.testingCasesEmpty")} /></div> },

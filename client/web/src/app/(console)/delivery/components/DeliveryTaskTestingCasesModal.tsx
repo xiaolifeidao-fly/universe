@@ -39,6 +39,7 @@ import {
   type TestingCasesStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems, SessionChangeSummary } from "./DeliverySessionMessage";
 
@@ -100,6 +101,7 @@ export function DeliveryTaskTestingCasesModal({
   const itemKey = item?.itemKey ?? "";
   const [conversation, setConversation] = useState<Awaited<ReturnType<typeof fetchCodexTaskTestingCasesConversation>> | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [switchingThreadId, setSwitchingThreadId] = useState("");
   const [newConversation, setNewConversation] = useState(false);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
@@ -108,15 +110,21 @@ export function DeliveryTaskTestingCasesModal({
   const [activeTab, setActiveTab] = useState<"chat" | "cases">("chat");
   const wasActiveRef = useRef(false);
   const initializedRef = useRef(false);
+  const newConversationRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
 
   const load = useCallback(async (threadId = "", preserveSelected = false) => {
     if (!programId || !itemKey) return null;
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     try {
       const next = await fetchCodexTaskTestingCasesConversation(programId, itemKey, threadId, testingPreference.tool);
+      if (requestId !== loadRequestIdRef.current) return null;
       setConversation(next);
-      setConversationExecutorType(next.threadId ? next.executorType : "");
-      if (!newConversation && !preserveSelected) setSelectedThreadId(next.threadId);
+      if (!newConversationRef.current) {
+        setConversationExecutorType(next.threadId ? next.executorType : "");
+        if (!preserveSelected) setSelectedThreadId(next.threadId);
+      }
       if (wasActiveRef.current && !next.active) await onChanged();
       wasActiveRef.current = Boolean(next.active);
       return next;
@@ -124,14 +132,20 @@ export function DeliveryTaskTestingCasesModal({
       message.error((error as Error).message);
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+        setSwitchingThreadId("");
+      }
     }
-  }, [itemKey, newConversation, onChanged, programId, testingPreference.tool]);
+  }, [itemKey, onChanged, programId, testingPreference.tool]);
 
   useEffect(() => {
     if (!open) {
+      newConversationRef.current = false;
+      loadRequestIdRef.current += 1;
       setConversation(null);
       setSelectedThreadId("");
+      setSwitchingThreadId("");
       setNewConversation(false);
       setDraft("");
       setActiveTab("chat");
@@ -141,6 +155,7 @@ export function DeliveryTaskTestingCasesModal({
     }
     if (!itemKey || initializedRef.current) return;
     initializedRef.current = true;
+    newConversationRef.current = startNewConversationOnOpen;
     setNewConversation(startNewConversationOnOpen);
     setSelectedThreadId(initialThreadId);
     setDraft("");
@@ -161,15 +176,17 @@ export function DeliveryTaskTestingCasesModal({
     [conversation],
   );
 
-  useEffect(() => {
-    if (!open || !active) return undefined;
-    const timer = window.setInterval(() => void load(), 4000);
-    return () => window.clearInterval(timer);
-  }, [active, load, open]);
+  usePollingLoop(open && active, 4000, load);
 
-  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, flattenedItems.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>(
+    [active, flattenedItems.length],
+    !switchingThreadId && conversation?.threadId
+      ? `zb.delivery.scroll.task-testing.${programId}.${itemKey}.${conversation.threadId}`
+      : "",
+  );
 
   const send = async () => {
+    if (switchingThreadId) return;
     const text = draft.trim();
     if (!text || !codexBridgeReady || !itemKey) return;
     setSending(true);
@@ -183,8 +200,10 @@ export function DeliveryTaskTestingCasesModal({
         fastMode: provider === "claude" && testingConfig.claudeFastMode,
       });
       setDraft("");
+      newConversationRef.current = false;
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
+      setSwitchingThreadId("");
       await onChanged();
       await load(action.threadId, true);
     } catch (error) {
@@ -209,17 +228,23 @@ export function DeliveryTaskTestingCasesModal({
 
   const startNewConversation = () => {
     if (active || !itemKey) return;
+    newConversationRef.current = true;
+    loadRequestIdRef.current += 1;
+    setLoading(false);
     setNewConversation(true);
     // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
     setConversationExecutorType("");
     setSelectedThreadId("");
+    setSwitchingThreadId("");
     setDraft("");
   };
 
   const selectConversation = (threadId: string) => {
     if (threadId === selectedThreadId && !newConversation) return;
+    newConversationRef.current = false;
     setNewConversation(false);
     setSelectedThreadId(threadId);
+    setSwitchingThreadId(threadId);
     void load(threadId, true);
   };
 
@@ -242,7 +267,7 @@ export function DeliveryTaskTestingCasesModal({
           <div className="delivery-session-history__list">
             {newConversation ? <div className="delivery-session-history__item is-selected is-draft"><MessageOutlined /><div><b>{testingConversationTitle}</b><span>{t("delivery.testingCases.status")} · {t("delivery.taskTestingCases.draft")}</span></div></div> : null}
             {historyEntries.map(({ kind, entry }) => (
-              <button className={`delivery-session-history__item${kind === "testing" && entry.threadId === conversation?.threadId && !newConversation ? " is-selected" : ""}`} key={`${kind}-${entry.threadId}`} type="button" onClick={() => kind === "testing" ? selectConversation(entry.threadId) : onOpenTaskConversation?.(entry.threadId)}>
+              <button className={`delivery-session-history__item${kind === "testing" && entry.threadId === (switchingThreadId || conversation?.threadId) && !newConversation ? " is-selected" : ""}`} key={`${kind}-${entry.threadId}`} type="button" onClick={() => kind === "testing" ? selectConversation(entry.threadId) : onOpenTaskConversation?.(entry.threadId)}>
                 <MessageOutlined /><div><b>{entry.title || (kind === "testing" ? testingConversationTitle : t("delivery.session.untitled"))}</b><span>{[kind === "testing" ? t("delivery.testingCases.status") : t(`delivery.phase.${entry.phase}`), toolDisplayName(entry.executorType), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>{entry.active ? <i /> : null}
               </button>
             ))}
@@ -270,10 +295,10 @@ export function DeliveryTaskTestingCasesModal({
                 key: "chat", label: t("delivery.taskTestingCases.chat"),
                 children: <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
                   <Alert className="delivery-testing-cases-chat-hint" type="info" showIcon message={t("delivery.testingCases.chatHint.title")} description={t("delivery.testingCases.chatHint.description")} />
-                  {loading && !conversation ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{groupSessionItems(turn.items).map((group) => (group.kind === "process"
+                  {switchingThreadId || (loading && !conversation) ? <div className="delivery-session-transcript__loading"><LoadingOutlined spin /></div> : !newConversation && flattenedItems.length ? (conversation?.turns ?? []).map((turn) => <Fragment key={turn.id}>{groupSessionItems(turn.items).map((group) => (group.kind === "process"
                     ? <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
                     : <TranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />))}<SessionChangeSummary items={turn.items} programId={programId} /></Fragment>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.taskTestingCases.empty").replace("{tool}", toolName)} />}
-                  {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
+                  {active && !switchingThreadId ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
                 </div>,
               },
               { key: "cases", label: t("delivery.taskTestingCases.cases"), children: <div className="delivery-session-document">{testingCasesPath ? <code className="delivery-session-document__path">{testingCasesPath}</code> : null}<SessionDocumentText value={testingCases} fallback={t("delivery.taskTestingCases.casesEmpty")} /></div> },

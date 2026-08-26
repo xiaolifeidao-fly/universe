@@ -103,6 +103,7 @@ import {
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { DeliveryRequirementDetailInput, requirementMentionKeys, requirementMentionReferences } from "./DeliveryRequirementDetailInput";
 import { DeliveryConversationMentionInput, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
+import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
@@ -243,6 +244,7 @@ export function DeliveryRequirementSessionModal({
   const toolName = toolDisplayName(planningProvider);
   const [conversation, setConversation] = useState<CodexPlanningConversation | null>(null);
   const [selectedThreadId, setSelectedThreadId] = useState("");
+  const [switchingThreadId, setSwitchingThreadId] = useState("");
   const [newConversation, setNewConversation] = useState(false);
   const [draft, setDraft] = useState("");
   const [chatReferences, setChatReferences] = useState<DeliveryConversationReference[]>([]);
@@ -348,6 +350,10 @@ export function DeliveryRequirementSessionModal({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const awaitingPlanningResultRef = useRef("");
+  // React 状态要到下一次渲染才更新；请求回调必须同步知道用户已经进入“新会话”草稿，
+  // 否则旧线程稍晚返回时会把它自己的 Codex / Claude 再写回模型选择器。
+  const newConversationRef = useRef(false);
+  const loadRequestIdRef = useRef(0);
 
   const requirementKey = saved?.requirementKey ?? "";
 
@@ -416,20 +422,27 @@ export function DeliveryRequirementSessionModal({
   const load = useCallback(async (threadId = "", preserveSelected = false, key = "") => {
     const targetKey = key || requirementKey;
     if (!programId || !targetKey) return null;
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     try {
       const next = await fetchCodexPlanningConversation(programId, threadId, targetKey, planningPreference.tool);
+      if (requestId !== loadRequestIdRef.current) return null;
       setConversation(next);
-      setPlanningExecutorType(next.threadId ? next.executorType : "");
-      if (!newConversation && !preserveSelected) setSelectedThreadId(next.threadId);
+      if (!newConversationRef.current) {
+        setPlanningExecutorType(next.threadId ? next.executorType : "");
+        if (!preserveSelected) setSelectedThreadId(next.threadId);
+      }
       return next;
     } catch (error) {
       message.error((error as Error).message);
       return null;
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+        setSwitchingThreadId("");
+      }
     }
-  }, [newConversation, planningPreference.tool, programId, requirementKey]);
+  }, [planningPreference.tool, programId, requirementKey]);
 
   const loadTestingHistory = useCallback(async () => {
     if (!programId || !requirementKey || !codexBridgeReady) {
@@ -456,8 +469,11 @@ export function DeliveryRequirementSessionModal({
 		if (!open) newRequirementFlowRef.current = false;
 		modalOpenRef.current = open;
     if (!open) {
+      newConversationRef.current = false;
+      loadRequestIdRef.current += 1;
       setConversation(null);
       setSelectedThreadId("");
+      setSwitchingThreadId("");
       setNewConversation(false);
       setDraft("");
       setChatReferences([]);
@@ -686,30 +702,21 @@ export function DeliveryRequirementSessionModal({
     void loadPrototype();
   }, [activePhaseTab, activeRequirementTab, codexBridgeReady, loadPrototype, open, requirementKey]);
 
-  useEffect(() => {
-    if (!prototypeGenerating || !open || !requirementKey) return undefined;
-    let activePolling = true;
-    const poll = async () => {
-      const next = await loadPrototype();
-      if (!activePolling || !next) return;
-      if (next.exists) {
-        setPrototypeGenerating(false);
-        message.success(t("delivery.prototype.generated"));
-        void onChanged();
-        return;
-      }
-      if (!next.active) {
-        setPrototypeGenerating(false);
-        message.error(t("delivery.prototype.failed"));
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 3000);
-    return () => {
-      activePolling = false;
-      window.clearInterval(timer);
-    };
-  }, [loadPrototype, onChanged, open, prototypeGenerating, requirementKey, t]);
+  const pollPrototypeGeneration = useCallback(async () => {
+    const next = await loadPrototype();
+    if (!next) return;
+    if (next.exists) {
+      setPrototypeGenerating(false);
+      message.success(t("delivery.prototype.generated"));
+      void onChanged();
+      return;
+    }
+    if (!next.active) {
+      setPrototypeGenerating(false);
+      message.error(t("delivery.prototype.failed"));
+    }
+  }, [loadPrototype, onChanged, t]);
+  usePollingLoop(Boolean(prototypeGenerating && open && requirementKey), 3000, pollPrototypeGeneration, true);
 
   const loadPrototypeEditConversation = useCallback(async (threadId: string) => {
     if (!open || !requirementKey || !threadId || !codexBridgeReady) return null;
@@ -758,22 +765,19 @@ export function DeliveryRequirementSessionModal({
 
   const prototypeEditActive = Boolean(prototypeEditConversation?.active);
 
-  useEffect(() => {
-    if (!prototypeEditorOpen || !prototypeEditActive || !prototypeEditConversation?.threadId) return undefined;
-    let activePolling = true;
-    const poll = async () => {
-      const next = await loadPrototypeEditConversation(prototypeEditConversation.threadId);
-      if (!activePolling || !next || next.active) return;
-      await loadPrototype();
-      void onChanged();
-      message.success(t("delivery.prototype.updated"));
-    };
-    const timer = window.setInterval(() => void poll(), 3000);
-    return () => {
-      activePolling = false;
-      window.clearInterval(timer);
-    };
-  }, [loadPrototype, loadPrototypeEditConversation, onChanged, prototypeEditActive, prototypeEditConversation?.threadId, prototypeEditorOpen, t]);
+  const prototypeEditThreadId = prototypeEditConversation?.threadId || "";
+  const pollPrototypeEdit = useCallback(async () => {
+    const next = await loadPrototypeEditConversation(prototypeEditThreadId);
+    if (!next || next.active) return;
+    await loadPrototype();
+    void onChanged();
+    message.success(t("delivery.prototype.updated"));
+  }, [loadPrototype, loadPrototypeEditConversation, onChanged, prototypeEditThreadId, t]);
+  usePollingLoop(
+    Boolean(prototypeEditorOpen && prototypeEditActive && prototypeEditThreadId),
+    3000,
+    pollPrototypeEdit,
+  );
 
   const active = Boolean(conversation?.active && !newConversation);
 
@@ -862,11 +866,7 @@ export function DeliveryRequirementSessionModal({
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
-  useEffect(() => {
-    if (!open || !active) return undefined;
-    const timer = window.setInterval(() => void load(), 5000);
-    return () => window.clearInterval(timer);
-  }, [active, load, open]);
+  usePollingLoop(open && active, 5000, load);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -892,7 +892,12 @@ export function DeliveryRequirementSessionModal({
     };
   }, [resizeContextPanel, resizingContext]);
 
-  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>([active, flattenedItems.length]);
+  const { ref: transcriptRef, onScroll: onTranscriptScroll } = useStickToBottom<HTMLDivElement>(
+    [active, flattenedItems.length],
+    !switchingThreadId && conversation?.threadId
+      ? `zb.delivery.scroll.requirement.${programId}.${requirementKey}.${conversation.threadId}`
+      : "",
+  );
 
   const prototypeEditItems = useMemo(
     () => (prototypeEditConversation?.turns ?? []).flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id }))),
@@ -1301,6 +1306,7 @@ export function DeliveryRequirementSessionModal({
    * 拆解方案先以预览回到聊天里，用户点确认之后才真正落库。
    */
   const send = async (confirmWrite = false) => {
+    if (switchingThreadId) return;
     const text = draft.trim() || (confirmWrite
       ? t("delivery.planning.confirmMessage")
       : chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
@@ -1352,8 +1358,10 @@ export function DeliveryRequirementSessionModal({
       setDraft("");
       setChatReferences([]);
       setAttachments([]);
+      newConversationRef.current = false;
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
+      setSwitchingThreadId("");
       // 只有写入轮次结束后才跳到「拆解结果」：预览轮次没有产出，跳过去只会看到一片空。
       awaitingPlanningResultRef.current = confirmWrite ? action.turnId : "";
       await load(action.threadId, false, current.requirementKey);
@@ -1454,10 +1462,15 @@ export function DeliveryRequirementSessionModal({
 
   const startNewConversation = () => {
     if (active) return;
+    newConversationRef.current = true;
+    // 使所有仍在读取旧窗口的请求失效；它们可以结束，但不能覆盖新草稿的模型。
+    loadRequestIdRef.current += 1;
+    setLoading(false);
     setNewConversation(true);
     // 新开会话回到偏好里选的工具，不再沿用上一条线程的执行器。
     setPlanningExecutorType("");
     setSelectedThreadId("");
+    setSwitchingThreadId("");
     setDraft("");
     setChatReferences([]);
     setAttachments([]);
@@ -1465,8 +1478,10 @@ export function DeliveryRequirementSessionModal({
 
   const selectConversation = (threadId: string) => {
     if (threadId === selectedThreadId && !newConversation) return;
+    newConversationRef.current = false;
     setNewConversation(false);
     setSelectedThreadId(threadId);
+    setSwitchingThreadId(threadId);
     setDraft("");
     setChatReferences([]);
     setAttachments([]);
@@ -1577,7 +1592,7 @@ export function DeliveryRequirementSessionModal({
             ) : null}
             {requirementHistory.map(({ kind, entry }) => (
               <button
-                className={`delivery-session-history__item${kind === "planning" && entry.threadId === conversation?.threadId && !newConversation ? " is-selected" : ""}`}
+                className={`delivery-session-history__item${kind === "planning" && entry.threadId === (switchingThreadId || conversation?.threadId) && !newConversation ? " is-selected" : ""}`}
                 key={`${kind}-${entry.threadId}`}
                 type="button"
                 onClick={() => kind === "planning" ? selectConversation(entry.threadId) : openTestingConversation(entry.threadId)}
@@ -2060,7 +2075,7 @@ export function DeliveryRequirementSessionModal({
           ) : null}
           <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
             {/* 首次加载时只显示转圈，不要再叠一层空状态：两个「空」摞在一起像坏了。 */}
-            {loading && !conversation ? (
+            {switchingThreadId || (loading && !conversation) ? (
               <div className="delivery-session-transcript__loading"><Spin /></div>
             ) : !newConversation && flattenedItems.length ? (
               // 按回合渲染：每个回合末尾补一份「本次改动」，对齐直接用 Codex / Claude 时看到的改动清单。
@@ -2080,7 +2095,7 @@ export function DeliveryRequirementSessionModal({
                 description={t(newConversation ? "delivery.session.newEmpty" : "delivery.planning.empty").replace("{tool}", toolName)}
               />
             )}
-            {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
+            {active && !switchingThreadId ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
           </div>
           <footer
             className={`delivery-session-composer is-stacked${draggingAttachments ? " is-dragging" : ""}`}
