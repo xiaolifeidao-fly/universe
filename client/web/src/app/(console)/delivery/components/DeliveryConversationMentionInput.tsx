@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipb
 import type { MentionsRef } from "rc-mentions/lib/Mentions";
 import type { OptionProps } from "rc-mentions/lib/Option";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useImeCompositionGuard } from "@/utils/ime";
 import type {
   DeliveryConversationReference,
   DeliveryConversationFileScope,
@@ -80,6 +81,7 @@ export function DeliveryConversationMentionInput({
 }: DeliveryConversationMentionInputProps) {
   const { t } = useLocale();
   const containerRef = useRef<HTMLDivElement>(null);
+  const { compositionProps, isComposingEnter } = useImeCompositionGuard();
   const mentionsRef = useRef<MentionsRef>(null);
   const latestValueRef = useRef(value);
   latestValueRef.current = value;
@@ -277,7 +279,7 @@ export function DeliveryConversationMentionInput({
   };
 
   return (
-    <div className="delivery-conversation-mention-input" ref={containerRef}>
+    <div className="delivery-conversation-mention-input" ref={containerRef} {...compositionProps}>
       <Mentions
         ref={mentionsRef}
         autoSize={{ minRows: 3, maxRows: 7 }}
@@ -303,7 +305,11 @@ export function DeliveryConversationMentionInput({
         }}
         onSelect={onSelect}
         onPaste={onPaste}
-        onPressEnter={onPressEnter}
+        onPressEnter={(event) => {
+          // 输入法用回车确认候选词，这一下不能当成发送。
+          if (isComposingEnter(event)) return;
+          onPressEnter?.(event);
+        }}
       />
       {referencedLabels.length ? (
         <div className="delivery-conversation-mention-tags">

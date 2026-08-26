@@ -39,6 +39,7 @@ import {
   type TestingCasesStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useImeCompositionGuard } from "@/utils/ime";
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems, SessionChangeSummary } from "./DeliverySessionMessage";
@@ -88,6 +89,7 @@ export function DeliveryTaskTestingCasesModal({
   onChanged,
 }: DeliveryTaskTestingCasesModalProps) {
   const { t } = useLocale();
+  const { compositionProps, isComposingEnter } = useImeCompositionGuard();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
   const testingPreference = configFor("productTesting");
   const [conversationExecutorType, setConversationExecutorType] = useState<AITool | "">("");
@@ -322,7 +324,7 @@ export function DeliveryTaskTestingCasesModal({
               />
               {provider === "claude" ? <Tooltip title={t("aiPreferences.fastMode")}><Switch size="small" checked={testingConfig.claudeFastMode} disabled={!codexBridgeReady || sending} aria-label={t("aiPreferences.fastMode")} onChange={(checked) => setSceneOverride("productTesting", { ...(preferences.scenes.productTesting ?? {}), claudeFastMode: checked })} /></Tooltip> : null}
             </div>
-            <div className="delivery-session-composer__input"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={draft} disabled={!codexBridgeReady || sending} placeholder={t("delivery.taskTestingCases.input")} onChange={(event) => setDraft(event.target.value)} onPressEnter={(event) => { if (event.shiftKey) return; event.preventDefault(); void send(); }} /><Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim() || !codexBridgeReady} onClick={() => void send()}>{t("delivery.session.send")}</Button></div>
+            <div className="delivery-session-composer__input"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={draft} disabled={!codexBridgeReady || sending} placeholder={t("delivery.taskTestingCases.input")} onChange={(event) => setDraft(event.target.value)} {...compositionProps} onPressEnter={(event) => { if (event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); void send(); }} /><Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim() || !codexBridgeReady} onClick={() => void send()}>{t("delivery.session.send")}</Button></div>
           </footer>
         </main>
       </div>

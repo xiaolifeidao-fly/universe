@@ -39,6 +39,7 @@ import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
 import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
 import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useImeCompositionGuard } from "@/utils/ime";
 import {
   CLAUDE_EFFORTS,
   CLAUDE_MODEL_OPTIONS,
@@ -230,6 +231,7 @@ export function DeliveryRequirementSessionModal({
   onChanged,
 }: DeliveryRequirementSessionModalProps) {
   const { t } = useLocale();
+  const { compositionProps, isComposingEnter } = useImeCompositionGuard();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
   const planningPreference = configFor("taskPlanning");
   const [planningExecutorType, setPlanningExecutorType] = useState<AITool | "">("");
@@ -2826,7 +2828,10 @@ export function DeliveryRequirementSessionModal({
                   disabled={!codexBridgeReady || prototypeEditSending}
                   placeholder={t("delivery.prototype.editPlaceholder")}
                   onChange={(event) => setPrototypeEditDraft(event.target.value)}
+                  {...compositionProps}
                   onPressEnter={(event) => {
+                    // 输入法用回车确认候选词，这一下不能当成发送。
+                    if (isComposingEnter(event)) return;
                     if (!event.shiftKey) {
                       event.preventDefault();
                       void sendPrototypeEdit();

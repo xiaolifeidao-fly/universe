@@ -44,6 +44,7 @@ import {
   type RequirementTestingStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { useImeCompositionGuard } from "@/utils/ime";
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
@@ -110,6 +111,7 @@ export function DeliveryRequirementTestingModal({
   onChanged,
 }: DeliveryRequirementTestingModalProps) {
   const { t } = useLocale();
+  const { compositionProps, isComposingEnter } = useImeCompositionGuard();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
   const testingPreference = configFor("productTesting");
   const [conversationExecutorType, setConversationExecutorType] = useState<AITool | "">("");
@@ -453,7 +455,7 @@ export function DeliveryRequirementTestingModal({
                 ))}
               </div>
             ) : null}
-            <div className="delivery-session-composer__input"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={draft} disabled={!codexBridgeReady || sending} placeholder={t(testCaseOnly ? "delivery.requirement.testingCasesInput" : "delivery.requirement.testingInput")} onChange={(event) => setDraft(event.target.value)} onPressEnter={(event) => { if (event.shiftKey) return; event.preventDefault(); void send(); }} /><Button type="primary" icon={<SendOutlined />} loading={sending} disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady} onClick={() => void send()}>{t(testCaseOnly ? "delivery.requirement.generateTestCases" : "delivery.session.send")}</Button></div>
+            <div className="delivery-session-composer__input"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={draft} disabled={!codexBridgeReady || sending} placeholder={t(testCaseOnly ? "delivery.requirement.testingCasesInput" : "delivery.requirement.testingInput")} onChange={(event) => setDraft(event.target.value)} {...compositionProps} onPressEnter={(event) => { if (event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); void send(); }} /><Button type="primary" icon={<SendOutlined />} loading={sending} disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady} onClick={() => void send()}>{t(testCaseOnly ? "delivery.requirement.generateTestCases" : "delivery.session.send")}</Button></div>
             {draggingAttachments ? <div className="delivery-session-composer__drop-target">{t("delivery.session.dropAttachments")}</div> : null}
           </footer>
         </main>
