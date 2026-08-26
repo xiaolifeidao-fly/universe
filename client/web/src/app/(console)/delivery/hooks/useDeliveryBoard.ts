@@ -342,7 +342,8 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
         moduleKey: nextFilters.moduleKey,
         requirementKey: nextFilters.requirementKey,
 		status: nextFilters.status,
-		phase: nextFilters.phase,
+		// 按模块分组展示需求下的全部任务，不按阶段收窄。
+		phase: nextFilters.groupBy === "module" ? undefined : nextFilters.phase,
         kind: nextFilters.kind,
 		ownerName: nextFilters.ownerName,
         keyword: nextFilters.keyword,

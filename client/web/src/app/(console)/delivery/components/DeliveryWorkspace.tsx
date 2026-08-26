@@ -1160,12 +1160,13 @@ export function DeliveryWorkspace() {
                 onChange={(value) => {
                   const groupBy = value as BoardGroupBy;
     				setSelectedItemKeys([]);
+                  // 按模块分组时看板不按阶段过滤，但阶段本身要留着：
+                  // 清成 undefined 会让切回按状态/里程碑时退回默认的「梳理需求」，
+                  // 需求起始阶段不是它的话任务就整片消失了。
                   setFilters({
                     ...filters,
                     groupBy,
-                    phase: groupBy === "stage" || groupBy === "status"
-                      ? filters.phase ?? "requirement"
-                      : undefined,
+                    phase: filters.phase ?? "requirement",
                   });
                 }}
                 options={[
