@@ -463,8 +463,7 @@ export function DeliveryRequirementProgressModal({
         </div>
       ) : null}
     >
-      <Spin spinning={loading && !progress}>
-        <div className="delivery-progress">
+      <div className="delivery-progress">
           {error ? <Alert type="error" showIcon message={error} /> : null}
           {progress ? (
             <>
@@ -631,9 +630,13 @@ export function DeliveryRequirementProgressModal({
                 })}
               </section>
             </>
-          ) : (!loading ? <Empty description={t("delivery.progress.empty")} /> : null)}
-        </div>
-      </Spin>
+          ) : loading ? (
+            <div className="delivery-progress__loading" role="status">
+              <Spin size="large" />
+              <span>{t("delivery.progress.loading")}</span>
+            </div>
+          ) : <Empty description={t("delivery.progress.empty")} />}
+      </div>
 
       <Modal
         open={constraintsOpen}

@@ -47,15 +47,18 @@ type DeliveryCloudSyncFile struct {
 	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
 	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_cloud_file,priority:1;index:idx_dlv_cloud_file_updated,priority:1" description:"业务线"`
 
-	ProgramID    int64     `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2" description:"所属项目"`
-	Category     string    `gorm:"column:category;type:varchar(16);uniqueIndex:uk_dlv_cloud_file,priority:3;index:idx_dlv_cloud_file_updated,priority:3" description:"同步类别：chat/requirement/design"`
-	RelativePath string    `gorm:"column:relative_path;type:varchar(1024);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"项目工作目录内的相对路径"`
-	ContentType  string    `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
-	ObjectKey    string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
-	Size         int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
-	SHA256       string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
-	UpdatedBy    string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
-	UpdatedTime  time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
+	ProgramID    int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2" description:"所属项目"`
+	Category     string `gorm:"column:category;type:varchar(16);uniqueIndex:uk_dlv_cloud_file,priority:3;index:idx_dlv_cloud_file_updated,priority:3" description:"同步类别：chat/requirement/design"`
+	RelativePath string `gorm:"column:relative_path;type:varchar(1024)" description:"项目工作目录内的相对路径"`
+	// 相对路径本身放进联合唯一键会让索引超过 InnoDB 的 3072 字节上限，
+	// 所以唯一性落在定长的路径哈希上，路径列保持完整长度只做展示与回读。
+	RelativePathHash string    `gorm:"column:relative_path_hash;type:char(64);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"relative_path 的 SHA-256，仅用于唯一键"`
+	ContentType      string    `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
+	ObjectKey        string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
+	Size             int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
+	SHA256           string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
+	UpdatedBy        string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
+	UpdatedTime      time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
 }
 
 func (d *DeliveryCloudSyncFile) TableName() string { return "zt_delivery_cloud_sync_file" }

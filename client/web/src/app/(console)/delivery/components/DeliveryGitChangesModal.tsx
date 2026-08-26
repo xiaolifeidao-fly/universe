@@ -32,6 +32,10 @@ type Props = {
   open: boolean;
   programId: number;
   branch?: string;
+  /** 要看哪个工程的改动：空串是项目根工作目录，否则是子项目的绝对路径。 */
+  workspace?: string;
+  /** 子项目名，只用于标题上标出这份改动属于哪个工程。 */
+  projectName?: string;
   onClose: () => void;
 };
 
@@ -59,7 +63,7 @@ function replaceTokens(template: string, values: Record<string, number>) {
 }
 
 /** 「变更」面板点开后的文件级明细：左边选文件，右边看改动前后的对比。 */
-export function DeliveryGitChangesModal({ open, programId, branch, onClose }: Props) {
+export function DeliveryGitChangesModal({ open, programId, branch, workspace = "", projectName = "", onClose }: Props) {
   const { t } = useLocale();
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<CodexGitChangeFile[]>([]);
@@ -76,7 +80,7 @@ export function DeliveryGitChangesModal({ open, programId, branch, onClose }: Pr
     setLoading(true);
     setListError("");
     try {
-      const result = await fetchCodexGitChanges(programId);
+      const result = await fetchCodexGitChanges(programId, workspace);
       setFiles(result.files);
       setTruncated(result.truncated);
       // 重新读清单时保住当前选中的文件，除非它已经不在改动列表里了。
@@ -90,7 +94,7 @@ export function DeliveryGitChangesModal({ open, programId, branch, onClose }: Pr
     } finally {
       setLoading(false);
     }
-  }, [programId]);
+  }, [programId, workspace]);
 
   useEffect(() => {
     if (!open) return;
@@ -138,7 +142,7 @@ export function DeliveryGitChangesModal({ open, programId, branch, onClose }: Pr
     let cancelled = false;
     setDetailLoading(true);
     setDetailError("");
-    fetchCodexGitChangeDetail(programId, selected)
+    fetchCodexGitChangeDetail(programId, selected, workspace)
       .then((result) => {
         if (cancelled) return;
         setDetail(result);
@@ -154,7 +158,7 @@ export function DeliveryGitChangesModal({ open, programId, branch, onClose }: Pr
     return () => {
       cancelled = true;
     };
-  }, [open, programId, selected]);
+  }, [open, programId, selected, workspace]);
 
   const renderPreviewState = (icon: ReactNode, title: string, description: string, tone = "neutral") => (
     <div className="delivery-git-changes__preview-empty" data-tone={tone}>
@@ -215,6 +219,7 @@ export function DeliveryGitChangesModal({ open, programId, branch, onClose }: Pr
         <div className="delivery-git-changes__title">
           <span>{t("delivery.requirement.gitChangesTitle")}</span>
           <div className="delivery-git-changes__title-actions">
+            {projectName ? <em className="delivery-git-changes__project">{projectName}</em> : null}
             {branch ? <code className="manager-mono">{branch}</code> : null}
             <Tooltip title={t("delivery.requirement.gitPanelRefresh")}>
               <Button

@@ -9,13 +9,14 @@ import {
   TableOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { Badge, Button, Empty, Popover, Space, Spin, Table, Tooltip } from "antd";
+import { Badge, Button, Empty, Popover, Space, Spin, Table, Tabs, Tooltip } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
+  DeliveryRequirementRecord,
   fetchDeliveryAttentionTasks,
   fetchDeliveryExecutionBatchNotifications,
   fetchDeliveryRequirementCompletionNotifications,
@@ -26,6 +27,7 @@ import {
   type DeliveryRequirementCompletionNotification,
 } from "@/api/delivery.api";
 import { DELIVERY_TASKS_CHANGED_EVENT } from "@/api/deliveryTaskEvents";
+import { DeliveryRequirementProgressModal } from "@/app/(console)/delivery/components/DeliveryRequirementProgressModal";
 
 /** 消息中心自动刷新的间隔；任务状态是人改出来的，一分钟一次足够。 */
 const REFRESH_INTERVAL_MS = 60_000;
@@ -50,6 +52,7 @@ export function ManagerNotificationCenter() {
   const [tasks, setTasks] = useState<DeliveryAttentionTask[]>([]);
   const [batches, setBatches] = useState<DeliveryExecutionBatchNotification[]>([]);
   const [completionNotifications, setCompletionNotifications] = useState<DeliveryRequirementCompletionNotification[]>([]);
+  const [progressBatch, setProgressBatch] = useState<DeliveryExecutionBatchNotification | null>(null);
 
   const refresh = useCallback(async () => {
     if (!bizLine) {
@@ -129,9 +132,10 @@ export function ManagerNotificationCenter() {
     router.push(`/delivery?${query.toString()}`);
   }, [router]);
 
-  const goBatchRequirement = useCallback(async (batch: DeliveryExecutionBatchNotification) => {
+  const openBatchProgress = useCallback(async (batch: DeliveryExecutionBatchNotification) => {
     setOpen(false);
-    // 已读只作用于完成批次；原有受阻/不做消息仍由任务当前状态决定，不会被这次点击消掉。
+    setProgressBatch(batch);
+    // 打开任务进度即视为已经查看这条完成批次提醒。
     try {
       const updated = await markDeliveryExecutionBatchNotificationRead(batch.programId, batch.batchId);
       setBatches((current) => current.map((entry) => (
@@ -140,16 +144,19 @@ export function ManagerNotificationCenter() {
           : entry
       )));
     } catch {
-      // 跳转本身不依赖确认成功；下次轮询会重试拉取最新已读状态。
+      // 弹窗打开不依赖确认成功；下次轮询会重试拉取最新已读状态。
     }
-    const query = new URLSearchParams({
-      programId: String(batch.programId),
-      focusRequirementKey: batch.requirementKey,
-      focusMode: "requirement",
-      focusToken: String(Date.now()),
+  }, []);
+
+  const progressRequirement = useMemo(() => {
+    if (!progressBatch) return null;
+    return Object.assign(new DeliveryRequirementRecord(), {
+      programId: progressBatch.programId,
+      bizLine,
+      requirementKey: progressBatch.requirementKey,
+      name: progressBatch.requirementName,
     });
-    router.push(`/delivery?${query.toString()}`);
-  }, [router]);
+  }, [bizLine, progressBatch]);
 
   const goCompletedRequirement = useCallback(async (notification: DeliveryRequirementCompletionNotification) => {
     setOpen(false);
@@ -234,12 +241,12 @@ export function ManagerNotificationCenter() {
       width: 240,
       render: (_value, batch) => (
         <div className="manager-notification-cell">
-          <Tooltip title={t("delivery.notificationCenter.batchOpenRequirement")}>
+          <Tooltip title={t("delivery.notificationCenter.batchOpenProgress")}>
             <button
               type="button"
               className="manager-notification-cell__link"
               disabled={!batch.requirementKey}
-              onClick={() => void goBatchRequirement(batch)}
+              onClick={() => void openBatchProgress(batch)}
             >
               {batch.requirementName || t("delivery.notificationCenter.noRequirement")}
             </button>
@@ -270,7 +277,7 @@ export function ManagerNotificationCenter() {
         </div>
       ),
     },
-  ], [goBatchRequirement, t]);
+  ], [openBatchProgress, t]);
 
   const completionColumns = useMemo<ColumnsType<DeliveryRequirementCompletionNotification>>(() => [
     {
@@ -315,13 +322,14 @@ export function ManagerNotificationCenter() {
   ], [goCompletedRequirement, t]);
 
   return (
-    <Popover
-      placement="bottomRight"
-      align={{ offset: [popoverOffsetX, 0] }}
-      trigger="click"
-      open={open}
-      onOpenChange={handleOpenChange}
-      title={(
+    <>
+      <Popover
+        placement="bottomRight"
+        align={{ offset: [popoverOffsetX, 0] }}
+        trigger="click"
+        open={open}
+        onOpenChange={handleOpenChange}
+        title={(
         <div className="manager-notification-head">
           <span>{t("delivery.notificationCenter.title")}</span>
           <Space size={8}>
@@ -339,61 +347,66 @@ export function ManagerNotificationCenter() {
           </Space>
         </div>
       )}
-      content={(
+        content={(
         <div className="manager-notification-popover">
           {loading && tasks.length === 0 && batches.length === 0 && completionNotifications.length === 0 ? (
             <div className="manager-notification-popover__loading"><Spin /></div>
-          ) : tasks.length === 0 && batches.length === 0 && completionNotifications.length === 0 ? (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.empty")} />
           ) : (
-            <div className="manager-notification-sections">
-              <div className="manager-notification-section">
-                <div className="manager-notification-section__title">{t("delivery.notificationCenter.completedBatches")}</div>
-                {batches.length === 0 ? (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.batchEmpty")} />
-                ) : (
-                  <Table
-                    rowKey={(batch) => `${batch.programId}:${batch.batchId}`}
-                    size="small"
-                    tableLayout="fixed"
-                    columns={batchColumns}
-                    dataSource={batches}
-                    pagination={batches.length > 5 ? { pageSize: 5, size: "small", showSizeChanger: false } : false}
-                  />
-                )}
-              </div>
-              <div className="manager-notification-section">
-                <div className="manager-notification-section__title">{t("delivery.notificationCenter.completedRequirements")}</div>
-                {completionNotifications.length === 0 ? (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.requirementCompletionEmpty")} />
-                ) : (
-                  <Table
-                    rowKey={(notification) => `${notification.programId}:${notification.requirementKey}`}
-                    size="small"
-                    tableLayout="fixed"
-                    columns={completionColumns}
-                    dataSource={completionNotifications}
-                    pagination={completionNotifications.length > 5 ? { pageSize: 5, size: "small", showSizeChanger: false } : false}
-                  />
-                )}
-              </div>
-              <div className="manager-notification-section">
-                <div className="manager-notification-section__title">{t("delivery.notificationCenter.task")}</div>
-                {tasks.length === 0 ? (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.empty")} />
-                ) : (
-                  <Table
-                    rowKey={(task) => `${task.programId}:${task.itemKey}`}
-                    size="small"
-                    tableLayout="fixed"
-                    columns={columns}
-                    dataSource={tasks}
-                    pagination={tasks.length > 10 ? { pageSize: 10, size: "small", showSizeChanger: false } : false}
-                    scroll={{ y: "min(420px, calc(100vh - 420px))" }}
-                  />
-                )}
-              </div>
-            </div>
+            <Tabs
+              className="manager-notification-tabs"
+              defaultActiveKey="batches"
+              items={[
+                {
+                  key: "batches",
+                  label: t("delivery.notificationCenter.completedBatches"),
+                  children: batches.length === 0 ? (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.batchEmpty")} />
+                  ) : (
+                    <Table
+                      rowKey={(batch) => `${batch.programId}:${batch.batchId}`}
+                      size="small"
+                      tableLayout="fixed"
+                      columns={batchColumns}
+                      dataSource={batches}
+                      pagination={batches.length > 5 ? { pageSize: 5, size: "small", showSizeChanger: false } : false}
+                    />
+                  ),
+                },
+                {
+                  key: "requirements",
+                  label: t("delivery.notificationCenter.completedRequirements"),
+                  children: completionNotifications.length === 0 ? (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.requirementCompletionEmpty")} />
+                  ) : (
+                    <Table
+                      rowKey={(notification) => `${notification.programId}:${notification.requirementKey}`}
+                      size="small"
+                      tableLayout="fixed"
+                      columns={completionColumns}
+                      dataSource={completionNotifications}
+                      pagination={completionNotifications.length > 5 ? { pageSize: 5, size: "small", showSizeChanger: false } : false}
+                    />
+                  ),
+                },
+                {
+                  key: "tasks",
+                  label: t("delivery.notificationCenter.task"),
+                  children: tasks.length === 0 ? (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.notificationCenter.empty")} />
+                  ) : (
+                    <Table
+                      rowKey={(task) => `${task.programId}:${task.itemKey}`}
+                      size="small"
+                      tableLayout="fixed"
+                      columns={columns}
+                      dataSource={tasks}
+                      pagination={tasks.length > 10 ? { pageSize: 10, size: "small", showSizeChanger: false } : false}
+                      scroll={{ y: "min(420px, calc(100vh - 420px))" }}
+                    />
+                  ),
+                },
+              ]}
+            />
           )}
         </div>
       )}
@@ -407,6 +420,14 @@ export function ManagerNotificationCenter() {
           />
         </Badge>
       </span>
-    </Popover>
+      </Popover>
+      <DeliveryRequirementProgressModal
+        open={Boolean(progressBatch)}
+        programId={progressBatch?.programId ?? 0}
+        bizLine={activeBusinessLine.id}
+        requirement={progressRequirement}
+        onClose={() => setProgressBatch(null)}
+      />
+    </>
   );
 }

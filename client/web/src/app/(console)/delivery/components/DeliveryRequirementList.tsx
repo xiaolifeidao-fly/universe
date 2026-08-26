@@ -6,6 +6,7 @@ import {
   DeleteOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  FolderOpenOutlined,
 	HistoryOutlined,
   MessageOutlined,
   FullscreenExitOutlined,
@@ -82,6 +83,14 @@ interface DeliveryRequirementListProps {
   gitWorkspaceStatus: CodexGitWorkspaceStatus | null;
   gitWorkspaceError: string;
   gitWorkspaceLoading: boolean;
+  /** 项目开了 Git 但工作目录还没初始化仓库：卡片上要提示先去初始化。 */
+  gitWorkspaceUninitialized: boolean;
+  /** 打开当前项目的偏好设置并停在 Git 页签。 */
+  onGitInitialize: () => void;
+  /** 本机还没给这个项目选工作目录：卡片上提示先去设置。 */
+  workspaceUnset: boolean;
+  /** 打开当前项目的偏好设置并停在工作目录页签。 */
+  onWorkspaceSetup: () => void;
   onStatusChange: (requirement: DeliveryRequirementRecord, status: RequirementStatus) => Promise<void>;
   onDelete: (requirementKey: string) => void;
 }
@@ -116,6 +125,10 @@ export function DeliveryRequirementList({
 	gitWorkspaceStatus,
 	gitWorkspaceError,
 	gitWorkspaceLoading,
+	gitWorkspaceUninitialized,
+	onGitInitialize,
+	workspaceUnset,
+	onWorkspaceSetup,
   onStatusChange,
   onDelete,
 }: DeliveryRequirementListProps) {
@@ -236,6 +249,9 @@ export function DeliveryRequirementList({
     const isSelected = requirement.requirementKey === selectedKey;
     const statusChanging = changingStatusKey === requirement.requirementKey;
 		const gitState = gitStateOf(requirement);
+		// 仓库都还没初始化时，需求分支无从谈起，先把「去初始化」这件事摆在卡片上。
+		// 工作目录都没选的话，先提示选目录：Git 那步在目录定下来之前无从判断。
+		const gitUninitialized = projectGitEnabled && gitWorkspaceUninitialized && !workspaceUnset;
 		// 工作区正停在这条需求的分支上且还有未提交改动时不许删：改动会失去对应的需求上下文。
 		const deleteBlocked = Boolean(gitState?.current && gitState?.dirty);
     // 信息位省略了字段名、长值也会截断，悬停提示得把「字段名 + 完整取值」补回来。
@@ -453,6 +469,42 @@ export function DeliveryRequirementList({
 				<b>{dayjs(requirement.createdAt).format("MM-DD HH:mm")}</b>
 			  </span>
 			</span>
+		  ) : null}
+		  {workspaceUnset ? (
+			<Tooltip title={t("delivery.requirement.workspaceUnsetHint")}>
+			  <span className="delivery-requirement-card__detail delivery-requirement-card__detail--branch">
+				<FolderOpenOutlined aria-hidden="true" />
+				<Tag color="warning" bordered={false}>{t("delivery.requirement.workspaceUnset")}</Tag>
+				<Button
+				  type="link"
+				  size="small"
+				  onClick={(event) => {
+					event.stopPropagation();
+					onWorkspaceSetup();
+				  }}
+				>
+				  {t("delivery.requirement.workspaceUnsetAction")}
+				</Button>
+			  </span>
+			</Tooltip>
+		  ) : null}
+		  {gitUninitialized ? (
+			<Tooltip title={t("delivery.requirement.gitUninitializedHint")}>
+			  <span className="delivery-requirement-card__detail delivery-requirement-card__detail--branch">
+				<BranchesOutlined aria-hidden="true" />
+				<Tag color="warning" bordered={false}>{t("delivery.requirement.gitUninitialized")}</Tag>
+				<Button
+				  type="link"
+				  size="small"
+				  onClick={(event) => {
+					event.stopPropagation();
+					onGitInitialize();
+				  }}
+				>
+				  {t("delivery.requirement.gitUninitializedAction")}
+				</Button>
+			  </span>
+			</Tooltip>
 		  ) : null}
 		  {gitState && requirement.gitBranch ? (
 			/* 分支名在胶囊里会被截断，用悬浮框给出完整分支名和当前工作区状态。 */

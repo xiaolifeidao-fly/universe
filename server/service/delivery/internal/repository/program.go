@@ -4,6 +4,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -128,15 +130,24 @@ func (r *DeliveryRepository) SaveProgramCloudSyncConfig(ctx context.Context, biz
 	return &row, nil
 }
 
+// CloudSyncRelativePathHash 是相对路径的稳定摘要，充当唯一键里的定长替身。
+func CloudSyncRelativePathHash(relativePath string) string {
+	sum := sha256.Sum256([]byte(relativePath))
+	return hex.EncodeToString(sum[:])
+}
+
 // UpsertCloudSyncFile 以项目、类别和相对路径作为稳定文件键，保留最后一次本机同步的快照。
+// 匹配走 relative_path_hash，与唯一键保持同一条件，避免长路径命中不到已有行而插入重复。
 func (r *DeliveryRepository) UpsertCloudSyncFile(ctx context.Context, row *DeliveryCloudSyncFile) (*DeliveryCloudSyncFile, error) {
+	row.RelativePathHash = CloudSyncRelativePathHash(row.RelativePath)
 	var existing DeliveryCloudSyncFile
 	err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).
-		Where("biz_line = ? AND program_id = ? AND category = ? AND relative_path = ?", row.BizLine, row.ProgramID, row.Category, row.RelativePath).
+		Where("biz_line = ? AND program_id = ? AND category = ? AND relative_path_hash = ?", row.BizLine, row.ProgramID, row.Category, row.RelativePathHash).
 		First(&existing).Error
 	if err == nil {
 		if err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).Where("id = ?", existing.Id).Updates(map[string]any{
-			"content_type": row.ContentType, "object_key": row.ObjectKey, "size": row.Size, "sha256": row.SHA256,
+			"relative_path": row.RelativePath,
+			"content_type":  row.ContentType, "object_key": row.ObjectKey, "size": row.Size, "sha256": row.SHA256,
 			"updated_by": row.UpdatedBy, "updated_time": row.UpdatedTime,
 		}).Error; err != nil {
 			return nil, err

@@ -31,6 +31,7 @@ import {
   updateRequirementStatus,
   type BoardGroupBy,
   type DeliveryItemRecord,
+  type DeliveryProgramRecord,
   type DeliveryKind,
 	type DeliveryOverview,
 	type DeliveryPhase,
@@ -52,6 +53,10 @@ import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionMod
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
 import { DeliveryOnboardingGuide } from "./DeliveryOnboardingGuide";
 import { DeliveryGitWorkspaceBadge } from "./DeliveryGitWorkspaceBadge";
+import {
+	ProgramWorkspacePreferenceModal,
+	type ProgramWorkspacePreferenceTab,
+} from "../../programs/components/ProgramWorkspacePreferenceModal";
 
 // 全景视角已经独立成「全景视图」菜单（/panorama），这里只留看板和列表。
 type ViewMode = "board" | "list";
@@ -140,6 +145,8 @@ export function DeliveryWorkspace() {
 		gitWorkspaceStatus,
 		gitWorkspaceError,
 		gitWorkspaceLoading,
+		gitWorkspaceUninitialized,
+		workspaceUnset,
 		refreshGitWorkspaceStatus,
     executingItemKey,
     batchStarting,
@@ -182,6 +189,9 @@ export function DeliveryWorkspace() {
   const [startRequirementTesting, setStartRequirementTesting] = useState(false);
 	const [timelineRequirement, setTimelineRequirement] = useState<DeliveryRequirementRecord | null>(null);
 	const [gitRequirement, setGitRequirement] = useState<DeliveryRequirementRecord | null>(null);
+	/** 需求卡片点「去设置 Git / 去设置工作目录」时就地打开的项目偏好设置，以及要停在哪个页签。 */
+	const [preferenceProgram, setPreferenceProgram] = useState<DeliveryProgramRecord | null>(null);
+	const [preferenceTab, setPreferenceTab] = useState<ProgramWorkspacePreferenceTab>("workspace");
   const [createOpen, setCreateOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftModule, setDraftModule] = useState("");
@@ -882,6 +892,13 @@ export function DeliveryWorkspace() {
     }
   }, [programId, refresh, refreshRequirement, t]);
 
+	/** 需求卡片提示「先配 Git / 先选工作目录」时就地开项目偏好设置，不跳项目管理。 */
+	const openProgramPreference = useCallback((tab: ProgramWorkspacePreferenceTab) => {
+		if (!selectedProgram) return;
+		setPreferenceTab(tab);
+		setPreferenceProgram(selectedProgram);
+	}, [selectedProgram]);
+
 	const openGitCheck = useCallback((requirement: DeliveryRequirementRecord) => {
 		if (!selectedProgram?.gitEnabled) return;
 		setGitRequirement(requirement);
@@ -1115,6 +1132,10 @@ export function DeliveryWorkspace() {
 		  gitWorkspaceStatus={gitWorkspaceStatus}
 		  gitWorkspaceError={gitWorkspaceError}
 		  gitWorkspaceLoading={gitWorkspaceLoading}
+		  gitWorkspaceUninitialized={gitWorkspaceUninitialized}
+		  onGitInitialize={() => openProgramPreference("git")}
+		  workspaceUnset={workspaceUnset}
+		  onWorkspaceSetup={() => openProgramPreference("workspace")}
           onStatusChange={handleRequirementStatusChange}
           onDelete={(requirementKey) => void handleDeleteRequirement(requirementKey)}
         />
@@ -1465,6 +1486,16 @@ export function DeliveryWorkspace() {
 				void refreshRequirements();
 			}}
 		/> : null}
+
+		<ProgramWorkspacePreferenceModal
+			program={preferenceProgram}
+			initialTab={preferenceTab}
+			onClose={() => setPreferenceProgram(null)}
+			onSaved={() => {
+				// 目录或仓库刚配好，立刻重读一次状态，卡片上的提示才会消失。
+				void refreshGitWorkspaceStatus();
+			}}
+		/>
 
       <Modal
         open={Boolean(pendingGroupedExecution)}

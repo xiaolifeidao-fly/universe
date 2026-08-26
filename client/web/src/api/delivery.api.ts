@@ -650,6 +650,52 @@ export class CodexGitWorkspaceStatus {
   checkedAt = 0;
 }
 
+/** 工作目录下的一个 Git 工程：根目录自己一条（path 为空串），一级子项目各一条。 */
+export class CodexGitProjectStatus extends CodexGitWorkspaceStatus {
+  /** 相对根工作目录的路径；根目录为空串。 */
+  path = "";
+
+  name = "";
+
+  /** 这个工程里本机或远端已经有需求分支；请求时带上 branch 才有意义。 */
+  hasBranch = false;
+
+  /** 这个工程读不动时的原因；非空表示同一行的状态字段都不可信。 */
+  error = "";
+}
+
+export class CodexGitProjectCatalog {
+  workspace = "";
+
+  projects: CodexGitProjectStatus[] = [];
+}
+
+/** 建分支 / 切分支 / 推送在单个工程上的结果，根目录也占一条。 */
+export class CodexGitTargetOutcome {
+  path = "";
+
+  name = "";
+
+  branch = "";
+
+  baseBranch = "";
+
+  created = false;
+
+  switched = false;
+
+  pushed = false;
+
+  committed = false;
+
+  upToDate = false;
+
+  /** 这个工程本轮没动：子项目里没有这条分支，或补建时跳过了根工作目录。 */
+  skipped = false;
+
+  error = "";
+}
+
 /** 工作区里的一条文件改动，用于「变更」面板列清单。 */
 export class CodexGitChangeFile {
   path = "";
@@ -751,6 +797,9 @@ export class CodexGitPrepareResult {
   stashed = false;
 
   status = new CodexGitWorkspaceStatus();
+
+  /** 根目录加各子项目的切换结果；根目录固定是第一条。 */
+  results: CodexGitTargetOutcome[] = [];
 }
 
 export class CodexGitBranchResult {
@@ -759,6 +808,9 @@ export class CodexGitBranchResult {
   baseBranch = "";
 
   branch = "";
+
+  /** 根目录加各子项目的创建结果；根目录固定是第一条。 */
+  results: CodexGitTargetOutcome[] = [];
 }
 
 export class CodexGitPushResult {
@@ -784,6 +836,9 @@ export class CodexGitPushResult {
   repairStatus = "";
 
   repairSummary = "";
+
+  /** 根目录加各子项目的推送结果；根目录固定是第一条。 */
+  results: CodexGitTargetOutcome[] = [];
 }
 
 export class CodexExecutionResult {
@@ -2107,6 +2162,20 @@ export async function fetchCodexGitBranches(programId: number, workspace = "") {
   return catalog;
 }
 
+/**
+ * 工作目录本身加它下面一级的独立 Git 子项目。
+ * 传 branch 时顺带判断每个工程里有没有这条需求分支，用于建分支勾选和面板标注。
+ */
+export async function fetchCodexGitProjects(programId: number, branch = "") {
+  const response = await instance.get<CodexGitProjectCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/git/projects`, {
+    params: bridgeWorkspaceParams(programId, { programId, ...(branch ? { branch } : {}) }),
+    timeout: 30000,
+  });
+  const catalog = plainToInstance(CodexGitProjectCatalog, response.data);
+  catalog.projects = plainToInstance(CodexGitProjectStatus, response.data.projects ?? []);
+  return catalog;
+}
+
 export async function fetchCodexGitWorkspaceStatus(programId: number) {
   const response = await instance.get<CodexGitWorkspaceStatus>(`${CODEX_BRIDGE_URL}/v1/codex/git/status`, {
     params: bridgeWorkspaceParams(programId, { programId }),
@@ -2115,18 +2184,25 @@ export async function fetchCodexGitWorkspaceStatus(programId: number) {
   return plainToInstance(CodexGitWorkspaceStatus, response.data);
 }
 
-/** 「变更」面板展开时读文件清单；只读本机工作区，不碰远端。 */
-export async function fetchCodexGitChanges(programId: number) {
+/**
+ * 「变更」面板展开时读文件清单；只读本机工作区，不碰远端。
+ * workspace 传子项目目录时读的是那个子项目的改动，不传就是项目根工作目录。
+ */
+export async function fetchCodexGitChanges(programId: number, workspace = "") {
   const response = await instance.get<CodexGitChangeList>(`${CODEX_BRIDGE_URL}/v1/codex/git/changes`, {
-    params: bridgeWorkspaceParams(programId, { programId }),
+    params: workspace.trim()
+      ? { programId, workspace: workspace.trim() }
+      : bridgeWorkspaceParams(programId, { programId }),
     timeout: 30000,
   });
   return plainToInstance(CodexGitChangeList, response.data);
 }
 
-export async function fetchCodexGitChangeDetail(programId: number, path: string) {
+export async function fetchCodexGitChangeDetail(programId: number, path: string, workspace = "") {
   const response = await instance.get<CodexGitChangeDetail>(`${CODEX_BRIDGE_URL}/v1/codex/git/change`, {
-    params: bridgeWorkspaceParams(programId, { programId, path }),
+    params: workspace.trim()
+      ? { programId, workspace: workspace.trim(), path }
+      : bridgeWorkspaceParams(programId, { programId, path }),
     timeout: 30000,
   });
   return plainToInstance(CodexGitChangeDetail, response.data);
@@ -2138,19 +2214,30 @@ export async function prepareCodexGitBranch(
   // 暂存后切换已经下线：脏工作区只能先提交再切，避免 stash 不自动恢复留下的隐性丢改动。
   strategy: "switch" | "commit" = "switch",
   commitMessage = "",
+  options: {
+    // 不传就交给桥接自己挑：所有已经有这条分支的子项目都会跟着切。
+    targets?: string[];
+    // 传子项目目录时这一轮只切那个工程，根工作目录不动。
+    workspace?: string;
+  } = {},
 ) {
   const response = await instance.post<CodexGitPrepareResult>(
     `${CODEX_BRIDGE_URL}/v1/codex/git/prepare`,
-    bridgeWorkspaceParams(programId, {
+    {
+      ...(options.workspace?.trim()
+        ? { workspace: options.workspace.trim() }
+        : bridgeWorkspaceParams(programId)),
       programId,
       branch,
       strategy,
       commitMessage,
-    }),
-    { timeout: 150000 },
+      ...(options.targets ? { targets: options.targets } : {}),
+    },
+    { timeout: 600000 },
   );
   const result = plainToInstance(CodexGitPrepareResult, response.data);
   result.status = plainToInstance(CodexGitWorkspaceStatus, response.data.status ?? response.data);
+  result.results = plainToInstance(CodexGitTargetOutcome, response.data.results ?? []);
   return result;
 }
 
@@ -2161,6 +2248,22 @@ export async function checkCodexGitWorkspace(programId: number, workspace: strin
     timeout: 15000,
   });
   return plainToInstance(CodexGitWorkspaceCheck, response.data);
+}
+
+/**
+ * 项目开了 Git，但本机这份工作目录还用不了：目录不是仓库、仓库没关联远端都算。
+ * 工作目录压根没设的情况由「请先设置工作目录」单独提示，这里不重复报。
+ * 只有桥接连不上这种「判定不了」的情况回 false，避免给出一个误导性的初始化提示。
+ */
+export async function isCodexGitWorkspaceUninitialized(programId: number) {
+  const workspace = getProjectWorkspace(programId);
+  if (!workspace) return false;
+  try {
+    const check = await checkCodexGitWorkspace(programId, workspace);
+    return !check.isGitRepository || !check.remoteConfigured;
+  } catch {
+    return false;
+  }
 }
 
 /** 首次关联要把整个仓库拉下来，超时按克隆的量级给，不按普通接口给。 */
@@ -2203,13 +2306,23 @@ export async function syncCodexCloudWorkspace(programId: number) {
 }
 
 /** 建分支要先把基准分支拉到最新，超时按一次 fetch 的量级给，不按普通接口给。 */
-export async function createCodexGitBranch(programId: number, baseBranch: string, branch: string) {
+export async function createCodexGitBranch(
+  programId: number,
+  baseBranch: string,
+  branch: string,
+  // 勾选的子项目会用同一个分支名各建一条；子项目没有同名基准分支时退回它自己的默认分支。
+  targets: string[] = [],
+  // 给已有需求补建子项目分支时置真：根工作目录早就在这条分支上，这一轮不切它也不拉它。
+  skipRoot = false,
+) {
   const response = await instance.post<CodexGitBranchResult>(
     `${CODEX_BRIDGE_URL}/v1/codex/git/branch`,
-    bridgeWorkspaceParams(programId, { programId, baseBranch, branch }),
-    { timeout: 300000 },
+    bridgeWorkspaceParams(programId, { programId, baseBranch, branch, targets, ...(skipRoot ? { skipRoot: true } : {}) }),
+    { timeout: 600000 },
   );
-  return plainToInstance(CodexGitBranchResult, response.data);
+  const result = plainToInstance(CodexGitBranchResult, response.data);
+  result.results = plainToInstance(CodexGitTargetOutcome, response.data.results ?? []);
+  return result;
 }
 
 /** 推送可能要等 AI 处理冲突，超时按一轮会话的量级给，不按普通接口给。 */
@@ -2217,25 +2330,41 @@ export async function pushCodexGitBranch(
   programId: number,
   branch: string,
   message: string,
-  options: { provider?: AITool; model?: string; reasoningEffort?: AIReasoningEffort; fastMode?: boolean; commitOnly?: boolean } = {},
+  options: {
+    provider?: AITool;
+    model?: string;
+    reasoningEffort?: AIReasoningEffort;
+    fastMode?: boolean;
+    commitOnly?: boolean;
+    // 不传就交给桥接自己挑：所有已经有这条分支的子项目都会一起提交推送。
+    targets?: string[];
+    // 传子项目目录时这一轮只推那个工程，根工作目录不动。
+    workspace?: string;
+  } = {},
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexGitPushResult>(
     `${CODEX_BRIDGE_URL}/v1/codex/git/push`,
-    bridgeWorkspaceParams(programId, {
+    {
+      ...(options.workspace?.trim()
+        ? { workspace: options.workspace.trim() }
+        : bridgeWorkspaceParams(programId)),
       programId,
       branch,
       message,
       provider,
       // 仅提交只在本机落一个提交点，桥接层不会再起 AI 去修推送。
       ...(options.commitOnly ? { commitOnly: true } : {}),
+      ...(options.targets ? { targets: options.targets } : {}),
       ...(options.model ? { model: options.model } : {}),
       ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
       ...(provider === "claude" && options.fastMode ? { fastMode: true } : {}),
-    }),
+    },
     { timeout: 20 * 60 * 1000 },
   );
-  return plainToInstance(CodexGitPushResult, response.data);
+  const result = plainToInstance(CodexGitPushResult, response.data);
+  result.results = plainToInstance(CodexGitTargetOutcome, response.data.results ?? []);
+  return result;
 }
 
 export function codexConversationAttachmentUrl(path: string) {

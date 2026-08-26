@@ -10,6 +10,7 @@ import {
   DeliveryStageRecord,
   fetchCodexBridgeHealth,
   fetchCodexGitWorkspaceStatus,
+  isCodexGitWorkspaceUninitialized,
   fetchItems,
   fetchModules,
   fetchPrograms,
@@ -53,6 +54,8 @@ export interface MyWorkProgramContext {
 export interface MyWorkGitWorkspace {
   status: CodexGitWorkspaceStatus | null;
   error: string;
+  /** 工作目录还不是 Git 仓库：与「桥接连不上」区分开，卡片据此提示先初始化。 */
+  uninitialized: boolean;
 }
 
 /** 工作台发起新需求时，只允许选择当前空间内可写的进行中项目。 */
@@ -140,10 +143,12 @@ export async function fetchMyWorkProgramContext(
 /** 批量读取各项目的 Git 工作区状态；单个项目失败不影响其他卡片。 */
 export async function fetchMyWorkGitWorkspaces(programIds: number[]) {
   const entries = await Promise.all(programIds.map(async (programId) => {
+    // 状态读得到不代表 Git 已就绪：仓库没关联远端时状态照样能读，所以这件事单独问一次。
+    const uninitialized = await isCodexGitWorkspaceUninitialized(programId);
     try {
-      return [programId, { status: await fetchCodexGitWorkspaceStatus(programId), error: "" }] as const;
+      return [programId, { status: await fetchCodexGitWorkspaceStatus(programId), error: "", uninitialized }] as const;
     } catch (error) {
-      return [programId, { status: null, error: (error as Error).message }] as const;
+      return [programId, { status: null, error: (error as Error).message, uninitialized }] as const;
     }
   }));
   return new Map<number, MyWorkGitWorkspace>(entries);

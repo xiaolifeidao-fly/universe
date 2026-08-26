@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_cloud_sync_file` (
   `program_id`    bigint        NOT NULL,
   `category`      varchar(16)   NOT NULL,                       -- chat / requirement / design
   `relative_path` varchar(1024) NOT NULL,                       -- 项目工作目录内相对路径
+  `relative_path_hash` char(64) NOT NULL,                       -- relative_path 的 SHA-256，唯一键里的定长替身
   `content_type`  varchar(128)  NOT NULL,
   `object_key`    varchar(1536) NOT NULL,                       -- 私有 OSS 对象键
   `size`          bigint        NOT NULL,
@@ -60,7 +61,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_cloud_sync_file` (
   `updated_by`    varchar(64)   NOT NULL,
   `updated_time`  timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_dlv_cloud_file` (`biz_line`, `program_id`, `category`, `relative_path`),
+  UNIQUE KEY `uk_dlv_cloud_file` (`biz_line`, `program_id`, `category`, `relative_path_hash`),
   KEY `idx_dlv_cloud_file_updated` (`biz_line`, `program_id`, `category`, `updated_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

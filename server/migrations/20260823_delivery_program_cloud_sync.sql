@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_cloud_sync_file` (
   `program_id`    bigint        NOT NULL,
   `category`      varchar(16)   NOT NULL,
   `relative_path` varchar(1024) NOT NULL,
+  `relative_path_hash` char(64) NOT NULL,
   `content_type`  varchar(128)  NOT NULL,
   `object_key`    varchar(1536) NOT NULL,
   `size`          bigint        NOT NULL,
@@ -40,7 +41,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_cloud_sync_file` (
   `updated_by`    varchar(64)   NOT NULL,
   `updated_time`  timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_dlv_cloud_file` (`biz_line`, `program_id`, `category`, `relative_path`),
+  UNIQUE KEY `uk_dlv_cloud_file` (`biz_line`, `program_id`, `category`, `relative_path_hash`),
   KEY `idx_dlv_cloud_file_updated` (`biz_line`, `program_id`, `category`, `updated_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -69,5 +70,42 @@ BEGIN
 END$$
 CALL migrate_delivery_cloud_sync_to_oss()$$
 DROP PROCEDURE migrate_delivery_cloud_sync_to_oss$$
+
+DELIMITER ;
+
+-- 早期版本把 relative_path 直接放进联合唯一键，utf8mb4 下超过 InnoDB 的 3072 字节上限。
+-- 唯一性改挂在定长的 SHA-256 上；SHA2(x,256) 与 Go 侧的 hex(sha256) 输出一致，可直接回填。
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS migrate_delivery_cloud_sync_path_hash$$
+CREATE PROCEDURE migrate_delivery_cloud_sync_path_hash()
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'zt_delivery_cloud_sync_file' AND column_name = 'relative_path_hash'
+  ) THEN
+    ALTER TABLE `zt_delivery_cloud_sync_file`
+      ADD COLUMN `relative_path_hash` char(64) NOT NULL DEFAULT '' AFTER `relative_path`;
+    UPDATE `zt_delivery_cloud_sync_file` SET `relative_path_hash` = SHA2(`relative_path`, 256);
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.statistics
+    WHERE table_schema = DATABASE() AND table_name = 'zt_delivery_cloud_sync_file'
+      AND index_name = 'uk_dlv_cloud_file' AND column_name = 'relative_path'
+  ) THEN
+    ALTER TABLE `zt_delivery_cloud_sync_file` DROP INDEX `uk_dlv_cloud_file`;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.statistics
+    WHERE table_schema = DATABASE() AND table_name = 'zt_delivery_cloud_sync_file' AND index_name = 'uk_dlv_cloud_file'
+  ) THEN
+    ALTER TABLE `zt_delivery_cloud_sync_file`
+      ADD UNIQUE KEY `uk_dlv_cloud_file` (`biz_line`, `program_id`, `category`, `relative_path_hash`);
+  END IF;
+END$$
+CALL migrate_delivery_cloud_sync_path_hash()$$
+DROP PROCEDURE migrate_delivery_cloud_sync_path_hash$$
 
 DELIMITER ;

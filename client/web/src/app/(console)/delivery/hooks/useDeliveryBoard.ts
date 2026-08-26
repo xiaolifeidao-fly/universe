@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { effortForConfig, modelForConfig, sceneForPhase, useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import { getUserScopedStorageKey } from "@/utils/auth";
+import { getProjectWorkspace } from "@/project-workspaces/projectWorkspacePreferences";
 import { notifyDeliveryTasksChanged } from "@/api/deliveryTaskEvents";
 import {
   advanceDeliveryPhase,
@@ -12,6 +13,7 @@ import {
   deleteItem,
   fetchCodexBridgeHealth,
 	fetchCodexGitWorkspaceStatus,
+	isCodexGitWorkspaceUninitialized,
   fetchBoard,
   fetchItems,
   fetchModules,
@@ -105,6 +107,10 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
 	const [gitWorkspaceStatus, setGitWorkspaceStatus] = useState<CodexGitWorkspaceStatus | null>(null);
 	const [gitWorkspaceError, setGitWorkspaceError] = useState("");
 	const [gitWorkspaceLoading, setGitWorkspaceLoading] = useState(false);
+	/** 项目开了 Git、工作目录却还不是仓库：需求卡片要据此提示「先初始化 Git」。 */
+	const [gitWorkspaceUninitialized, setGitWorkspaceUninitialized] = useState(false);
+	/** 本机还没给这个项目选工作目录：与 Git 无关，任何项目都要提示。 */
+	const [workspaceUnset, setWorkspaceUnset] = useState(false);
   const [executingItemKey, setExecutingItemKey] = useState("");
   const [preparingTestCasesKey, setPreparingTestCasesKey] = useState("");
   const [batchStarting, setBatchStarting] = useState(false);
@@ -160,12 +166,17 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
 	);
 
 	const refreshGitWorkspaceStatus = useCallback(async () => {
+		// 工作目录是本机偏好，与项目开没开 Git 无关，所以放在下面的早退之前判。
+		setWorkspaceUnset(Boolean(programId) && !getProjectWorkspace(programId));
 		if (!programId || !selectedProgram?.gitEnabled) {
 			setGitWorkspaceStatus(null);
 			setGitWorkspaceError("");
+			setGitWorkspaceUninitialized(false);
 			return null;
 		}
 		setGitWorkspaceLoading(true);
+		// 状态读得到不代表 Git 已就绪：仓库没关联远端时状态照样能读，所以这件事单独问一次。
+		setGitWorkspaceUninitialized(await isCodexGitWorkspaceUninitialized(programId));
 		try {
 			const status = await fetchCodexGitWorkspaceStatus(programId);
 			setGitWorkspaceStatus(status);
@@ -587,6 +598,8 @@ export function useDeliveryBoard(shareFilter: DeliveryBoardShareFilter = {}) {
 		gitWorkspaceStatus,
 		gitWorkspaceError,
 		gitWorkspaceLoading,
+		gitWorkspaceUninitialized,
+		workspaceUnset,
 		refreshGitWorkspaceStatus,
     checkCodexHealth,
     executingItemKey,

@@ -12,6 +12,7 @@ import {
   ExportOutlined,
   FileOutlined,
   FileTextOutlined,
+  FolderOutlined,
   FullscreenExitOutlined,
   FullscreenOutlined,
   LoadingOutlined,
@@ -29,7 +30,7 @@ import {
   ToolOutlined,
   UpOutlined,
 } from "@ant-design/icons";
-import { Button, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Switch, Tabs, Tag, Tooltip, message } from "antd";
+import { Button, Checkbox, DatePicker, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as ReactClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
@@ -60,6 +61,7 @@ import {
 	bindRequirementGitBranch,
 	createCodexGitBranch,
 	fetchCodexGitBranches,
+	fetchCodexGitProjects,
 	fetchCodexGitWorkspaceStatus,
 	pushCodexGitBranch,
   fetchCodexRequirementPrototype,
@@ -77,6 +79,8 @@ import {
   stopCodexPlanningConversation,
   uploadCodexPlanningAttachments,
   type CodexConversationItem,
+  type CodexGitProjectStatus,
+  type CodexGitTargetOutcome,
   type CodexGitWorkspaceStatus,
   type CodexPlanningConversation,
   type CodexPlanningSessionSummary,
@@ -279,18 +283,32 @@ export function DeliveryRequirementSessionModal({
 	const [gitBranchesLoading, setGitBranchesLoading] = useState(false);
 	const [gitCreating, setGitCreating] = useState(false);
 	const [gitBranchFormOpen, setGitBranchFormOpen] = useState(false);
+	// 表单开在哪种用途上："branch" 是建需求分支，"subprojects" 是给已有需求补建子项目分支。
+	const [gitBranchFormMode, setGitBranchFormMode] = useState<"branch" | "subprojects">("branch");
 	// 创建分支失败的原因直接留在表单里：多行原文加上处理指引，比弹一层 Modal 更好接着操作。
 	const [gitBranchError, setGitBranchError] = useState<{ detail: string; dirty: boolean; branch: string } | null>(null);
 	const [gitStatus, setGitStatus] = useState<CodexGitWorkspaceStatus | null>(null);
+	// 工作目录下一级的独立 Git 子项目：面板要分工程列状态，建分支要按工程勾选。
+	const [gitSubprojects, setGitSubprojects] = useState<CodexGitProjectStatus[]>([]);
+	const [gitBranchTargets, setGitBranchTargets] = useState<string[]>([]);
+	// 子项目默认收起：面板要先能一眼看完根工作目录，展开的工程才铺开完整信息。
+	const [expandedSubprojects, setExpandedSubprojects] = useState<string[]>([]);
 	const [gitStatusRefreshing, setGitStatusRefreshing] = useState(false);
 	const [gitPushOpen, setGitPushOpen] = useState(false);
 	// 提交/推送的目标分支：默认是需求分支，创建分支被脏工作区拦下时改成当前所处的那条。
 	const [gitPushBranch, setGitPushBranch] = useState("");
 	const [gitPushMessage, setGitPushMessage] = useState("");
+	// 主项目推送时一并提交的子项目：默认全选，用户可以按需取消。
+	const [gitPushTargets, setGitPushTargets] = useState<string[]>([]);
 	const [gitPushing, setGitPushing] = useState(false);
 	const [gitChangesOpen, setGitChangesOpen] = useState(false);
+	// 「变更」看的是哪个工程：空串是项目根工作目录，否则是子项目的绝对路径。
+	const [gitChangesWorkspace, setGitChangesWorkspace] = useState("");
 	// 分支不一致时从 Git 面板直接进检查并切换弹窗，不用退回需求列表。
 	const [gitCheckOpen, setGitCheckOpen] = useState(false);
+	// 切换 / 推送作用在哪个工程：空串是项目根工作目录，否则是子项目的绝对路径。
+	const [gitCheckWorkspace, setGitCheckWorkspace] = useState("");
+	const [gitPushWorkspace, setGitPushWorkspace] = useState("");
 	// 新建窗口即使在落库后收到父组件回传，也仍属于同一轮新建流程；Git 项目要据此持续拦截首轮对话。
 	const newRequirementFlowRef = useRef(false);
 	const modalOpenRef = useRef(false);
@@ -492,6 +510,8 @@ export function DeliveryRequirementSessionModal({
 		// 分支表单每次打开都按当前需求重置；已经建过分支的需求在工具栏上只读展示。
 		setGitBranchFormOpen(false);
 		setGitStatus(null);
+		setGitSubprojects([]);
+		setExpandedSubprojects([]);
 		setGitBaseBranch(requirement?.gitBaseBranch ?? projectGitBaseBranch);
 		setGitBranch(requirement?.gitBranch ?? "");
 		setGitBranches([]);
@@ -559,28 +579,62 @@ export function DeliveryRequirementSessionModal({
 	}, [gitBranchFormOpen, open, programId, projectGitEnabled, saved?.requirementKey, t]);
 
 	// 需求分支已经建好时，工具栏上要能看出它现在有多少待提交改动。
-	const refreshGitStatus = useCallback(async () => {
+	const refreshGitProjects = useCallback(async () => {
 		if (!open || !projectGitEnabled || !codexBridgeReady || !saved?.gitBranch) {
 			setGitStatus(null);
-			return null;
+			setGitSubprojects([]);
+			return { root: null as CodexGitWorkspaceStatus | null, subprojects: [] as CodexGitProjectStatus[] };
 		}
 		// 状态常常几十毫秒就回来了，转一圈都看不见；这里兜一个最短时长，让手动刷新一定有画面反馈。
 		const startedAt = Date.now();
 		setGitStatusRefreshing(true);
 		let next: CodexGitWorkspaceStatus | null = null;
+		let subprojects: CodexGitProjectStatus[] = [];
 		try {
-			next = await fetchCodexGitWorkspaceStatus(programId);
+			// 一次把根目录和子项目的状态都读回来：面板要分工程展示，多打一次接口没必要。
+			const catalog = await fetchCodexGitProjects(programId, saved.gitBranch);
+			next = catalog.projects.find((project) => !project.path) ?? null;
+			subprojects = catalog.projects.filter((project) => project.path);
 			setGitStatus(next);
+			setGitSubprojects(subprojects);
 		} catch {
-			// 工作区状态是附加信息，读不到就只显示分支名，不打扰用户。
-			setGitStatus(null);
+			// 桥接还是旧版本（没有子项目接口）时退回单目录状态，别让整块 Git 信息一起消失。
+			setGitSubprojects([]);
+			try {
+				next = await fetchCodexGitWorkspaceStatus(programId);
+				setGitStatus(next);
+			} catch {
+				// 工作区状态是附加信息，读不到就只显示分支名，不打扰用户。
+				setGitStatus(null);
+			}
 		} finally {
 			const rest = 480 - (Date.now() - startedAt);
 			if (rest > 0) await new Promise((resolve) => setTimeout(resolve, rest));
 			setGitStatusRefreshing(false);
 		}
-		return next;
+		return { root: next, subprojects };
 	}, [codexBridgeReady, open, programId, projectGitEnabled, saved?.gitBranch]);
+
+	const refreshGitStatus = useCallback(async () => (await refreshGitProjects()).root, [refreshGitProjects]);
+
+	const gitPushProject = gitPushWorkspace
+		? gitSubprojects.find((project) => project.workspace === gitPushWorkspace) ?? null
+		: null;
+
+	const gitCheckProject = gitCheckWorkspace
+		? gitSubprojects.find((project) => project.workspace === gitCheckWorkspace) ?? null
+		: null;
+
+	const gitChangesProject = gitChangesWorkspace
+		? gitSubprojects.find((project) => project.workspace === gitChangesWorkspace) ?? null
+		: null;
+
+	// 推送和切换会自动带上「本机已经有这条分支」的子项目，弹窗里要先把名单说清楚。
+	// 面板和推送弹窗都按「扫到的 Git 工程」列；gitLinked 只用来判断还有哪些工程缺这条需求分支。
+	const gitLinkedSubprojects = gitSubprojects.filter((project) => project.hasBranch && !project.error);
+	const gitVisibleSubprojects = gitSubprojects.filter((project) => !project.error);
+	const gitPushSubprojects = gitVisibleSubprojects;
+
 
 	// 工作目录停在别的分支上：Git 面板要同时给出提示和切换入口。
 	const gitBranchMismatched = Boolean(
@@ -1013,12 +1067,49 @@ export function DeliveryRequirementSessionModal({
     }
   };
 
-	const openGitBranchForm = async () => {
+	const openGitBranchForm = async (mode: "branch" | "subprojects" = "branch") => {
 		// 新需求不先保存：先在本机创建分支，成功后才创建需求并写入关联。
+		setGitBranchFormMode(mode);
 		setGitBaseBranch(saved?.gitBaseBranch || projectGitBaseBranch || "");
 		setGitBranch(saved?.gitBranch || (saved?.requirementKey ? defaultRequirementGitBranch(saved.requirementKey) : defaultNewRequirementGitBranch()));
 		setGitBranchError(null);
 		setGitBranchFormOpen(true);
+		// 工作目录下可能摆着若干个独立工程，建分支时要能一次把它们都带上；默认全选。
+		try {
+			const catalog = await fetchCodexGitProjects(programId, saved?.gitBranch || "");
+			const subprojects = catalog.projects.filter((project) => project.path);
+			setGitSubprojects(subprojects);
+			// 默认勾还没有这条分支的工程：已经有的再建一次没有意义，只会白拉一轮远端。
+			setGitBranchTargets(subprojects
+				.filter((project) => project.isGitRepository && !project.error && !project.hasBranch)
+				.map((project) => project.path));
+		} catch {
+			// 读不到子项目不该挡住建分支：退化成只在根工作目录建这一条。
+			setGitSubprojects([]);
+			setGitBranchTargets([]);
+		}
+	};
+
+	/** 建分支 / 推送这类批量动作里，逐个子项目的失败原因要留在屏幕上，不能用 toast 一闪而过。 */
+	const reportGitTargetFailures = (title: string, results: CodexGitTargetOutcome[]) => {
+		const failed = results.filter((entry) => entry.path && entry.error);
+		if (!failed.length) return;
+		Modal.warning({
+			title,
+			width: 560,
+			okText: t("common.close"),
+			wrapClassName: "manager-form-skin",
+			content: (
+				<div className="delivery-requirement-git-error">
+					{failed.map((entry) => (
+						<div key={entry.path}>
+							<b>{entry.name || entry.path}</b>
+							<pre>{entry.error}</pre>
+						</div>
+					))}
+				</div>
+			),
+		});
 	};
 
 	const createGitBranch = async () => {
@@ -1030,12 +1121,21 @@ export function DeliveryRequirementSessionModal({
 		setGitCreating(true);
 		setGitBranchError(null);
 		try {
+			// 补建只在子项目里建分支：需求关联早就写好了，根工作目录这一轮完全不动。
+			if (gitBranchFormMode === "subprojects" && saved?.gitBranch) {
+				const patched = await createCodexGitBranch(programId, gitBaseBranch, saved.gitBranch, gitBranchTargets, true);
+				setGitBranchFormOpen(false);
+				void refreshGitProjects();
+				message.success(t("delivery.requirement.gitSubprojectBranchCreated"));
+				reportGitTargetFailures(t("delivery.requirement.gitSubprojectBranchFailed"), patched.results);
+				return;
+			}
 			const current = saved;
 			const needsTemporaryName = newRequirementFlowRef.current && !current?.name.trim();
 			const nextBranch = gitBranch.trim() || (current?.requirementKey ? defaultRequirementGitBranch(current.requirementKey) : defaultNewRequirementGitBranch());
 			if (!nextBranch) return;
 			// 新建流程严格按「先创建本机分支，再创建需求」执行；需求保存失败时不会提前落库。
-			const created = await createCodexGitBranch(programId, gitBaseBranch, nextBranch);
+			const created = await createCodexGitBranch(programId, gitBaseBranch, nextBranch, gitBranchTargets);
 			let next = current
 				? await bindRequirementGitBranch(programId, current.requirementKey, created.baseBranch, created.branch)
 				: await save({ gitEnabled: true, gitBaseBranch: created.baseBranch, gitBranch: created.branch });
@@ -1059,6 +1159,8 @@ export function DeliveryRequirementSessionModal({
 			setGitBranchFormOpen(false);
 			void refreshGitStatus();
 			message.success(t("delivery.requirement.gitBranchCreated"));
+			// 根目录建成了，个别子项目没建成的原因单独摆出来：需求已经关联，用户补建即可。
+			reportGitTargetFailures(t("delivery.requirement.gitSubprojectBranchFailed"), created.results);
 		} catch (error) {
 			// Git 的失败原因往往是多行输出，toast 会截断，直接留在表单里，用户看完就能接着处理。
 			const detail = (error as Error).message;
@@ -1080,9 +1182,16 @@ export function DeliveryRequirementSessionModal({
 	const requirementOfBranch = (branch: string) =>
 		branch ? requirements.find((entry) => entry.gitBranch === branch) ?? null : null;
 
-	const openGitPush = (branch = "") => {
+	const openGitPush = (branch = "", workspace = "") => {
 		const target = branch || saved?.gitBranch || "";
 		const owner = target && target === saved?.gitBranch ? saved : requirementOfBranch(target);
+		setGitPushWorkspace(workspace);
+		// 单独推某个子项目时不再牵扯别的工程；推主项目才带上默认全选的子项目。
+		setGitPushTargets(workspace
+			? []
+			: gitSubprojects
+				.filter((project) => !project.error && (project.hasBranch || project.currentBranch))
+				.map((project) => project.path));
 		setGitPushBranch(target);
 		setGitPushMessage(owner ? `feat: ${owner.name || owner.requirementKey}（${owner.requirementKey}）` : target ? `chore: ${target}` : "");
 		setGitPushOpen(true);
@@ -1095,6 +1204,8 @@ export function DeliveryRequirementSessionModal({
 		setGitPushing(true);
 		try {
 			const result = await pushCodexGitBranch(programId, branch, gitPushMessage.trim(), {
+				// 推子项目时只动那一个工程；推主项目则按弹窗里勾选的子项目一并处理。
+				...(gitPushWorkspace ? { workspace: gitPushWorkspace, targets: [] } : { targets: gitPushTargets }),
 				provider: planningProvider,
 				model: modelForConfig(planningConfig),
 				reasoningEffort: effortForConfig(planningConfig),
@@ -1105,6 +1216,7 @@ export function DeliveryRequirementSessionModal({
 			// 挡住创建分支的那点未提交改动已经落成提交，表单里的错误提示跟着清掉，直接重试即可。
 			setGitBranchError(null);
 			void refreshGitStatus();
+			reportGitTargetFailures(t("delivery.requirement.gitSubprojectPushFailed"), result.results);
 			if (commitOnly) {
 				message.success(
 					result.committed
@@ -1537,8 +1649,11 @@ export function DeliveryRequirementSessionModal({
                   </Tooltip>
                 </div>
               </header>
+              {/* 内容单独一层：标题和刷新/收起按钮要一直钉在顶上，长出来的只让下面这块滚。 */}
+              {!gitPanelCollapsed ? (
+                <div className="delivery-requirement-git-panel__body">
               {/* 还没建分支：面板里只放创建入口，顺带把「先建分支再对话」的原因说清楚。 */}
-              {!gitPanelCollapsed && !gitLinked ? (
+              {!gitLinked ? (
                 <>
                   <button
                     className={`delivery-requirement-git-panel__row is-action${saving ? " is-disabled" : ""}`}
@@ -1561,7 +1676,7 @@ export function DeliveryRequirementSessionModal({
                   ) : null}
                 </>
               ) : null}
-              {!gitPanelCollapsed && gitLinked ? (
+              {gitLinked ? (
                 <>
                   <Tooltip
                     placement="left"
@@ -1575,7 +1690,10 @@ export function DeliveryRequirementSessionModal({
                     <button
                       className="delivery-requirement-git-panel__row is-action"
                       type="button"
-                      onClick={() => setGitChangesOpen(true)}
+                      onClick={() => {
+                        setGitChangesWorkspace("");
+                        setGitChangesOpen(true);
+                      }}
                     >
                       <FileTextOutlined />
                       {/* 面板宽度固定，标题和取值分两行放，长文案就不会互相挤掉。 */}
@@ -1638,6 +1756,7 @@ export function DeliveryRequirementSessionModal({
                         aria-disabled={!codexBridgeReady}
                         onClick={() => {
                           if (!codexBridgeReady) return;
+                          setGitCheckWorkspace("");
                           setGitCheckOpen(true);
                         }}
                       >
@@ -1668,7 +1787,190 @@ export function DeliveryRequirementSessionModal({
                       </button>
                     </Tooltip>
                   ) : null}
+                  {/* 参与这条需求的子工程：默认收起，展开后是一整块和根目录同样的 Git 信息。 */}
+                  {gitSubprojects.length ? (
+                    <>
+                      <div className="delivery-requirement-git-panel__section">
+                        <span>{t("delivery.requirement.gitSubprojects")}</span>
+                      </div>
+                      {/* 一个都没列出来时不能整块留白：说清楚原因，并给一个补建分支的入口。 */}
+                      {!gitVisibleSubprojects.length ? (
+                        <div className="delivery-requirement-git-panel__row">
+                          <span className="delivery-requirement-git-panel__row-caption">
+                            {t("delivery.requirement.gitSubprojectsUnreadable")}
+                          </span>
+                        </div>
+                      ) : null}
+                      {gitVisibleSubprojects.map((project) => {
+                        const expanded = expandedSubprojects.includes(project.path);
+                        // 游离 HEAD 也算没停在需求分支上，同样要给切换入口。
+                        const projectMismatched = project.currentBranch !== saved?.gitBranch;
+                        // 没有这条需求分支的工程只是「工作目录里的另一个仓库」：不给切换，
+                        // 提交也只针对它自己当前所在的分支。
+                        const projectTag = project.hasBranch
+                          ? (projectMismatched ? "is-mismatch" : "is-ready")
+                          : "is-none";
+                        const projectTagText = t(project.hasBranch
+                          ? (projectMismatched
+                            ? "delivery.requirement.gitState.mismatch"
+                            : "delivery.requirement.gitState.ready")
+                          : "delivery.requirement.gitSubprojectNoBranch");
+                        const pushBranch = project.hasBranch ? saved?.gitBranch ?? "" : project.currentBranch;
+                        return (
+                          <div className="delivery-requirement-git-panel__group" key={project.path}>
+                            <button
+                              className="delivery-requirement-git-panel__row is-action is-subproject"
+                              type="button"
+                              aria-expanded={expanded}
+                              onClick={() => setExpandedSubprojects((current) => (
+                                current.includes(project.path)
+                                  ? current.filter((path) => path !== project.path)
+                                  : [...current, project.path]
+                              ))}
+                            >
+                              {expanded ? <DownOutlined /> : <RightOutlined />}
+                              <span className="delivery-requirement-git-panel__row-body">
+                                <span className="delivery-requirement-git-panel__row-label">{project.name}</span>
+                                {/* 收起时也要能看出这个工程有没有活儿，不然还得一个个点开。 */}
+                                <b className={project.changed ? "is-dirty" : "is-clean"}>
+                                  {project.changed
+                                    ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(project.changed))
+                                    : t("delivery.requirement.gitBranchClean")}
+                                </b>
+                              </span>
+                              <span className={`delivery-requirement-git-panel__tag ${projectTag}`}>{projectTagText}</span>
+                            </button>
+                            {expanded ? (
+                              <div className="delivery-requirement-git-panel__group-body">
+                                <Tooltip
+                                  placement="left"
+                                  title={`${t("delivery.requirement.gitPanelChangesDetail")
+                                    .replace("{staged}", String(project.staged))
+                                    .replace("{unstaged}", String(project.unstaged))
+                                    .replace("{untracked}", String(project.untracked))}\n${t("delivery.requirement.gitSubprojectChangesOpen")}`}
+                                >
+                                  <button
+                                    className="delivery-requirement-git-panel__row is-action"
+                                    type="button"
+                                    onClick={() => {
+                                      setGitChangesWorkspace(project.workspace);
+                                      setGitChangesOpen(true);
+                                    }}
+                                  >
+                                    <FileTextOutlined />
+                                    <span className="delivery-requirement-git-panel__row-body">
+                                      <span className="delivery-requirement-git-panel__row-label">
+                                        {t("delivery.requirement.gitPanelChanges")}
+                                      </span>
+                                      <b className={project.changed ? "is-dirty" : "is-clean"}>
+                                        {project.changed
+                                          ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(project.changed))
+                                          : t("delivery.requirement.gitBranchClean")}
+                                      </b>
+                                    </span>
+                                  </button>
+                                </Tooltip>
+                                <div className="delivery-requirement-git-panel__row">
+                                  <BranchesOutlined />
+                                  <span className="delivery-requirement-git-panel__row-body">
+                                    {/* 有这条需求分支才把它摆在第一行；没有的工程只说自己此刻停在哪。 */}
+                                    {project.hasBranch ? (
+                                      <span className="delivery-requirement-git-panel__branch">
+                                        <Tooltip title={saved?.gitBranch} placement="left">
+                                          <code className="manager-mono">{saved?.gitBranch}</code>
+                                        </Tooltip>
+                                        <Tooltip
+                                          placement="left"
+                                          title={projectMismatched
+                                            ? t("delivery.requirement.gitBranchNotCurrent")
+                                              .replace("{current}", project.currentBranch || t("delivery.requirement.gitCurrentBranchDetached"))
+                                            : t("delivery.requirement.gitAlreadyOnBranch")}
+                                        >
+                                          <span className={`delivery-requirement-git-panel__tag ${projectTag}`}>{projectTagText}</span>
+                                        </Tooltip>
+                                      </span>
+                                    ) : null}
+                                    {project.currentBranch && (projectMismatched || !project.hasBranch) ? (
+                                      <span className="delivery-requirement-git-panel__branch">
+                                        <Tooltip title={project.currentBranch} placement="left">
+                                          <code className="manager-mono">{project.currentBranch}</code>
+                                        </Tooltip>
+                                        <span className="delivery-requirement-git-panel__tag is-current">
+                                          {t("delivery.requirement.gitCurrentBranchTag")}
+                                        </span>
+                                      </span>
+                                    ) : null}
+                                    {!project.currentBranch ? (
+                                      <span className="delivery-requirement-git-panel__row-caption">
+                                        {t("delivery.requirement.gitCurrentBranchDetached")}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </div>
+                                {project.hasBranch && projectMismatched ? (
+                                  <Tooltip placement="left" title={codexBridgeReady ? t("delivery.requirement.gitCheckTitle") : t("delivery.requirement.gitPanelUnavailable")}>
+                                    <button
+                                      className={`delivery-requirement-git-panel__row is-action is-warning${!codexBridgeReady ? " is-disabled" : ""}`}
+                                      type="button"
+                                      aria-disabled={!codexBridgeReady}
+                                      onClick={() => {
+                                        if (!codexBridgeReady) return;
+                                        setGitCheckWorkspace(project.workspace);
+                                        setGitCheckOpen(true);
+                                      }}
+                                    >
+                                      <SwapOutlined />
+                                      <span>{t("delivery.requirement.gitCheck")}</span>
+                                    </button>
+                                  </Tooltip>
+                                ) : null}
+                                {gitPushReady ? (
+                                  <Tooltip
+                                    placement="left"
+                                    title={!codexBridgeReady
+                                      ? t("delivery.requirement.gitPanelUnavailable")
+                                      : pushBranch
+                                        ? t("delivery.requirement.gitPushHint").replace("{branch}", pushBranch)
+                                        : t("delivery.requirement.gitCurrentBranchDetached")}
+                                  >
+                                    <button
+                                      className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady || gitPushing || !pushBranch ? " is-disabled" : ""}`}
+                                      type="button"
+                                      aria-disabled={!codexBridgeReady || gitPushing || !pushBranch}
+                                      onClick={() => {
+                                        if (!codexBridgeReady || gitPushing || !pushBranch) return;
+                                        openGitPush(pushBranch, project.workspace);
+                                      }}
+                                    >
+                                      {gitPushing ? <LoadingOutlined spin /> : <CloudUploadOutlined />}
+                                      <span>{t("delivery.requirement.gitPanelPush")}</span>
+                                    </button>
+                                  </Tooltip>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                      {gitLinkedSubprojects.length < gitSubprojects.length ? (
+                        <button
+                          className={`delivery-requirement-git-panel__row is-action${saving ? " is-disabled" : ""}`}
+                          type="button"
+                          aria-disabled={saving}
+                          onClick={() => {
+                            if (saving) return;
+                            void openGitBranchForm("subprojects");
+                          }}
+                        >
+                          <BranchesOutlined />
+                          <span>{t("delivery.requirement.gitSubprojectCreateBranch")}</span>
+                        </button>
+                      ) : null}
+                    </>
+                  ) : null}
                 </>
+              ) : null}
+                </div>
               ) : null}
             </aside>
           ) : null}
@@ -2487,8 +2789,12 @@ export function DeliveryRequirementSessionModal({
         wrapClassName="manager-form-skin"
         open={gitBranchFormOpen}
         destroyOnClose
-        title={t("delivery.requirement.gitBranchFormTitle")}
-        okText={t("delivery.requirement.gitCreateBranch")}
+        title={t(gitBranchFormMode === "subprojects"
+          ? "delivery.requirement.gitSubprojectCreateBranch"
+          : "delivery.requirement.gitBranchFormTitle")}
+        okText={t(gitBranchFormMode === "subprojects"
+          ? "delivery.requirement.gitSubprojectCreateBranch"
+          : "delivery.requirement.gitCreateBranch")}
         cancelText={t("common.cancel")}
         confirmLoading={gitCreating}
         okButtonProps={{ disabled: !gitBaseBranch || !gitBranch.trim() || gitBranchesLoading }}
@@ -2516,6 +2822,8 @@ export function DeliveryRequirementSessionModal({
           <label>
             {t("delivery.requirement.gitBranch")}
             <Input
+              // 补建走的是需求已有的那条分支，改名字就不是补建了。
+              disabled={gitBranchFormMode === "subprojects"}
               value={gitBranch}
               placeholder={saved?.requirementKey
                 ? t("delivery.requirement.gitBranchPlaceholder").replace("{key}", saved.requirementKey)
@@ -2523,7 +2831,7 @@ export function DeliveryRequirementSessionModal({
               onChange={(event) => setGitBranch(event.target.value)}
             />
           </label>
-          <label>
+          {gitBranchFormMode === "subprojects" ? null : <label>
             {t("delivery.requirement.gitExistingBranch")}
             <Select
               showSearch
@@ -2534,7 +2842,32 @@ export function DeliveryRequirementSessionModal({
               onChange={setGitBranch}
               options={gitBranches.map((branch) => ({ value: branch, label: branch }))}
             />
-          </label>
+          </label>}
+          {/* 工作目录下的独立子工程：默认全勾，勾上的会用同一个分支名各建一条。 */}
+          {gitSubprojects.length ? (
+            <label>
+              {t("delivery.requirement.gitSubprojectTargets")}
+              <Checkbox.Group
+                className="delivery-requirement-git-targets"
+                value={gitBranchTargets}
+                onChange={(values) => setGitBranchTargets(values as string[])}
+                options={gitSubprojects.map((project) => ({
+                  value: project.path,
+                  disabled: !project.isGitRepository,
+                  label: (
+                    <span className="delivery-requirement-git-targets__item">
+                      <b>{project.name}</b>
+                      <code className="manager-mono">
+                        {project.currentBranch || t("delivery.requirement.gitCurrentBranchDetached")}
+                      </code>
+                      {project.hasBranch ? <i>{t("delivery.requirement.gitSubprojectHasBranch")}</i> : null}
+                    </span>
+                  ),
+                }))}
+              />
+              <small>{t("delivery.requirement.gitSubprojectTargetsHint")}</small>
+            </label>
+          ) : null}
           {/* 失败原因留在表单里，脏工作区还顺手给一个提交入口，不用退出去重新找。 */}
           {gitBranchError ? (
             <div className="delivery-requirement-git-error">
@@ -2577,13 +2910,23 @@ export function DeliveryRequirementSessionModal({
         <DeliveryRequirementGitCheckModal
           requirement={gitCheckOpen ? saved : null}
           programId={programId}
-          status={gitStatus}
+          // 切子项目时弹窗里的现状要按那个工程读，不能拿根目录的状态糊弄。
+          status={gitCheckProject ?? gitStatus}
+          workspace={gitCheckWorkspace}
+          projectName={gitCheckProject?.name ?? ""}
           statusError=""
           statusLoading={gitStatusRefreshing}
-          onRefreshStatus={refreshGitStatus}
-          onClose={() => setGitCheckOpen(false)}
+          onRefreshStatus={async () => {
+            const catalog = await refreshGitProjects();
+            if (!gitCheckWorkspace) return catalog.root;
+            return catalog.subprojects.find((project) => project.workspace === gitCheckWorkspace) ?? null;
+          }}
+          onClose={() => {
+            setGitCheckOpen(false);
+            setGitCheckWorkspace("");
+          }}
           onPrepared={() => {
-            void refreshGitStatus();
+            void refreshGitProjects();
           }}
         />
       ) : null}
@@ -2591,7 +2934,10 @@ export function DeliveryRequirementSessionModal({
       <DeliveryGitChangesModal
         open={gitChangesOpen}
         programId={programId}
-        branch={saved?.gitBranch}
+        // 看子项目时标题上的分支要按那个工程当前所处的分支写，不能挂需求分支。
+        branch={gitChangesProject ? gitChangesProject.currentBranch : saved?.gitBranch}
+        workspace={gitChangesWorkspace}
+        projectName={gitChangesProject?.name ?? ""}
         onClose={() => setGitChangesOpen(false)}
       />
 
@@ -2600,7 +2946,9 @@ export function DeliveryRequirementSessionModal({
         wrapClassName="manager-form-skin"
         open={gitPushOpen}
         destroyOnClose
-        title={t("delivery.requirement.gitPush")}
+        title={gitPushProject
+          ? `${t("delivery.requirement.gitPush")} · ${gitPushProject.name}`
+          : t("delivery.requirement.gitPush")}
         confirmLoading={gitPushing}
         onCancel={() => setGitPushOpen(false)}
         onOk={() => void pushGitBranch()}
@@ -2619,6 +2967,37 @@ export function DeliveryRequirementSessionModal({
       >
         <div className="delivery-requirement-git-push">
           <p>{t("delivery.requirement.gitPushDescription").replace("{branch}", gitPushBranch || saved?.gitBranch || "")}</p>
+          {/* 工作目录里还有别的 Git 工程时，让用户自己决定这一轮带上谁；单独推某个工程时不出现。 */}
+          {!gitPushWorkspace && gitPushSubprojects.length ? (
+            <label>
+              {t("delivery.requirement.gitPushSubprojects")}
+              <Checkbox.Group
+                className="delivery-requirement-git-targets"
+                value={gitPushTargets}
+                onChange={(values) => setGitPushTargets(values as string[])}
+                options={gitPushSubprojects.map((project) => ({
+                  value: project.path,
+                  // 游离 HEAD 没有可提交的分支，勾了也没处落。
+                  disabled: !project.hasBranch && !project.currentBranch,
+                  label: (
+                    <span className="delivery-requirement-git-targets__item">
+                      <b>{project.name}</b>
+                      <code className="manager-mono">
+                        {(project.hasBranch ? saved?.gitBranch : project.currentBranch)
+                          || t("delivery.requirement.gitCurrentBranchDetached")}
+                      </code>
+                      <i className={project.changed ? "is-dirty" : "is-clean"}>
+                        {project.changed
+                          ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(project.changed))
+                          : t("delivery.requirement.gitBranchClean")}
+                      </i>
+                    </span>
+                  ),
+                }))}
+              />
+              <small>{t("delivery.requirement.gitPushSubprojectsHint")}</small>
+            </label>
+          ) : null}
           <label>
             {t("delivery.requirement.gitPushMessage")}
             <Input.TextArea

@@ -28,14 +28,18 @@ import {
   deleteItem,
   deleteRequirement,
   fetchCodexGitWorkspaceStatus,
+  fetchPrograms,
+  isCodexGitWorkspaceUninitialized,
   REQUIREMENT_STATUSES,
   updateRequirementStatus,
   type DeliveryItemRecord,
+  type DeliveryProgramRecord,
   type DeliveryRequirementRecord,
   type RequirementStatus,
 } from "@/api/delivery.api";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { getProjectWorkspace } from "@/project-workspaces/projectWorkspacePreferences";
 import { getAuthUser } from "@/utils/auth";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { requirementMentionPlainText } from "../../delivery/components/DeliveryRequirementDetailInput";
@@ -45,6 +49,10 @@ import { DeliveryRequirementTimelineDrawer } from "../../delivery/components/Del
 import { DeliveryRequirementProgressModal } from "../../delivery/components/DeliveryRequirementProgressModal";
 import { DeliveryRequirementOutlineModal } from "../../delivery/components/DeliveryTaskOutline";
 import { DeliveryRequirementSessionModal } from "../../delivery/components/DeliveryRequirementSessionModal";
+import {
+  ProgramWorkspacePreferenceModal,
+  type ProgramWorkspacePreferenceTab,
+} from "../../programs/components/ProgramWorkspacePreferenceModal";
 import {
   fetchMyWorkGitWorkspaces,
   fetchMyWorkPrograms,
@@ -97,6 +105,10 @@ export function MyWorkWorkspace() {
   const [reloadKey, setReloadKey] = useState(0);
   const [gitWorkspaces, setGitWorkspaces] = useState<Map<number, MyWorkGitWorkspace>>(new Map());
   const [gitLoading, setGitLoading] = useState(false);
+  /** 卡片点「去设置 Git / 去设置工作目录」时就地打开的项目偏好设置，以及正在取项目记录的那条需求。 */
+  const [preferenceProgram, setPreferenceProgram] = useState<DeliveryProgramRecord | null>(null);
+  const [preferenceTab, setPreferenceTab] = useState<ProgramWorkspacePreferenceTab>("workspace");
+  const [preferenceLoadingKey, setPreferenceLoadingKey] = useState("");
   // 就地打开的需求弹窗：卡片本身不跳转，只有「跳转看板」才离开工作台。
   const [sessionRecord, setSessionRecord] = useState<MyWorkRequirement | null>(null);
   // 新增需求同样在工作台就地打开：此时 sessionRecord 为空，只有项目上下文。
@@ -188,6 +200,12 @@ export function MyWorkWorkspace() {
       });
     return () => { active = false; };
   }, [gitProgramIds, reloadKey]);
+
+  /** 本机还没选工作目录的项目：与 Git 无关，任何项目的卡片都要提示。 */
+  const workspaceUnsetProgramIds = useMemo(
+    () => new Set(records.filter((record) => !getProjectWorkspace(record.programId)).map((record) => record.programId)),
+    [records],
+  );
 
   /**
    * 与需求列表同一套判定：先看项目和需求是否都开了 Git，再拿工作区当前分支比对。
@@ -297,6 +315,28 @@ export function MyWorkWorkspace() {
     if (itemKey) params.set("focusItemKey", itemKey);
     router.push(`/delivery?${params.toString()}`);
   }, [router]);
+
+  /**
+   * 卡片提示「先初始化 Git」时就地开项目偏好设置，停在 Git 页签，不跳项目管理。
+   * 卡片本身只带了项目的几个字段，弹窗要的是完整项目记录，所以点开时按需取一次。
+   */
+  const openProgramPreference = useCallback(async (record: MyWorkRequirement, tab: ProgramWorkspacePreferenceTab) => {
+    setPreferenceLoadingKey(record.requirementKey);
+    try {
+      const programs = await fetchPrograms(record.bizLine);
+      const program = programs.find((item) => item.programId === record.programId);
+      if (!program) {
+        message.error(t("myWork.programMissing"));
+        return;
+      }
+      setPreferenceTab(tab);
+      setPreferenceProgram(program);
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setPreferenceLoadingKey("");
+    }
+  }, [t]);
 
   const openCreateRequirement = useCallback(async () => {
     if (!activeBusinessLine.id) return;
@@ -451,11 +491,17 @@ export function MyWorkWorkspace() {
   const refreshGitWorkspace = useCallback(async (programId: number) => {
     if (!programId) return null;
     try {
+      // 状态读得到不代表 Git 已就绪：仓库没关联远端时状态照样能读，所以这件事单独问一次。
+      const uninitialized = await isCodexGitWorkspaceUninitialized(programId);
       const status = await fetchCodexGitWorkspaceStatus(programId);
-      setGitWorkspaces((current) => new Map(current).set(programId, { status, error: "" }));
+      setGitWorkspaces((current) => new Map(current).set(programId, { status, error: "", uninitialized }));
       return status;
     } catch (error) {
-      setGitWorkspaces((current) => new Map(current).set(programId, { status: null, error: (error as Error).message }));
+      const uninitialized = await isCodexGitWorkspaceUninitialized(programId);
+      setGitWorkspaces((current) => new Map(current).set(
+        programId,
+        { status: null, error: (error as Error).message, uninitialized },
+      ));
       return null;
     }
   }, []);
@@ -630,6 +676,12 @@ export function MyWorkWorkspace() {
         <section className="my-work-grid" aria-label={t("myWork.list")}>
           {sortedRecords.map((record) => {
             const gitState = gitStateOf(record);
+            // 仓库都还没初始化时，需求分支无从谈起，先把「去初始化」这件事摆在卡片上。
+            // 工作目录都没选的话先提示选目录：Git 那步在目录定下来之前无从判断。
+            const workspaceUnset = workspaceUnsetProgramIds.has(record.programId);
+            const gitUninitialized = record.programGitEnabled
+              && Boolean(gitWorkspaces.get(record.programId)?.uninitialized)
+              && !workspaceUnset;
             // 工作区正停在这条需求的分支上且还有未提交改动时不许删：改动会失去对应的需求上下文。
             const deleteBlocked = Boolean(gitState?.current && gitState?.dirty);
             return (
@@ -664,6 +716,40 @@ export function MyWorkWorkspace() {
                   {record.detail ? <p>{requirementMentionPlainText(record.detail, requirementNames)}</p> : null}
                 </div>
 
+                {workspaceUnset ? (
+                  <div className="my-work-card__git">
+                    <FolderOpenOutlined />
+                    <span className="my-work-chip is-warning" title={t("delivery.requirement.workspaceUnsetHint")}>
+                      <i />
+                      {t("delivery.requirement.workspaceUnset")}
+                    </span>
+                    <Button
+                      type="link"
+                      size="small"
+                      loading={preferenceLoadingKey === record.requirementKey}
+                      onClick={() => void openProgramPreference(record, "workspace")}
+                    >
+                      {t("delivery.requirement.workspaceUnsetAction")}
+                    </Button>
+                  </div>
+                ) : null}
+                {gitUninitialized ? (
+                  <div className="my-work-card__git">
+                    <BranchesOutlined />
+                    <span className="my-work-chip is-warning" title={t("delivery.requirement.gitUninitializedHint")}>
+                      <i />
+                      {t("delivery.requirement.gitUninitialized")}
+                    </span>
+                    <Button
+                      type="link"
+                      size="small"
+                      loading={preferenceLoadingKey === record.requirementKey}
+                      onClick={() => void openProgramPreference(record, "git")}
+                    >
+                      {t("delivery.requirement.gitUninitializedAction")}
+                    </Button>
+                  </div>
+                ) : null}
                 {gitState ? (
                   <div className="my-work-card__git">
                     <BranchesOutlined />
@@ -889,6 +975,14 @@ export function MyWorkWorkspace() {
         onRefreshStatus={() => refreshGitWorkspace(gitRecord?.programId ?? 0)}
         onClose={() => setGitRecord(null)}
         onPrepared={() => setReloadKey((value) => value + 1)}
+      />
+
+      <ProgramWorkspacePreferenceModal
+        program={preferenceProgram}
+        initialTab={preferenceTab}
+        onClose={() => setPreferenceProgram(null)}
+        // 目录或仓库刚配好，重拉一遍卡片和 Git 状态，提示才会消失。
+        onSaved={() => setReloadKey((value) => value + 1)}
       />
 
       <DeliveryRequirementOutlineModal

@@ -19,6 +19,10 @@ interface DeliveryRequirementGitCheckModalProps {
   requirement: DeliveryRequirementRecord | null;
   programId: number;
   status: CodexGitWorkspaceStatus | null;
+  /** 只切工作目录下的某个子项目时传它的绝对路径；空串表示项目根工作目录。 */
+  workspace?: string;
+  /** 子项目名，只用于标题上标出这轮切的是哪个工程。 */
+  projectName?: string;
   statusError: string;
   statusLoading: boolean;
   /** 打开时重新确认一次工作区现状：列表里的快照可能是上一条需求留下的。 */
@@ -36,6 +40,8 @@ export function DeliveryRequirementGitCheckModal({
   requirement,
   programId,
   status,
+  workspace = "",
+  projectName = "",
   statusError,
   statusLoading,
   onRefreshStatus,
@@ -53,14 +59,15 @@ export function DeliveryRequirementGitCheckModal({
 
   useEffect(() => {
     if (!requirement) return;
+    // 换一个工程重新打开时，上一次的失败原因和提交说明都不该留着。
     setStrategy(status?.dirty ? "commit" : "switch");
     setCommitMessage(`chore: save work before ${requirement.gitBranch}`);
     setPrepareError("");
     // 打开时的状态可能还是上一次的快照；真正确认的结果回来后再定默认策略。
     void onRefreshStatus().then((next) => setStrategy(next?.dirty ? "commit" : "switch"));
-    // 只在需求变化时重置，用户改过的提交说明不能被状态刷新覆盖。
+    // 只在需求或工程变化时重置，用户改过的提交说明不能被状态刷新覆盖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requirement]);
+  }, [requirement, workspace]);
 
   const alreadyOnBranch = Boolean(
     status?.currentBranch && requirement?.gitBranch && status.currentBranch === requirement.gitBranch,
@@ -74,10 +81,24 @@ export function DeliveryRequirementGitCheckModal({
     setPreparing(true);
     setPrepareError("");
     try {
-      const result = await prepareCodexGitBranch(programId, requirement.gitBranch, strategy, commitMessage.trim());
+      const result = await prepareCodexGitBranch(programId, requirement.gitBranch, strategy, commitMessage.trim(), {
+        // 切子项目时只动那一个工程；它下面不再往里找嵌套仓库。
+        ...(workspace ? { workspace, targets: [] } : {}),
+      });
       // 从 origin/feature 关联时，本机实际分支会变成 feature；把这个规范化名称写回需求。
-      if (result.branch && result.branch !== requirement.gitBranch) {
+      // 需求分支的归属记在根工作目录上，切子项目不改这条关联。
+      if (!workspace && result.branch && result.branch !== requirement.gitBranch) {
         await bindRequirementGitBranch(programId, requirement.requirementKey, requirement.gitBaseBranch, result.branch);
+      }
+      // 切换会把已经有这条分支的子项目一起带过去；个别子项目没切成要留在弹窗里说清楚。
+      const failed = result.results.filter((entry) => entry.path && entry.error);
+      if (failed.length) {
+        setPrepareError([
+          t("delivery.requirement.gitSubprojectPrepareFailed"),
+          ...failed.map((entry) => `${entry.name || entry.path}：${entry.error}`),
+        ].join("\n\n"));
+        onPrepared();
+        return;
       }
       if (alreadyOnBranch) {
         message.success(result.pulled ? t("delivery.requirement.gitPulled") : t("delivery.requirement.gitPrepared"));
@@ -102,7 +123,9 @@ export function DeliveryRequirementGitCheckModal({
     if (pushing || !branch) return;
     setPushing(true);
     try {
-      await pushCodexGitBranch(programId, branch, commitMessage.trim() || `chore: ${branch}`);
+      await pushCodexGitBranch(programId, branch, commitMessage.trim() || `chore: ${branch}`, {
+        ...(workspace ? { workspace, targets: [] } : {}),
+      });
       setPrepareError("");
       await onRefreshStatus();
       message.success(t("delivery.requirement.gitPreparePushed").replace("{branch}", branch));
@@ -127,7 +150,9 @@ export function DeliveryRequirementGitCheckModal({
   return (
     <Modal
       open={Boolean(requirement)}
-      title={t("delivery.requirement.gitCheckTitle")}
+      title={projectName
+        ? `${t("delivery.requirement.gitCheckTitle")} · ${projectName}`
+        : t("delivery.requirement.gitCheckTitle")}
       okText={t("delivery.requirement.gitPrepare")}
       confirmLoading={preparing}
       width={520}
