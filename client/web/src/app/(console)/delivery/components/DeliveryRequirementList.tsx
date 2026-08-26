@@ -2,6 +2,7 @@
 
 import {
 	BranchesOutlined,
+	CloudDownloadOutlined,
 	ClockCircleOutlined,
   DeleteOutlined,
   ExperimentOutlined,
@@ -533,6 +534,21 @@ export function DeliveryRequirementList({
 				  <Tag color="processing" bordered={false}>{t("delivery.requirement.gitCurrentBranchTag")}</Tag>
 				) : null}
 				<Tag color={gitState.color} bordered={false}>{gitState.label}</Tag>
+				{gitState.current ? (
+				  <Button
+					type="link"
+					size="small"
+					icon={<CloudDownloadOutlined />}
+					loading={gitWorkspaceLoading}
+					aria-label={t("delivery.requirement.gitPullLatest")}
+					onClick={(event) => {
+					  event.stopPropagation();
+					  onGitCheck(requirement);
+					}}
+				  >
+					{t("delivery.requirement.gitPullLatest")}
+				  </Button>
+				) : null}
 			  </span>
 			</Tooltip>
 		  ) : null}

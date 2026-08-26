@@ -6,6 +6,7 @@ import {
   BranchesOutlined,
   CheckSquareOutlined,
   ClockCircleOutlined,
+  CloudDownloadOutlined,
   DeleteOutlined,
   ExperimentOutlined,
   FileTextOutlined,
@@ -764,6 +765,17 @@ export function MyWorkWorkspace() {
                       <span className="my-work-chip is-open"><i />{t("delivery.requirement.gitCurrentBranchTag")}</span>
                     ) : null}
                     <span className={`my-work-chip ${gitState.tone}`}><i />{gitState.label}</span>
+                    {gitState.current ? (
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<CloudDownloadOutlined />}
+                        loading={gitLoading}
+                        onClick={() => setGitRecord(record)}
+                      >
+                        {t("delivery.requirement.gitPullLatest")}
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
 

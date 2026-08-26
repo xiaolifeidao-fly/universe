@@ -1,12 +1,14 @@
 "use client";
 
-import { Alert, Button, Input, Modal, message } from "antd";
+import { Alert, Button, Checkbox, Input, Modal, Spin, message } from "antd";
 import { useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   bindRequirementGitBranch,
+  fetchCodexGitProjects,
   prepareCodexGitBranch,
   pushCodexGitBranch,
+  type CodexGitProjectStatus,
   type CodexGitWorkspaceStatus,
   type DeliveryRequirementRecord,
 } from "@/api/delivery.api";
@@ -56,6 +58,10 @@ export function DeliveryRequirementGitCheckModal({
   // 切换失败的原因常是多行 git 输出，toast 会截断，留在弹窗里用户看完就能接着处理。
   const [prepareError, setPrepareError] = useState("");
   const [pushing, setPushing] = useState(false);
+  // 工作目录下的独立子工程：默认把已经有这条需求分支的都勾上，一并切过去。
+  const [subprojects, setSubprojects] = useState<CodexGitProjectStatus[]>([]);
+  const [targets, setTargets] = useState<string[]>([]);
+  const [subprojectsLoading, setSubprojectsLoading] = useState(false);
 
   useEffect(() => {
     if (!requirement) return;
@@ -65,6 +71,22 @@ export function DeliveryRequirementGitCheckModal({
     setPrepareError("");
     // 打开时的状态可能还是上一次的快照；真正确认的结果回来后再定默认策略。
     void onRefreshStatus().then((next) => setStrategy(next?.dirty ? "commit" : "switch"));
+    // 只有切根工作目录时才谈得上带上子项目；单独切某个子项目不牵扯别的工程。
+    setSubprojects([]);
+    setTargets([]);
+    setSubprojectsLoading(false);
+    if (!workspace) {
+      setSubprojectsLoading(true);
+      void fetchCodexGitProjects(programId, requirement.gitBranch)
+        .then((catalog) => {
+          const children = catalog.projects.filter((project) => project.path && !project.error);
+          setSubprojects(children);
+          setTargets(children.filter((project) => project.hasBranch).map((project) => project.path));
+        })
+        // 读不到子项目不该挡住切换：退化成只切根工作目录。
+        .catch(() => setSubprojects([]))
+        .finally(() => setSubprojectsLoading(false));
+    }
     // 只在需求或工程变化时重置，用户改过的提交说明不能被状态刷新覆盖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requirement, workspace]);
@@ -83,7 +105,8 @@ export function DeliveryRequirementGitCheckModal({
     try {
       const result = await prepareCodexGitBranch(programId, requirement.gitBranch, strategy, commitMessage.trim(), {
         // 切子项目时只动那一个工程；它下面不再往里找嵌套仓库。
-        ...(workspace ? { workspace, targets: [] } : {}),
+        // 切根工作目录时按弹窗里勾选的子项目一并切，勾选为空就只切根目录。
+        ...(workspace ? { workspace, targets: [] } : { targets }),
       });
       // 从 origin/feature 关联时，本机实际分支会变成 feature；把这个规范化名称写回需求。
       // 需求分支的归属记在根工作目录上，切子项目不改这条关联。
@@ -166,7 +189,7 @@ export function DeliveryRequirementGitCheckModal({
           key="pull"
           type="primary"
           loading={preparing}
-          disabled={Boolean(pushing || statusLoading || status?.dirty)}
+          disabled={Boolean(pushing || statusLoading || subprojectsLoading || status?.dirty)}
           onClick={() => void confirm()}
         >
           {t("delivery.requirement.gitPullLatest")}
@@ -177,6 +200,7 @@ export function DeliveryRequirementGitCheckModal({
           preparing
           || pushing
           || statusLoading
+          || subprojectsLoading
           || statusError
           || !requirement?.gitBranch
           || status?.detached
@@ -231,6 +255,48 @@ export function DeliveryRequirementGitCheckModal({
             .replace("{untracked}", String(status.untracked))}
           description={alreadyOnBranch ? undefined : t("delivery.requirement.gitDirtySwitchHint")}
         /> : null}
+
+        {/* 根项目打开时先稳定展示加载态，避免网络结果回来后子项目列表突然插进弹框。 */}
+        {!workspace && (subprojectsLoading || subprojects.length) ? <div className="git-check__field git-check__subprojects">
+          <span className="git-check__field-label">
+            {t(alreadyOnBranch
+              ? "delivery.requirement.gitPullSubprojects"
+              : "delivery.requirement.gitCheckSubprojects")}
+          </span>
+          {subprojectsLoading ? (
+            <div className="git-check__subprojects-loading" aria-live="polite">
+              <Spin size="small" />
+              <span>{t("delivery.requirement.gitLoadingSubprojects")}</span>
+            </div>
+          ) : (
+            <div className="git-check__subprojects-loaded">
+              <Checkbox.Group
+                className="delivery-requirement-git-targets"
+                value={targets}
+                onChange={(values) => setTargets(values as string[])}
+                options={subprojects.map((project) => ({
+                  value: project.path,
+                  // 本机没有这条需求分支的工程切不过去，勾了也只会报错。
+                  disabled: !project.hasBranch,
+                  label: (
+                    <span className="delivery-requirement-git-targets__item">
+                      <b>{project.name}</b>
+                      <code className="manager-mono">
+                        {project.currentBranch || t("delivery.requirement.gitCurrentBranchDetached")}
+                      </code>
+                      {project.hasBranch ? null : <i className="is-clean">{t("delivery.requirement.gitSubprojectNoBranch")}</i>}
+                    </span>
+                  ),
+                }))}
+              />
+              <small className="git-check__field-hint">
+                {t(alreadyOnBranch
+                  ? "delivery.requirement.gitPullSubprojectsHint"
+                  : "delivery.requirement.gitCheckSubprojectsHint")}
+              </small>
+            </div>
+          )}
+        </div> : null}
 
         {needsCommit ? <div className="git-check__field">
           <span className="git-check__field-label">{t("delivery.requirement.gitCommitMessage")}</span>

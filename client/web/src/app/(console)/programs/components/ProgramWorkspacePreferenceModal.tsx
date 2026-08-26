@@ -29,6 +29,7 @@ import {
 	fetchCodexGitBranches,
 	fetchCodexLocalProjects,
 	initializeCodexGitWorkspace,
+	initializeCodexGitSubmodules,
 	saveProgramCloudSyncConfig,
 	saveProgramGitConfig,
 	syncCodexCloudWorkspace,
@@ -298,8 +299,33 @@ export function ProgramWorkspacePreferenceModal({
 			message.success(
 				t(result.adopted ? "programs.git.initializedAdopted" : "programs.git.initialized").replace("{branch}", result.branch),
 			);
+			if (result.submoduleError) {
+				message.warning(t("programs.git.submodulesPartial").replace("{error}", result.submoduleError));
+			} else if (result.submodules.length) {
+				message.success(t("programs.git.submodulesInitialized").replace("{count}", String(result.submodules.length)));
+			}
 			setGitStateVersion((version) => version + 1);
 			// 仓库刚建好，调用方的需求卡片提示要立刻跟着消失，不能等到保存弹窗才刷新。
+			await onSaved?.();
+		} catch (error) {
+			message.error((error as Error).message);
+		} finally {
+			setGitInitializing(false);
+		}
+	};
+
+	/** 主仓库已经可用、但 .gitmodules 里的目录还没检出时，单独补初始化子模块。 */
+	const initializeWorkspaceSubmodules = async () => {
+		if (!program || !workspacePath.trim()) return;
+		setGitInitializing(true);
+		try {
+			const result = await initializeCodexGitSubmodules(program.programId, workspacePath);
+			if (result.submoduleError) {
+				message.warning(t("programs.git.submodulesPartial").replace("{error}", result.submoduleError));
+			} else {
+				message.success(t("programs.git.submodulesInitialized").replace("{count}", String(result.submodules.length)));
+			}
+			setGitStateVersion((version) => version + 1);
 			await onSaved?.();
 		} catch (error) {
 			message.error((error as Error).message);
@@ -501,6 +527,26 @@ export function ProgramWorkspacePreferenceModal({
 														onClick={() => void initializeWorkspaceGit()}
 													>
 														{t("programs.git.initialize")}
+													</Button>
+												</div>
+											</div>
+										) : null}
+										{gitEnabled && gitWorkspaceCheck?.isGitRepository && gitWorkspaceCheck.pendingSubmodules.length ? (
+											<div className="manager-codex-note manager-codex-note--warn">
+												<ExclamationCircleOutlined />
+												<div>
+													<strong>{t("programs.git.submodulesPending")}</strong>
+													<p>{t("programs.git.submodulesPendingHint").replace("{projects}", gitWorkspaceCheck.pendingSubmodules.join("、"))}</p>
+													<Button
+														className="manager-codex-note__action"
+														type="primary"
+														size="small"
+														icon={<CloudDownloadOutlined />}
+														loading={gitInitializing}
+														disabled={gitWorkspaceChecking}
+														onClick={() => void initializeWorkspaceSubmodules()}
+													>
+														{t("programs.git.initializeSubmodules")}
 													</Button>
 												</div>
 											</div>

@@ -2,6 +2,7 @@
 
 import {
 	BranchesOutlined,
+	CloudDownloadOutlined,
 	CloudUploadOutlined,
 	SwapOutlined,
 	LeftOutlined,
@@ -1765,6 +1766,23 @@ export function DeliveryRequirementSessionModal({
                       </button>
                     </Tooltip>
                   ) : null}
+                  {gitStatus?.currentBranch === saved?.gitBranch ? (
+                    <Tooltip placement="left" title={codexBridgeReady ? t("delivery.requirement.gitPullLatest") : t("delivery.requirement.gitPanelUnavailable")}>
+                      <button
+                        className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady ? " is-disabled" : ""}`}
+                        type="button"
+                        aria-disabled={!codexBridgeReady}
+                        onClick={() => {
+                          if (!codexBridgeReady) return;
+                          setGitCheckWorkspace("");
+                          setGitCheckOpen(true);
+                        }}
+                      >
+                        <CloudDownloadOutlined />
+                        <span>{t("delivery.requirement.gitPullLatest")}</span>
+                      </button>
+                    </Tooltip>
+                  ) : null}
                   {gitPushReady ? (
                     <Tooltip
                       placement="left"
@@ -1818,28 +1836,48 @@ export function DeliveryRequirementSessionModal({
                         const pushBranch = project.hasBranch ? saved?.gitBranch ?? "" : project.currentBranch;
                         return (
                           <div className="delivery-requirement-git-panel__group" key={project.path}>
-                            <button
-                              className="delivery-requirement-git-panel__row is-action is-subproject"
-                              type="button"
-                              aria-expanded={expanded}
-                              onClick={() => setExpandedSubprojects((current) => (
-                                current.includes(project.path)
-                                  ? current.filter((path) => path !== project.path)
-                                  : [...current, project.path]
-                              ))}
-                            >
-                              {expanded ? <DownOutlined /> : <RightOutlined />}
-                              <span className="delivery-requirement-git-panel__row-body">
-                                <span className="delivery-requirement-git-panel__row-label">{project.name}</span>
-                                {/* 收起时也要能看出这个工程有没有活儿，不然还得一个个点开。 */}
-                                <b className={project.changed ? "is-dirty" : "is-clean"}>
-                                  {project.changed
-                                    ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(project.changed))
-                                    : t("delivery.requirement.gitBranchClean")}
-                                </b>
-                              </span>
-                              <span className={`delivery-requirement-git-panel__tag ${projectTag}`}>{projectTagText}</span>
-                            </button>
+                            <div className="delivery-requirement-git-panel__group-head">
+                              <button
+                                className="delivery-requirement-git-panel__row is-action is-subproject"
+                                type="button"
+                                aria-expanded={expanded}
+                                onClick={() => setExpandedSubprojects((current) => (
+                                  current.includes(project.path)
+                                    ? current.filter((path) => path !== project.path)
+                                    : [...current, project.path]
+                                ))}
+                              >
+                                {expanded ? <DownOutlined /> : <RightOutlined />}
+                                <span className="delivery-requirement-git-panel__row-body">
+                                  <span className="delivery-requirement-git-panel__row-label">{project.name}</span>
+                                  {/* 收起时也要能看出这个工程有没有活儿，不然还得一个个点开。 */}
+                                  <b className={project.changed ? "is-dirty" : "is-clean"}>
+                                    {project.changed
+                                      ? t("delivery.requirement.gitBranchPending").replace("{changed}", String(project.changed))
+                                      : t("delivery.requirement.gitBranchClean")}
+                                  </b>
+                                </span>
+                                <span className={`delivery-requirement-git-panel__tag ${projectTag}`}>{projectTagText}</span>
+                              </button>
+                              {project.hasBranch && !projectMismatched ? (
+                                <Tooltip placement="left" title={codexBridgeReady ? t("delivery.requirement.gitPullLatest") : t("delivery.requirement.gitPanelUnavailable")}>
+                                  <button
+                                    className={`delivery-requirement-git-panel__quick-action${!codexBridgeReady ? " is-disabled" : ""}`}
+                                    type="button"
+                                    aria-label={`${project.name} · ${t("delivery.requirement.gitPullLatest")}`}
+                                    aria-disabled={!codexBridgeReady}
+                                    onClick={() => {
+                                      if (!codexBridgeReady) return;
+                                      setGitCheckWorkspace(project.workspace);
+                                      setGitCheckOpen(true);
+                                    }}
+                                  >
+                                    <CloudDownloadOutlined />
+                                    <span>{t("delivery.requirement.gitPullLatest")}</span>
+                                  </button>
+                                </Tooltip>
+                              ) : null}
+                            </div>
                             {expanded ? (
                               <div className="delivery-requirement-git-panel__group-body">
                                 <Tooltip

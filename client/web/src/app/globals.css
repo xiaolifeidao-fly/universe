@@ -4969,6 +4969,12 @@ select {
 	font-weight: 500;
 }
 /* 子项目标题行：一个折叠箭头加工程名，右侧留分支状态标签。 */
+.delivery-requirement-git-panel__group-head {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+.delivery-requirement-git-panel__group-head > .delivery-requirement-git-panel__row { min-width: 0; }
 .delivery-requirement-git-panel__row.is-subproject > .anticon { font-size: var(--manager-fs-micro); color: var(--manager-text-faint); }
 .delivery-requirement-git-panel__row.is-subproject .delivery-requirement-git-panel__row-label {
 	color: var(--manager-text);
@@ -4976,6 +4982,28 @@ select {
 	font-weight: 500;
 }
 .delivery-requirement-git-panel__row.is-subproject > .delivery-requirement-git-panel__tag { flex: 0 0 auto; }
+.delivery-requirement-git-panel__quick-action {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 4px;
+	margin-right: 4px;
+	padding: 5px 7px;
+	border: 0;
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-primary-light);
+	color: var(--manager-primary);
+	cursor: pointer;
+	font-size: var(--manager-fs-micro);
+	font-weight: 500;
+	white-space: nowrap;
+}
+.delivery-requirement-git-panel__quick-action:hover:not(.is-disabled) { background: var(--manager-primary-muted); }
+.delivery-requirement-git-panel__quick-action.is-disabled {
+	background: var(--manager-bg-soft);
+	color: var(--manager-text-faint);
+	cursor: not-allowed;
+}
 /* 展开后的内容整体缩进：让它明显从属于上面那个工程，而不是又一组根目录信息。 */
 .delivery-requirement-git-panel__group-body {
 	display: grid;
@@ -7695,10 +7723,41 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   gap: 6px;
 }
 
+.git-check__field-hint {
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  line-height: 1.6;
+}
+
 .git-check__field-label {
   color: var(--manager-text-faint);
   font-size: var(--manager-fs-xs);
   letter-spacing: 0.04em;
+}
+
+.git-check__subprojects-loading {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed var(--manager-border);
+  border-radius: var(--manager-radius-sm);
+  color: var(--manager-text-faint);
+  background: var(--manager-bg-soft);
+  font-size: var(--manager-fs-sm);
+}
+
+.git-check__subprojects-loaded {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: git-check-subprojects-in 160ms ease-out;
+}
+
+@keyframes git-check-subprojects-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* 切换失败时把 git 的原始输出摆出来：多行、可滚动，不截断也不撑破弹窗。 */

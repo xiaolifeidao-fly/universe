@@ -751,6 +751,9 @@ export class CodexGitWorkspaceCheck {
   remoteConfigured = false;
 
   empty = false;
+
+  /** .gitmodules 里登记了、但本机还没检出内容的子模块路径。 */
+  pendingSubmodules: string[] = [];
 }
 
 export class CodexGitInitResult {
@@ -766,6 +769,21 @@ export class CodexGitInitResult {
   adopted = false;
 
   status = new CodexGitWorkspaceStatus();
+
+  /** 本轮一并初始化好的子模块路径。 */
+  submodules: string[] = [];
+
+  /** 子模块没能全部初始化时的原因；主仓库仍然可用。 */
+  submoduleError = "";
+}
+
+/** 补初始化子模块的结果：主仓库早就建好，只是子模块目录还是空的。 */
+export class CodexGitSubmoduleResult {
+  workspace = "";
+
+  submodules: string[] = [];
+
+  submoduleError = "";
 }
 
 export const CLOUD_SYNC_SCOPES = ["chat", "requirement", "design"] as const;
@@ -2245,9 +2263,11 @@ export async function prepareCodexGitBranch(
 export async function checkCodexGitWorkspace(programId: number, workspace: string) {
   const response = await instance.get<CodexGitWorkspaceCheck>(`${CODEX_BRIDGE_URL}/v1/codex/git/workspace-check`, {
     params: { programId, workspace: workspace.trim() },
-    timeout: 15000,
+    timeout: 30000,
   });
-  return plainToInstance(CodexGitWorkspaceCheck, response.data);
+  const check = plainToInstance(CodexGitWorkspaceCheck, response.data);
+  check.pendingSubmodules = (response.data.pendingSubmodules ?? []).map((path) => String(path || "")).filter(Boolean);
+  return check;
 }
 
 /**
@@ -2287,6 +2307,19 @@ export async function initializeCodexGitWorkspace(payload: {
   );
   const result = plainToInstance(CodexGitInitResult, response.data);
   result.status = plainToInstance(CodexGitWorkspaceStatus, response.data.status ?? {});
+  result.submodules = (response.data.submodules ?? []).map((path) => String(path || "")).filter(Boolean);
+  return result;
+}
+
+/** 目录早就是仓库、只是子模块还没拉下来时补这一步；克隆量级的超时，不按普通接口给。 */
+export async function initializeCodexGitSubmodules(programId: number, workspace: string) {
+  const response = await instance.post<CodexGitSubmoduleResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/git/submodules`,
+    { programId, workspace: workspace.trim() },
+    { timeout: 30 * 60 * 1000 },
+  );
+  const result = plainToInstance(CodexGitSubmoduleResult, response.data);
+  result.submodules = (response.data.submodules ?? []).map((path) => String(path || "")).filter(Boolean);
   return result;
 }
 
