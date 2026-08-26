@@ -70,6 +70,7 @@ import {
   fetchCodexRequirementTestingConversation,
   fetchCodexPlanningConversation,
   fetchDeliveryConversationMentionCatalog,
+	fetchDeliveryDocumentSet,
 	fetchProgramMembers,
   generateCodexRequirementPrototype,
   fetchRequirement,
@@ -101,7 +102,7 @@ import {
 } from "@/api/delivery.api";
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { DeliveryRequirementDetailInput, requirementMentionKeys, requirementMentionReferences } from "./DeliveryRequirementDetailInput";
-import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
+import { DeliveryConversationMentionInput, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
@@ -258,6 +259,7 @@ export function DeliveryRequirementSessionModal({
     requirements: DeliveryRequirementRecord[];
     items: DeliveryItemRecord[];
   } | null>(null);
+  const [mentionFiles, setMentionFiles] = useState<DeliveryConversationMentionFile[]>([]);
 
   // 需求表单。saved 是「已经落库的那份」，拆解会话的归属键从它上面取。
   const [saved, setSaved] = useState<DeliveryRequirementRecord | null>(null);
@@ -950,6 +952,50 @@ export function DeliveryRequirementSessionModal({
       cancelled = true;
     };
   }, [open, programId]);
+
+  // “文件”候选只来自当前需求受控的三个目录；任一栏目暂未生成都不影响其他候选展示。
+  useEffect(() => {
+    const requirementKey = saved?.requirementKey ?? "";
+    if (!open || !programId || !requirementKey || !codexBridgeReady) {
+      setMentionFiles([]);
+      return undefined;
+    }
+    let cancelled = false;
+    void Promise.allSettled([
+      fetchDeliveryDocumentSet(programId, "requirement-outline", requirementKey),
+      fetchDeliveryDocumentSet(programId, "requirement-testing", requirementKey),
+      fetchCodexRequirementPrototype(programId, requirementKey),
+    ]).then(([outlineResult, testingResult, prototypeResult]) => {
+      if (cancelled) return;
+      const next: DeliveryConversationMentionFile[] = [];
+      if (outlineResult.status === "fulfilled") {
+        next.push(...outlineResult.value.files.map((file) => ({
+          path: file.path,
+          name: file.name,
+          scope: "requirement-outline" as const,
+        })));
+      }
+      if (testingResult.status === "fulfilled") {
+        next.push(...testingResult.value.files.map((file) => ({
+          path: file.path,
+          name: file.name,
+          scope: "requirement-testing" as const,
+        })));
+      }
+      if (prototypeResult.status === "fulfilled") {
+        next.push(...prototypeResult.value.files.map((file) => ({
+          path: file.path,
+          name: file.name,
+          scope: "requirement-prototype" as const,
+        })));
+      }
+      const unique = new Map(next.map((file) => [file.path, file]));
+      setMentionFiles(Array.from(unique.values()));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, codexBridgeReady, open, programId, prototype?.generatedAt, saved?.requirementKey]);
 
   const chatRequirements = useMemo(
     () => (mentionCatalog?.requirements ?? requirements).filter((item) => item.requirementKey !== saved?.requirementKey),
@@ -2116,6 +2162,7 @@ export function DeliveryRequirementSessionModal({
 					: t(newConversation ? "delivery.session.newPlaceholder" : "delivery.planning.placeholder")}
                 requirements={chatRequirements}
                 items={chatItems}
+                files={mentionFiles}
                 references={chatReferences}
                 onChange={setDraft}
                 onReferencesChange={setChatReferences}

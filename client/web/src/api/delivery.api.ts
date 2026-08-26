@@ -1224,10 +1224,17 @@ export class CodexConversationActionResult {
   alreadyFinished = false;
 }
 
-/** 聊天输入中通过 @ 选中的交付对象；桥接层会按键重新读取权威详情。 */
+/** 需求聊天里可引用的当前需求文件栏目；原型文件由独立的原型接口提供。 */
+export type DeliveryConversationFileScope =
+  | "requirement-outline"
+  | "requirement-testing"
+  | "requirement-prototype";
+
+/** 聊天输入中通过 @ 选中的交付对象；桥接层会按键或受控路径重新读取权威详情。 */
 export interface DeliveryConversationReference {
-  kind: "requirement" | "task";
+  kind: "requirement" | "task" | "file";
   key: string;
+  scope?: DeliveryConversationFileScope;
 }
 
 /** 项目级需求拆解会话，与单条任务会话分开保存。 */

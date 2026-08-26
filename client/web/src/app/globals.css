@@ -3969,10 +3969,28 @@ select {
 .delivery-conversation-mention-input {
   min-width: 0;
   flex: 1;
+  position: relative;
 }
 
 .delivery-conversation-mention-input .ant-mentions {
   width: 100%;
+}
+
+/* @ 候选始终占同一块区域：Tab 切换和候选数量变化都不改变弹层位置与尺寸。 */
+.delivery-conversation-mention-dropdown {
+  display: flex;
+  width: 100%;
+  height: 256px;
+  max-height: 256px;
+  overflow: hidden;
+}
+
+.delivery-conversation-mention-dropdown .ant-mentions-dropdown-menu {
+  flex: 1;
+  height: 100%;
+  max-height: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .delivery-conversation-mention-option {
@@ -3997,6 +4015,65 @@ select {
 
 .delivery-conversation-mention-option small {
   color: var(--manager-text-tertiary);
+}
+
+.delivery-conversation-mention-option.is-file > svg {
+  color: var(--manager-primary);
+}
+
+.delivery-conversation-mention-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--manager-bg-soft);
+}
+
+.delivery-conversation-mention-tabs button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--manager-text-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.delivery-conversation-mention-tabs button.is-active {
+  background: var(--manager-surface);
+  color: var(--manager-primary);
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+}
+
+/* Tab 头借用一个禁用候选承载；恢复正常透明度并去掉候选高亮。 */
+.ant-mentions-dropdown-menu-item-disabled:has(.delivery-conversation-mention-tabs) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 4px 6px;
+  opacity: 1;
+  cursor: default;
+  background: var(--manager-surface) !important;
+}
+
+.delivery-conversation-mention-empty {
+  padding: 12px 8px;
+  color: var(--manager-text-faint);
+  text-align: center;
+}
+
+.ant-mentions-dropdown-menu-item-disabled:has(.delivery-conversation-mention-empty) {
+  opacity: 1;
+  cursor: default;
+}
+
+@media (max-height: 620px) {
+  .delivery-conversation-mention-dropdown {
+    height: 220px;
+    max-height: 220px;
+  }
 }
 
 .delivery-conversation-mention-tags {
