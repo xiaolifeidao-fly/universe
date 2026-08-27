@@ -57,6 +57,8 @@ type Service interface {
 	BindRequirementGitBranch(ctx context.Context, req dto.BindRequirementGitBranchRequest) (dto.RequirementView, error)
 	DeleteRequirement(ctx context.Context, req dto.DeleteRequirementRequest) error
 	// 拆解会话目录：桥接是本地进程，重启就没了，聊天列表只能由服务端持有。
+	ListPlanningBatches(ctx context.Context, query dto.PlanningBatchQuery) ([]dto.PlanningBatchView, error)
+	CreatePlanningBatch(ctx context.Context, req dto.CreatePlanningBatchRequest) (dto.PlanningBatchView, error)
 	ListPlanningSessions(ctx context.Context, query dto.PlanningSessionQuery) ([]dto.PlanningSessionView, error)
 	BindPlanningSession(ctx context.Context, req dto.BindPlanningSessionRequest) (dto.PlanningSessionView, error)
 	GetRequirementPrototype(ctx context.Context, bizLine contract.BizLine, programID int64, requirementKey string) (dto.RequirementPrototypeView, error)

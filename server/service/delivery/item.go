@@ -245,7 +245,9 @@ func (s *service) CreateItem(ctx context.Context, req dto.SaveItemRequest) (dto.
 		StageKey:       req.StageKey,
 		ModuleKey:      req.ModuleKey,
 		RequirementKey: strings.TrimSpace(req.RequirementKey),
-		Kind:           normalizeKindOrDefault(req.Kind, KindCapability),
+		// 拆解批次非必填：手工建的任务留空，只有拆解写入才带批次键。
+		PlanningBatchKey: strings.TrimSpace(req.PlanningBatchKey),
+		Kind:             normalizeKindOrDefault(req.Kind, KindCapability),
 		// prototype_task 是历史兼容列；新流程从不创建原型任务。
 		PrototypeTask:           false,
 		Title:                   strings.TrimSpace(req.Title),
@@ -284,6 +286,16 @@ func (s *service) CreateItem(ctx context.Context, req dto.SaveItemRequest) (dto.
 		if row.RequirementKey != "" {
 			if _, err := tx.FindRequirement(ctx, row.BizLine, row.ProgramID, row.RequirementKey); err != nil {
 				return translate(err)
+			}
+		}
+		// 批次键写错就等于任务永远归不了批，和需求键一样在这里挡住。
+		if row.PlanningBatchKey != "" {
+			batch, err := tx.FindRequirementPlanningBatch(ctx, row.BizLine, row.ProgramID, row.PlanningBatchKey)
+			if err != nil {
+				return translate(err)
+			}
+			if batch.RequirementKey != row.RequirementKey {
+				return fmt.Errorf("拆解批次 %s 不属于需求 %s", row.PlanningBatchKey, row.RequirementKey)
 			}
 		}
 		lockedItems, err := tx.ListAllItems(ctx, repository.ItemQuery{

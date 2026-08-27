@@ -548,6 +548,9 @@ func (s *service) DeleteRequirement(ctx context.Context, req dto.DeleteRequireme
 			return err
 		}
 		// 需求没了，挂在它下面的拆解会话目录也留不住。
+		if err := tx.DeleteRequirementPlanningBatches(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey); err != nil {
+			return err
+		}
 		if err := tx.DeleteRequirementPlanningSessions(ctx, req.BizLine.String(), req.ProgramID, req.RequirementKey); err != nil {
 			return err
 		}

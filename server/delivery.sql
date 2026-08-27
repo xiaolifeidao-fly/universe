@@ -188,6 +188,34 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement_planning_session` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------------------
+-- 3.15 需求拆解批次：一次「拆解并写入任务」算一批。
+--      任务侧只冻结 planning_batch_key，删批次不影响任务；批次是任务进度按行
+--      展示与「整批再做一次」的唯一依据，靠创建时间聚类猜不出来。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_requirement_planning_batch` (
+  `id`              bigint       NOT NULL AUTO_INCREMENT,
+  `biz_line`        varchar(32)  NOT NULL,
+  `program_id`      bigint       NOT NULL,
+  `batch_key`       varchar(64)  NOT NULL,                      -- 批次业务键 如 plan-xxxx
+  `requirement_key` varchar(64)  NOT NULL,                      -- 所属需求
+  `seq`             bigint       NOT NULL DEFAULT 1,            -- 需求内第几次拆解，从 1 开始
+  `title`           varchar(255) NOT NULL DEFAULT '',           -- 默认「第 N 次拆解」
+  `source`          varchar(16)  NOT NULL DEFAULT 'planner',    -- planner 拆解会话 / manual 人工 / import 导入
+  `executor_type`   varchar(32)  NOT NULL DEFAULT '',           -- 产出该批次的执行器，可空
+  `thread_id`       varchar(255) NOT NULL DEFAULT '',           -- 产出该批次的拆解会话，可空
+  `summary`         varchar(1024) NOT NULL DEFAULT '',
+  `item_count`      bigint       NOT NULL DEFAULT 0,            -- 写入时登记的任务数，实际归属以任务表为准
+  `created_by`      varchar(64)  NOT NULL DEFAULT '',
+  `created_by_name` varchar(64)  NOT NULL DEFAULT '',
+  `updated_by`      varchar(64)  NOT NULL DEFAULT '',
+  `created_time`    timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time`    timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_planning_batch` (`biz_line`, `program_id`, `batch_key`),
+  KEY `idx_dlv_planning_batch_req` (`biz_line`, `program_id`, `requirement_key`, `seq`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
 -- 3.2 需求总体测试会话目录：正文仍在执行器会话缓存，平台保存可恢复的会话索引。
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `zt_delivery_requirement_testing_session` (
@@ -226,6 +254,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_item` (
   `stage_key`    varchar(64)   NOT NULL,                       -- 所属阶段
   `module_key`   varchar(64)   NOT NULL,                       -- 所属模块
   `requirement_key` varchar(64) NOT NULL DEFAULT '',           -- 所属需求，空串是需求层落地前的存量任务
+  `planning_batch_key` varchar(64) NOT NULL DEFAULT '',        -- 来源拆解批次，非必填；手工建的任务留空
   `kind`         varchar(16)   NOT NULL,                       -- gap 坑点 / capability 能力 / asset 已具备
   `prototype_task` boolean      NOT NULL DEFAULT FALSE,         -- 历史兼容字段；新方案不再创建原型图任务
   `title`        varchar(255)  NOT NULL,
@@ -258,6 +287,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_item` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_dlv_item` (`biz_line`, `program_id`, `item_key`),
   KEY `idx_dlv_item_board` (`biz_line`, `program_id`, `stage_key`, `status`),
+  KEY `idx_dlv_item_planning_batch` (`biz_line`, `program_id`, `planning_batch_key`),
   KEY `idx_dlv_item_module` (`biz_line`, `program_id`, `module_key`, `status`),
   KEY `idx_dlv_item_requirement_key` (`biz_line`, `program_id`, `requirement_key`),
   KEY `idx_dlv_item_requirement` (`biz_line`, `program_id`, `requirement_status`),

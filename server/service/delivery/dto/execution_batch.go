@@ -49,8 +49,11 @@ type CreateExecutionBatchRequest struct {
 	Mode         string           `json:"mode"`
 	ExecutorType string           `json:"executorType"`
 	ItemKeys     []string         `json:"itemKeys"`
-	ActorID      string           `json:"-"`
-	ActorName    string           `json:"actorName"`
+	// Redo 表示这是一次「再做一次」：已完成的任务也允许重新进入批次，
+	// 任务状态不回滚，只是再开一轮执行实例。
+	Redo      bool   `json:"redo"`
+	ActorID   string `json:"-"`
+	ActorName string `json:"actorName"`
 }
 
 type UpdateExecutionBatchItemRequest struct {
@@ -97,6 +100,8 @@ type RequirementProgressView struct {
 	StatusCounts    map[string]int       `json:"statusCounts"`
 	Items           []ItemView           `json:"items"`
 	Batches         []ExecutionBatchView `json:"batches"`
+	// PlanningBatches 是这条需求拆解过几批任务；任务用 planningBatchKey 归到某一批。
+	PlanningBatches []PlanningBatchView `json:"planningBatches"`
 }
 
 type MarkExecutionBatchNotificationReadRequest struct {

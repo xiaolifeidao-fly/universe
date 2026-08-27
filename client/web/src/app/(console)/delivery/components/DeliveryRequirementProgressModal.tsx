@@ -14,6 +14,7 @@ import {
   PlayCircleOutlined,
   PoweroffOutlined,
   ReloadOutlined,
+  RedoOutlined,
   RightOutlined,
   SyncOutlined,
   UserOutlined,
@@ -33,6 +34,7 @@ import {
   stopCodexConversation,
   type DeliveryExecutionBatchRecord,
   type DeliveryItemRecord,
+  type DeliveryPlanningBatchRecord,
   type DeliveryRequirementProgressRecord,
   type DeliveryRequirementRecord,
   type DeliveryStatus,
@@ -60,9 +62,18 @@ interface DeliveryRequirementProgressModalProps {
   previewProgress?: DeliveryRequirementProgressRecord;
 }
 
-/** 和任务面板的批量执行同一口径：除了已完成的任务，其余都可以再发起一次。 */
-function executable(item: DeliveryItemRecord) {
-  return item.status !== "done";
+/** 已完成的任务也能勾选：「再做一次」不回滚状态，只是再开一轮执行实例。不执行的任务除外。 */
+function selectable(item: DeliveryItemRecord) {
+  return item.status !== "dropped";
+}
+
+/** 一行就是一个拆解批次；批次被删或任务写在批次上线之前时归到「未归批次」那一行。 */
+interface PlanningGroup {
+  key: string;
+  title: string;
+  hint: string;
+  batch?: DeliveryPlanningBatchRecord;
+  items: DeliveryItemRecord[];
 }
 
 interface ItemBatchContext {
@@ -148,6 +159,91 @@ function buildFlowColumns(items: DeliveryItemRecord[], stepLabel: (index: number
   }).filter((column) => column.items.length > 0);
 }
 
+interface PlanningBatchRowProps {
+  group: PlanningGroup;
+  stepLabel: (index: number) => string;
+  selectedCount: number;
+  selectableCount: number;
+  disabled: boolean;
+  canRedo: boolean;
+  redoing: boolean;
+  redoHint: string;
+  onToggleAll: (checked: boolean) => void;
+  onRedo: () => void;
+  renderNode: (item: DeliveryItemRecord) => ReactNode;
+  t: (key: string) => string;
+}
+
+/** 一个拆解批次一行：行内仍按依赖分层，行本身是整批全选和「本批再做一次」的单位。 */
+function PlanningBatchRow({
+  group,
+  stepLabel,
+  selectedCount,
+  selectableCount,
+  disabled,
+  canRedo,
+  redoing,
+  redoHint,
+  onToggleAll,
+  onRedo,
+  renderNode,
+  t,
+}: PlanningBatchRowProps) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const columns = useMemo(() => buildFlowColumns(group.items, stepLabel), [group.items, stepLabel]);
+  const allSelected = selectableCount > 0 && selectedCount === selectableCount;
+  return (
+    <article className="delivery-progress-plan-row">
+      <header className="delivery-progress-plan-row__head">
+        <Checkbox
+          checked={allSelected}
+          disabled={disabled || selectableCount === 0}
+          indeterminate={selectedCount > 0 && !allSelected}
+          onChange={(event) => onToggleAll(event.target.checked)}
+        >
+          {fill(t("delivery.progress.selectBatch"), { count: selectableCount })}
+        </Checkbox>
+        <span className="delivery-progress-plan-row__title">
+          <b>{group.title}</b>
+          {group.batch ? <code className="manager-mono" title={group.batch.batchKey}>{group.batch.batchKey}</code> : null}
+          <small>{group.batch?.summary || group.hint}</small>
+        </span>
+        <em className="manager-mono">{fill(t("delivery.progress.planningBatchCount"), { count: group.items.length })}</em>
+        <Tooltip title={canRedo ? redoHint : t("delivery.progress.bridgeOffline")}>
+          <Button
+            disabled={disabled || !canRedo || selectableCount === 0}
+            icon={<RedoOutlined />}
+            loading={redoing}
+            size="small"
+            onClick={onRedo}
+          >
+            {t("delivery.progress.redoBatch")}
+          </Button>
+        </Tooltip>
+      </header>
+      <div className="delivery-progress-flow-scroll">
+        <div className="delivery-progress-flow" ref={rowRef}>
+          <DeliveryDependencyLayer
+            boardRef={rowRef}
+            columns={columns}
+            scale={1}
+            onDeleteDependency={() => undefined}
+          />
+          {columns.map((column) => (
+            <section className="delivery-progress-flow__column" key={column.key}>
+              <header>
+                <span>{column.name}</span>
+                <b className="manager-mono">{column.items.length}</b>
+              </header>
+              <div>{column.items.map(renderNode)}</div>
+            </section>
+          ))}
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function DeliveryRequirementProgressModal({
   open,
   programId,
@@ -162,7 +258,6 @@ export function DeliveryRequirementProgressModal({
   const [progress, setProgress] = useState<DeliveryRequirementProgressRecord | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const flowRef = useRef<HTMLDivElement>(null);
   // 会话弹窗要的候选数据和桥接状态，进度窗自己取一份，不指望调用方准备。
   const [bridgeReady, setBridgeReady] = useState(false);
   const [itemCatalog, setItemCatalog] = useState<DeliveryItemRecord[]>([]);
@@ -170,9 +265,13 @@ export function DeliveryRequirementProgressModal({
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [startingKey, setStartingKey] = useState("");
   const [batchStarting, setBatchStarting] = useState(false);
+  // 「本批再做一次」发起时先把整批勾上，再走和批量执行同一条路：先确认前置条件，再启动。
+  const [redoingBatchKey, setRedoingBatchKey] = useState("");
   // 和任务面板一样，批量执行前先让用户写一次性的执行约束。
   const [constraintsOpen, setConstraintsOpen] = useState(false);
   const [executionConstraints, setExecutionConstraints] = useState("");
+  // 弹框确认前先冻结这次要跑哪些任务：勾选可能在等待输入期间被刷新改掉。
+  const [pendingItems, setPendingItems] = useState<DeliveryItemRecord[]>([]);
   const [stoppingKey, setStoppingKey] = useState("");
   const [stoppingAll, setStoppingAll] = useState(false);
   const [chatItem, setChatItem] = useState<DeliveryItemRecord | null>(null);
@@ -213,6 +312,8 @@ export function DeliveryRequirementProgressModal({
       setBridgeReady(false);
       setConstraintsOpen(false);
       setExecutionConstraints("");
+      setPendingItems([]);
+      setRedoingBatchKey("");
       return;
     }
     if (previewProgress) {
@@ -226,10 +327,39 @@ export function DeliveryRequirementProgressModal({
     return () => window.clearInterval(timer);
   }, [load, loadContext, open, previewProgress]);
 
-  const columns = useMemo(
-    () => buildFlowColumns(progress?.items ?? [], (index) => fill(t("delivery.progress.step"), { index })),
-    [progress?.items, t],
-  );
+  const stepLabel = useCallback((index: number) => fill(t("delivery.progress.step"), { index }), [t]);
+  /** 一行一个拆解批次：按 seq 排，批次外的任务收在末尾的「未归批次」一行里。 */
+  const planningGroups = useMemo<PlanningGroup[]>(() => {
+    const itemsByBatch = new Map<string, DeliveryItemRecord[]>();
+    for (const item of progress?.items ?? []) {
+      const key = item.planningBatchKey || "";
+      itemsByBatch.set(key, [...(itemsByBatch.get(key) ?? []), item]);
+    }
+    const groups: PlanningGroup[] = [];
+    for (const batch of [...(progress?.planningBatches ?? [])].sort((left, right) => left.seq - right.seq)) {
+      const items = itemsByBatch.get(batch.batchKey) ?? [];
+      itemsByBatch.delete(batch.batchKey);
+      if (!items.length) continue;
+      groups.push({
+        key: batch.batchKey,
+        title: batch.title || fill(t("delivery.progress.planningBatchTitle"), { seq: batch.seq }),
+        hint: batch.createdByName,
+        batch,
+        items: [...items].sort(taskOrder),
+      });
+    }
+    // 空批次键、以及批次记录已被删掉的孤儿任务，都并到最后一行，不能让任务从总览里消失。
+    const ungrouped = Array.from(itemsByBatch.values()).flat().sort(taskOrder);
+    if (ungrouped.length) {
+      groups.push({
+        key: "",
+        title: t("delivery.progress.planningBatchUngrouped"),
+        hint: t("delivery.progress.planningBatchUngroupedHint"),
+        items: ungrouped,
+      });
+    }
+    return groups;
+  }, [progress?.items, progress?.planningBatches, t]);
   const runningBatches = useMemo(
     () => (progress?.batches ?? []).filter((batch) => batch.status === "running"),
     [progress?.batches],
@@ -253,7 +383,7 @@ export function DeliveryRequirementProgressModal({
   };
 
   const selectableItems = useMemo(
-    () => (progress?.items ?? []).filter(executable),
+    () => (progress?.items ?? []).filter(selectable),
     [progress?.items],
   );
   const selectedItems = useMemo(
@@ -262,9 +392,19 @@ export function DeliveryRequirementProgressModal({
   );
 
   const allSelected = selectableItems.length > 0 && selectedItems.length === selectableItems.length;
+  // 勾选里只要有已完成任务，这次批量就是「再做一次」。
+  const selectedRedo = selectedItems.some((item) => item.status === "done");
 
   const toggleAll = (checked: boolean) => {
     setSelectedKeys(checked ? selectableItems.map((item) => item.itemKey) : []);
+  };
+
+  /** 按一行（一个拆解批次）整批勾选或取消。 */
+  const toggleGroup = (items: DeliveryItemRecord[], checked: boolean) => {
+    const keys = items.map((item) => item.itemKey);
+    setSelectedKeys((current) => (checked
+      ? Array.from(new Set([...current, ...keys]))
+      : current.filter((key) => !keys.includes(key))));
   };
 
   const toggleSelected = (itemKey: string, checked: boolean) => {
@@ -273,7 +413,8 @@ export function DeliveryRequirementProgressModal({
       : current.filter((key) => key !== itemKey)));
   };
 
-  /** 单条任务直接发起：走任务自身阶段的模型偏好，和任务面板上点执行是同一条路。 */
+  /** 单条任务直接发起：走任务自身阶段的模型偏好，和任务面板上点执行是同一条路。
+   * 已完成的任务走「再做一次」：状态不回滚，只是再开一轮执行实例。 */
   const startItem = useCallback(async (item: DeliveryItemRecord) => {
     setStartingKey(item.itemKey);
     try {
@@ -285,6 +426,7 @@ export function DeliveryRequirementProgressModal({
         config.tool,
         effortForConfig(config),
         config.tool === "claude" && config.claudeFastMode,
+        item.status === "done",
       );
       message.success(t("delivery.progress.started"));
       window.setTimeout(() => void load(true), 500);
@@ -325,39 +467,52 @@ export function DeliveryRequirementProgressModal({
   }, [load, preferences.globalTool, programId, t]);
 
   /**
-   * 勾选后批量发起，流程与任务面板的批量执行一致：先确认执行约束，再由服务端建一条执行批次，
-   * 本窗口的「当前执行批次」随后就能看到。
+   * 批量发起，流程与任务面板的批量执行一致：先确认前置条件，再由服务端建一条执行批次，
+   * 本窗口的「当前执行批次」随后就能看到。已完成任务在列时按「再做一次」发起。
    */
-  const startSelected = useCallback(async () => {
-    if (!selectedItems.length) return;
+  const startPending = useCallback(async () => {
+    if (!pendingItems.length) return;
     setBatchStarting(true);
     try {
-      const first = selectedItems[0];
+      const first = pendingItems[0];
       const config = configFor(sceneForPhase(first.phase));
       const result = await startCodexExecutionBatch(
         programId,
-        selectedItems.map((item) => item.itemKey),
+        pendingItems.map((item) => item.itemKey),
         modelForConfig(config),
         config.tool,
         executionConstraints.trim(),
         effortForConfig(config),
         config.tool === "claude" && config.claudeFastMode,
+        pendingItems.some((item) => item.status === "done"),
       );
       message.success(fill(t("delivery.execution.batchStarted"), { count: result.itemKeys.length }));
       setSelectedKeys((current) => current.filter((itemKey) => !result.itemKeys.includes(itemKey)));
       setConstraintsOpen(false);
       setExecutionConstraints("");
+      setPendingItems([]);
+      setRedoingBatchKey("");
       window.setTimeout(() => void load(true), 500);
     } catch (nextError) {
       message.error((nextError as Error).message);
     } finally {
       setBatchStarting(false);
     }
-  }, [configFor, executionConstraints, load, programId, selectedItems, t]);
+  }, [configFor, executionConstraints, load, pendingItems, programId, t]);
+
+  /** 打开前置条件弹框，并记下这次要跑的任务集合。 */
+  const askConstraints = useCallback((items: DeliveryItemRecord[], batchKey = "") => {
+    if (!items.length) return;
+    setPendingItems(items);
+    setRedoingBatchKey(batchKey);
+    setExecutionConstraints("");
+    setConstraintsOpen(true);
+  }, []);
 
   const taskNode = (item: DeliveryItemRecord) => {
     const batch = batchByItem.get(item.itemKey);
-    const canStart = executable(item);
+    const canStart = selectable(item);
+    const redo = item.status === "done";
     return (
       <div
         className={`delivery-progress-node is-${item.status}`}
@@ -396,11 +551,11 @@ export function DeliveryRequirementProgressModal({
         </button>
         <span className="delivery-progress-node__actions">
           {canStart ? (
-            <Tooltip title={bridgeReady ? t("delivery.progress.startItem") : t("delivery.progress.bridgeOffline")}>
+            <Tooltip title={bridgeReady ? t(redo ? "delivery.progress.redoItem" : "delivery.progress.startItem") : t("delivery.progress.bridgeOffline")}>
               <Button
-                aria-label={t("delivery.progress.startItem")}
+                aria-label={t(redo ? "delivery.progress.redoItem" : "delivery.progress.startItem")}
                 disabled={!bridgeReady || Boolean(previewProgress)}
-                icon={<PlayCircleOutlined />}
+                icon={redo ? <RedoOutlined /> : <PlayCircleOutlined />}
                 loading={startingKey === item.itemKey}
                 size="small"
                 type="text"
@@ -500,8 +655,8 @@ export function DeliveryRequirementProgressModal({
                 <div className="delivery-progress__section-head">
                   <span><ApartmentOutlined /></span>
                   <div>
-                    <b>{t("delivery.progress.flow")}</b>
-                    <small>{t("delivery.progress.flowHint")}</small>
+                    <b>{t("delivery.progress.planningBatches")}</b>
+                    <small>{t("delivery.progress.planningBatchHint")}</small>
                   </div>
                 </div>
                 {previewProgress ? null : (
@@ -525,43 +680,53 @@ export function DeliveryRequirementProgressModal({
                           {t("delivery.progress.stopAll")}
                         </Button>
                       </Popconfirm>
-                      <Tooltip title={bridgeReady ? t("delivery.execution.batchHint") : t("delivery.progress.bridgeOffline")}>
+                      <Tooltip title={bridgeReady ? t(selectedRedo ? "delivery.progress.redoHint" : "delivery.execution.batchHint") : t("delivery.progress.bridgeOffline")}>
                         <Button
                           disabled={!bridgeReady || selectedItems.length === 0}
-                          icon={<PlayCircleOutlined />}
-                          loading={batchStarting}
+                          icon={selectedRedo ? <RedoOutlined /> : <PlayCircleOutlined />}
+                          loading={batchStarting && !redoingBatchKey}
                           size="small"
                           type="primary"
-                          onClick={() => {
-                            setExecutionConstraints("");
-                            setConstraintsOpen(true);
-                          }}
+                          onClick={() => askConstraints(selectedItems)}
                         >
-                          {fill(t("delivery.execution.batchSelected"), { count: selectedItems.length })}
+                          {fill(
+                            t(selectedRedo ? "delivery.progress.redoSelected" : "delivery.execution.batchSelected"),
+                            { count: selectedItems.length },
+                          )}
                         </Button>
                       </Tooltip>
                     </span>
                   </div>
                 )}
-                {progress.items.length ? (
-                  <div className="delivery-progress-flow-scroll">
-                    <div className="delivery-progress-flow" ref={flowRef}>
-                      <DeliveryDependencyLayer
-                        boardRef={flowRef}
-                        columns={columns}
-                        scale={1}
-                        onDeleteDependency={() => undefined}
-                      />
-                      {columns.map((column) => (
-                        <section className="delivery-progress-flow__column" key={column.key}>
-                          <header>
-                            <span>{column.name}</span>
-                            <b className="manager-mono">{column.items.length}</b>
-                          </header>
-                          <div>{column.items.map(taskNode)}</div>
-                        </section>
-                      ))}
-                    </div>
+                {planningGroups.length ? (
+                  <div className="delivery-progress-plan-rows">
+                    {planningGroups.map((group) => {
+                      const groupSelectable = group.items.filter(selectable);
+                      const groupSelected = groupSelectable.filter((item) => selectedKeys.includes(item.itemKey));
+                      return (
+                        <PlanningBatchRow
+                          canRedo={bridgeReady}
+                          disabled={Boolean(previewProgress)}
+                          group={group}
+                          key={group.key || "ungrouped"}
+                          redoHint={t("delivery.progress.redoHint")}
+                          redoing={batchStarting && redoingBatchKey === (group.key || "ungrouped")}
+                          renderNode={taskNode}
+                          selectableCount={groupSelectable.length}
+                          selectedCount={groupSelected.length}
+                          stepLabel={stepLabel}
+                          t={t}
+                          onRedo={() => {
+                            setSelectedKeys((current) => Array.from(new Set([
+                              ...current,
+                              ...groupSelectable.map((item) => item.itemKey),
+                            ])));
+                            askConstraints(groupSelectable, group.key || "ungrouped");
+                          }}
+                          onToggleAll={(checked) => toggleGroup(groupSelectable, checked)}
+                        />
+                      );
+                    })}
                   </div>
                 ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.progress.empty")} />}
               </section>
@@ -646,8 +811,10 @@ export function DeliveryRequirementProgressModal({
         onCancel={() => {
           setConstraintsOpen(false);
           setExecutionConstraints("");
+          setPendingItems([]);
+          setRedoingBatchKey("");
         }}
-        onOk={() => void startSelected()}
+        onOk={() => void startPending()}
       >
         <div className="delivery-drawer">
           <label>

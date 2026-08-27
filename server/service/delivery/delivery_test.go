@@ -388,8 +388,14 @@ func TestBuildRequirementProgressViewKeepsAllTaskStatesAndBatchContext(t *testin
 	batches := []*repository.DeliveryExecutionBatch{{BatchID: "batch-1", Status: ExecutionBatchStatusRunning}}
 	batchItems := []*repository.DeliveryExecutionBatchItem{{BatchID: "batch-1", ItemKey: "doing", Status: ExecutionBatchItemRunning}}
 	dependencies := []*repository.DeliveryItemDependency{{PredecessorItemKey: "done", SuccessorItemKey: "doing"}}
+	planningBatches := []*repository.DeliveryRequirementPlanningBatch{
+		{BatchKey: "plan-1", RequirementKey: "req-1", Seq: 1, Title: "第 1 次拆解", ItemCount: 4},
+	}
 
-	view := buildRequirementProgressView(requirement, rows, dependencies, batches, batchItems)
+	view := buildRequirementProgressView(requirement, rows, dependencies, batches, batchItems, planningBatches)
+	if len(view.PlanningBatches) != 1 || view.PlanningBatches[0].BatchKey != "plan-1" || view.PlanningBatches[0].Seq != 1 {
+		t.Fatalf("拆解批次没有进入进度视图：%#v", view.PlanningBatches)
+	}
 	if view.TotalCount != 4 || view.CountedCount != 3 || view.Progress != 58.33 {
 		t.Fatalf("需求进度汇总不正确：%#v", view)
 	}
@@ -643,5 +649,28 @@ func TestMarshalPlanningMetadataRejectsOversizedContext(t *testing.T) {
 	}
 	if _, err := marshalPlanningMetadata(nil); err != nil {
 		t.Fatalf("空 metadata 应写成 {}：%v", err)
+	}
+}
+
+func TestNormalizePlanningBatchSourceDefaultsToPlanner(t *testing.T) {
+	got, err := normalizePlanningBatchSource("")
+	if err != nil || got != PlanningBatchSourcePlanner {
+		t.Fatalf("拆解批次来源默认值不正确：%q %v", got, err)
+	}
+	if _, err := normalizePlanningBatchSource(" Manual "); err != nil {
+		t.Fatalf("人工来源应当被接受：%v", err)
+	}
+	if _, err := normalizePlanningBatchSource("robot"); err == nil {
+		t.Fatal("未知来源应当报错")
+	}
+}
+
+func TestGeneratePlanningBatchKeyIsUnique(t *testing.T) {
+	first, second := generatePlanningBatchKey(), generatePlanningBatchKey()
+	if first == second {
+		t.Fatalf("两次生成的拆解批次键不应相同：%s", first)
+	}
+	if !strings.HasPrefix(first, "plan-") {
+		t.Fatalf("拆解批次键应当以 plan- 打头：%s", first)
 	}
 }

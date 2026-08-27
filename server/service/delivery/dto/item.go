@@ -33,7 +33,9 @@ type ItemView struct {
 	StageKey       string           `json:"stageKey"`
 	ModuleKey      string           `json:"moduleKey"`
 	RequirementKey string           `json:"requirementKey"`
-	Kind           string           `json:"kind"`
+	// PlanningBatchKey 是任务来自哪一次需求拆解；非必填，手工新建和存量任务为空串。
+	PlanningBatchKey string `json:"planningBatchKey"`
+	Kind             string `json:"kind"`
 	Title          string           `json:"title"`
 	Description    string           `json:"description"`
 	// BenefitTags 用简短标签说明任务交付后带来的收益或作用。
@@ -84,6 +86,7 @@ type SaveItemRequest struct {
 	StageKey                string            `json:"stageKey"`
 	ModuleKey               string            `json:"moduleKey"`
 	RequirementKey          string            `json:"requirementKey"`
+	PlanningBatchKey        string            `json:"planningBatchKey"`
 	Kind                    string            `json:"kind"`
 	Title                   string            `json:"title"`
 	Description             string            `json:"description"`

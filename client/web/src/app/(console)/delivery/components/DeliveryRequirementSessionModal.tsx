@@ -22,7 +22,6 @@ import {
   PauseCircleOutlined,
   PictureOutlined,
   DownOutlined,
-  PlusOutlined,
 	ReloadOutlined,
 	RightOutlined,
   SaveOutlined,
@@ -68,6 +67,7 @@ import {
 	pushCodexGitBranch,
   fetchCodexRequirementPrototype,
   fetchCodexRequirementPrototypeConversation,
+  fetchCodexRequirementReviewConversation,
   fetchCodexRequirementTestingConversation,
   fetchCodexPlanningConversation,
   fetchDeliveryConversationMentionCatalog,
@@ -107,7 +107,9 @@ import { DeliveryConversationMentionInput, type DeliveryConversationMentionFile 
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { DeliveryRequirementReviewModal } from "./DeliveryRequirementReviewModal";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
+import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -327,7 +329,13 @@ export function DeliveryRequirementSessionModal({
   const [activeRequirementTab, setActiveRequirementTab] = useState<RequirementStageTab>("requirement");
   const [activeTestingTab, setActiveTestingTab] = useState<TestingStageTab>("testingCases");
   const [testingWorkspaceOpen, setTestingWorkspaceOpen] = useState(false);
+  // 聊天历史分栏在需求编辑和测试工作区之间共用，返回时还停在原来那一栏。
+  const [historyTab, setHistoryTab] = useState<DeliveryHistoryTab>("planning");
   const [testingConversations, setTestingConversations] = useState<CodexPlanningSessionSummary[]>([]);
+  const [reviewConversations, setReviewConversations] = useState<CodexPlanningSessionSummary[]>([]);
+  const [reviewWorkspaceOpen, setReviewWorkspaceOpen] = useState(false);
+  const [reviewThreadId, setReviewThreadId] = useState("");
+  const [startNewReviewConversation, setStartNewReviewConversation] = useState(false);
   const [testingThreadId, setTestingThreadId] = useState("");
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
   const [outlineFullscreen, setOutlineFullscreen] = useState(false);
@@ -459,6 +467,19 @@ export function DeliveryRequirementSessionModal({
     }
   }, [codexBridgeReady, programId, requirementKey, testingProvider]);
 
+  const loadReviewHistory = useCallback(async () => {
+    if (!programId || !requirementKey || !codexBridgeReady) {
+      setReviewConversations([]);
+      return;
+    }
+    try {
+      const next = await fetchCodexRequirementReviewConversation(programId, requirementKey, "", testingProvider);
+      setReviewConversations(next.conversations);
+    } catch (error) {
+      message.error((error as Error).message);
+    }
+  }, [codexBridgeReady, programId, requirementKey, testingProvider]);
+
   // 自动写进来的那个名字（先是占位名，随后是 AI 标题）；用户自己改过就不再跟着变。
   const autoNameRef = useRef("");
 	useEffect(() => {
@@ -486,6 +507,11 @@ export function DeliveryRequirementSessionModal({
       setActiveRequirementTab("requirement");
       setActiveTestingTab("testingCases");
       setTestingWorkspaceOpen(false);
+      setReviewWorkspaceOpen(false);
+      setReviewConversations([]);
+      setReviewThreadId("");
+      setStartNewReviewConversation(false);
+      setHistoryTab("planning");
       setTestingConversations([]);
       setTestingThreadId("");
       setStartNewTestingConversation(false);
@@ -675,7 +701,8 @@ export function DeliveryRequirementSessionModal({
   useEffect(() => {
     if (!open || !requirementKey) return;
     void loadTestingHistory();
-  }, [loadTestingHistory, open, requirementKey]);
+    void loadReviewHistory();
+  }, [loadReviewHistory, loadTestingHistory, open, requirementKey]);
 
   const loadPrototype = useCallback(async () => {
     if (!open || !requirementKey || !codexBridgeReady) {
@@ -1490,12 +1517,36 @@ export function DeliveryRequirementSessionModal({
     void load(threadId, true);
   };
 
-  const requirementHistory = useMemo(() => [
-    ...(conversation?.conversations ?? []).map((entry) => ({ kind: "planning" as const, entry })),
-    ...testingConversations.map((entry) => ({ kind: "testing" as const, entry })),
-  ].sort((left, right) => (right.entry.updatedAt || "").localeCompare(left.entry.updatedAt || "")), [conversation?.conversations, testingConversations]);
+  // 回到拆解会话：空线程号表示直接新开一轮拆解。
+  const openPlanningConversation = (threadId: string) => {
+    setHistoryTab("planning");
+    if (testingWorkspaceOpen) {
+      setTestingWorkspaceOpen(false);
+      setStartNewTestingConversation(false);
+      void loadTestingHistory();
+    }
+    if (reviewWorkspaceOpen) {
+      setReviewWorkspaceOpen(false);
+      setStartNewReviewConversation(false);
+      void loadReviewHistory();
+    }
+    if (threadId) selectConversation(threadId);
+    else startNewConversation();
+  };
+
+  const openReviewConversation = (threadId = "", startNew = false) => {
+    setHistoryTab("review");
+    setTestingWorkspaceOpen(false);
+    setStartNewTestingConversation(false);
+    setReviewThreadId(threadId);
+    setStartNewReviewConversation(startNew);
+    setReviewWorkspaceOpen(true);
+  };
 
   const openTestingConversation = (threadId = "", startNewConversation = false) => {
+    setHistoryTab("testing");
+    setReviewWorkspaceOpen(false);
+    setStartNewReviewConversation(false);
     setTestingThreadId(threadId);
     setStartNewTestingConversation(startNewConversation);
     setTestingWorkspaceOpen(true);
@@ -1525,161 +1576,9 @@ export function DeliveryRequirementSessionModal({
     }
   }, [active, conversation, onChanged, onTasksWritten, saved, t]);
 
-  return (
-    <Modal
-      className="delivery-task-session-modal delivery-planning-session-modal"
-      open={open}
-      footer={null}
-      onCancel={onClose}
-      // 用 100% 而不是 100vw：100vw 不减去滚动条宽度，会把整个弹窗顶出一条横向滚动。
-      width="100%"
-      style={{ top: 0, maxWidth: "none", margin: 0, paddingBottom: 0 }}
-      styles={{ content: { padding: 0 }, body: { padding: 0 } }}
-      title={null}
-    >
-      {testingWorkspaceOpen && saved ? (
-        <DeliveryRequirementTestingModal
-          embedded
-          open
-          requirement={saved}
-          programId={programId}
-          programName={programName}
-          codexBridgeReady={codexBridgeReady}
-          startNewConversationOnOpen={startNewTestingConversation}
-          initialThreadId={testingThreadId}
-          planningConversations={conversation?.conversations ?? []}
-          onOpenPlanningConversation={(threadId) => {
-            setTestingWorkspaceOpen(false);
-            setStartNewTestingConversation(false);
-            selectConversation(threadId);
-          }}
-          onClose={() => {
-            setTestingWorkspaceOpen(false);
-            setStartNewTestingConversation(false);
-            void loadTestingHistory();
-          }}
-          onChanged={async () => {
-            await onChanged();
-            await loadTestingHistory();
-          }}
-        />
-      ) : (
-      <>
-      <div
-		className={`delivery-planning-shell${resizingContext ? " is-resizing-context" : ""}${contextCollapsed ? " is-context-collapsed" : ""}`}
-		ref={planningShellRef}
-		style={{ "--delivery-planning-context-width": `${contextPanelWidth}px` } as CSSProperties}
-		>
-        {/* 左：会话列表。同一条需求可以开多轮拆解，追问和重开在这里切。 */}
-        <aside className="delivery-planning-history">
-          <header className="delivery-session-history__header">
-            <h3>{t("delivery.session.history")}</h3>
-            <Tooltip title={active ? t("delivery.session.newDisabled") : t("delivery.session.new")}>
-              <Button
-                type="text"
-                shape="circle"
-                icon={<PlusOutlined />}
-                disabled={active || !requirementKey}
-                onClick={startNewConversation}
-                aria-label={t("delivery.session.new")}
-              />
-            </Tooltip>
-          </header>
-          <div className="delivery-session-history__list">
-            {newConversation ? (
-              <div className="delivery-session-history__item is-selected is-draft">
-                <MessageOutlined />
-                <div><b>{t("delivery.session.newConversation")}</b><span>{t("delivery.planning.title")} · {t("delivery.session.newDraft").replace("{tool}", toolName)}</span></div>
-              </div>
-            ) : null}
-            {requirementHistory.map(({ kind, entry }) => (
-              <button
-                className={`delivery-session-history__item${kind === "planning" && entry.threadId === (switchingThreadId || conversation?.threadId) && !newConversation ? " is-selected" : ""}`}
-                key={`${kind}-${entry.threadId}`}
-                type="button"
-                onClick={() => kind === "planning" ? selectConversation(entry.threadId) : openTestingConversation(entry.threadId)}
-              >
-                <MessageOutlined />
-                <div><Tooltip title={entry.title || t("delivery.session.untitled")} placement="topLeft" mouseEnterDelay={0.3}><b>{entry.title || t("delivery.session.untitled")}</b></Tooltip><span>{[kind === "planning" ? t("delivery.planning.title") : t("delivery.testingCases.status"), toolDisplayName(entry.executorType)].filter(Boolean).join(" · ")}</span>{/* 时间单独占一行：跟阶段、工具挤在一行时窄侧栏里必被省略号吃掉。 */}{entry.updatedAt ? <span className="delivery-session-history__item-time">{dayjs(entry.updatedAt).format("MM-DD HH:mm")}</span> : null}</div>
-                {entry.active ? <i /> : null}
-              </button>
-            ))}
-            {!newConversation && !requirementHistory.length ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.session.historyEmpty")} />
-            ) : null}
-          </div>
-        </aside>
-
-        {/* 中：聊天记录 + 输入框，与任务会话弹窗同一套结构。 */}
-        <main className="delivery-session-main">
-          <header className="delivery-session-toolbar delivery-planning-session-toolbar">
-            <div className="delivery-planning-session-toolbar__summary">
-              <div className="delivery-session-title delivery-planning-session-title">
-                <div className="delivery-planning-session-title__heading">
-                  <span>{saved ? t("delivery.requirement.edit") : t("delivery.requirement.new")}</span>
-                  <b>{name.trim() || saved?.requirementKey || programName || programId}</b>
-                  {name.trim() || saved?.requirementKey ? <small>{programName || programId}</small> : null}
-                </div>
-                {saved?.createdAt ? (
-                  <small className="delivery-planning-session-title__created-at">
-                    {t("delivery.requirement.createdAt")} {dayjs(saved.createdAt).format("YYYY-MM-DD HH:mm")}
-                  </small>
-                ) : null}
-              </div>
-              {/* 分享、刷新提到标题行，且只留图标，靠 Tooltip 说明文案；创建分支归到 Git 悬浮框。 */}
-              <div className="delivery-planning-session-toolbar__quick">
-                <Tooltip title={requirementKey ? t("delivery.requirement.shareLink") : t("delivery.requirement.saveFirst")}>
-                  <Button
-                    icon={<ShareAltOutlined />}
-                    disabled={!saved}
-                    aria-label={t("delivery.requirement.shareLink")}
-                    onClick={() => {
-                      if (saved) onShare(saved);
-                    }}
-                  />
-                </Tooltip>
-                <Tooltip title={t("delivery.session.refresh")}>
-                  <Button icon={<ReloadOutlined />} loading={loading} disabled={!requirementKey} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />
-                </Tooltip>
-              </div>
-              {/* 没有会话状态可说时仍保留位置，避免刷新按钮在不同状态下左右跳动。 */}
-              {!requirementKey ? (
-                <span className="delivery-planning-session-toolbar__state delivery-planning-session-toolbar__state--save-required">
-                  {t(gitBranchRequiredBeforeConversation ? "delivery.requirement.gitBranchRequiredBeforeConversation" : "delivery.requirement.saveFirst")}
-                </span>
-              ) : newConversation ? (
-                <span className="delivery-planning-session-toolbar__state">{t("delivery.session.newConversation")}</span>
-              ) : conversation?.threadId ? (
-                <span className="delivery-planning-session-toolbar__state"><i /> {t("delivery.session.connected").replace("{tool}", toolName)}</span>
-              ) : (
-                <span className="delivery-planning-session-toolbar__state" />
-              )}
-              {/* 展开/收起跟弹窗的关闭按钮排在同一行，右上角只留这两个。 */}
-              <Tooltip title={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}>
-                <Button
-                  className="delivery-planning-context-toggle"
-                  type="text"
-                  shape="circle"
-                  icon={contextCollapsed ? <RightOutlined /> : <LeftOutlined />}
-                  aria-label={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}
-                  onClick={() => {
-                    const nextCollapsed = !contextCollapsed;
-                    setContextCollapsed(nextCollapsed);
-                    setGitPanelCollapsed(false);
-                  }}
-                />
-              </Tooltip>
-            </div>
-            <div className="delivery-session-toolbar__actions">
-              {/* 分支与推送都搬到收起需求信息后出现的 Git 悬浮框里，这里不再重复。 */}
-              {prototype?.exists ? (
-                <Button icon={<EditOutlined />} disabled={!codexBridgeReady} onClick={openPrototypeEditor}>
-                  {t("delivery.prototype.edit")}
-                </Button>
-              ) : null}
-              {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.planning.stop")}</Button> : null}
-            </div>
-          </header>
+  // Git 悬浮框在拆解和 review 两个会话区里共用，抽成一份，别在两处各维护一遍。
+  const gitPanel = (
+    <>
           {/* Git 相关入口全部收在这个悬浮框里：还没建分支时给创建入口，建好后是分支、变更和推送。 */}
           {gitLinked || gitToolbarReady ? (
             <aside className={`delivery-requirement-git-panel${gitPanelCollapsed ? " is-collapsed" : ""}`}>
@@ -2075,6 +1974,176 @@ export function DeliveryRequirementSessionModal({
               ) : null}
             </aside>
           ) : null}
+    </>
+  );
+
+  return (
+    <Modal
+      className="delivery-task-session-modal delivery-planning-session-modal"
+      open={open}
+      footer={null}
+      onCancel={onClose}
+      // 用 100% 而不是 100vw：100vw 不减去滚动条宽度，会把整个弹窗顶出一条横向滚动。
+      width="100%"
+      style={{ top: 0, maxWidth: "none", margin: 0, paddingBottom: 0 }}
+      styles={{ content: { padding: 0 }, body: { padding: 0 } }}
+      title={null}
+    >
+            <>
+      <div
+		className={`delivery-planning-shell${resizingContext ? " is-resizing-context" : ""}${contextCollapsed ? " is-context-collapsed" : ""}`}
+		ref={planningShellRef}
+		style={{ "--delivery-planning-context-width": `${contextPanelWidth}px` } as CSSProperties}
+		>
+        {/* 左：会话列表按用途分成拆解 / 代码 review / 测试三栏，追问和重开在各自那一栏里切。 */}
+        <DeliverySessionHistoryTabs
+          activeTab={historyTab}
+          onTabChange={setHistoryTab}
+          planningConversations={conversation?.conversations ?? []}
+          reviewConversations={reviewConversations}
+          testingConversations={testingConversations}
+          selectedKind={testingWorkspaceOpen ? "testing" : reviewWorkspaceOpen ? "review" : "planning"}
+          selectedThreadId={testingWorkspaceOpen
+            ? (startNewTestingConversation ? "" : testingThreadId)
+            : reviewWorkspaceOpen
+              ? (startNewReviewConversation ? "" : reviewThreadId)
+              : newConversation ? "" : switchingThreadId || conversation?.threadId || ""}
+          draft={testingWorkspaceOpen
+            ? startNewTestingConversation ? { kind: "testing" as const, title: `${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`, subtitle: `${t("delivery.testingCases.status")} · ${t("delivery.requirement.testingDraft")}` } : null
+            : reviewWorkspaceOpen
+              ? startNewReviewConversation ? { kind: "review" as const, title: `${t("delivery.review.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.review.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
+              : newConversation ? { kind: "planning" as const, title: t("delivery.session.newConversation"), subtitle: `${t("delivery.planning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null}
+          onSelect={(kind, threadId) => (kind === "planning" ? openPlanningConversation(threadId) : kind === "review" ? openReviewConversation(threadId) : openTestingConversation(threadId))}
+          onNew={(tab) => (tab === "planning" ? openPlanningConversation("") : tab === "review" ? openReviewConversation("", true) : openTestingConversation("", true))}
+          newDisabled={testingWorkspaceOpen || reviewWorkspaceOpen ? !requirementKey : active || !requirementKey}
+          newDisabledTip={!testingWorkspaceOpen && !reviewWorkspaceOpen && active ? t("delivery.session.newDisabled") : ""}
+          testingTitleFallback={`${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`}
+        />
+
+        {/* 中：拆解会话，或者测试工作区的会话区——两者共用同一套左右两栏。 */}
+        {reviewWorkspaceOpen && saved ? (
+        <DeliveryRequirementReviewModal
+          requirement={saved}
+          programId={programId}
+          programName={programName}
+          codexBridgeReady={codexBridgeReady}
+          startNewConversationOnOpen={startNewReviewConversation}
+          initialThreadId={reviewThreadId}
+          gitPanel={gitPanel}
+          contextCollapsed={contextCollapsed}
+          onToggleContext={() => {
+            setContextCollapsed(!contextCollapsed);
+            setGitPanelCollapsed(false);
+          }}
+          onConversationStateChange={({ threadId, isNew }) => {
+            setReviewThreadId(threadId);
+            setStartNewReviewConversation(isNew);
+          }}
+          onChanged={async () => {
+            await loadReviewHistory();
+          }}
+        />
+        ) : testingWorkspaceOpen && saved ? (
+        <DeliveryRequirementTestingModal
+          embedded
+          mainOnly
+          open
+          requirement={saved}
+          programId={programId}
+          programName={programName}
+          codexBridgeReady={codexBridgeReady}
+          startNewConversationOnOpen={startNewTestingConversation}
+          initialThreadId={testingThreadId}
+          contextCollapsed={contextCollapsed}
+          onToggleContext={() => {
+            setContextCollapsed(!contextCollapsed);
+            setGitPanelCollapsed(false);
+          }}
+          onConversationStateChange={({ threadId, isNew }) => {
+            setTestingThreadId(threadId);
+            setStartNewTestingConversation(isNew);
+          }}
+          onClose={() => {
+            setTestingWorkspaceOpen(false);
+            setStartNewTestingConversation(false);
+            void loadTestingHistory();
+          }}
+          onChanged={async () => {
+            await onChanged();
+            await loadTestingHistory();
+          }}
+        />
+        ) : (
+        <main className="delivery-session-main">
+          <header className="delivery-session-toolbar delivery-planning-session-toolbar">
+            <div className="delivery-planning-session-toolbar__summary">
+              <div className="delivery-session-title delivery-planning-session-title">
+                <div className="delivery-planning-session-title__heading">
+                  <span>{saved ? t("delivery.requirement.edit") : t("delivery.requirement.new")}</span>
+                  <b>{name.trim() || saved?.requirementKey || programName || programId}</b>
+                  {name.trim() || saved?.requirementKey ? <small>{programName || programId}</small> : null}
+                </div>
+                {saved?.createdAt ? (
+                  <small className="delivery-planning-session-title__created-at">
+                    {t("delivery.requirement.createdAt")} {dayjs(saved.createdAt).format("YYYY-MM-DD HH:mm")}
+                  </small>
+                ) : null}
+              </div>
+              {/* 分享、刷新提到标题行，且只留图标，靠 Tooltip 说明文案；创建分支归到 Git 悬浮框。 */}
+              <div className="delivery-planning-session-toolbar__quick">
+                <Tooltip title={requirementKey ? t("delivery.requirement.shareLink") : t("delivery.requirement.saveFirst")}>
+                  <Button
+                    icon={<ShareAltOutlined />}
+                    disabled={!saved}
+                    aria-label={t("delivery.requirement.shareLink")}
+                    onClick={() => {
+                      if (saved) onShare(saved);
+                    }}
+                  />
+                </Tooltip>
+                <Tooltip title={t("delivery.session.refresh")}>
+                  <Button icon={<ReloadOutlined />} loading={loading} disabled={!requirementKey} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />
+                </Tooltip>
+              </div>
+              {/* 没有会话状态可说时仍保留位置，避免刷新按钮在不同状态下左右跳动。 */}
+              {!requirementKey ? (
+                <span className="delivery-planning-session-toolbar__state delivery-planning-session-toolbar__state--save-required">
+                  {t(gitBranchRequiredBeforeConversation ? "delivery.requirement.gitBranchRequiredBeforeConversation" : "delivery.requirement.saveFirst")}
+                </span>
+              ) : newConversation ? (
+                <span className="delivery-planning-session-toolbar__state">{t("delivery.session.newConversation")}</span>
+              ) : conversation?.threadId ? (
+                <span className="delivery-planning-session-toolbar__state"><i /> {t("delivery.session.connected").replace("{tool}", toolName)}</span>
+              ) : (
+                <span className="delivery-planning-session-toolbar__state" />
+              )}
+              {/* 展开/收起跟弹窗的关闭按钮排在同一行，右上角只留这两个。 */}
+              <Tooltip title={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}>
+                <Button
+                  className="delivery-planning-context-toggle"
+                  type="text"
+                  shape="circle"
+                  icon={contextCollapsed ? <RightOutlined /> : <LeftOutlined />}
+                  aria-label={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}
+                  onClick={() => {
+                    const nextCollapsed = !contextCollapsed;
+                    setContextCollapsed(nextCollapsed);
+                    setGitPanelCollapsed(false);
+                  }}
+                />
+              </Tooltip>
+            </div>
+            <div className="delivery-session-toolbar__actions">
+              {/* 分支与推送都搬到收起需求信息后出现的 Git 悬浮框里，这里不再重复。 */}
+              {prototype?.exists ? (
+                <Button icon={<EditOutlined />} disabled={!codexBridgeReady} onClick={openPrototypeEditor}>
+                  {t("delivery.prototype.edit")}
+                </Button>
+              ) : null}
+              {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.planning.stop")}</Button> : null}
+            </div>
+          </header>
+          {gitPanel}
           <div className="delivery-session-transcript" ref={transcriptRef} onScroll={onTranscriptScroll}>
             {/* 首次加载时只显示转圈，不要再叠一层空状态：两个「空」摞在一起像坏了。 */}
             {switchingThreadId || (loading && !conversation) ? (
@@ -2224,6 +2293,7 @@ export function DeliveryRequirementSessionModal({
             {draggingAttachments ? <div className="delivery-session-composer__drop-target">{t("delivery.session.dropAttachments")}</div> : null}
           </footer>
         </main>
+        )}
 
         {/* 右：需求详情。项目是只读的 —— 需求跟着当前项目走，不在这里换。 */}
         <aside className="delivery-planning-context">
@@ -2887,7 +2957,6 @@ export function DeliveryRequirementSessionModal({
       </div>
       </Modal>
       </>
-      )}
 
       {/* 建分支只问两件事：从哪条分支切出来、这条需求的分支叫什么。 */}
       <Modal

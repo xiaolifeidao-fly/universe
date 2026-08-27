@@ -271,6 +271,9 @@ export class DeliveryItemRecord {
   /** 所属需求；空串是需求层落地之前建的存量任务。 */
   requirementKey = "";
 
+  /** 来源拆解批次；非必填，手工新建和存量任务为空串。 */
+  planningBatchKey = "";
+
   kind: DeliveryKind = "gap";
 
   title = "";
@@ -1356,6 +1359,44 @@ export class CodexRequirementTestingActionResult {
   active = false;
 }
 
+/** 需求级代码 review 会话；与测试会话共用会话表，只读代码给意见，不改实现。 */
+export class CodexRequirementReviewConversation {
+  programId = 0;
+
+  requirementKey = "";
+
+  threadId = "";
+
+  executorType: AITool = "codex";
+
+  turns: CodexConversationTurn[] = [];
+
+  conversations: CodexPlanningSessionSummary[] = [];
+
+  active = false;
+
+  activeTurnId = "";
+
+  /** review 报告只落在工作区文件里；没生成过就是空串。 */
+  reviewReport = "";
+
+  reviewReportPath = "";
+}
+
+export class CodexRequirementReviewActionResult {
+  accepted = false;
+
+  programId = 0;
+
+  requirementKey = "";
+
+  threadId = "";
+
+  turnId = "";
+
+  active = false;
+}
+
 /** 任务级预先测试用例会话；与任务执行会话隔离，永远不领取或推进任务。 */
 export class CodexTaskTestingCasesConversation {
   programId = 0;
@@ -1872,6 +1913,41 @@ export class DeliveryExecutionBatchItemRecord {
   updatedAt?: string;
 }
 
+/** 一次「拆解并写入任务」的批次。任务用 planningBatchKey 归到某一批。 */
+export class DeliveryPlanningBatchRecord {
+  batchKey = "";
+
+  bizLine = "";
+
+  programId = 0;
+
+  requirementKey = "";
+
+  /** 需求内的第几次拆解，从 1 开始。 */
+  seq = 0;
+
+  title = "";
+
+  source = "planner";
+
+  executorType = "";
+
+  threadId = "";
+
+  summary = "";
+
+  /** 写入时登记的任务数；任务可能被删，实际归属以任务表为准。 */
+  itemCount = 0;
+
+  createdBy = "";
+
+  createdByName = "";
+
+  createdAt?: string;
+
+  updatedAt?: string;
+}
+
 export class DeliveryRequirementProgressRecord {
   requirementKey = "";
 
@@ -1894,6 +1970,9 @@ export class DeliveryRequirementProgressRecord {
   items: DeliveryItemRecord[] = [];
 
   batches: DeliveryExecutionBatchRecord[] = [];
+
+  /** 这条需求拆过几批任务；进度窗按批次成行展示。 */
+  planningBatches: DeliveryPlanningBatchRecord[] = [];
 }
 
 export interface DeliveryExecutionBatchNotification extends DeliveryExecutionBatchRecord {
@@ -2089,6 +2168,7 @@ export async function fetchRequirementProgress(programId: number, requirementKey
   progress.batches = (progress.batches ?? []).map((batch) => Object.assign(new DeliveryExecutionBatchRecord(), batch, {
     items: (batch.items ?? []).map((item) => Object.assign(new DeliveryExecutionBatchItemRecord(), item)),
   }));
+  progress.planningBatches = (progress.planningBatches ?? []).map((batch) => Object.assign(new DeliveryPlanningBatchRecord(), batch));
   return progress;
 }
 
@@ -2706,6 +2786,8 @@ export async function startCodexExecution(
   provider: AITool = "codex",
   reasoningEffort?: AIReasoningEffort,
   fastMode = false,
+  /** 再做一次：已完成的任务也能重新起一轮执行实例，任务状态不回滚。 */
+  redo = false,
 ) {
   const response = await instance.post<CodexExecutionResult>(
     `${CODEX_BRIDGE_URL}/v1/codex/execute`,
@@ -2713,6 +2795,7 @@ export async function startCodexExecution(
       programId,
       task,
       provider,
+      ...(redo ? { redo: true } : {}),
       ...(model ? { model } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(provider === "claude" && fastMode ? { fastMode: true } : {}),
@@ -2849,6 +2932,8 @@ export async function startCodexExecutionBatch(
   executionConstraints = "",
   reasoningEffort?: AIReasoningEffort,
   fastMode = false,
+  /** 再做一次：允许把已完成任务重新拉起，任务状态不回滚，只是再开一轮执行实例。 */
+  redo = false,
 ) {
   const response = await instance.post<CodexExecutionBatchResult>(
     `${CODEX_BRIDGE_URL}/v1/codex/execute-batch`,
@@ -2856,6 +2941,7 @@ export async function startCodexExecutionBatch(
       programId,
       itemKeys,
       provider,
+      ...(redo ? { redo: true } : {}),
       ...(model ? { model } : {}),
       ...(executionConstraints.trim() ? { executionConstraints: executionConstraints.trim() } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -3080,6 +3166,81 @@ export async function stopCodexRequirementTestingConversation(
     { timeout: 20000 },
   );
   return plainToInstance(CodexRequirementTestingActionResult, response.data);
+}
+
+/** 用户在面板上勾选的 review 范围：一个 Git 工程一条，files 为空表示整个工程都看。 */
+export interface CodexReviewScopeProject {
+  path: string;
+  name: string;
+  changed: number;
+  files: string[];
+}
+
+export interface SendCodexRequirementReviewMessageOptions {
+  threadId?: string;
+  newConversation?: boolean;
+  provider?: AITool;
+  model?: string;
+  reasoningEffort?: AIReasoningEffort;
+  fastMode?: boolean;
+  scope?: CodexReviewScopeProject[];
+  /** true 表示这一轮是「确认生成 review 报告」，会把结论写进工作区的报告文件。 */
+  generateReport?: boolean;
+}
+
+function hydrateRequirementReviewConversation(data: CodexRequirementReviewConversation) {
+  const conversation = plainToInstance(CodexRequirementReviewConversation, data);
+  conversation.turns = plainToInstance(CodexConversationTurn, data.turns ?? []).map((turn) => {
+    turn.items = plainToInstance(CodexConversationItem, turn.items ?? []).map((item) => {
+      item.attachments = plainToInstance(CodexConversationAttachment, item.attachments ?? []);
+      item.changes = plainToInstance(CodexConversationChange, item.changes ?? []);
+      return item;
+    });
+    return turn;
+  });
+  conversation.conversations = plainToInstance(CodexPlanningSessionSummary, data.conversations ?? []);
+  return conversation;
+}
+
+export async function fetchCodexRequirementReviewConversation(
+  programId: number,
+  requirementKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.get<CodexRequirementReviewConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-review`, {
+    params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
+    timeout: 20000,
+  });
+  return hydrateRequirementReviewConversation(response.data);
+}
+
+export async function sendCodexRequirementReviewMessage(
+  programId: number,
+  requirementKey: string,
+  message: string,
+  options: SendCodexRequirementReviewMessageOptions = {},
+) {
+  const response = await instance.post<CodexRequirementReviewActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-review`,
+    bridgeWorkspaceParams(programId, { programId, requirementKey, message, ...options }),
+    { timeout: 30000 },
+  );
+  return plainToInstance(CodexRequirementReviewActionResult, response.data);
+}
+
+export async function stopCodexRequirementReviewConversation(
+  programId: number,
+  requirementKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.post<CodexRequirementReviewActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-review/stop`,
+    bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexRequirementReviewActionResult, response.data);
 }
 
 export async function uploadCodexPlanningAttachments(

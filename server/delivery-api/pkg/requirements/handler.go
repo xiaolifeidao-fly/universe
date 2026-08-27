@@ -42,6 +42,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/requirement/testing/save", h.saveTesting)
 	// 拆解会话目录由桥接写入，和任务执行会话绑定同样走用户凭证。
 	api.POST("/requirement/planning-session/bind", h.bindPlanningSession)
+	// 拆解批次由拆解插件在写任务之前开一条，之后每条任务带着批次键写入。
+	api.POST("/requirement/planning-batch/create", h.createPlanningBatch)
 	api.POST("/requirement/testing-session/bind", h.bindTestingSession)
 	api.GET("/requirement/completion-notifications", h.listCompletionNotifications)
 
@@ -51,6 +53,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	group.GET("/delivery/requirement/progress", httpx.RequireUserOrService(), h.progress)
 	group.GET("/delivery/requirement/prototype", httpx.RequireUserOrService(), h.getPrototype)
 	group.GET("/delivery/requirement/planning-sessions", httpx.RequireUserOrService(), h.listPlanningSessions)
+	group.GET("/delivery/requirement/planning-batches", httpx.RequireUserOrService(), h.listPlanningBatches)
 	group.GET("/delivery/requirement/testing-sessions", httpx.RequireUserOrService(), h.listTestingSessions)
 }
 
@@ -108,6 +111,37 @@ func (h *Handler) listPlanningSessions(context *gin.Context) {
 	}
 	views, err := h.service.ListPlanningSessions(context.Request.Context(), query)
 	httpx.JSON(context, views, err)
+}
+
+func (h *Handler) listPlanningBatches(context *gin.Context) {
+	var query deliverydto.PlanningBatchQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, query.ProgramID, &query.BizLine) {
+		return
+	}
+	views, err := h.service.ListPlanningBatches(context.Request.Context(), query)
+	httpx.JSON(context, views, err)
+}
+
+func (h *Handler) createPlanningBatch(context *gin.Context) {
+	var req deliverydto.CreatePlanningBatchRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	// 开批次等于要往这条需求下写任务，权限口径和建任务保持一致。
+	if !h.requireProgramManager(context, req.BizLine, req.ProgramID) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	view, err := h.service.CreatePlanningBatch(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) bindPlanningSession(context *gin.Context) {

@@ -1,21 +1,20 @@
 "use client";
 
 import {
-  ArrowLeftOutlined,
   DeleteOutlined,
   FileOutlined,
   FileTextOutlined,
+  LeftOutlined,
   LoadingOutlined,
   MessageOutlined,
   PaperClipOutlined,
   PauseCircleOutlined,
   PictureOutlined,
-  PlusOutlined,
   ReloadOutlined,
+  RightOutlined,
   SendOutlined,
 } from "@ant-design/icons";
 import { Alert, Button, Checkbox, Empty, Input, Modal, Select, Switch, Tabs, Tag, Tooltip, message } from "antd";
-import dayjs from "dayjs";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   CLAUDE_EFFORTS,
@@ -48,6 +47,7 @@ import { useImeCompositionGuard } from "@/utils/ime";
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -66,8 +66,17 @@ interface DeliveryRequirementTestingModalProps {
   startNewConversationOnOpen?: boolean;
   /** 从需求拆解历史进入测试会话时，直接定位到该测试聊天。 */
   initialThreadId?: string;
-  /** 同一需求下的拆解聊天，和测试聊天一起显示在左侧。 */
+  /** 同一需求下的拆解聊天，显示在左侧「需求拆解」分栏里。 */
   planningConversations?: CodexPlanningSessionSummary[];
+  /** 聊天历史分栏与需求编辑工作区共用，返回时还停在同一栏。 */
+  historyTab?: DeliveryHistoryTab;
+  onHistoryTabChange?: (tab: DeliveryHistoryTab) => void;
+  /** 嵌进需求编辑的三栏骨架时只渲染中间会话区：左侧历史和右侧需求信息都由上层出。 */
+  mainOnly?: boolean;
+  contextCollapsed?: boolean;
+  onToggleContext?: () => void;
+  /** 把当前测试线程回报给上层，左侧历史据此点亮对应条目。 */
+  onConversationStateChange?: (state: { threadId: string; isNew: boolean }) => void;
   onClose: () => void;
   onOpenPlanningConversation?: (threadId: string) => void;
   onChanged: () => Promise<void> | void;
@@ -106,6 +115,12 @@ export function DeliveryRequirementTestingModal({
   startNewConversationOnOpen = false,
   initialThreadId = "",
   planningConversations = [],
+  historyTab,
+  onHistoryTabChange,
+  mainOnly = false,
+  contextCollapsed = false,
+  onToggleContext,
+  onConversationStateChange,
   onClose,
   onOpenPlanningConversation,
   onChanged,
@@ -134,6 +149,8 @@ export function DeliveryRequirementTestingModal({
   const [attachments, setAttachments] = useState<File[]>([]);
   const [draggingAttachments, setDraggingAttachments] = useState(false);
   const [activeTab, setActiveTab] = useState<"chat" | "cases" | "report">("chat");
+  // 独立打开测试工作区时自己记分栏；嵌在需求编辑里则跟着上层走。
+  const [ownHistoryTab, setOwnHistoryTab] = useState<DeliveryHistoryTab>("testing");
   const [testCaseOnly, setTestCaseOnly] = useState(true);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
@@ -195,6 +212,24 @@ export function DeliveryRequirementTestingModal({
     void load(initialThreadId, true);
   }, [initialThreadId, load, open, requirementKey, startNewConversationOnOpen]);
 
+  // 只渲染会话区时，选线程和新开聊天的指令都来自上层侧栏，这里跟着 props 走。
+  useEffect(() => {
+    if (!mainOnly || !open || !initializedRef.current) return;
+    if (startNewConversationOnOpen) {
+      if (!newConversationRef.current) startNewConversation();
+      return;
+    }
+    if (initialThreadId && initialThreadId !== selectedThreadId) selectConversation(initialThreadId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialThreadId, mainOnly, open, startNewConversationOnOpen]);
+
+  // 线程变化回报给上层，左侧历史才能点亮当前这条测试聊天。
+  useEffect(() => {
+    if (!mainOnly) return;
+    onConversationStateChange?.({ threadId: newConversation ? "" : switchingThreadId || conversation?.threadId || "", isNew: newConversation });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversation?.threadId, mainOnly, newConversation, switchingThreadId]);
+
   const active = Boolean(conversation?.active && !newConversation);
   const report = conversation?.testingReport || requirement?.testingReport || "";
   const testingStatus = conversation?.testingStatus || requirement?.testingStatus || "todo";
@@ -202,10 +237,8 @@ export function DeliveryRequirementTestingModal({
   const testingCasesPath = conversation?.testingCasesPath || requirement?.testingCasesPath || "";
   const testingCasesStatus = conversation?.testingCasesStatus || requirement?.testingCasesStatus || "todo";
   const testingConversationTitle = `${requirement?.name || requirementKey} · ${t("delivery.testingCases.status")}`;
-  const historyEntries = useMemo(() => [
-    ...planningConversations.map((entry) => ({ kind: "planning" as const, entry })),
-    ...(conversation?.conversations ?? []).map((entry) => ({ kind: "testing" as const, entry })),
-  ].sort((left, right) => (right.entry.updatedAt || "").localeCompare(left.entry.updatedAt || "")), [conversation?.conversations, planningConversations]);
+  const currentHistoryTab = historyTab ?? ownHistoryTab;
+  const changeHistoryTab = (tab: DeliveryHistoryTab) => (onHistoryTabChange ? onHistoryTabChange(tab) : setOwnHistoryTab(tab));
   const flattenedItems = useMemo(
     () => (conversation?.turns ?? []).flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id }))),
     [conversation],
@@ -342,25 +375,23 @@ export function DeliveryRequirementTestingModal({
     void load(threadId, true);
   };
 
-  const workspace = (
-      <div className="delivery-planning-shell delivery-requirement-testing-shell">
-        <aside className="delivery-planning-history">
-          <header className="delivery-session-history__header">
-            <h3>{t("delivery.session.history")}</h3>
-            <Tooltip title={t("delivery.session.new")}>
-              <Button type="text" shape="circle" icon={<PlusOutlined />} disabled={active || !requirementKey} onClick={startNewConversation} />
-            </Tooltip>
-          </header>
-          <div className="delivery-session-history__list">
-            {newConversation ? <div className="delivery-session-history__item is-selected is-draft"><MessageOutlined /><div><b>{testingConversationTitle}</b><span>{t("delivery.testingCases.status")} · {t("delivery.requirement.testingDraft")}</span></div></div> : null}
-            {historyEntries.map(({ kind, entry }) => (
-              <button className={`delivery-session-history__item${kind === "testing" && entry.threadId === (switchingThreadId || conversation?.threadId) && !newConversation ? " is-selected" : ""}`} key={`${kind}-${entry.threadId}`} type="button" onClick={() => kind === "testing" ? selectConversation(entry.threadId) : onOpenPlanningConversation?.(entry.threadId)}>
-                <MessageOutlined /><div><b>{entry.title || (kind === "testing" ? testingConversationTitle : t("delivery.session.untitled"))}</b><span>{[kind === "testing" ? t("delivery.testingCases.status") : t("delivery.planning.title"), toolDisplayName(entry.executorType), entry.updatedAt ? dayjs(entry.updatedAt).format("MM-DD HH:mm") : ""].filter(Boolean).join(" · ")}</span></div>{entry.active ? <i /> : null}
-              </button>
-            ))}
-            {!newConversation && !historyEntries.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.session.historyEmpty")} /> : null}
-          </div>
-        </aside>
+  const history = (
+        <DeliverySessionHistoryTabs
+          activeTab={currentHistoryTab}
+          onTabChange={changeHistoryTab}
+          planningConversations={planningConversations}
+          testingConversations={conversation?.conversations ?? []}
+          selectedKind="testing"
+          selectedThreadId={newConversation ? "" : switchingThreadId || conversation?.threadId || ""}
+          draft={newConversation ? { kind: "testing", title: testingConversationTitle, subtitle: `${t("delivery.testingCases.status")} · ${t("delivery.requirement.testingDraft")}` } : null}
+          onSelect={(kind, threadId) => (kind === "testing" ? selectConversation(threadId) : onOpenPlanningConversation?.(threadId))}
+          onNew={(tab) => (tab === "testing" ? startNewConversation() : onOpenPlanningConversation?.(""))}
+          newDisabled={active || !requirementKey}
+          testingTitleFallback={testingConversationTitle}
+        />
+  );
+
+  const sessionMain = (
         <main className="delivery-session-main">
           <header className="delivery-session-toolbar delivery-planning-session-toolbar">
             <div className="delivery-planning-session-toolbar__summary">
@@ -369,10 +400,22 @@ export function DeliveryRequirementTestingModal({
               <Tag color={testingCasesStatus === "ready" ? "success" : testingCasesStatus === "blocked" ? "warning" : testingCasesStatus === "doing" ? "processing" : "default"}>{t(`delivery.testingCases.status.${testingCasesStatus}`)}</Tag>
             </div>
             <div className="delivery-session-toolbar__actions">
-              {embedded ? <Button icon={<ArrowLeftOutlined />} onClick={onClose}>{t("delivery.requirement.backToEditing")}</Button> : null}
               {testingCases.trim() && !active ? <Button onClick={executeExistingCases} disabled={!codexBridgeReady || sending}>{t("delivery.requirement.executeTesting")}</Button> : null}
               {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.session.stop")}</Button> : null}
               <Button icon={<ReloadOutlined />} loading={loading} disabled={!requirementKey} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />
+              {/* 右侧需求信息在测试工作区里同样可展开收起，位置和拆解会话保持一致。 */}
+              {onToggleContext ? (
+                <Tooltip title={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}>
+                  <Button
+                    className="delivery-planning-context-toggle"
+                    type="text"
+                    shape="circle"
+                    icon={contextCollapsed ? <RightOutlined /> : <LeftOutlined />}
+                    aria-label={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}
+                    onClick={onToggleContext}
+                  />
+                </Tooltip>
+              ) : null}
             </div>
           </header>
           <Tabs
@@ -459,7 +502,16 @@ export function DeliveryRequirementTestingModal({
             {draggingAttachments ? <div className="delivery-session-composer__drop-target">{t("delivery.session.dropAttachments")}</div> : null}
           </footer>
         </main>
-      </div>
+  );
+
+  // 嵌进需求编辑的三栏骨架时只交出中间会话区，左右两栏由上层统一渲染。
+  if (mainOnly) return sessionMain;
+
+  const workspace = (
+    <div className="delivery-planning-shell delivery-requirement-testing-shell">
+      {history}
+      {sessionMain}
+    </div>
   );
 
   if (embedded) return workspace;

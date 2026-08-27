@@ -52,7 +52,8 @@ func (s *service) CreateExecutionBatch(ctx context.Context, req dto.CreateExecut
 			if item == nil {
 				return fmt.Errorf("任务不存在：%s", itemKey)
 			}
-			if item.Status == StatusDone || item.Status == StatusDropped {
+			// 「再做一次」允许把已完成任务重新拉起：不回滚它的状态，只是再开一轮执行实例。
+			if item.Status == StatusDropped || (item.Status == StatusDone && !req.Redo) {
 				return fmt.Errorf("任务 %s 不是可执行状态", itemKey)
 			}
 			if strings.TrimSpace(item.RequirementKey) == "" {

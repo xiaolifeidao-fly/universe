@@ -44,8 +44,12 @@ func (s *service) GetRequirementProgress(ctx context.Context, query dto.Requirem
 	if err != nil {
 		return dto.RequirementProgressView{}, err
 	}
+	planningBatches, err := s.repo.ListRequirementPlanningBatches(ctx, query.BizLine.String(), query.ProgramID, query.RequirementKey)
+	if err != nil {
+		return dto.RequirementProgressView{}, err
+	}
 
-	return buildRequirementProgressView(requirement, items, dependencies, batches, batchItems), nil
+	return buildRequirementProgressView(requirement, items, dependencies, batches, batchItems, planningBatches), nil
 }
 
 func buildRequirementProgressView(
@@ -54,6 +58,7 @@ func buildRequirementProgressView(
 	dependencies []*repository.DeliveryItemDependency,
 	batches []*repository.DeliveryExecutionBatch,
 	batchItems []*repository.DeliveryExecutionBatchItem,
+	planningBatches []*repository.DeliveryRequirementPlanningBatch,
 ) dto.RequirementProgressView {
 	statusCounts := map[string]int{
 		StatusTodo: 0, StatusDoing: 0, StatusDone: 0, StatusBlocked: 0, StatusDropped: 0,
@@ -69,11 +74,16 @@ func buildRequirementProgressView(
 	for _, batch := range batches {
 		batchViews = append(batchViews, toExecutionBatchView(batch, itemsByBatch[batch.BatchID]))
 	}
+	planningBatchViews := make([]dto.PlanningBatchView, 0, len(planningBatches))
+	for _, batch := range planningBatches {
+		planningBatchViews = append(planningBatchViews, toPlanningBatchView(batch))
+	}
 	return dto.RequirementProgressView{
 		RequirementKey: requirement.RequirementKey, RequirementName: requirement.Name,
 		TotalCount: len(items), CountedCount: countCounted(items), Progress: averageProgress(items),
-		StatusCounts: statusCounts,
-		Items:        toItemViews(items, dependencyKeysBySuccessor(dependencies), dependencySourceSidesBySuccessor(dependencies), dependencyTargetSidesBySuccessor(dependencies)),
-		Batches:      batchViews,
+		StatusCounts:    statusCounts,
+		Items:           toItemViews(items, dependencyKeysBySuccessor(dependencies), dependencySourceSidesBySuccessor(dependencies), dependencyTargetSidesBySuccessor(dependencies)),
+		Batches:         batchViews,
+		PlanningBatches: planningBatchViews,
 	}
 }

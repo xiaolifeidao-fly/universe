@@ -67,7 +67,8 @@
 | `zt_delivery_requirement` | 需求：项目与任务之间的一层；含可选的计划开始/结束时间；专业模式可在任务拆解确认后生成关联 HTML 原型；需求测试用例与总体测试报告独立保存 | 原型没有 |
 | `zt_delivery_requirement_event` | 需求自身的变更流水；与任务流水按时间聚合为需求时间线 | 原型没有 |
 | `zt_delivery_requirement_planning_session` | 需求拆解会话目录（聊天列表）；对话正文在执行器自己的会话缓存里，这里只存 `thread_id` | 原型没有 |
-| `zt_delivery_item` | 推进任务，看板主体；`requirement_key` 指向所属需求；测试用例可与研发并行生成，`prototype_task` 仅保留历史兼容 | `tasks[]` |
+| `zt_delivery_requirement_planning_batch` | 需求拆解批次：一次「拆解并写入任务」算一批，任务进度按批次成行展示 | 原型没有 |
+| `zt_delivery_item` | 推进任务，看板主体；`requirement_key` 指向所属需求，`planning_batch_key` 指向来源拆解批次（非必填）；测试用例可与研发并行生成，`prototype_task` 仅保留历史兼容 | `tasks[]` |
 | `zt_delivery_item_execution_session` | 任务与外部执行器会话的通用绑定及独立状态 | 原型没有，供自动执行引擎使用 |
 | `zt_delivery_item_dependency` | 任务依赖有向边（前置 → 后置），`source_side` / `target_side` 持久化两端连接边框 | 任务面板依赖连线 |
 | `zt_delivery_item_event` | 流水：状态流转 / 进度改动 / 进展评论；事件中冻结 `requirement_key`，供需求时间线回溯 | 原型没有，看板的价值主要在这 |
@@ -106,6 +107,9 @@ uk_dlv_stage     (biz_line, program_id, stage_key)      idx_dlv_stage_seq    (bi
 uk_dlv_module    (biz_line, program_id, module_key)     idx_dlv_module_seq   (biz_line, program_id, seq)
 uk_dlv_item      (biz_line, program_id, item_key)       idx_dlv_item_board   (biz_line, program_id, stage_key, status)
                                                         idx_dlv_item_module  (biz_line, program_id, module_key, status)
+uk_dlv_planning_batch   (biz_line, program_id, batch_key)
+idx_dlv_planning_batch_req (biz_line, program_id, requirement_key, seq)
+idx_dlv_item_planning_batch (biz_line, program_id, planning_batch_key)
 uk_dlv_planning_session (biz_line, program_id, requirement_key, executor_type, thread_id)
 idx_dlv_planning_program (program_id, requirement_key)
 uk_dlv_item_exec (biz_line, program_id, item_key, executor_type)
@@ -155,6 +159,12 @@ uk_dlv_snapshot  (biz_line, program_id, stat_date, module_key)
 - 会话状态为 `pending/running/completed/blocked/closed`，不替代任务的 `todo/doing/done/blocked/dropped`
 - 会话更新必须带独立的 `version`，扩展信息只能放在不超过 8KB 的 JSON 对象 `metadata`
 
+**⑥ 拆解批次 ≠ 执行批次。**
+
+- `zt_delivery_requirement_planning_batch`（拆解批次）回答「这批任务是哪一轮拆解写进来的」，写入时定型，之后不变
+- `zt_delivery_execution_batch`（执行批次）回答「这一次批量/串行跑了哪些任务、结果如何」，一批任务可以被执行无数次
+- 任务对拆解批次是弱引用：`planning_batch_key` 非必填，批次被删也不影响任务
+
 ### 建表
 
 两条路，结构完全一致，走哪条都行。
@@ -193,6 +203,12 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 已有需求表升级到支持需求级测试用例、总体测试报告及其聊天会话目录时，执行
 [`migrations/20260816_delivery_requirement_testing.sql`](migrations/20260816_delivery_requirement_testing.sql)。
 该脚本可安全重复执行；它会补齐测试字段、索引和 `zt_delivery_requirement_testing_session` 会话目录表。
+
+已有交付表升级到支持需求拆解批次时，执行
+[`migrations/20260827_delivery_planning_batch.sql`](migrations/20260827_delivery_planning_batch.sql)。
+该脚本可安全重复执行；它会建 `zt_delivery_requirement_planning_batch` 并给任务表补
+可为空的 `planning_batch_key`。**存量任务不回填批次** —— 猜出来的归批比空着更难纠正，
+面板会把它们显示在「未归批次」一行里。
 
 已有需求表升级到支持计划时间段时，执行
 [`migrations/20260817_delivery_requirement_planned_period.sql`](migrations/20260817_delivery_requirement_planned_period.sql)。

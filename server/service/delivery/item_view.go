@@ -34,6 +34,7 @@ func toItemView(row *repository.DeliveryItem, dependsOnItemKeys []string, depend
 		StageKey:                row.StageKey,
 		ModuleKey:               row.ModuleKey,
 		RequirementKey:          row.RequirementKey,
+		PlanningBatchKey:        row.PlanningBatchKey,
 		Kind:                    row.Kind,
 		Title:                   row.Title,
 		Description:             row.Description,

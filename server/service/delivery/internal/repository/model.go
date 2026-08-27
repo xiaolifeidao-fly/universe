@@ -263,6 +263,41 @@ func (d *DeliveryRequirementPlanningSession) TableName() string {
 }
 func (d *DeliveryRequirementPlanningSession) Init() {}
 
+// DeliveryRequirementPlanningBatch 需求拆解批次：一次「拆解并写入任务」的写入单元。
+//
+// 一条需求可以反复拆解，每次拆出来的任务是一批。批次记录这批任务是什么时候、
+// 由谁、基于哪一轮拆解会话写进来的；任务侧只冻结 planning_batch_key 一个弱引用，
+// 老任务和手工建的任务留空，不强制归批。
+type DeliveryRequirementPlanningBatch struct {
+	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_planning_batch,priority:1;index:idx_dlv_planning_batch_req,priority:1" description:"业务线"`
+
+	ProgramID      int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_planning_batch,priority:2;index:idx_dlv_planning_batch_req,priority:2" description:"所属项目"`
+	BatchKey       string `gorm:"column:batch_key;type:varchar(64);uniqueIndex:uk_dlv_planning_batch,priority:3" description:"批次业务键 如 plan-xxxx"`
+	RequirementKey string `gorm:"column:requirement_key;type:varchar(64);index:idx_dlv_planning_batch_req,priority:3" description:"所属需求业务键"`
+	// Seq 是同一条需求下的第几次拆解，从 1 开始；展示成「第 N 批」不用再按时间猜。
+	Seq int `gorm:"column:seq;index:idx_dlv_planning_batch_req,priority:4" description:"需求内的拆解序号，从 1 开始"`
+
+	Title  string `gorm:"column:title;type:varchar(255)" description:"批次标题，默认取「第 N 次拆解」"`
+	Source string `gorm:"column:source;type:varchar(16);default:planner" description:"来源：planner 拆解会话 / manual 人工 / import 导入"`
+	// ExecutorType / ThreadID 指回产出这批任务的那轮拆解会话，可为空。
+	ExecutorType string `gorm:"column:executor_type;type:varchar(32)" description:"产出该批次的执行器类型，可空"`
+	ThreadID     string `gorm:"column:thread_id;type:varchar(255)" description:"产出该批次的拆解会话标识，可空"`
+	Summary      string `gorm:"column:summary;type:varchar(1024)" description:"本批次的一句话说明"`
+	ItemCount    int    `gorm:"column:item_count" description:"写入时登记的任务数，实际归属以任务表为准"`
+
+	CreatedBy     string    `gorm:"column:created_by;type:varchar(64)" description:"创建人标识"`
+	CreatedByName string    `gorm:"column:created_by_name;type:varchar(64)" description:"创建人显示名"`
+	UpdatedBy     string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`
+	CreatedTime   time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+	UpdatedTime   time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
+}
+
+func (d *DeliveryRequirementPlanningBatch) TableName() string {
+	return "zt_delivery_requirement_planning_batch"
+}
+func (d *DeliveryRequirementPlanningBatch) Init() {}
+
 // DeliveryRequirementTestingSession 需求总体测试的会话目录。拆解会话与测试会话分表，
 // 因为它们的产物、权限与生命周期不同，不能用一个 metadata 字段靠 kind 猜语义。
 type DeliveryRequirementTestingSession struct {
@@ -296,16 +331,18 @@ func (d *DeliveryRequirementTestingSession) Init() {}
 // 这边是「这个能力建到哪一步了」。两者同名不同域，前缀是唯一的归属判据。
 type DeliveryItem struct {
 	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_item,priority:1;index:idx_dlv_item_board,priority:1;index:idx_dlv_item_module,priority:1;index:idx_dlv_item_requirement_key,priority:1" description:"业务线"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_item,priority:1;index:idx_dlv_item_board,priority:1;index:idx_dlv_item_module,priority:1;index:idx_dlv_item_requirement_key,priority:1;index:idx_dlv_item_planning_batch,priority:1" description:"业务线"`
 
-	ProgramID int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_item,priority:2;index:idx_dlv_item_board,priority:2;index:idx_dlv_item_module,priority:2;index:idx_dlv_item_requirement_key,priority:2" description:"所属项目"`
+	ProgramID int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_item,priority:2;index:idx_dlv_item_board,priority:2;index:idx_dlv_item_module,priority:2;index:idx_dlv_item_requirement_key,priority:2;index:idx_dlv_item_planning_batch,priority:2" description:"所属项目"`
 	ItemKey   string `gorm:"column:item_key;type:varchar(64);uniqueIndex:uk_dlv_item,priority:3" description:"任务业务键 如 data-p01，沿用原型 id 便于导入"`
 
 	StageKey  string `gorm:"column:stage_key;type:varchar(64);index:idx_dlv_item_board,priority:3" description:"所属阶段"`
 	ModuleKey string `gorm:"column:module_key;type:varchar(64);index:idx_dlv_item_module,priority:3" description:"所属模块"`
 	// RequirementKey 是任务归属的需求；空串表示需求层落地之前建的存量任务。
 	RequirementKey string `gorm:"column:requirement_key;type:varchar(64);index:idx_dlv_item_requirement_key,priority:3" description:"所属需求"`
-	Kind           string `gorm:"column:kind;type:varchar(16)" description:"gap 坑点 / capability 能力 / asset 已具备"`
+	// PlanningBatchKey 是任务来自哪一次需求拆解；非必填，手工新建和存量任务留空。
+	PlanningBatchKey string `gorm:"column:planning_batch_key;type:varchar(64);index:idx_dlv_item_planning_batch,priority:3" description:"来源拆解批次，可空"`
+	Kind             string `gorm:"column:kind;type:varchar(16)" description:"gap 坑点 / capability 能力 / asset 已具备"`
 	// PrototypeTask 仅兼容旧数据；新需求原型挂在需求本身，不再创建额外任务。
 	PrototypeTask bool `gorm:"column:prototype_task;default:false" description:"历史原型任务标记，新流程不写入"`
 
