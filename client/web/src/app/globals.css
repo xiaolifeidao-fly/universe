@@ -3710,6 +3710,9 @@ select {
 .delivery-planning-tabs {
 	display: grid;
 	height: 100%;
+	/* 单列网格必须写死列宽：隐式列是 auto（= max-content），产物文档里一条长路径
+	   就会把整栏撑出可视区。min-width 只拦得住「撑宽外层」，拦不住自己被撑开。 */
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: auto minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
@@ -3760,6 +3763,7 @@ select {
 
 .delivery-planning-stage-tabs {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: auto minmax(0, 1fr);
 }
 
@@ -3855,6 +3859,7 @@ select {
 /* 需求表单：字段区滚动，保存条常驻底部，不跟着表单一起滚走。 */
 .delivery-planning-tab-panel.is-form {
 	display: grid;
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: minmax(0, 1fr) auto;
 	overflow: hidden;
 }
@@ -4806,6 +4811,9 @@ select {
 .delivery-session-document-tabs {
 	display: grid;
 	height: 100%;
+	/* 必须锁死列宽：隐式列是 auto（= max-content），聊天正文里一条不折行的长路径
+	   就会把整个网格撑到那么宽，同级的工具栏、输入区跟着被拉出可视区再被裁掉。 */
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: auto minmax(0, 1fr);
 }
 
@@ -4908,6 +4916,9 @@ select {
 	display: grid;
 	min-width: 0;
 	min-height: 0;
+	/* 同上：min-width 只拦住「把外层撑宽」，拦不住自己的隐式列被 max-content 撑开。
+	   列不锁死的话，宽内容一加载进来，工具栏按钮和发送按钮就被推到 overflow 之外。 */
+	grid-template-columns: minmax(0, 1fr);
 	grid-template-rows: auto minmax(0, 1fr) auto;
 	overflow: hidden;
 	background: var(--manager-bg);
@@ -5506,7 +5517,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-git-changes__file-meta b { display: inline-flex; gap: 5px; font-family: var(--manager-mono); font-weight: 650; }
 .delivery-git-changes__file-meta b i { font-style: normal; }
 
-.delivery-git-changes__diff { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--manager-surface); }
+.delivery-git-changes__diff { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--manager-surface); }
 .delivery-git-changes__preview-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 16px; min-height: 82px; padding: 16px 20px; border-bottom: 1px solid var(--manager-border); }
 .delivery-git-changes__preview-header > div:first-child { display: grid; min-width: 0; gap: 5px; }
 .delivery-git-changes__preview-header > div:first-child > span { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
@@ -5773,7 +5784,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 /* 聊天附件和「本次改动」里的文件都在这个弹窗里查看，尺寸受控，不挤压聊天记录。 */
 .delivery-file-preview-modal .ant-modal-body { display: flex; min-height: 0; overflow: hidden; }
-.delivery-file-preview { display: grid; flex: 1; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); gap: 14px; }
+.delivery-file-preview { display: grid; flex: 1; min-width: 0; min-height: 0; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 14px; }
 .delivery-file-preview__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .delivery-file-preview__actions { display: flex; flex: none; align-items: center; gap: 6px; }
 .delivery-file-preview__body { min-width: 0; min-height: 0; overflow: auto; }
