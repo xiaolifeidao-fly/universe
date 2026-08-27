@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useLayoutEffect, useState, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import type { DeliveryBoardColumn } from "@/api/delivery.api";
 
 interface DeliveryDependencyLayerProps {
@@ -26,7 +26,57 @@ interface LayerSize {
 
 type TargetSide = "top" | "right" | "bottom" | "left";
 
-function pathBetween(source: DOMRect, target: DOMRect, board: DOMRect, scale: number, savedSourceSide?: string, savedTargetSide?: string) {
+/** 卡片相对画布的布局坐标：只累加 offset，不受祖先 transform 影响。 */
+interface BoxRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
+/** 打开动画期间逐帧复算的时长：覆盖 antd 弹窗/抽屉的展开动画。 */
+const SETTLE_WINDOW_MS = 500;
+/** 画布迟迟排不出版时的兜底重试上限，避免空面板一直空转 rAF。 */
+const READY_TIMEOUT_MS = 3000;
+
+const ZERO_RECT: BoxRect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+
+function toBoxRect(left: number, top: number, width: number, height: number): BoxRect {
+  return { left, top, right: left + width, bottom: top + height, width, height };
+}
+
+/**
+ * 画布内元素的布局坐标。弹窗打开时 antd 的缩放动画会给祖先加 transform，
+ * getBoundingClientRect 量到的是动画中途的尺寸，连线会被压到卡片底下看不见，
+ * 一直要等下一次数据刷新重算才显形；沿 offsetParent 累加则始终是布局坐标。
+ */
+function layoutRect(element: HTMLElement, board: HTMLElement): BoxRect {
+  let left = 0;
+  let top = 0;
+  let node: HTMLElement | null = element;
+  while (node && node !== board) {
+    left += node.offsetLeft;
+    top += node.offsetTop;
+    const parent = node.offsetParent as HTMLElement | null;
+    if (!parent) {
+      // 链路没落到画布上（比如中途 position: fixed），退回视口坐标做差。
+      const elementRect = element.getBoundingClientRect();
+      const boardRect = board.getBoundingClientRect();
+      return toBoxRect(
+        elementRect.left - boardRect.left,
+        elementRect.top - boardRect.top,
+        elementRect.width,
+        elementRect.height,
+      );
+    }
+    node = parent;
+  }
+  return toBoxRect(left, top, element.offsetWidth, element.offsetHeight);
+}
+
+function pathBetween(source: BoxRect, target: BoxRect, board: BoxRect, scale: number, savedSourceSide?: string, savedTargetSide?: string) {
   const sourceCenterX = source.left - board.left + source.width / 2;
   const targetCenterX = target.left - board.left + target.width / 2;
   const sourceCenterY = source.top - board.top + source.height / 2;
@@ -85,63 +135,105 @@ export function DeliveryDependencyLayer({
 }: DeliveryDependencyLayerProps) {
   const [paths, setPaths] = useState<DependencyPath[]>([]);
   const [size, setSize] = useState<LayerSize>({ width: 0, height: 0 });
+  // 画布 ref 挂在父级节点上，而子组件的 layout effect 比父级 host 节点的 ref 赋值更早，
+  // 首次挂载时 boardRef.current 还是 null。这里用每次渲染后跑的 passive effect 把画布同步进
+  // 状态，拿到之后再量算；否则连线要等下一次 columns 变化（进度窗 10s 轮询）才出现。
+  const [board, setBoard] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (boardRef.current !== board) setBoard(boardRef.current);
+  });
 
   useLayoutEffect(() => {
-    const board = boardRef.current;
     if (!board) return;
 
     let frame = 0;
-    const measure = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const boardRect = board.getBoundingClientRect();
-        const cards = new Map<string, DOMRect>();
-        board.querySelectorAll<HTMLElement>("[data-delivery-item-key]").forEach((element) => {
-          const itemKey = element.dataset.deliveryItemKey;
-          if (itemKey) cards.set(itemKey, element.getBoundingClientRect());
-        });
+    let readyDeadline = 0;
+    let settleUntil = 0;
+    let signature = "";
 
-        const nextPaths: DependencyPath[] = [];
-        columns.forEach((column) => {
-          column.items.forEach((item) => {
-            const target = cards.get(item.itemKey);
-            if (!target) return;
-            (item.dependsOnItemKeys ?? []).forEach((predecessorItemKey) => {
-              const source = cards.get(predecessorItemKey);
-              if (!source) return;
-              nextPaths.push({
-                id: `${predecessorItemKey}->${item.itemKey}`,
-                from: predecessorItemKey,
-                to: item.itemKey,
-				d: pathBetween(
-					source,
-					target,
-					boardRect,
-					scale,
-					item.dependencySourceSides?.[predecessorItemKey],
-					item.dependencyTargetSides?.[predecessorItemKey],
-				),
-              });
+    const collect = () => {
+      const cards = new Map<string, BoxRect>();
+      board.querySelectorAll<HTMLElement>("[data-delivery-item-key]").forEach((element) => {
+        const itemKey = element.dataset.deliveryItemKey;
+        if (itemKey) cards.set(itemKey, layoutRect(element, board));
+      });
+
+      const nextPaths: DependencyPath[] = [];
+      columns.forEach((column) => {
+        column.items.forEach((item) => {
+          const target = cards.get(item.itemKey);
+          if (!target) return;
+          (item.dependsOnItemKeys ?? []).forEach((predecessorItemKey) => {
+            const source = cards.get(predecessorItemKey);
+            if (!source) return;
+            nextPaths.push({
+              id: `${predecessorItemKey}->${item.itemKey}`,
+              from: predecessorItemKey,
+              to: item.itemKey,
+              d: pathBetween(
+                source,
+                target,
+                ZERO_RECT,
+                scale,
+                item.dependencySourceSides?.[predecessorItemKey],
+                item.dependencyTargetSides?.[predecessorItemKey],
+              ),
             });
           });
         });
-
-        setSize({ width: board.scrollWidth, height: board.scrollHeight });
-        setPaths(nextPaths);
       });
+
+      const width = board.scrollWidth;
+      const height = board.scrollHeight;
+      // 画布还没排好版（弹窗刚挂载、祖先还没显示）时量到的全是 0，
+      // 这时候提交等于把连线画进 0×0 的视口里，看不见。
+      const ready = width > 0 && height > 0
+        && Array.from(cards.values()).every((rect) => rect.width > 0 && rect.height > 0);
+      return { paths: nextPaths, width, height, ready };
     };
 
+    const run = () => {
+      frame = 0;
+      const result = collect();
+      const nextSignature = `${result.width}x${result.height}|${result.paths.map((path) => `${path.id}:${path.d}`).join("|")}`;
+      if (result.ready && nextSignature !== signature) {
+        signature = nextSignature;
+        setSize({ width: result.width, height: result.height });
+        setPaths(result.paths);
+      }
+      const now = performance.now();
+      // 弹窗、抽屉展开的那几百毫秒里布局还在变，而这些变化不一定触发 ResizeObserver，
+      // 所以先逐帧复算一小段；否则连线要等下一次数据刷新（轮询 10s）才显形。
+      if ((!result.ready && now < readyDeadline) || now < settleUntil) {
+        frame = requestAnimationFrame(run);
+      }
+    };
+
+    const measure = () => {
+      if (frame) cancelAnimationFrame(frame);
+      const now = performance.now();
+      readyDeadline = now + READY_TIMEOUT_MS;
+      settleUntil = now + SETTLE_WINDOW_MS;
+      run();
+    };
+
+    // 首帧同步量一次：卡片和连线同一次绘制出现，不再差一帧。
     measure();
-    const observer = new ResizeObserver(measure);
+    // 尺寸变化走下一帧，避免在 ResizeObserver 回调里同步改状态触发 loop 警告。
+    const scheduleMeasure = () => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(board);
     board.querySelectorAll<HTMLElement>("[data-delivery-item-key]").forEach((element) => observer.observe(element));
-    window.addEventListener("resize", measure);
+    window.addEventListener("resize", scheduleMeasure);
     return () => {
-      cancelAnimationFrame(frame);
+      if (frame) cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("resize", scheduleMeasure);
     };
-	}, [boardRef, columns, scale]);
+  }, [board, columns, scale]);
 
   return (
     <svg
