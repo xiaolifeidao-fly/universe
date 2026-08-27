@@ -902,6 +902,7 @@ export class CodexRequirementDocument {
 export type DeliveryDocumentScope =
   | "requirement-outline"
   | "requirement-testing"
+  | "requirement-review"
   | "task-document"
   | "task-design"
   | "task-testing";
@@ -1231,6 +1232,7 @@ export class CodexConversationActionResult {
 export type DeliveryConversationFileScope =
   | "requirement-outline"
   | "requirement-testing"
+  | "requirement-review"
   | "requirement-prototype";
 
 /** 聊天输入中通过 @ 选中的交付对象；桥接层会按键或受控路径重新读取权威详情。 */
@@ -2500,6 +2502,27 @@ export async function fetchCodexConversationAttachment(programId: number, path: 
   return response.data;
 }
 
+/** 工作区文件在本机的位置：绝对路径按工作区根目录拼，桥接跑在同一台机器上。 */
+export function workspaceFileAbsolutePath(programId: number, relativePath: string) {
+  const workspace = getProjectWorkspace(programId).trim();
+  const relative = String(relativePath || "").trim();
+  if (!workspace || !relative) return relative;
+  // Windows 工作区用反斜杠，路径拼接跟着工作区的写法走，复制出去才能直接用。
+  const separator = workspace.includes("\\") && !workspace.includes("/") ? "\\" : "/";
+  const normalized = separator === "\\" ? relative.replace(/\//g, "\\") : relative;
+  return `${workspace.replace(/[\\/]+$/, "")}${separator}${normalized}`;
+}
+
+/** 在本机文件管理器里打开该文件所在目录并选中它。桥接只唤起文件管理器，不读文件内容。 */
+export async function revealCodexWorkspaceFile(programId: number, path: string) {
+  const response = await instance.post<{ path: string; directory: string; relativePath: string }>(
+    `${CODEX_BRIDGE_URL}/v1/codex/workspace-file/reveal`,
+    bridgeWorkspaceParams(programId, { programId, path }),
+    { timeout: 15000 },
+  );
+  return response.data;
+}
+
 export async function fetchCodexBridgeHealth(programId: number, provider: AITool = "codex") {
   const response = await instance.get<CodexBridgeHealth>(`${CODEX_BRIDGE_URL}/v1/ai/health`, {
     params: bridgeWorkspaceParams(programId, { programId, provider }),
@@ -3125,6 +3148,8 @@ export interface SendCodexRequirementTestingMessageOptions {
   attachmentIds?: string[];
   /** true 时仅设计并归档用例，不发起真实接口、UI 或脚本测试。 */
   testCaseOnly?: boolean;
+  /** 本轮 @ 的需求、任务和需求文档；桥接层据此补上下文，和拆解聊天走同一套。 */
+  chatReferences?: DeliveryConversationReference[];
 }
 
 export async function fetchCodexRequirementTestingConversation(
@@ -3184,6 +3209,8 @@ export interface SendCodexRequirementReviewMessageOptions {
   reasoningEffort?: AIReasoningEffort;
   fastMode?: boolean;
   scope?: CodexReviewScopeProject[];
+  /** 本轮 @ 的需求、任务和需求文档；桥接层据此补上下文，和拆解聊天走同一套。 */
+  chatReferences?: DeliveryConversationReference[];
   /** true 表示这一轮是「确认生成 review 报告」，会把结论写进工作区的报告文件。 */
   generateReport?: boolean;
 }

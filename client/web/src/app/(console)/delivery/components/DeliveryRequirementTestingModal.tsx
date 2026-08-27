@@ -14,7 +14,7 @@ import {
   RightOutlined,
   SendOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Checkbox, Empty, Input, Modal, Select, Switch, Tabs, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Checkbox, Empty, Modal, Select, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   CLAUDE_EFFORTS,
@@ -39,13 +39,16 @@ import {
   uploadCodexRequirementTestingAttachments,
   type CodexConversationItem,
   type CodexPlanningSessionSummary,
+  type DeliveryConversationReference,
+  type DeliveryItemRecord,
   type DeliveryRequirementRecord,
   type RequirementTestingStatus,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { useImeCompositionGuard } from "@/utils/ime";
 import { usePollingLoop } from "../hooks/usePollingLoop";
+import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
+import { DeliveryConversationMentionInput, type DeliveryConversationMentionCatalog, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
 import {
@@ -79,6 +82,11 @@ interface DeliveryRequirementTestingModalProps {
   onConversationStateChange?: (state: { threadId: string; isNew: boolean }) => void;
   onClose: () => void;
   onOpenPlanningConversation?: (threadId: string) => void;
+  /** @ 候选目录由需求窗口统一加载后传下来，测试会话不再自己拉一遍。 */
+  mentionRequirements?: DeliveryRequirementRecord[];
+  mentionItems?: DeliveryItemRecord[];
+  mentionFiles?: DeliveryConversationMentionFile[];
+  onSearchMentionCandidates?: (keyword: string) => Promise<DeliveryConversationMentionCatalog>;
   onChanged: () => Promise<void> | void;
 }
 
@@ -123,10 +131,13 @@ export function DeliveryRequirementTestingModal({
   onConversationStateChange,
   onClose,
   onOpenPlanningConversation,
+  mentionRequirements = [],
+  mentionItems = [],
+  mentionFiles,
+  onSearchMentionCandidates,
   onChanged,
 }: DeliveryRequirementTestingModalProps) {
   const { t } = useLocale();
-  const { compositionProps, isComposingEnter } = useImeCompositionGuard();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
   const testingPreference = configFor("productTesting");
   const [conversationExecutorType, setConversationExecutorType] = useState<AITool | "">("");
@@ -253,9 +264,20 @@ export function DeliveryRequirementTestingModal({
       : "",
   );
 
+  const [chatReferences, setChatReferences] = useState<DeliveryConversationReference[]>([]);
+
+  useDraftMemory(
+    requirementKey
+      ? `zb.delivery.draft.requirement-testing.${programId}.${requirementKey}.${newConversation ? "new" : conversation?.threadId || "new"}`
+      : "",
+    draft,
+    setDraft,
+  );
+
   const send = async (requestedText?: string, requestedTestCaseOnly = testCaseOnly) => {
     if (switchingThreadId) return;
-    const text = (requestedText ?? draft).trim();
+    const text = (requestedText ?? draft).trim()
+      || (chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
     if ((!text && !attachments.length) || !codexBridgeReady || !requirementKey) return;
     setSending(true);
     try {
@@ -270,9 +292,11 @@ export function DeliveryRequirementTestingModal({
         reasoningEffort: effortForConfig(testingConfig),
         fastMode: provider === "claude" && testingConfig.claudeFastMode,
         attachmentIds: uploaded.map((attachment) => attachment.id),
+        chatReferences,
         testCaseOnly: requestedTestCaseOnly,
       });
       setDraft("");
+      setChatReferences([]);
       setAttachments([]);
       newConversationRef.current = false;
       setNewConversation(false);
@@ -498,7 +522,19 @@ export function DeliveryRequirementTestingModal({
                 ))}
               </div>
             ) : null}
-            <div className="delivery-session-composer__input"><Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={draft} disabled={!codexBridgeReady || sending} placeholder={t(testCaseOnly ? "delivery.requirement.testingCasesInput" : "delivery.requirement.testingInput")} onChange={(event) => setDraft(event.target.value)} {...compositionProps} onPressEnter={(event) => { if (event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); void send(); }} /><Button type="primary" icon={<SendOutlined />} loading={sending} disabled={(!draft.trim() && !attachments.length) || !codexBridgeReady} onClick={() => void send()}>{t(testCaseOnly ? "delivery.requirement.generateTestCases" : "delivery.session.send")}</Button></div>
+            <div className="delivery-session-composer__input"><DeliveryConversationMentionInput
+              value={draft}
+              disabled={!codexBridgeReady || sending}
+              placeholder={t(testCaseOnly ? "delivery.requirement.testingCasesInput" : "delivery.requirement.testingInput")}
+              requirements={mentionRequirements}
+              items={mentionItems}
+              files={mentionFiles}
+              references={chatReferences}
+              onChange={setDraft}
+              onReferencesChange={setChatReferences}
+              onSearchCandidates={onSearchMentionCandidates}
+              onPressEnter={(event) => { if (event.shiftKey) return; event.preventDefault(); void send(); }}
+            /><Button type="primary" icon={<SendOutlined />} loading={sending} disabled={(!draft.trim() && !attachments.length && !chatReferences.length) || !codexBridgeReady} onClick={() => void send()}>{t(testCaseOnly ? "delivery.requirement.generateTestCases" : "delivery.session.send")}</Button></div>
             {draggingAttachments ? <div className="delivery-session-composer__drop-target">{t("delivery.session.dropAttachments")}</div> : null}
           </footer>
         </main>

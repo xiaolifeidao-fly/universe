@@ -105,6 +105,7 @@ import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { DeliveryRequirementDetailInput, requirementMentionKeys, requirementMentionReferences } from "./DeliveryRequirementDetailInput";
 import { DeliveryConversationMentionInput, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
 import { usePollingLoop } from "../hooks/usePollingLoop";
+import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryRequirementReviewModal } from "./DeliveryRequirementReviewModal";
@@ -266,6 +267,8 @@ export function DeliveryRequirementSessionModal({
     items: DeliveryItemRecord[];
   } | null>(null);
   const [mentionFiles, setMentionFiles] = useState<DeliveryConversationMentionFile[]>([]);
+  // review 报告、测试用例是在子会话里生成的，父窗口感知不到文件变化；那边跑完一轮就顺手加一，重拉候选。
+  const [mentionFilesToken, setMentionFilesToken] = useState(0);
 
   // 需求表单。saved 是「已经落库的那份」，拆解会话的归属键从它上面取。
   const [saved, setSaved] = useState<DeliveryRequirementRecord | null>(null);
@@ -928,6 +931,14 @@ export function DeliveryRequirementSessionModal({
       : "",
   );
 
+  useDraftMemory(
+    requirementKey
+      ? `zb.delivery.draft.requirement.${programId}.${requirementKey}.${newConversation ? "new" : conversation?.threadId || "new"}`
+      : "",
+    draft,
+    setDraft,
+  );
+
   const prototypeEditItems = useMemo(
     () => (prototypeEditConversation?.turns ?? []).flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id }))),
     [prototypeEditConversation],
@@ -998,8 +1009,9 @@ export function DeliveryRequirementSessionModal({
     void Promise.allSettled([
       fetchDeliveryDocumentSet(programId, "requirement-outline", requirementKey),
       fetchDeliveryDocumentSet(programId, "requirement-testing", requirementKey),
+      fetchDeliveryDocumentSet(programId, "requirement-review", requirementKey),
       fetchCodexRequirementPrototype(programId, requirementKey),
-    ]).then(([outlineResult, testingResult, prototypeResult]) => {
+    ]).then(([outlineResult, testingResult, reviewResult, prototypeResult]) => {
       if (cancelled) return;
       const next: DeliveryConversationMentionFile[] = [];
       if (outlineResult.status === "fulfilled") {
@@ -1016,6 +1028,14 @@ export function DeliveryRequirementSessionModal({
           scope: "requirement-testing" as const,
         })));
       }
+      // review 报告写在 doc/review/<需求键>/ 下，还没生成过时这一栏为空，不影响其它候选。
+      if (reviewResult.status === "fulfilled") {
+        next.push(...reviewResult.value.files.map((file) => ({
+          path: file.path,
+          name: file.name,
+          scope: "requirement-review" as const,
+        })));
+      }
       if (prototypeResult.status === "fulfilled") {
         next.push(...prototypeResult.value.files.map((file) => ({
           path: file.path,
@@ -1029,7 +1049,7 @@ export function DeliveryRequirementSessionModal({
     return () => {
       cancelled = true;
     };
-  }, [active, codexBridgeReady, open, programId, prototype?.generatedAt, saved?.requirementKey]);
+  }, [active, codexBridgeReady, mentionFilesToken, open, programId, prototype?.generatedAt, saved?.requirementKey]);
 
   const chatRequirements = useMemo(
     () => (mentionCatalog?.requirements ?? requirements).filter((item) => item.requirementKey !== saved?.requirementKey),
@@ -2030,6 +2050,10 @@ export function DeliveryRequirementSessionModal({
           startNewConversationOnOpen={startNewReviewConversation}
           initialThreadId={reviewThreadId}
           gitPanel={gitPanel}
+          mentionRequirements={chatRequirements}
+          mentionItems={chatItems}
+          mentionFiles={mentionFiles}
+          onSearchMentionCandidates={searchMentionCandidates}
           contextCollapsed={contextCollapsed}
           onToggleContext={() => {
             setContextCollapsed(!contextCollapsed);
@@ -2041,6 +2065,7 @@ export function DeliveryRequirementSessionModal({
           }}
           onChanged={async () => {
             await loadReviewHistory();
+            setMentionFilesToken((token) => token + 1);
           }}
         />
         ) : testingWorkspaceOpen && saved ? (
@@ -2054,6 +2079,10 @@ export function DeliveryRequirementSessionModal({
           codexBridgeReady={codexBridgeReady}
           startNewConversationOnOpen={startNewTestingConversation}
           initialThreadId={testingThreadId}
+          mentionRequirements={chatRequirements}
+          mentionItems={chatItems}
+          mentionFiles={mentionFiles}
+          onSearchMentionCandidates={searchMentionCandidates}
           contextCollapsed={contextCollapsed}
           onToggleContext={() => {
             setContextCollapsed(!contextCollapsed);
@@ -2071,6 +2100,7 @@ export function DeliveryRequirementSessionModal({
           onChanged={async () => {
             await onChanged();
             await loadTestingHistory();
+            setMentionFilesToken((token) => token + 1);
           }}
         />
         ) : (

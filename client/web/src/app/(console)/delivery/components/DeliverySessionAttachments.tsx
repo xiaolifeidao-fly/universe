@@ -1,12 +1,17 @@
 "use client";
 
-import { CopyOutlined, DownloadOutlined, EyeOutlined, FileOutlined, LoadingOutlined, PictureOutlined } from "@ant-design/icons";
+import { CopyOutlined, DownloadOutlined, EyeOutlined, FileOutlined, FolderOpenOutlined, LoadingOutlined, PictureOutlined } from "@ant-design/icons";
 import { Button, Empty, Modal, Segmented, Spin, Tooltip, message } from "antd";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { fetchCodexConversationAttachment, type CodexConversationAttachment } from "@/api/delivery.api";
+import {
+  fetchCodexConversationAttachment,
+  revealCodexWorkspaceFile,
+  workspaceFileAbsolutePath,
+  type CodexConversationAttachment,
+} from "@/api/delivery.api";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { DeliveryHtmlFrame } from "./DeliveryHtmlFrame";
 
@@ -272,10 +277,21 @@ export function SessionFilePreviewModal({
   const [failed, setFailed] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const [textLoaded, setTextLoaded] = useState(false);
   const [mode, setMode] = useState<FilePreviewMode>("render");
   const kind = attachment ? attachmentPreviewKind(attachment) : "download";
   const copyable = ["text", "markdown", "html"].includes(kind);
+  // 桥接和面板跑在同一台机器上，绝对路径按工作区根目录拼出来即可，不必多跑一次接口。
+  const absolutePath = useMemo(
+    () => (attachment?.relativePath ? workspaceFileAbsolutePath(programId, attachment.relativePath) : ""),
+    [attachment?.relativePath, programId],
+  );
+  const copyValue = (value: string, successKey: string, failedKey: string) => {
+    void copyPreviewText(value)
+      .then(() => message.success(t(successKey)))
+      .catch(() => message.error(t(failedKey)));
+  };
   const metadata = useMemo(
     () => attachment
       ? [attachment.contentType || "-", readableAttachmentSize(attachment.size), sourceLanguageOf(attachment.name)].filter(Boolean)
@@ -326,7 +342,54 @@ export function SessionFilePreviewModal({
     <Modal
       className="delivery-file-preview-modal"
       wrapClassName="manager-form-skin"
-      title={<span className="delivery-file-preview__title"><FileOutlined />{attachment.name}</span>}
+      title={(
+        <div className="delivery-file-preview__heading">
+          <span className="delivery-file-preview__title">
+            <FileOutlined />
+            <b title={attachment.name}>{attachment.name}</b>
+            <Tooltip title={t("delivery.session.copyFileName")}>
+              <Button
+                type="text"
+                size="small"
+                icon={<CopyOutlined />}
+                aria-label={t("delivery.session.copyFileName")}
+                onClick={() => copyValue(attachment.name, "delivery.session.copyFileNameSuccess", "delivery.session.copyFilePathFailed")}
+              />
+            </Tooltip>
+          </span>
+          {/* 产物没登记工作区相对路径时（比如纯上传的附件）就没有本机位置可给，这一行整体不出现。 */}
+          {absolutePath ? (
+            <div className="delivery-file-preview__path">
+              <code className="manager-mono" title={absolutePath}>{absolutePath}</code>
+              <Tooltip title={t("delivery.session.copyFilePath")}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<CopyOutlined />}
+                  aria-label={t("delivery.session.copyFilePath")}
+                  onClick={() => copyValue(absolutePath, "delivery.session.copyFilePathSuccess", "delivery.session.copyFilePathFailed")}
+                />
+              </Tooltip>
+              <Tooltip title={t("delivery.session.revealFile")}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  loading={revealing}
+                  aria-label={t("delivery.session.revealFile")}
+                  onClick={() => {
+                    setRevealing(true);
+                    void revealCodexWorkspaceFile(programId, attachment.relativePath)
+                      .then(() => message.success(t("delivery.session.revealFileSuccess")))
+                      .catch((error) => message.error((error as Error).message))
+                      .finally(() => setRevealing(false));
+                  }}
+                />
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
+      )}
       width="min(1100px, calc(100vw - 32px))"
       open={open}
       onCancel={onClose}

@@ -4828,6 +4828,19 @@ select {
 	padding: 22px 24px 32px;
 }
 
+/* 会话区嵌在文档 Tabs 里时，滚动必须交给 transcript 自己：
+   tabpane 抢走滚动的话，transcript 既滚不动（自身没有受限高度，
+   overscroll-behavior: contain 还会把滚动链截断），
+   绑在它上面的位置记忆和自动吸底也全部落空。 */
+.delivery-session-document-tabs .ant-tabs-tabpane:has(> .delivery-session-transcript) {
+	overflow: hidden;
+	padding: 0;
+}
+
+.delivery-session-document-tabs .ant-tabs-tabpane > .delivery-session-transcript {
+	height: 100%;
+}
+
 .delivery-session-document-tabs .ant-tabs-tab {
 	padding: 14px 4px 12px;
 	font-size: var(--manager-fs-sm);
@@ -5764,8 +5777,16 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-file-preview__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .delivery-file-preview__actions { display: flex; flex: none; align-items: center; gap: 6px; }
 .delivery-file-preview__body { min-width: 0; min-height: 0; overflow: auto; }
+/* 标题区是两行：文件名一行，本机绝对路径一行；两行各带自己的复制按钮，路径行还能唤起文件管理器。 */
+.delivery-file-preview__heading { display: grid; min-width: 0; max-width: calc(100% - 40px); gap: 2px; }
 .delivery-file-preview__title { display: inline-flex; min-width: 0; max-width: 460px; align-items: center; gap: 8px; }
+.delivery-file-preview__title > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-file-preview__title .anticon { color: var(--manager-primary); }
+.delivery-file-preview__path { display: flex; min-width: 0; align-items: center; gap: 2px; }
+/* 路径可能很长：超出就截尾，全文交给 title 提示；文件名上面那行已经完整给过了。 */
+.delivery-file-preview__path > code { overflow: hidden; min-width: 0; color: var(--manager-text-faint); font: var(--manager-fs-xs)/1.6 var(--manager-mono); text-overflow: ellipsis; white-space: nowrap; }
+.delivery-file-preview__path .ant-btn { flex: none; color: var(--manager-text-faint); }
+.delivery-file-preview__path .ant-btn:hover { color: var(--manager-primary); }
 .delivery-file-preview__meta { display: flex; flex-wrap: wrap; gap: 6px; }
 .delivery-file-preview__meta span { max-width: 100%; overflow: hidden; padding: 3px 7px; border-radius: 4px; background: var(--manager-panel); color: var(--manager-text-faint); font: var(--manager-fs-xs)/1.35 var(--manager-mono); text-overflow: ellipsis; white-space: nowrap; }
 .delivery-file-preview__loading { display: grid; min-height: 300px; place-items: center; }
@@ -5821,11 +5842,15 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-session-thinking .anticon { color: var(--manager-primary); }
 
 .delivery-session-composer {
+	/* 输入区比会话区窄一档（约 80%）居中：整行太宽时一行字要横扫整个屏幕，读写都费劲。
+	   但不低于 740px，否则 @ 候选面板和附件条会被挤得频繁换行。
+	   容器本身不到 740px 时退回常规内边距，按容器宽度铺满。 */
+	--delivery-composer-inset: max(clamp(18px, 4vw, 54px), min(10%, calc((100% - 740px) / 2)));
 	position: relative;
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto auto;
 	gap: 10px;
-	padding: 14px clamp(18px, 4vw, 54px) 18px;
+	padding: 14px var(--delivery-composer-inset) 18px;
 	border-top: 1px solid var(--manager-border);
 	background: var(--manager-surface);
 }

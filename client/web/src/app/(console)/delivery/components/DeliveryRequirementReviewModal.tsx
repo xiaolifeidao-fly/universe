@@ -10,7 +10,7 @@ import {
   RightOutlined,
   SendOutlined,
 } from "@ant-design/icons";
-import { Alert, Button, Checkbox, Empty, Input, Popconfirm, Select, Switch, Tabs, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Checkbox, Empty, Popconfirm, Select, Switch, Tabs, Tag, Tooltip, message } from "antd";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CLAUDE_EFFORTS,
@@ -35,12 +35,15 @@ import {
   stopCodexRequirementReviewConversation,
   type CodexConversationItem,
   type CodexReviewScopeProject,
+  type DeliveryConversationReference,
+  type DeliveryItemRecord,
   type DeliveryRequirementRecord,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { useImeCompositionGuard } from "@/utils/ime";
 import { usePollingLoop } from "../hooks/usePollingLoop";
+import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
+import { DeliveryConversationMentionInput, type DeliveryConversationMentionCatalog, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 
 interface DeliveryRequirementReviewModalProps {
@@ -56,6 +59,11 @@ interface DeliveryRequirementReviewModalProps {
   onConversationStateChange?: (state: { threadId: string; isNew: boolean }) => void;
   /** 需求编辑里的 Git 悬浮框，review 时同样浮在会话区右侧。 */
   gitPanel?: ReactNode;
+  /** @ 候选目录由需求窗口统一加载后传下来，review 不再自己拉一遍。 */
+  mentionRequirements?: DeliveryRequirementRecord[];
+  mentionItems?: DeliveryItemRecord[];
+  mentionFiles?: DeliveryConversationMentionFile[];
+  onSearchMentionCandidates?: (keyword: string) => Promise<DeliveryConversationMentionCatalog>;
   onChanged: () => Promise<void> | void;
 }
 
@@ -92,10 +100,13 @@ export function DeliveryRequirementReviewModal({
   onToggleContext,
   onConversationStateChange,
   gitPanel = null,
+  mentionRequirements = [],
+  mentionItems = [],
+  mentionFiles,
+  onSearchMentionCandidates,
   onChanged,
 }: DeliveryRequirementReviewModalProps) {
   const { t } = useLocale();
-  const { compositionProps, isComposingEnter } = useImeCompositionGuard();
   const { preferences, configFor, setSceneOverride } = useAIPreferences();
   const reviewPreference = configFor("productTesting");
   const [conversationExecutorType, setConversationExecutorType] = useState<AITool | "">("");
@@ -217,6 +228,16 @@ export function DeliveryRequirementReviewModal({
       : "",
   );
 
+  const [chatReferences, setChatReferences] = useState<DeliveryConversationReference[]>([]);
+
+  useDraftMemory(
+    requirementKey
+      ? `zb.delivery.draft.requirement-review.${programId}.${requirementKey}.${newConversation ? "new" : conversation?.threadId || "new"}`
+      : "",
+    draft,
+    setDraft,
+  );
+
   const startNewConversation = () => {
     if (active || !requirementKey) return;
     newConversationRef.current = true;
@@ -259,7 +280,9 @@ export function DeliveryRequirementReviewModal({
 
   const send = async (generateReport = false) => {
     // 「确认生成」不强制先写字：没补充要求就按已确认的范围和规则直接出报告。
-    const text = draft.trim() || (generateReport ? t("delivery.review.generateInstruction") : "");
+    const text = draft.trim()
+      || (generateReport ? t("delivery.review.generateInstruction") : "")
+      || (chatReferences.length ? t("delivery.chatMention.referenceMessage") : "");
     if (!text || !codexBridgeReady || !requirementKey || switchingThreadId) return;
     setSending(true);
     try {
@@ -271,9 +294,11 @@ export function DeliveryRequirementReviewModal({
         reasoningEffort: effortForConfig(reviewConfig),
         fastMode: provider === "claude" && reviewConfig.claudeFastMode,
         scope: selectedScope,
+        chatReferences,
         generateReport,
       });
       setDraft("");
+      setChatReferences([]);
       newConversationRef.current = false;
       setNewConversation(false);
       setSelectedThreadId(action.threadId);
@@ -460,20 +485,24 @@ export function DeliveryRequirementReviewModal({
           ) : null}
         </div>
         <div className="delivery-session-composer__input">
-          <Input.TextArea
-            autoSize={{ minRows: 3, maxRows: 7 }}
+          <DeliveryConversationMentionInput
             value={draft}
             disabled={!codexBridgeReady || sending}
             placeholder={t("delivery.review.placeholder")}
-            onChange={(event) => setDraft(event.target.value)}
-            {...compositionProps}
+            requirements={mentionRequirements}
+            items={mentionItems}
+            files={mentionFiles}
+            references={chatReferences}
+            onChange={setDraft}
+            onReferencesChange={setChatReferences}
+            onSearchCandidates={onSearchMentionCandidates}
             onPressEnter={(event) => {
-              if (event.shiftKey || isComposingEnter(event)) return;
+              if (event.shiftKey) return;
               event.preventDefault();
               void send();
             }}
           />
-          <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim() || !codexBridgeReady || active} onClick={() => void send()}>
+          <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={(!draft.trim() && !chatReferences.length) || !codexBridgeReady || active} onClick={() => void send()}>
             {t("delivery.review.send")}
           </Button>
         </div>

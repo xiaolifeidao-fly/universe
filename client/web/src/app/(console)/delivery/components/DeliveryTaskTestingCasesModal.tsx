@@ -41,6 +41,7 @@ import {
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useImeCompositionGuard } from "@/utils/ime";
 import { usePollingLoop } from "../hooks/usePollingLoop";
+import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems, SessionChangeSummary } from "./DeliverySessionMessage";
 
@@ -185,6 +186,14 @@ export function DeliveryTaskTestingCasesModal({
     !switchingThreadId && conversation?.threadId
       ? `zb.delivery.scroll.task-testing.${programId}.${itemKey}.${conversation.threadId}`
       : "",
+  );
+
+  useDraftMemory(
+    itemKey
+      ? `zb.delivery.draft.task-testing.${programId}.${itemKey}.${newConversation ? "new" : conversation?.threadId || "new"}`
+      : "",
+    draft,
+    setDraft,
   );
 
   const send = async () => {

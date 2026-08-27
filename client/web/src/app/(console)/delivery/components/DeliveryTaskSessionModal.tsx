@@ -76,6 +76,7 @@ import {
   readableAttachmentSize,
 } from "./DeliverySessionAttachments";
 import { usePollingLoop } from "../hooks/usePollingLoop";
+import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
@@ -415,6 +416,14 @@ export function DeliveryTaskSessionModal({
   ], !switchingThreadId && conversation?.threadId && activeItem?.itemKey
     ? `zb.delivery.scroll.task.${programId}.${activeItem.itemKey}.${conversation.threadId}`
     : "");
+
+  useDraftMemory(
+    activeItem?.itemKey
+      ? `zb.delivery.draft.task.${programId}.${activeItem.itemKey}.${newConversation ? "new" : conversation?.threadId || "new"}`
+      : "",
+    draft,
+    setDraft,
+  );
 
   const send = async () => {
     if (switchingThreadId) return;
