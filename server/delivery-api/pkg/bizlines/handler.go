@@ -27,8 +27,10 @@ func NewHandler(service bizline.Service, identities identity.Service) *Handler {
 }
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
+	// 业务方需要这条轻量列表来定位自己的业务工作台；空间维护能力
+	// 则属于产品产研侧，不能只依赖控制台菜单隐藏。
 	group.GET("/bizline/lines", httpx.RequireUserOrService(), h.list)
-	api := group.Group("/bizline", httpx.RequireUser())
+	api := group.Group("/bizline", httpx.RequireProductResearch())
 	api.GET("/lines/all", h.listAll)
 	api.POST("/line/save", h.save)
 	api.POST("/line/delete", h.delete)

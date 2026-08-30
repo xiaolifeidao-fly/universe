@@ -87,6 +87,7 @@ export function UserManagementDemo() {
     { title: "账号", dataIndex: "username", width: 150, render: (value: string) => <span className="manager-mono">{value}</span> },
     { title: "显示名称", dataIndex: "displayName", width: 150 },
     { title: "角色", dataIndex: "role", width: 100, render: (value: string) => <Tag color={value === "admin" ? "gold" : "blue"}>{value === "admin" ? "管理员" : "成员"}</Tag> },
+		{ title: t("account.persona"), dataIndex: "personas", width: 180, render: (values: UserRecord["personas"], user) => <Space size={[4, 4]} wrap>{(values?.length ? values : [user.persona]).map((value) => <Tag key={value} color={value === "business" ? "green" : "purple"}>{value === "business" ? t("account.personaBusiness") : t("account.personaProductResearch")}</Tag>)}</Space> },
     { title: "状态", dataIndex: "status", width: 100, render: (value: string) => <Tag color={value === "active" ? "success" : "default"}>{value === "active" ? "启用" : "停用"}</Tag> },
     { title: "空间", dataIndex: "bizLines", width: 220, render: (values: string[]) => values.length ? values.map((value) => <Tag key={value}>{value}</Tag>) : "-" },
     { title: "项目", dataIndex: "programs", width: 220, render: (values: UserRecord["programs"]) => values.length ? values.map((value) => <Tag key={`${value.bizLine}:${value.programId}`}>{value.programId}</Tag>) : "-" },
@@ -117,12 +118,13 @@ export function UserManagementDemo() {
         <Space wrap>
           <Input className="manager-filter-input" prefix={<SearchOutlined />} value={search} placeholder="搜索账号或名称" onChange={(event) => setSearch(event.target.value)} onPressEnter={() => void refresh({ pageIndex: 1, keyword: search })} style={{ width: 240 }} />
           <Select value={query.role || undefined} allowClear placeholder="角色" onChange={(value) => void refresh({ pageIndex: 1, role: value ?? "" })} options={[{ value: "admin", label: "管理员" }, { value: "member", label: "成员" }]} style={{ width: 120 }} />
+			<Select value={query.persona || undefined} allowClear placeholder={t("account.persona")} onChange={(value) => void refresh({ pageIndex: 1, persona: value ?? "" })} options={[{ value: "business", label: t("account.personaBusiness") }, { value: "product_research", label: t("account.personaProductResearch") }]} style={{ width: 130 }} />
           <Select value={query.status || undefined} allowClear placeholder="状态" onChange={(value) => void refresh({ pageIndex: 1, status: value ?? "" })} options={[{ value: "active", label: "启用" }, { value: "disabled", label: "停用" }]} style={{ width: 120 }} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); setEditorOpen(true); }}>新建用户</Button>
         </Space>
       </section>
       <section className="manager-data-card manager-table">
-        <Table<UserRecord> rowKey="id" loading={loading} columns={columns} dataSource={users} scroll={{ x: 1215 }} pagination={{ current: query.pageIndex, pageSize: query.pageSize, total, showSizeChanger: false, onChange: (page) => void refresh({ pageIndex: page, keyword: search }) }} />
+        <Table<UserRecord> rowKey="id" loading={loading} columns={columns} dataSource={users} scroll={{ x: 1335 }} pagination={{ current: query.pageIndex, pageSize: query.pageSize, total, showSizeChanger: false, onChange: (page) => void refresh({ pageIndex: page, keyword: search }) }} />
       </section>
       <UserFormModal open={editorOpen} submitting={submitting} user={editing} bizLines={bizLines} onCancel={closeEditor} onSubmit={handleSave} />
     </div>

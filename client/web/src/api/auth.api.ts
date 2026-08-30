@@ -1,7 +1,7 @@
 "use client";
 
 import { getData, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
-import { isAuthTokenRemembered, setAuthUser } from "@/utils/auth";
+import { isAuthTokenRemembered, setAuthUser, type WorkPersona } from "@/utils/auth";
 import type { LoginResponse } from "@/app/login/api/login.api";
 
 export class CurrentUserProgramScope {
@@ -20,6 +20,10 @@ export class CurrentUserProfile {
   displayName = "";
 
   role = "member";
+
+	persona: WorkPersona = "product_research";
+
+	personas: WorkPersona[] = ["product_research"];
 
   status = "active";
 
@@ -57,6 +61,8 @@ export async function refreshAuthUser() {
         username: profile.username,
         displayName: profile.displayName,
         role: profile.role,
+		persona: profile.persona,
+		personas: profile.personas,
         mustChangePassword: profile.mustChangePassword,
         writableBizLines: profile.writableBizLines,
         managedBizLines: profile.managedBizLines,

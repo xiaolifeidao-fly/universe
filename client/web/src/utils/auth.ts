@@ -4,11 +4,17 @@ const AUTH_TOKEN_KEY = "phoenix_manager_token";
 const PASSWORD_CHANGE_REQUIRED_KEY = "phoenix_manager_password_change_required";
 const AUTH_USER_KEY = "phoenix_manager_user";
 
+export type WorkPersona = "business" | "product_research";
+
 export interface AuthUser {
   id: number;
   username: string;
   displayName: string;
   role: string;
+	/** 主身份仅用于兼容升级前的浏览器缓存；权限判断一律使用 personas。 */
+	persona?: WorkPersona;
+	/** 用户可以同时拥有业务方和产品产研身份。 */
+	personas?: WorkPersona[];
   mustChangePassword: boolean;
 	writableBizLines?: string[];
 	managedBizLines?: string[];
@@ -72,6 +78,19 @@ export function getAuthUser(): AuthUser | null {
   } catch {
     return null;
   }
+}
+
+export function authPersonas(user: AuthUser | null = getAuthUser()): WorkPersona[] {
+	const values = user?.personas?.length ? user.personas : user?.persona ? [user.persona] : ["product_research"];
+	return Array.from(new Set(values)).filter((value): value is WorkPersona => value === "business" || value === "product_research");
+}
+
+export function hasAuthPersona(persona: WorkPersona, user: AuthUser | null = getAuthUser()) {
+	return authPersonas(user).includes(persona);
+}
+
+export function isBusinessOnlyUser(user: AuthUser | null = getAuthUser()) {
+	return hasAuthPersona("business", user) && !hasAuthPersona("product_research", user);
 }
 
 /** Browser preferences belong to the signed-in person, not the browser session. */

@@ -9,6 +9,7 @@ import {
 	CopyOutlined,
   DownOutlined,
 	ExportOutlined,
+	FileTextOutlined,
   FolderOutlined,
   GlobalOutlined,
 	IdcardOutlined,
@@ -31,7 +32,7 @@ import { TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { changeOwnPassword, fetchCurrentUser, type CurrentUserProfile } from "@/api/auth.api";
 import { useDeliveryTaskPlannerHeartbeat } from "@/project-workspaces/deliveryTaskPlannerHeartbeat";
-import { clearAuthToken, getAuthUser, isAuthTokenRemembered, isPasswordChangeRequired, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
+import { authPersonas, clearAuthToken, getAuthUser, hasAuthPersona, isAuthTokenRemembered, isPasswordChangeRequired, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   CLAUDE_EFFORTS,
@@ -97,8 +98,10 @@ const PAGE_TITLES: Record<string, [string, string]> = {
   "/commands": ["指令库", "WhatsApp / 系统 / 浏览器指令 · Commands"],
   "/scoring": ["评分体系", "健康分 · 执行分 · 等级反哺 · Scoring"],
   "/survival": ["投产存活反馈", "真实存活率回测 · 校准评分与流程 · Survival Loop"],
-  "/delivery": ["page.delivery.title", "page.delivery.subtitle"],
-  "/my-work": ["page.myWork.title", "page.myWork.subtitle"],
+	"/delivery": ["page.delivery.title", "page.delivery.subtitle"],
+	"/my-work": ["page.myWork.title", "page.myWork.subtitle"],
+	"/business-workbench": ["page.businessWorkbench.title", "page.businessWorkbench.subtitle"],
+	"/business-intake": ["page.businessIntake.title", "page.businessIntake.subtitle"],
   "/panorama": ["page.panorama.title", "page.panorama.subtitle"],
   "/business-lines": ["page.businessLines.title", "page.businessLines.subtitle"],
   "/programs": ["page.programs.title", "page.programs.subtitle"],
@@ -139,9 +142,21 @@ const DELIVERY_NAV_GROUP: NavGroup = {
   icon: <span>🧭</span>,
   children: [
     { key: "/my-work", label: "nav.myWork", icon: <InboxOutlined /> },
+		{ key: "/business-intake", label: "nav.businessIntake", icon: <FileTextOutlined /> },
     { key: "/delivery", label: "nav.deliveryBoard", icon: <span>🗂️</span> },
     { key: "/panorama", label: "nav.panorama", icon: <span>🌐</span> },
   ],
+};
+
+const BUSINESS_NAV_GROUP: NavGroup = {
+	key: "grp-business",
+	label: "nav.businessWorkbench",
+	caption: "BUSINESS",
+	tone: "green",
+	icon: <span>◈</span>,
+	children: [
+		{ key: "/business-workbench", label: "nav.businessWorkbench", icon: <FileTextOutlined /> },
+	],
 };
 
 // 用户管理是系统管理员独占的入口：其余人连这一组都看不到。
@@ -165,8 +180,13 @@ const PRIMARY_NAV_ITEMS: NavLeaf[] = [
 // 空间管理对所有人常开：新建空间不再是管理员特权，
 // 名下一个空间都没有的人也得有地方建第一个。
 // 系统管理员的空间可见范围和普通用户一致，多出来的只有用户管理。
-function navEntriesFor(isAdmin: boolean): NavEntry[] {
+
+function navEntriesFor(isAdmin: boolean, hasBusiness: boolean, hasProductResearch: boolean): NavEntry[] {
+	if (hasBusiness && !hasProductResearch) {
+		return [BUSINESS_NAV_GROUP];
+	}
 	return [
+		...(hasBusiness ? [BUSINESS_NAV_GROUP] : []),
 		DELIVERY_NAV_GROUP,
 		...PRIMARY_NAV_ITEMS,
 		...(isAdmin ? [SYSTEM_NAV_GROUP] : []),
@@ -191,7 +211,9 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	// 本地插件的 token 和 user_id 全靠这条心跳，登录期间一直跑。
 	useDeliveryTaskPlannerHeartbeat();
 	const isAdmin = authUser?.role === "admin";
-	const navEntries = useMemo(() => navEntriesFor(isAdmin), [isAdmin]);
+	const hasBusiness = hasAuthPersona("business", authUser);
+	const hasProductResearch = hasAuthPersona("product_research", authUser);
+	const navEntries = useMemo(() => navEntriesFor(isAdmin, hasBusiness, hasProductResearch), [hasBusiness, hasProductResearch, isAdmin]);
 	const navGroups = useMemo(() => navEntries.filter(isNavGroup), [navEntries]);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -263,6 +285,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
   const activePath = pathname ?? "/my-work";
   const openGroupKey = findGroupKey(activePath, navGroups);
   const [pageTitle, pageSubtitle] = PAGE_TITLES[activePath] ?? ["brand.name", "page.fallback.subtitle"];
+	const visiblePersonas = profile?.personas?.length ? profile.personas : authPersonas(authUser);
 
   useEffect(() => {
     try {
@@ -730,11 +753,25 @@ export function ManagerShell({ children }: ManagerShellProps) {
 			  <Tag color={(profile?.role ?? authUser?.role) === "admin" ? "gold" : "blue"}>
 				{(profile?.role ?? authUser?.role) === "admin" ? t("account.roleAdmin") : t("account.roleMember")}
 			  </Tag>
+			  {visiblePersonas.map((persona) => (
+				<Tag key={persona} color={persona === "business" ? "green" : "purple"}>
+					{persona === "business" ? t("account.personaBusiness") : t("account.personaProductResearch")}
+				</Tag>
+			  ))}
 			  <Tag color={profile?.status === "disabled" ? "red" : "green"}>
 				{profile?.status === "disabled" ? t("account.statusDisabled") : t("account.statusActive")}
 			  </Tag>
 			</Space>
 			<Descriptions column={1} size="small" bordered>
+			  <Descriptions.Item label={t("account.persona")}>
+				<Space size={[4, 4]} wrap>
+				  {visiblePersonas.map((persona) => (
+					<Tag key={persona} color={persona === "business" ? "green" : "purple"}>
+					  {persona === "business" ? t("account.personaBusiness") : t("account.personaProductResearch")}
+					</Tag>
+				  ))}
+				</Space>
+			  </Descriptions.Item>
 			  <Descriptions.Item label={t("account.bizLines")}>
 				{profile?.bizLines?.length ? profile.bizLines.join("、") : t("account.scopeAll")}
 			  </Descriptions.Item>

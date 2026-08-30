@@ -1,6 +1,7 @@
 "use client";
 
 import { getData, getDataList, getPage, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
+import type { WorkPersona } from "@/utils/auth";
 
 export class ProgramScope {
   bizLine = "";
@@ -16,6 +17,11 @@ export class UserRecord {
   displayName = "";
 
   role: "admin" | "member" = "member";
+
+	// persona is the primary identity retained for old responses.
+	persona: WorkPersona = "product_research";
+
+	personas: WorkPersona[] = ["product_research"];
 
   status: "active" | "disabled" = "active";
 
@@ -57,6 +63,7 @@ export interface UserQuery {
   pageSize?: number;
   keyword?: string;
   role?: "admin" | "member" | "";
+	persona?: WorkPersona | "";
   status?: "active" | "disabled" | "";
 }
 
@@ -64,6 +71,7 @@ export interface SaveUserPayload {
   username: string;
   displayName: string;
   role: "admin" | "member";
+	personas: WorkPersona[];
   status: "active" | "disabled";
   password?: string;
   bizLines: string[];
@@ -76,6 +84,7 @@ export async function fetchUsers(query: UserQuery = {}) {
     pageSize: query.pageSize,
     keyword: query.keyword,
     role: query.role,
+		persona: query.persona,
     status: query.status,
   });
 }

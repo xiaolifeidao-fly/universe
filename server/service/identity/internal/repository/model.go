@@ -3,11 +3,15 @@ package repository
 import "time"
 
 type IdentityUser struct {
-	ID                 int64      `gorm:"column:id;primaryKey;autoIncrement"`
-	Username           string     `gorm:"column:username;type:varchar(64);uniqueIndex:uk_identity_user_username"`
-	DisplayName        string     `gorm:"column:display_name;type:varchar(128)"`
-	PasswordHash       string     `gorm:"column:password_hash;type:varchar(255)"`
-	Role               string     `gorm:"column:role;type:varchar(16);index:idx_identity_user_status,priority:1"`
+	ID           int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	Username     string `gorm:"column:username;type:varchar(64);uniqueIndex:uk_identity_user_username"`
+	DisplayName  string `gorm:"column:display_name;type:varchar(128)"`
+	PasswordHash string `gorm:"column:password_hash;type:varchar(255)"`
+	Role         string `gorm:"column:role;type:varchar(16);index:idx_identity_user_status,priority:1"`
+	// Persona stores the canonical comma-separated work identity set, for
+	// example "business,product_research". It remains varchar(32) because
+	// the product currently has exactly these two identities.
+	Persona            string     `gorm:"column:persona;type:varchar(32);default:'product_research';index:idx_identity_user_persona,priority:1"`
 	Status             string     `gorm:"column:status;type:varchar(16);index:idx_identity_user_status,priority:2"`
 	MustChangePassword bool       `gorm:"column:must_change_password;default:false"`
 	TokenVersion       int        `gorm:"column:token_version;default:1"`

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS `zt_identity_user` (
   `display_name` varchar(128) NOT NULL,
   `password_hash` varchar(255) NOT NULL,
   `role` varchar(16) NOT NULL,
+	`persona` varchar(32) NOT NULL DEFAULT 'product_research', -- 单身份或逗号分隔的多身份，如 business,product_research
   `status` varchar(16) NOT NULL,
   `must_change_password` tinyint(1) NOT NULL DEFAULT 0,
   `token_version` bigint NOT NULL DEFAULT 1,
@@ -13,7 +14,8 @@ CREATE TABLE IF NOT EXISTS `zt_identity_user` (
   `updated_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_identity_user_username` (`username`),
-  KEY `idx_identity_user_status` (`role`, `status`)
+  KEY `idx_identity_user_status` (`role`, `status`),
+	KEY `idx_identity_user_persona` (`persona`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_identity_user_biz_line` (

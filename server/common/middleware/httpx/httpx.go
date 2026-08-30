@@ -28,10 +28,14 @@ var config map[string]string
 // The identity domain owns token validation and assignment loading; httpx only
 // consumes this narrow shape so common does not depend on a business module.
 type UserPrincipal struct {
-	ID                 string
-	Username           string
-	DisplayName        string
-	Role               string
+	ID          string
+	Username    string
+	DisplayName string
+	Role        string
+	// Persona keeps the primary identity for old callers. New authorization
+	// checks must use Personas so a user can hold both work identities.
+	Persona            string
+	Personas           []string
 	MustChangePassword bool
 	BizLines           []string
 	WritableBizLines   []string
@@ -111,6 +115,21 @@ func RequireUser() gin.HandlerFunc {
 	}
 }
 
+// RequireProductResearch protects the existing delivery workbench and task
+// board APIs. A business user has a different intake surface and must not be
+// able to reach product/research data merely by calling an old API directly.
+func RequireProductResearch() gin.HandlerFunc {
+	return func(ginContext *gin.Context) {
+		if !authenticateUser(ginContext) {
+			return
+		}
+		if !requireChangedPassword(ginContext) || !requireProductResearch(ginContext) {
+			return
+		}
+		ginContext.Next()
+	}
+}
+
 func RequireAdmin() gin.HandlerFunc {
 	return func(ginContext *gin.Context) {
 		if !authenticateUser(ginContext) {
@@ -122,6 +141,9 @@ func RequireAdmin() gin.HandlerFunc {
 		if !IsAdmin(ginContext) {
 			Fail(ginContext, "无权执行系统设置操作")
 			ginContext.Abort()
+			return
+		}
+		if !requireProductResearch(ginContext) {
 			return
 		}
 		ginContext.Next()
@@ -160,6 +182,24 @@ func RequireUserOrService() gin.HandlerFunc {
 	}
 }
 
+// RequireProductResearchOrService is the read-side counterpart used by
+// delivery APIs that are also consumed by trusted server-side workers.
+func RequireProductResearchOrService() gin.HandlerFunc {
+	return func(ginContext *gin.Context) {
+		if authenticateService(ginContext) {
+			ginContext.Next()
+			return
+		}
+		if !authenticateUser(ginContext) {
+			return
+		}
+		if !requireChangedPassword(ginContext) || !requireProductResearch(ginContext) {
+			return
+		}
+		ginContext.Next()
+	}
+}
+
 func requireChangedPassword(ginContext *gin.Context) bool {
 	principal, ok := CurrentUser(ginContext)
 	if !ok || !principal.MustChangePassword || ginContext.FullPath() == "/api/auth/me" || ginContext.FullPath() == "/api/auth/password" {
@@ -168,6 +208,28 @@ func requireChangedPassword(ginContext *gin.Context) bool {
 	Fail(ginContext, "请先修改初始密码")
 	ginContext.Abort()
 	return false
+}
+
+func requireProductResearch(ginContext *gin.Context) bool {
+	principal, ok := CurrentUser(ginContext)
+	if ok && principal.HasPersona("product_research") {
+		return true
+	}
+	Fail(ginContext, "当前登录身份不是产品产研")
+	ginContext.Abort()
+	return false
+}
+
+// HasPersona reports whether the authenticated user owns a work identity.
+// The Persona fallback keeps credentials issued before multi-identity support
+// usable until the user next signs in.
+func (principal UserPrincipal) HasPersona(target string) bool {
+	for _, persona := range principal.Personas {
+		if persona == target {
+			return true
+		}
+	}
+	return principal.Persona == target
 }
 
 func authenticateUser(ginContext *gin.Context) bool {

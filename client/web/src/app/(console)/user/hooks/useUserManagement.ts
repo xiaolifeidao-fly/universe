@@ -8,6 +8,7 @@ const DEFAULT_QUERY: Required<UserQuery> = {
   pageSize: 10,
   keyword: "",
   role: "",
+	persona: "",
   status: "",
 };
 

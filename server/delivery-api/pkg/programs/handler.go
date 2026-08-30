@@ -29,7 +29,7 @@ func NewHandler(service delivery.Service, identities identity.Service) *Handler 
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 项目 / 阶段 / 模块都是配置，写一律 RequireUser。
-	api := group.Group("/delivery", httpx.RequireUser())
+	api := group.Group("/delivery", httpx.RequireProductResearch())
 	api.POST("/program/save", h.saveProgram)
 	api.POST("/program/git-config", h.saveGitConfig)
 	api.POST("/program/cloud-sync-config", h.saveCloudSyncConfig)
@@ -45,11 +45,11 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/program/assignment", h.saveAssignment)
 
 	// 只读的配置，控制台和将来的定时快照作业都要看。
-	group.GET("/delivery/programs", httpx.RequireUserOrService(), h.listPrograms)
-	group.GET("/delivery/program", httpx.RequireUserOrService(), h.getProgram)
-	group.GET("/delivery/stages", httpx.RequireUserOrService(), h.listStages)
-	group.GET("/delivery/modules", httpx.RequireUserOrService(), h.listModules)
-	group.GET("/delivery/modules/page", httpx.RequireUserOrService(), h.listModulesPage)
+	group.GET("/delivery/programs", httpx.RequireProductResearchOrService(), h.listPrograms)
+	group.GET("/delivery/program", httpx.RequireProductResearchOrService(), h.getProgram)
+	group.GET("/delivery/stages", httpx.RequireProductResearchOrService(), h.listStages)
+	group.GET("/delivery/modules", httpx.RequireProductResearchOrService(), h.listModules)
+	group.GET("/delivery/modules/page", httpx.RequireProductResearchOrService(), h.listModulesPage)
 }
 
 // listPrograms 逐条按项目可见性过滤，不在入口按空间一刀切：

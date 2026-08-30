@@ -17,7 +17,7 @@ func (s *service) CurrentUser(ctx context.Context, id int64) (dto.UserView, erro
 }
 
 func (s *service) ListUsers(ctx context.Context, query dto.UserQuery) (dto.UserPage, error) {
-	rows, total, err := s.repo.ListUsers(ctx, repository.UserQuery{Keyword: strings.TrimSpace(query.Keyword), Role: query.Role, Status: query.Status, Offset: query.Offset(), Limit: query.Limit()})
+	rows, total, err := s.repo.ListUsers(ctx, repository.UserQuery{Keyword: strings.TrimSpace(query.Keyword), Role: query.Role, Persona: query.Persona, Status: query.Status, Offset: query.Offset(), Limit: query.Limit()})
 	if err != nil {
 		return dto.UserPage{}, err
 	}
@@ -73,6 +73,15 @@ func (s *service) SaveUser(ctx context.Context, req dto.SaveUserRequest) (dto.Us
 	if !validRole(req.Role) || !validStatus(req.Status) {
 		return dto.UserView{}, errors.New("用户角色或状态无效")
 	}
+	personas, err := normalizePersonas(req.Personas, req.Persona)
+	if err != nil {
+		return dto.UserView{}, err
+	}
+	// 管理员是系统管理权限，必须同时具备产品产研身份。业务方和产品
+	// 产研可以并存；拥有两者的管理员仍可进入系统管理和两类工作台。
+	if req.Role == RoleAdmin && !hasPersona(personas, PersonaProductResearch) {
+		return dto.UserView{}, errors.New("管理员必须具备产品产研身份")
+	}
 	bizLines, programs, err := normalizeAssignments(req.BizLines, req.Programs)
 	if err != nil {
 		return dto.UserView{}, err
@@ -94,7 +103,7 @@ func (s *service) SaveUser(ctx context.Context, req dto.SaveUserRequest) (dto.Us
 		if err != nil {
 			return dto.UserView{}, err
 		}
-		user := &repository.IdentityUser{Username: username, DisplayName: displayName, PasswordHash: hash, Role: req.Role, Status: req.Status, MustChangePassword: true, TokenVersion: 1}
+		user := &repository.IdentityUser{Username: username, DisplayName: displayName, PasswordHash: hash, Role: req.Role, Persona: personaStorage(personas), Status: req.Status, MustChangePassword: true, TokenVersion: 1}
 		if err := s.repo.CreateUser(ctx, user); err != nil {
 			return dto.UserView{}, err
 		}
@@ -125,7 +134,7 @@ func (s *service) SaveUser(ctx context.Context, req dto.SaveUserRequest) (dto.Us
 			return dto.UserView{}, errors.New("至少保留一个启用的管理员")
 		}
 	}
-	user.Username, user.DisplayName, user.Role, user.Status = username, displayName, req.Role, req.Status
+	user.Username, user.DisplayName, user.Role, user.Persona, user.Status = username, displayName, req.Role, personaStorage(personas), req.Status
 	if strings.TrimSpace(req.Password) != "" {
 		user.PasswordHash, err = hashPassword(req.Password)
 		if err != nil {
@@ -176,7 +185,7 @@ func (s *service) EnsureDefaultAdmin(ctx context.Context, username, displayName,
 	if err != nil {
 		return err
 	}
-	return s.repo.CreateUser(ctx, &repository.IdentityUser{Username: username, DisplayName: displayName, PasswordHash: hash, Role: RoleAdmin, Status: StatusActive, MustChangePassword: true, TokenVersion: 1})
+	return s.repo.CreateUser(ctx, &repository.IdentityUser{Username: username, DisplayName: displayName, PasswordHash: hash, Role: RoleAdmin, Persona: PersonaProductResearch, Status: StatusActive, MustChangePassword: true, TokenVersion: 1})
 }
 
 func (s *service) toUserView(ctx context.Context, user *repository.IdentityUser) (dto.UserView, error) {
@@ -209,5 +218,6 @@ func (s *service) toUserView(ctx context.Context, user *repository.IdentityUser)
 			managedPrograms = append(managedPrograms, scope)
 		}
 	}
-	return dto.UserView{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: user.Role, Status: user.Status, MustChangePassword: user.MustChangePassword, BizLines: bizLines, WritableBizLines: writableBizLines, ManagedBizLines: managedBizLines, Programs: programs, ManagedPrograms: managedPrograms, LastLoginAt: user.LastLoginAt, UpdatedAt: timePtr(user.UpdatedTime), CreatedAt: timePtr(user.CreatedTime)}, nil
+	personas := personasOf(user.Persona)
+	return dto.UserView{ID: user.ID, Username: user.Username, DisplayName: user.DisplayName, Role: user.Role, Persona: personas[0], Personas: personas, Status: user.Status, MustChangePassword: user.MustChangePassword, BizLines: bizLines, WritableBizLines: writableBizLines, ManagedBizLines: managedBizLines, Programs: programs, ManagedPrograms: managedPrograms, LastLoginAt: user.LastLoginAt, UpdatedAt: timePtr(user.UpdatedTime), CreatedAt: timePtr(user.CreatedTime)}, nil
 }

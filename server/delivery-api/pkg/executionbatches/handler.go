@@ -19,7 +19,7 @@ type Handler struct{ service delivery.Service }
 func NewHandler(service delivery.Service) *Handler { return &Handler{service: service} }
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
-	api := group.Group("/delivery", httpx.RequireUser())
+	api := group.Group("/delivery", httpx.RequireProductResearch())
 	api.POST("/execution-batch/create", h.create)
 	api.POST("/execution-batch/item/status", h.updateItem)
 	api.POST("/execution-batch/finalize", h.finalize)

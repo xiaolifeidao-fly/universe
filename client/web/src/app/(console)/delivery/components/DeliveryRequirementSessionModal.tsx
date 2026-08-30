@@ -939,14 +939,20 @@ export function DeliveryRequirementSessionModal({
     setDraft,
   );
 
-  const prototypeEditItems = useMemo(
-    () => (prototypeEditConversation?.turns ?? []).flatMap((turn) => turn.items.map((item) => ({ ...item, turnId: turn.id }))),
+  // 原型编辑也会运行 Claude / Codex 的命令；按回合沿用主聊天的过程分组，
+  // 让命令、文件读取和工具调用默认折叠，而不是在这个入口单独铺开。
+  const prototypeEditTurns = useMemo(
+    () => prototypeEditConversation?.turns ?? [],
     [prototypeEditConversation],
+  );
+  const prototypeEditItemCount = useMemo(
+    () => prototypeEditTurns.reduce((count, turn) => count + turn.items.length, 0),
+    [prototypeEditTurns],
   );
 
   const { ref: prototypeEditTranscriptRef, onScroll: onPrototypeEditTranscriptScroll } = useStickToBottom<HTMLDivElement>([
     prototypeEditActive,
-    prototypeEditItems.length,
+    prototypeEditItemCount,
   ]);
 
   // 确认写入只在「已经出过一轮预览、当前没有回合在跑」时可用：没有方案可确认，或方案还在生成中都不放行。
@@ -2912,10 +2918,14 @@ export function DeliveryRequirementSessionModal({
               </Tooltip>
             </header>
             <div ref={prototypeEditTranscriptRef} onScroll={onPrototypeEditTranscriptScroll} className="delivery-session-transcript" style={{ flex: 1, minHeight: 360, maxHeight: "calc(100vh - 350px)" }}>
-              {prototypeEditItems.length ? prototypeEditItems.map((item, index) => (
-                <Fragment key={`${item.turnId}-${item.id || index}`}>
-                  <PlanningTranscriptItem item={item} programId={programId} toolName={toolName} />
-                  {index === prototypeEditItems.length - 1 ? <SessionChangeSummary items={prototypeEditConversation?.turns.find((turn) => turn.id === item.turnId)?.items ?? []} programId={programId} /> : null}
+              {prototypeEditItemCount ? prototypeEditTurns.map((turn) => (
+                <Fragment key={turn.id}>
+                  {groupSessionItems(turn.items).map((group) => (group.kind === "process" ? (
+                    <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
+                  ) : (
+                    <PlanningTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />
+                  )))}
+                  <SessionChangeSummary items={turn.items} programId={programId} />
                 </Fragment>
               )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.editEmpty")} />}
               {prototypeEditActive ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}

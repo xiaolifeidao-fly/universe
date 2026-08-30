@@ -295,7 +295,9 @@ function processSummary(items: CodexConversationItem[], t: (key: string) => stri
  */
 export function SessionProcessGroup({ items }: { items: CodexConversationItem[] }) {
   const { t } = useLocale();
-  const [open, setOpen] = useState(true);
+  // 过程日志（运行命令、读写文件和工具调用）通常很长；默认不打断 Claude / Codex 的正文，
+  // 但仍可通过标题栏随时展开查看完整过程。
+  const [open, setOpen] = useState(false);
   // 展开看全文的只有推理摘要，按行记：一块里可能有好几段摘要，各自开合。
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const rows = items.map((item) => ({ key: `${item.id}-${item.type}`, ...describeProcessItem(item, t) }));

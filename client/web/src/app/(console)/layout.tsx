@@ -1,11 +1,11 @@
 "use client";
 
 import { Spin } from "antd";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { ManagerShell } from "@/components/manager-shell/ManagerShell";
-import { isAuthenticated } from "@/utils/auth";
+import { getAuthUser, isAuthenticated, isBusinessOnlyUser } from "@/utils/auth";
 
 export default function ConsoleLayout({
   children,
@@ -13,6 +13,7 @@ export default function ConsoleLayout({
   children: ReactNode;
 }>) {
   const router = useRouter();
+	const pathname = usePathname();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -20,8 +21,19 @@ export default function ConsoleLayout({
       router.replace("/login");
       return;
     }
+		const user = getAuthUser();
+		const isBusinessOnly = isBusinessOnlyUser(user);
+		const hasBusiness = !isBusinessOnly && user?.personas?.includes("business");
+		if (isBusinessOnly && pathname !== "/business-workbench") {
+			router.replace("/business-workbench");
+			return;
+		}
+		if (!isBusinessOnly && !hasBusiness && pathname === "/business-workbench") {
+			router.replace("/my-work");
+			return;
+		}
     setReady(true);
-  }, [router]);
+	}, [pathname, router]);
 
   if (!ready) {
     return (

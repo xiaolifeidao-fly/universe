@@ -31,10 +31,15 @@ type ProgramScope struct {
 }
 
 type UserView struct {
-	ID                 int64          `json:"id"`
-	Username           string         `json:"username"`
-	DisplayName        string         `json:"displayName"`
-	Role               string         `json:"role"`
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role"`
+	// Persona 是兼容旧客户端的主身份；新客户端使用 Personas。
+	Persona string `json:"persona"`
+	// Personas 是用户可同时持有的工作身份。business 走业务需求工作台，
+	// product_research 使用交付工作台与任务面板。
+	Personas           []string       `json:"personas"`
 	Status             string         `json:"status"`
 	MustChangePassword bool           `json:"mustChangePassword"`
 	BizLines           []string       `json:"bizLines"`
@@ -99,19 +104,23 @@ type UserQuery struct {
 	Page
 	Keyword string `json:"keyword" form:"keyword"`
 	Role    string `json:"role" form:"role"`
+	Persona string `json:"persona" form:"persona"`
 	Status  string `json:"status" form:"status"`
 }
 
 type SaveUserRequest struct {
-	ID          int64          `json:"id"`
-	Username    string         `json:"username"`
-	DisplayName string         `json:"displayName"`
-	Role        string         `json:"role"`
-	Status      string         `json:"status"`
-	Password    string         `json:"password"`
-	BizLines    []string       `json:"bizLines"`
-	Programs    []ProgramScope `json:"programs"`
-	ActorID     string         `json:"-"`
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"displayName"`
+	Role        string `json:"role"`
+	// Persona 保留给旧客户端，新增或更新时优先使用 Personas。
+	Persona  string         `json:"persona"`
+	Personas []string       `json:"personas"`
+	Status   string         `json:"status"`
+	Password string         `json:"password"`
+	BizLines []string       `json:"bizLines"`
+	Programs []ProgramScope `json:"programs"`
+	ActorID  string         `json:"-"`
 }
 
 type ResetPasswordRequest struct {

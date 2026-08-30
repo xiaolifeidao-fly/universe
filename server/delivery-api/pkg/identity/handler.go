@@ -31,8 +31,9 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	group.POST("/auth/register", h.register)
 	user := group.Group("/auth", httpx.RequireUser())
 	user.GET("/me", h.me)
-	user.GET("/members", h.members)
 	user.POST("/password", h.changeOwnPassword)
+	// 同事列表只服务于产研的负责人、协助人等选择控件；业务方无需获取。
+	group.GET("/auth/members", httpx.RequireProductResearch(), h.members)
 
 	admin := group.Group("/system/users", httpx.RequireAdmin())
 	admin.GET("", h.list)

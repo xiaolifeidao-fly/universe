@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { login } from "@/app/login/api/login.api";
 import { register } from "@/app/login/api/register.api";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
-import { isAuthenticated, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
+import { isAuthenticated, isBusinessOnlyUser, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
 import { useLocale } from "@/i18n/LocaleProvider";
 
 const { Title } = Typography;
@@ -50,7 +50,7 @@ export function LoginFormCard() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      router.replace(landingPath);
+		router.replace(landingPath);
     }
   }, [landingPath, router]);
 
@@ -66,7 +66,8 @@ export function LoginFormCard() {
       setPasswordChangeRequired(response.user.mustChangePassword);
 		await refreshBusinessLines().catch(() => undefined);
       messageApi.success(t("login.success"));
-      router.replace(landingPath);
+		const nextPath = isBusinessOnlyUser(response.user) && landingPath === "/my-work" ? "/business-workbench" : landingPath;
+      router.replace(nextPath);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : t("login.passwordRequired");
       messageApi.error(errorMessage);
@@ -90,7 +91,8 @@ export function LoginFormCard() {
       setRegisterOpen(false);
       registerForm.resetFields();
       messageApi.success(t("register.success"));
-      router.replace(landingPath);
+		const nextPath = isBusinessOnlyUser(response.user) && landingPath === "/my-work" ? "/business-workbench" : landingPath;
+      router.replace(nextPath);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : t("register.failed");
       messageApi.error(errorMessage);

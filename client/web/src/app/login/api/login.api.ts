@@ -1,6 +1,7 @@
 "use client";
 
 import { instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
+import type { WorkPersona } from "@/utils/auth";
 
 export interface LoginPayload {
   username: string;
@@ -21,6 +22,10 @@ export class LoggedInUser {
   displayName = "";
 
   role = "member";
+
+	persona: WorkPersona = "product_research";
+
+	personas: WorkPersona[] = ["product_research"];
 
   mustChangePassword = false;
 

@@ -69,7 +69,7 @@ func (s *service) AuthenticateToken(ctx context.Context, rawToken string) (httpx
 	}
 	return httpx.UserPrincipal{
 		ID: strconv.FormatInt(user.ID, 10), Username: user.Username, DisplayName: user.DisplayName,
-		Role: user.Role, MustChangePassword: user.MustChangePassword, BizLines: view.BizLines, WritableBizLines: view.WritableBizLines, ManagedBizLines: view.ManagedBizLines, ProgramIDs: programIDs, ManagedProgramIDs: managedProgramIDs,
+		Role: user.Role, Persona: view.Persona, Personas: view.Personas, MustChangePassword: user.MustChangePassword, BizLines: view.BizLines, WritableBizLines: view.WritableBizLines, ManagedBizLines: view.ManagedBizLines, ProgramIDs: programIDs, ManagedProgramIDs: managedProgramIDs,
 	}, nil
 }
 
@@ -174,6 +174,7 @@ func (s *service) Register(ctx context.Context, req dto.RegisterRequest) (dto.Lo
 		DisplayName:        displayName,
 		PasswordHash:       hash,
 		Role:               RoleMember,
+		Persona:            PersonaProductResearch,
 		Status:             StatusActive,
 		MustChangePassword: false,
 		TokenVersion:       1,

@@ -19,7 +19,7 @@ func NewHandler(service delivery.Service) *Handler { return &Handler{service: se
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 落快照是同步链路里的内部动作（将来由定时作业调），不是人点的按钮 → RequireService。
 	group.POST("/delivery/snapshot/rebuild", httpx.RequireService(), h.rebuild)
-	group.GET("/delivery/snapshots", httpx.RequireUserOrService(), h.list)
+	group.GET("/delivery/snapshots", httpx.RequireProductResearchOrService(), h.list)
 }
 
 func (h *Handler) rebuild(context *gin.Context) {

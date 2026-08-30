@@ -13,6 +13,7 @@ import (
 type UserQuery struct {
 	Keyword string
 	Role    string
+	Persona string
 	Status  string
 	Offset  int
 	Limit   int
@@ -49,6 +50,9 @@ func (r *IdentityRepository) ListUsers(ctx context.Context, q UserQuery) ([]*Ide
 	if q.Role != "" {
 		database = database.Where("role = ?", q.Role)
 	}
+	if q.Persona != "" {
+		database = database.Where("FIND_IN_SET(?, persona) > 0", q.Persona)
+	}
 	if q.Status != "" {
 		database = database.Where("status = ?", q.Status)
 	}
@@ -72,7 +76,7 @@ func (r *IdentityRepository) CreateUser(ctx context.Context, row *IdentityUser) 
 
 func (r *IdentityRepository) UpdateUser(ctx context.Context, row *IdentityUser) error {
 	return r.Db.WithContext(ctx).Model(&IdentityUser{}).Where("id = ?", row.ID).Updates(map[string]any{
-		"username": row.Username, "display_name": row.DisplayName, "role": row.Role,
+		"username": row.Username, "display_name": row.DisplayName, "role": row.Role, "persona": row.Persona,
 		"status": row.Status, "must_change_password": row.MustChangePassword,
 		"password_hash": row.PasswordHash, "token_version": row.TokenVersion,
 		"updated_time": time.Now(),

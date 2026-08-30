@@ -30,7 +30,7 @@ func NewHandler(service delivery.Service, identities identity.Service) *Handler 
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 需求是人维护的，写一律 RequireUser；读放开到服务凭证，拆解插件要拿需求上下文。
-	api := group.Group("/delivery", httpx.RequireUser())
+	api := group.Group("/delivery", httpx.RequireProductResearch())
 	api.POST("/requirement/save", h.save)
 	api.POST("/requirement/members/assign", h.assignMembers)
 	api.POST("/requirement/status/update", h.updateStatus)
@@ -47,14 +47,14 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/requirement/testing-session/bind", h.bindTestingSession)
 	api.GET("/requirement/completion-notifications", h.listCompletionNotifications)
 
-	group.GET("/delivery/requirements", httpx.RequireUserOrService(), h.list)
-	group.GET("/delivery/requirement", httpx.RequireUserOrService(), h.get)
-	group.GET("/delivery/requirement/timeline", httpx.RequireUserOrService(), h.timeline)
-	group.GET("/delivery/requirement/progress", httpx.RequireUserOrService(), h.progress)
-	group.GET("/delivery/requirement/prototype", httpx.RequireUserOrService(), h.getPrototype)
-	group.GET("/delivery/requirement/planning-sessions", httpx.RequireUserOrService(), h.listPlanningSessions)
-	group.GET("/delivery/requirement/planning-batches", httpx.RequireUserOrService(), h.listPlanningBatches)
-	group.GET("/delivery/requirement/testing-sessions", httpx.RequireUserOrService(), h.listTestingSessions)
+	group.GET("/delivery/requirements", httpx.RequireProductResearchOrService(), h.list)
+	group.GET("/delivery/requirement", httpx.RequireProductResearchOrService(), h.get)
+	group.GET("/delivery/requirement/timeline", httpx.RequireProductResearchOrService(), h.timeline)
+	group.GET("/delivery/requirement/progress", httpx.RequireProductResearchOrService(), h.progress)
+	group.GET("/delivery/requirement/prototype", httpx.RequireProductResearchOrService(), h.getPrototype)
+	group.GET("/delivery/requirement/planning-sessions", httpx.RequireProductResearchOrService(), h.listPlanningSessions)
+	group.GET("/delivery/requirement/planning-batches", httpx.RequireProductResearchOrService(), h.listPlanningBatches)
+	group.GET("/delivery/requirement/testing-sessions", httpx.RequireProductResearchOrService(), h.listTestingSessions)
 }
 
 func (h *Handler) progress(context *gin.Context) {

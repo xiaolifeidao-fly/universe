@@ -28,7 +28,7 @@ func NewHandler(service delivery.Service, identities identity.Service) *Handler 
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 推进任务是人维护的配置，写一律 RequireUser —— 机器不该改路线图。
-	api := group.Group("/delivery", httpx.RequireUser())
+	api := group.Group("/delivery", httpx.RequireProductResearch())
 	api.POST("/item/create", h.create)
 	api.POST("/item/patch", h.patch)
 	api.POST("/item/phase/advance", h.advancePhase)
@@ -38,10 +38,10 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/item/execution-session/status", h.updateExecutionSessionStatus)
 	api.POST("/item/testing-cases/save", h.updateTestingCases)
 
-	group.GET("/delivery/items", httpx.RequireUserOrService(), h.list)
-	group.GET("/delivery/item", httpx.RequireUserOrService(), h.get)
-	group.GET("/delivery/item/events", httpx.RequireUserOrService(), h.events)
-	group.GET("/delivery/item/execution-session", httpx.RequireUserOrService(), h.listExecutionSessions)
+	group.GET("/delivery/items", httpx.RequireProductResearchOrService(), h.list)
+	group.GET("/delivery/item", httpx.RequireProductResearchOrService(), h.get)
+	group.GET("/delivery/item/events", httpx.RequireProductResearchOrService(), h.events)
+	group.GET("/delivery/item/execution-session", httpx.RequireProductResearchOrService(), h.listExecutionSessions)
 }
 
 func (h *Handler) advancePhase(context *gin.Context) {

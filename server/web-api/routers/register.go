@@ -12,8 +12,11 @@ import (
 
 	deliveryapi "delivery-api/pkg/delivery"
 	"service/bizline"
+	"service/business"
 	"service/delivery"
 	"service/identity"
+	"web-api/pkg/local"
+	"web-api/pkg/remote"
 
 	"gorm.io/gorm"
 )
@@ -47,11 +50,21 @@ func buildHandlers(_ context.Context, database *gorm.DB) []commonrouters.Handler
 	}
 	deliveryService := delivery.New(database, cloudStorage)
 	bizLineService := bizline.New(database, deliveryService)
+	businessTimeoutSeconds, _ := strconv.Atoi(httpx.Property("business.kodes.timeout_seconds"))
+	businessAssistant := remote.NewBusinessAssistant(
+		httpx.Property("business.kodes.remote_url"),
+		httpx.Property("business.kodes.token"),
+		httpx.Property("business.kodes.workspace"),
+		httpx.Property("business.kodes.model"),
+		httpx.Property("business.kodes.reasoning_effort"),
+		time.Duration(businessTimeoutSeconds)*time.Second,
+	)
+	businessService := business.New(database, local.BusinessProgramReader{Service: deliveryService}, businessAssistant)
 	tokenTTL, _ := strconv.Atoi(httpx.Property("auth.token_ttl_seconds"))
 	identityService := identity.New(database, deliveryService, httpx.Property("auth.token_secret"), time.Duration(tokenTTL)*time.Second)
 	httpx.SetUserAuthenticator(identityService)
 
 	return []commonrouters.Handler{
-		deliveryapi.NewHandler(deliveryService, bizLineService, identityService),
+		deliveryapi.NewHandler(deliveryService, bizLineService, identityService, businessService),
 	}
 }

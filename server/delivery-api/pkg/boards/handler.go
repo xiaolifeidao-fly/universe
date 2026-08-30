@@ -21,7 +21,7 @@ func NewHandler(service delivery.Service) *Handler { return &Handler{service: se
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 纯只读：控制台要看，将来的周报作业也要看。
-	api := group.Group("/delivery", httpx.RequireUserOrService())
+	api := group.Group("/delivery", httpx.RequireProductResearchOrService())
 	api.GET("/board", h.board)
 	api.GET("/overview", h.overview)
 }

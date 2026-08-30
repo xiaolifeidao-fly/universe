@@ -5304,6 +5304,18 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 /* 预设明细一格里放检测和安装两条命令，安装命令弱化一档。 */
 .program-environment-command { display: grid; gap: 4px; justify-items: start; }
 .program-environment-command__install { opacity: 0.72; }
+
+/* 用户编辑弹窗：身份字段改为可多选后，角色、状态使用稳定的两列网格。
+   不再把三个带最小宽度的表单项塞进一行，避免状态选择框溢出弹窗。 */
+.user-form-modal { width: min(720px, calc(100vw - 32px)) !important; max-width: calc(100vw - 32px); }
+.user-form-modal .ant-modal-body { overflow-x: hidden; }
+.user-form-modal__two-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.user-form-modal__two-columns .ant-form-item { min-width: 0; }
+.user-form-modal__two-columns .ant-select { width: 100%; }
+@media (max-width: 576px) {
+  .user-form-modal { width: calc(100vw - 20px) !important; max-width: calc(100vw - 20px); }
+  .user-form-modal__two-columns { grid-template-columns: minmax(0, 1fr); }
+}
 .program-environment-setup-modal { top: 24px; padding-bottom: 24px; }
 .program-environment-setup-modal .ant-modal-content { display: grid; height: min(800px, calc(100dvh - 48px)); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding: 0; }
 .program-environment-setup-modal .ant-modal-header { margin: 0; padding: 20px 56px 16px 24px; }
@@ -7999,3 +8011,254 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 }
 
 .git-check__failure p { margin: 0; }
+
+/* 业务方工作台：业务会话和产研任务会话完全分开，所有文本内容来自服务端。 */
+.manager-business-chat {
+  display: grid;
+  grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
+  min-height: min(720px, calc(100vh - 180px));
+  overflow: hidden;
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r-lg);
+  background: var(--manager-surface);
+  box-shadow: var(--manager-shadow);
+}
+
+.manager-business-chat__sidebar {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--manager-border);
+  background: var(--manager-bg-soft);
+}
+
+.manager-business-chat__sidebar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 18px 16px 12px;
+}
+
+.manager-business-chat__sidebar-head .manager-mono {
+  color: var(--manager-text-faint);
+  font-size: 11px;
+}
+
+.manager-business-chat__sidebar-head h2 {
+  margin: 4px 0 0;
+  font-size: 17px;
+}
+
+.manager-business-chat__sidebar-hint {
+  padding: 0 16px 14px;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-sm);
+  line-height: 1.55;
+}
+
+.manager-business-chat__session-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  border-top: 1px solid var(--manager-border);
+}
+
+.manager-business-chat__session {
+  cursor: pointer;
+  padding: 14px 16px !important;
+  transition: background var(--manager-t), box-shadow var(--manager-t);
+}
+
+.manager-business-chat__session:hover { background: var(--manager-surface); }
+
+.manager-business-chat__session--active {
+  background: var(--manager-primary-light);
+  box-shadow: inset 3px 0 0 var(--manager-primary);
+}
+
+.manager-business-chat__session strong,
+.manager-business-chat__session p {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-business-chat__session p {
+  margin: 5px 0;
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-sm);
+}
+
+.manager-business-chat__session .manager-mono {
+  color: var(--manager-text-faint);
+  font-size: 11px;
+}
+
+.manager-business-chat__main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.manager-business-chat__center {
+  display: grid;
+  min-height: 360px;
+  flex: 1;
+  place-items: center;
+}
+
+.manager-business-chat__project {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--manager-border);
+}
+
+.manager-business-chat__project-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--manager-r);
+  color: var(--manager-primary);
+  background: var(--manager-primary-light);
+}
+
+.manager-business-chat__project > div:nth-child(2) { min-width: 0; flex: 1; }
+.manager-business-chat__project span { color: var(--manager-text-faint); font-size: 11px; }
+.manager-business-chat__project h2 { margin: 3px 0; font-size: 17px; }
+.manager-business-chat__project p { margin: 0; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: 1.5; }
+
+.manager-business-chat__document {
+  margin: 12px 22px 0;
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r);
+  background: var(--manager-bg-soft);
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-sm);
+}
+
+.manager-business-chat__document summary { cursor: pointer; padding: 10px 12px; color: var(--manager-primary); font-weight: 650; }
+.manager-business-chat__document strong { display: block; padding: 0 12px 6px; color: var(--manager-text); }
+.manager-business-chat__document div { padding: 0 12px 12px; white-space: pre-wrap; line-height: 1.65; }
+
+.manager-business-chat__messages {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 20px 22px;
+  background: linear-gradient(180deg, rgba(18,161,80,.025), transparent 28%);
+}
+
+.manager-business-chat__message { max-width: min(760px, 84%); margin-bottom: 18px; }
+.manager-business-chat__message--user { margin-left: auto; }
+
+.manager-business-chat__message-meta {
+  display: flex;
+  gap: 10px;
+  margin: 0 4px 5px;
+  color: var(--manager-text-faint);
+  font-size: 11px;
+}
+
+.manager-business-chat__message--user .manager-business-chat__message-meta { justify-content: flex-end; }
+
+.manager-business-chat__bubble {
+  padding: 12px 14px;
+  border: 1px solid var(--manager-border);
+  border-radius: 4px var(--manager-r) var(--manager-r) var(--manager-r);
+  color: var(--manager-text);
+  background: var(--manager-bg-soft);
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.manager-business-chat__message--user .manager-business-chat__bubble {
+  border-color: transparent;
+  border-radius: var(--manager-r) 4px var(--manager-r) var(--manager-r);
+  color: #fff;
+  background: var(--manager-primary);
+}
+
+.manager-business-chat__empty-message {
+  display: grid;
+  min-height: 210px;
+  place-content: center;
+  gap: 10px;
+  color: var(--manager-text-faint);
+  text-align: center;
+}
+
+.manager-business-chat__empty-message svg { margin: auto; font-size: 28px; color: var(--manager-primary); }
+
+.manager-business-chat__composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--manager-border);
+  background: var(--manager-surface);
+}
+
+.manager-business-chat__composer .ant-input { resize: none; }
+
+.manager-business-intake__list { margin-top: 12px; }
+
+.manager-business-intake__item { align-items: flex-start !important; padding: 16px 4px !important; }
+.manager-business-intake__item .ant-list-item-meta { min-width: 0; }
+.manager-business-intake__item .ant-list-item-meta-content { min-width: 0; }
+.manager-business-intake__item .ant-list-item-meta-description p {
+  display: -webkit-box;
+  margin: 5px 0 7px;
+  overflow: hidden;
+  color: var(--manager-text-soft);
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.manager-business-intake__item .ant-list-item-meta-description span { color: var(--manager-text-faint); font-size: 11px; }
+
+.manager-business-intake__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: var(--manager-r);
+  color: var(--manager-primary);
+  background: var(--manager-primary-light);
+}
+
+.manager-business-intake__title {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  color: var(--manager-text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manager-business-intake__title:hover { color: var(--manager-primary); }
+
+.manager-business-intake__loading { display: grid; min-height: 260px; place-items: center; }
+.manager-business-intake__messages { display: flex; flex-direction: column; gap: 2px; }
+.manager-business-intake__messages .manager-business-chat__message { max-width: 88%; }
+
+@media (max-width: 760px) {
+  .manager-business-chat { grid-template-columns: minmax(0, 1fr); min-height: calc(100vh - 148px); }
+  .manager-business-chat__sidebar { max-height: 210px; border-right: 0; border-bottom: 1px solid var(--manager-border); }
+  .manager-business-chat__sidebar-hint { display: none; }
+  .manager-business-chat__session-list { display: flex; overflow-x: auto; overflow-y: hidden; }
+  .manager-business-chat__session { min-width: 180px; border-right: 1px solid var(--manager-border); }
+  .manager-business-chat__project, .manager-business-chat__messages { padding-left: 14px; padding-right: 14px; }
+  .manager-business-chat__document { margin-left: 14px; margin-right: 14px; }
+}

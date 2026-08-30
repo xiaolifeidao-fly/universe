@@ -7,8 +7,10 @@ package delivery
 import (
 	"common/middleware/routers"
 
+	"delivery-api/pkg/businessrequirements"
 	"delivery-api/pkg/identity"
 	"service/bizline"
+	"service/business"
 	deliveryservice "service/delivery"
 	identityservice "service/identity"
 
@@ -27,10 +29,11 @@ type Handler struct {
 	handlers []routers.Handler
 }
 
-func NewHandler(deliveryService deliveryservice.Service, bizLineService bizline.Service, identityService identityservice.Service) *Handler {
+func NewHandler(deliveryService deliveryservice.Service, bizLineService bizline.Service, identityService identityservice.Service, businessService business.Service) *Handler {
 	return &Handler{handlers: []routers.Handler{
 		identity.NewHandler(identityService, bizLineService),
 		bizlines.NewHandler(bizLineService, identityService),
+		businessrequirements.NewHandler(businessService),
 		programs.NewHandler(deliveryService, identityService),
 		requirements.NewHandler(deliveryService, identityService),
 		items.NewHandler(deliveryService, identityService),

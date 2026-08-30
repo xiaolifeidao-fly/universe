@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	RoleAdmin      = "admin"
-	RoleMember     = "member"
-	StatusActive   = "active"
-	StatusDisabled = "disabled"
+	RoleAdmin              = "admin"
+	RoleMember             = "member"
+	PersonaBusiness        = "business"
+	PersonaProductResearch = "product_research"
+	StatusActive           = "active"
+	StatusDisabled         = "disabled"
 )
 
 type Service interface {

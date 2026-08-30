@@ -1,8 +1,9 @@
 "use client";
 
-import { Button, Form, Input, Modal, Select, Space, Tag } from "antd";
+import { Form, Input, Modal, Select } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import type { WorkPersona } from "@/utils/auth";
 import {
   fetchProgramOptions,
   type BizLineOption,
@@ -25,6 +26,7 @@ interface UserFormValues {
   username: string;
   displayName: string;
   role: "admin" | "member";
+	personas: WorkPersona[];
   status: "active" | "disabled";
   password?: string;
   bizLines: string[];
@@ -38,6 +40,8 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
   const { t } = useLocale();
   const [programs, setPrograms] = useState<ProgramOption[]>([]);
   const selectedBizLines = Form.useWatch("bizLines", form) ?? [];
+	const selectedPersonas = Form.useWatch("personas", form) ?? ["product_research"];
+	const isBusinessOnly = selectedPersonas.includes("business") && !selectedPersonas.includes("product_research");
   const isEdit = Boolean(user);
 
   useEffect(() => {
@@ -46,6 +50,7 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
       username: user?.username ?? "",
       displayName: user?.displayName ?? "",
       role: user?.role ?? "member",
+		personas: user?.personas?.length ? user.personas : [user?.persona ?? "product_research"],
       status: user?.status ?? "active",
       password: "",
       bizLines: user?.bizLines ?? [],
@@ -86,6 +91,7 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
       username: values.username.trim(),
       displayName: values.displayName.trim(),
       role: values.role,
+		personas: values.personas,
       status: values.status,
       password: values.password?.trim() || undefined,
       bizLines: values.bizLines ?? [],
@@ -95,9 +101,11 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
 
   return (
     <Modal
+		className="user-form-modal"
       wrapClassName="manager-form-skin"
       destroyOnClose
       open={open}
+		width={720}
       title={isEdit ? "编辑用户" : "新建用户"}
       okText={isEdit ? "保存" : "创建"}
       cancelText="取消"
@@ -105,21 +113,35 @@ export function UserFormModal({ open, submitting, user, bizLines, onCancel, onSu
       onCancel={onCancel}
       onOk={() => void submit()}
     >
-      <Form<UserFormValues> form={form} layout="vertical">
+      <Form<UserFormValues> className="user-form-modal__form" form={form} layout="vertical">
         <Form.Item label="用户名" name="username" rules={[{ required: true, message: "请输入用户名" }]}>
           <Input autoComplete="off" disabled={isEdit} />
         </Form.Item>
         <Form.Item label="显示名称" name="displayName" rules={[{ required: true, message: "请输入显示名称" }]}>
           <Input autoComplete="off" />
         </Form.Item>
-        <Space style={{ display: "flex" }} size={12} align="start">
-          <Form.Item label="角色" name="role" style={{ minWidth: 180 }}>
-            <Select options={[{ value: "member", label: "成员" }, { value: "admin", label: "管理员" }]} />
+        <div className="user-form-modal__two-columns">
+          <Form.Item label="角色" name="role">
+            <Select disabled={isBusinessOnly} options={[{ value: "member", label: "成员" }, { value: "admin", label: "管理员" }]} />
           </Form.Item>
-          <Form.Item label="状态" name="status" style={{ minWidth: 180 }}>
+          <Form.Item label="状态" name="status">
             <Select options={[{ value: "active", label: "启用" }, { value: "disabled", label: "停用" }]} />
           </Form.Item>
-        </Space>
+		</div>
+		<Form.Item label={t("account.persona")} name="personas" rules={[{ required: true, type: "array", min: 1, message: "请至少选择一个工作身份" }]} extra={t("account.personaHint")}>
+			<Select
+				mode="multiple"
+				maxTagCount="responsive"
+				options={[
+					{ value: "business", label: t("account.personaBusiness") },
+					{ value: "product_research", label: t("account.personaProductResearch") },
+				]}
+				onChange={(values: WorkPersona[]) => {
+					const businessOnly = values.includes("business") && !values.includes("product_research");
+					if (businessOnly) form.setFieldValue("role", "member");
+				}}
+			/>
+		</Form.Item>
         <Form.Item
           label={isEdit ? "更新密码" : "初始密码"}
           name="password"
