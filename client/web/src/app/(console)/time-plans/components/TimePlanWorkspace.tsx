@@ -351,6 +351,7 @@ export function TimePlanWorkspace() {
         open={formOpen}
         programId={programId}
         plan={editing}
+        plans={plans}
         gitEnabled={Boolean(program?.gitEnabled)}
         defaultBaseBranch={program?.gitBaseBranch ?? ""}
         onClose={() => {

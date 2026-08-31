@@ -29,6 +29,8 @@ interface TimePlanFormModalProps {
   programId: number;
   /** 为空表示新建；带记录表示编辑。 */
   plan: DeliveryTimePlanRecord | null;
+  /** 同项目下已有的计划，用于建分支之前先在本地查一遍分支重名。 */
+  plans: DeliveryTimePlanRecord[];
   /** 项目没开 Git 时只排期，不建分支，分支字段整体隐藏。 */
   gitEnabled: boolean;
   /** 项目设置里的默认基准分支，新建时预填。 */
@@ -45,14 +47,16 @@ function defaultBranchOf(endAt: Dayjs | undefined) {
 /**
  * 时间计划的新建 / 编辑表单。
  *
- * 新建且项目启用了 Git 时，保存后立刻在本机建出计划分支：根工作目录必建，
- * 子项目按勾选建（勾选项默认全选，和需求分支的创建行为一致）。分支创建失败
- * 不回滚已经落库的计划 —— 计划本身是排期事实，分支可以稍后在列表里补建。
+ * 项目启用 Git 时严格按「先建本机分支，再落库计划」执行：根工作目录的分支没建成就
+ * 直接中止，计划不会落库 —— 一条没有分支的计划在列表里三个合并动作全都点不动，
+ * 留着只会让人以为分支已经准备好了。子项目建失败不算中止：根分支已经在了，
+ * 撤回计划反而更难收拾，缺哪个子项目会明确列出来，之后在编辑里补建。
  */
 export function TimePlanFormModal({
   open,
   programId,
   plan,
+  plans,
   gitEnabled,
   defaultBaseBranch,
   onClose,
@@ -95,12 +99,7 @@ export function TimePlanFormModal({
       // 读不到本机分支列表不该挡住建计划：基准分支退化成手填。
       .catch(() => setBranches([]))
       .finally(() => setBranchesLoading(false));
-    // 只有新建时才谈得上一并建分支；编辑不重复建，已有分支的归属不该被表单改掉。
-    if (plan) {
-      setSubprojects([]);
-      setTargets([]);
-      return;
-    }
+    // 编辑时也要有这份勾选：改了分支名同样要在本机建出来，缺了它子项目就跟不上。
     setSubprojectsLoading(true);
     void fetchCodexGitProjects(programId)
       .then((catalog) => {
@@ -117,9 +116,44 @@ export function TimePlanFormModal({
     const values = await form.validateFields();
     const [start, end] = values.range ?? [];
     if (!end) return;
+    const baseBranch = values.baseBranch?.trim() || "";
+    const branch = values.branch?.trim() || "";
+    // 编辑时分支没改就不用再建一次：那条分支早就在本机了。
+    const needsBranch = gitEnabled && Boolean(branch) && branch !== plan?.branch;
     setSaving(true);
     setBranchError("");
     try {
+      let effectiveBranch = branch;
+      let subprojectFailures = "";
+      if (needsBranch) {
+        // 服务端也会拒绝重名分支，但那是在建完之后才返回的，本机会白留一条没人认领的分支。
+        // 先在已加载的计划里查一遍，把这种情况挡在动 Git 之前。
+        const taken = plans.find((entry) => entry.planKey !== plan?.planKey && entry.branch === branch);
+        if (taken) {
+          setBranchError(t("timePlan.form.branchTaken").replace("{branch}", branch).replace("{plan}", taken.name));
+          setSaving(false);
+          return;
+        }
+        let created;
+        try {
+          created = await createCodexGitBranch(programId, baseBranch, branch, targets);
+        } catch (error) {
+          // 根工作目录的分支没建成，计划一律不落库。
+          setBranchError((error as Error).message);
+          setSaving(false);
+          return;
+        }
+        // 从 origin/xxx 关联时本机分支名会被规范化，落库要用真正建出来的那个名字。
+        effectiveBranch = created.branch || branch;
+        const failed = created.results.filter((entry) => entry.path && entry.error);
+        if (failed.length) {
+          subprojectFailures = [
+            t("timePlan.form.subprojectBranchFailed"),
+            ...failed.map((entry) => `${entry.name}：${entry.error}`),
+          ].join("\n");
+        }
+        message.success(t("timePlan.form.branchCreated").replace("{branch}", effectiveBranch));
+      }
       const saved = await saveTimePlan({
         programId,
         ...(plan ? { planKey: plan.planKey, version: plan.version } : {}),
@@ -127,34 +161,23 @@ export function TimePlanFormModal({
         startAt: start?.toISOString(),
         endAt: end.toISOString(),
         status: values.status,
-        ...(gitEnabled
-          ? { baseBranch: values.baseBranch?.trim() || "", branch: values.branch?.trim() || "" }
-          : {}),
+        ...(gitEnabled ? { baseBranch, branch: effectiveBranch } : {}),
       });
       message.success(t("timePlan.saved"));
-      // 新建 + 启用 Git 才在本机建分支；建失败只提示，不把已经建好的计划撤掉。
-      if (!plan && gitEnabled && saved.branch && saved.baseBranch) {
+      // 分支创建时间单独记一笔；bind 失败只是少一个时间戳，不影响计划和分支本身。
+      if (needsBranch && saved.branch && saved.baseBranch) {
         try {
-          const result = await createCodexGitBranch(programId, saved.baseBranch, saved.branch, targets);
-          // 从 origin/xxx 关联时本机分支名会被规范化，把真正落地的名字写回计划。
-          await bindTimePlanBranch(programId, saved.planKey, saved.baseBranch, result.branch || saved.branch);
-          const failed = result.results.filter((entry) => entry.path && entry.error);
-          if (failed.length) {
-            setBranchError([
-              t("timePlan.form.subprojectBranchFailed"),
-              ...failed.map((entry) => `${entry.name}：${entry.error}`),
-            ].join("\n"));
-            onSaved();
-            return;
-          }
-          message.success(t("timePlan.form.branchCreated").replace("{branch}", result.branch || saved.branch));
+          await bindTimePlanBranch(programId, saved.planKey, saved.baseBranch, saved.branch);
         } catch (error) {
-          setBranchError((error as Error).message);
-          onSaved();
-          return;
+          message.warning((error as Error).message);
         }
       }
       onSaved();
+      if (subprojectFailures) {
+        // 缺子项目分支要留在弹窗里说清楚，不关窗，用户看完自己决定要不要重试。
+        setBranchError(subprojectFailures);
+        return;
+      }
       onClose();
     } catch (error) {
       message.error((error as Error).message);
@@ -228,8 +251,7 @@ export function TimePlanFormModal({
             >
               <Input onChange={() => setBranchTouched(true)} />
             </Form.Item>
-            {!plan ? (
-              <Form.Item label={t("timePlan.form.subprojects")} extra={t("timePlan.form.subprojects.hint")}>
+            <Form.Item label={t("timePlan.form.subprojects")} extra={t("timePlan.form.subprojects.hint")}>
                 {subprojectsLoading ? (
                   <Spin size="small" />
                 ) : subprojects.length ? (
@@ -254,8 +276,7 @@ export function TimePlanFormModal({
                 ) : (
                   <div className="manager-table-subline">{t("timePlan.form.subprojects.empty")}</div>
                 )}
-              </Form.Item>
-            ) : null}
+            </Form.Item>
           </>
         ) : (
           <Alert type="info" showIcon message={t("timePlan.form.gitDisabled")} />
