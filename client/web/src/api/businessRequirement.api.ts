@@ -7,6 +7,9 @@ export class BusinessRequirementRecord {
   id = 0;
   bizLine = "";
   programId = 0;
+  /** 服务端按业务线一次性解析出的项目名与编码，列表不必再显示裸的 #ID。 */
+  programName = "";
+  programCode = "";
   title = "";
   detail = "";
   status = "submitted";
@@ -28,10 +31,21 @@ export class BusinessProgramContext {
   summary = "";
 }
 
+/** 业务方随消息发出的图片或文档。文件本体在远端业务工作目录，这里只有清单。 */
+export class BusinessRequirementAttachment {
+  id = "";
+  name = "";
+  contentType = "";
+  size = 0;
+  isImage = false;
+  createdAt?: string;
+}
+
 export class BusinessRequirementMessage {
   id = 0;
   role: "user" | "assistant" = "user";
   content = "";
+  attachments: BusinessRequirementAttachment[] = [];
   createdAt?: string;
 }
 
@@ -44,17 +58,35 @@ export class BusinessRequirementDocument {
   createdAt?: string;
 }
 
+/** 一条运行中的远端访谈过程：推理摘要、执行的命令、读写的文件。只用于展示，不落库。 */
+export class BusinessRequirementActivity {
+	id = "";
+	type = "";
+	text = "";
+	action = "";
+	target = "";
+	status = "";
+	phase = "";
+}
+
 export class BusinessRequirementConversation {
-  requirement = new BusinessRequirementRecord();
-  program = new BusinessProgramContext();
-  messages: BusinessRequirementMessage[] = [];
-  documents: BusinessRequirementDocument[] = [];
+	requirement = new BusinessRequirementRecord();
+	program = new BusinessProgramContext();
+	messages: BusinessRequirementMessage[] = [];
+	documents: BusinessRequirementDocument[] = [];
+	active = false;
+	threadId = "";
+	turnId = "";
+	streamingReply = "";
+	streamingActivities: BusinessRequirementActivity[] = [];
+	remoteError = "";
 }
 
 export class SendBusinessRequirementMessageResult {
-  userMessage = new BusinessRequirementMessage();
-  assistantMessage = new BusinessRequirementMessage();
-  document = new BusinessRequirementDocument();
+	userMessage = new BusinessRequirementMessage();
+	threadId = "";
+	turnId = "";
+	active = false;
 }
 
 export async function fetchBusinessPrograms(bizLine: string) {
@@ -74,13 +106,41 @@ export async function fetchBusinessRequirementConversation(bizLine: string, requ
   return getData(BusinessRequirementConversation, "/business/requirement", withBizLine(bizLine, { requirementId }));
 }
 
-export async function sendBusinessRequirementMessage(bizLine: string, requirementId: number, content: string) {
+export async function sendBusinessRequirementMessage(
+  bizLine: string,
+  requirementId: number,
+  content: string,
+  attachmentIds: string[] = [],
+) {
   const response = await instance.post<ApiResponse<SendBusinessRequirementMessageResult>>(
     "/business/requirement/messages",
-    { requirementId, content },
+    { requirementId, content, attachmentIds },
     { params: withBizLine(bizLine) },
   );
   return unwrapApiResponse(response.data);
+}
+
+/** 先上传、再随消息发出：和交付会话一样，附件在发送前就已经落到远端工作目录。 */
+export async function uploadBusinessRequirementAttachments(bizLine: string, requirementId: number, files: File[]) {
+  const form = new FormData();
+  form.append("requirementId", String(requirementId));
+  files.forEach((file) => form.append("files", file, file.name));
+  const response = await instance.post<ApiResponse<BusinessRequirementAttachment[]>>(
+    "/business/requirement/attachments",
+    form,
+    { params: withBizLine(bizLine), timeout: 120000 },
+  );
+  return unwrapApiResponse(response.data) ?? [];
+}
+
+/** 附件内容经由本系统读回，浏览器不直接访问远端 Kodes。 */
+export async function fetchBusinessRequirementAttachment(bizLine: string, requirementId: number, attachmentId: string) {
+  const response = await instance.get<Blob>("/business/requirement/attachment", {
+    params: withBizLine(bizLine, { requirementId, attachmentId }),
+    responseType: "blob",
+    timeout: 60000,
+  });
+  return response.data;
 }
 
 // Product/research collection is read-only. It is intentionally separate

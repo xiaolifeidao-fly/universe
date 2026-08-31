@@ -8,6 +8,11 @@ CREATE TABLE IF NOT EXISTS `zt_business_requirement` (
   `title`           varchar(255) NOT NULL,
   `detail`          mediumtext   NOT NULL,
   `status`          varchar(16)  NOT NULL DEFAULT 'submitted',
+  `remote_thread_id` varchar(128) NOT NULL DEFAULT '',
+  `remote_turn_id`   varchar(128) NOT NULL DEFAULT '',
+  `remote_status`    varchar(16)  NOT NULL DEFAULT 'idle',
+  `remote_error`     varchar(512) NOT NULL DEFAULT '',
+  `remote_workspace` varchar(512) NOT NULL DEFAULT '',
   `created_by`      varchar(64)  NOT NULL,
   `created_by_name` varchar(64)  NOT NULL,
   `created_time`    timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,4 +47,24 @@ CREATE TABLE IF NOT EXISTS `zt_business_requirement_document` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_business_requirement_document` (`biz_line`, `requirement_id`, `type`, `version`),
   KEY `idx_business_requirement_document` (`biz_line`, `requirement_id`, `created_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 业务访谈里业务方上传的图片与文档清单。文件本体在远端 Kodes 的业务工作目录，
+-- message_id 为 0 表示还没随消息发出。
+CREATE TABLE IF NOT EXISTS `zt_business_requirement_attachment` (
+  `id`             bigint       NOT NULL AUTO_INCREMENT,
+  `biz_line`       varchar(32)  NOT NULL,
+  `requirement_id` bigint       NOT NULL,
+  `message_id`     bigint       NOT NULL DEFAULT 0,
+  `remote_id`      varchar(128) NOT NULL,
+  `name`           varchar(255) NOT NULL,
+  `content_type`   varchar(128) NOT NULL DEFAULT 'application/octet-stream',
+  `size`           bigint       NOT NULL DEFAULT 0,
+  `is_image`       tinyint(1)   NOT NULL DEFAULT 0,
+  `created_by`     varchar(64)  NOT NULL,
+  `created_time`   timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_business_requirement_attachment_remote` (`remote_id`),
+  KEY `idx_business_requirement_attachment` (`biz_line`, `requirement_id`, `created_time`),
+  KEY `idx_business_requirement_attachment_message` (`message_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

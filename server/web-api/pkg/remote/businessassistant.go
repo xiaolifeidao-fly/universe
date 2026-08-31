@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,48 +19,69 @@ import (
 
 const (
 	kodesConversationPath = "/v1/codex/conversation"
-	pollInterval          = 500 * time.Millisecond
+	kodesAttachmentsPath  = "/v1/codex/business-attachments"
+	kodesAttachmentPath   = "/v1/codex/business-attachment"
+	// 业务访谈默认走中等推理强度：业务方说的是原始诉求，追问和澄清足够用，
+	// 不配置也不该退化成远端 Codex 当时的默认值。
+	defaultReasoningEffort = "medium"
 )
 
 // BusinessAssistant adapts the remote Kodes conversation protocol for the
 // business-intake domain. Kodes has the same route and payload shape as the
 // local delivery plugin; only the target is a configured remote URL.
 //
-// workspace is an identifier understood by remote Kodes. It is deliberately
-// supplied from server configuration rather than a browser or local machine.
+// workspace is an identifier understood by remote Kodes. The business service
+// builds it from the authenticated business user and project, never from a
+// browser or local machine path.
 type BusinessAssistant struct {
 	baseURL         string
-	token           string
-	workspace       string
 	model           string
 	reasoningEffort string
 	timeout         time.Duration
 	client          *http.Client
 }
 
-func NewBusinessAssistant(baseURL, token, workspace, model, reasoningEffort string, timeout time.Duration) *BusinessAssistant {
+func NewBusinessAssistant(baseURL, model, reasoningEffort string, timeout time.Duration) *BusinessAssistant {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	if reasoningEffort == "" {
+		reasoningEffort = defaultReasoningEffort
+	}
 	return &BusinessAssistant{
 		baseURL:         strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		token:           strings.TrimSpace(token),
-		workspace:       strings.TrimSpace(workspace),
 		model:           strings.TrimSpace(model),
-		reasoningEffort: strings.TrimSpace(reasoningEffort),
+		reasoningEffort: reasoningEffort,
 		timeout:         timeout,
 		client:          &http.Client{Timeout: timeout},
 	}
 }
 
+type kodesAttachmentsResponse struct {
+	Attachments []kodesAttachment `json:"attachments"`
+	Error       json.RawMessage   `json:"error"`
+}
+
+type kodesAttachment struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	ContentType string `json:"contentType"`
+	Size        int64  `json:"size"`
+	IsImage     bool   `json:"isImage"`
+}
+
 type kodesConversationRequest struct {
-	ProgramID       int64  `json:"programId"`
-	ItemKey         string `json:"itemKey"`
-	Message         string `json:"message"`
-	Provider        string `json:"provider"`
-	Workspace       string `json:"workspace"`
-	Model           string `json:"model,omitempty"`
-	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	ProgramID       int64    `json:"programId"`
+	ItemKey         string   `json:"itemKey"`
+	Message         string   `json:"message"`
+	ThreadID        string   `json:"threadId,omitempty"`
+	AttachmentIDs   []string `json:"attachmentIds,omitempty"`
+	BusinessIntake  bool     `json:"businessIntake"`
+	Provider        string   `json:"provider"`
+	Workspace       string   `json:"workspace"`
+	Model           string   `json:"model,omitempty"`
+	ReasoningEffort string   `json:"reasoningEffort,omitempty"`
 }
 
 type kodesConversationAction struct {
@@ -85,10 +107,14 @@ type kodesTurn struct {
 }
 
 type kodesItem struct {
+	ID      string `json:"id"`
 	Type    string `json:"type"`
 	Text    string `json:"text"`
 	Content string `json:"content"`
 	Summary string `json:"summary"`
+	Action  string `json:"action"`
+	Target  string `json:"target"`
+	Status  string `json:"status"`
 	Phase   string `json:"phase"`
 }
 
@@ -96,62 +122,184 @@ type kodesErrorResponse struct {
 	Error json.RawMessage `json:"error"`
 }
 
-// Reply starts a Kodes conversation turn, then reads the same conversation
-// endpoint until the remote turn has completed. The business message remains
-// stored locally before this call, so a remote failure never drops user input.
-func (assistant *BusinessAssistant) Reply(ctx context.Context, program dto.ProgramContext, requirementID int64, history []dto.MessageView) (string, error) {
+// Start mirrors the local Bridge's POST behaviour: create or continue a turn
+// and return its cursor immediately. The business domain persists the user's
+// statement before calling here, so a remote failure never loses that input.
+func (assistant *BusinessAssistant) Start(ctx context.Context, program dto.ProgramContext, requirementID int64, history []dto.MessageView, threadID, workspace string, attachmentIDs []string) (dto.ConversationAction, error) {
 	if assistant.baseURL == "" {
-		return "", errors.New("未配置远端 Kodes 业务访谈服务")
+		return dto.ConversationAction{}, errors.New("未配置远端 Kodes 业务访谈服务")
 	}
-	if assistant.workspace == "" {
-		return "", errors.New("未配置远端 Kodes 工作区标识")
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return dto.ConversationAction{}, errors.New("缺少远端 Kodes 业务工作目录")
 	}
 	if requirementID <= 0 {
-		return "", errors.New("业务需求标识无效")
+		return dto.ConversationAction{}, errors.New("业务需求标识无效")
 	}
 	message := businessConversationMessage(program, history)
 	if message == "" {
-		return "", errors.New("缺少业务方消息")
+		return dto.ConversationAction{}, errors.New("缺少业务方消息")
 	}
 
 	requestContext, cancel := context.WithTimeout(ctx, assistant.timeout)
 	defer cancel()
-	itemKey := fmt.Sprintf("business-requirement-%d", requirementID)
+	itemKey := businessItemKey(requirementID)
 	action, err := assistant.startConversation(requestContext, kodesConversationRequest{
 		ProgramID:       program.ProgramID,
 		ItemKey:         itemKey,
 		Message:         message,
+		ThreadID:        strings.TrimSpace(threadID),
+		AttachmentIDs:   attachmentIDs,
+		BusinessIntake:  true,
 		Provider:        "codex",
-		Workspace:       assistant.workspace,
+		Workspace:       workspace,
 		Model:           assistant.model,
 		ReasoningEffort: assistant.reasoningEffort,
 	})
 	if err != nil {
-		return "", err
+		return dto.ConversationAction{}, err
 	}
 	if !action.Accepted {
-		return "", errors.New("远端 Kodes 未接受业务访谈请求")
+		return dto.ConversationAction{}, errors.New("远端 Kodes 未接受业务访谈请求")
 	}
-	threadID := strings.TrimSpace(action.ThreadID)
-	for {
-		conversation, err := assistant.getConversation(requestContext, program.ProgramID, itemKey, threadID)
+	return dto.ConversationAction{
+		ThreadID: strings.TrimSpace(action.ThreadID),
+		TurnID:   strings.TrimSpace(action.TurnID),
+		Active:   action.Active,
+	}, nil
+}
+
+// Poll mirrors the local Bridge's GET behaviour. It reads one snapshot only;
+// browser-driven polling decides when the next request should happen.
+func (assistant *BusinessAssistant) Poll(ctx context.Context, programID, requirementID int64, threadID, turnID, workspace string) (dto.ConversationState, error) {
+	if assistant.baseURL == "" {
+		return dto.ConversationState{}, errors.New("未配置远端 Kodes 业务访谈服务")
+	}
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return dto.ConversationState{}, errors.New("缺少远端 Kodes 业务工作目录")
+	}
+	if programID <= 0 || requirementID <= 0 || strings.TrimSpace(threadID) == "" || strings.TrimSpace(turnID) == "" {
+		return dto.ConversationState{}, errors.New("远端业务访谈会话标识无效")
+	}
+	requestContext, cancel := context.WithTimeout(ctx, assistant.timeout)
+	defer cancel()
+	conversation, err := assistant.getConversation(requestContext, programID, businessItemKey(requirementID), strings.TrimSpace(threadID), workspace)
+	if err != nil {
+		return dto.ConversationState{}, err
+	}
+	state := conversation.stateFor(strings.TrimSpace(turnID))
+	if state.ThreadID == "" {
+		state.ThreadID = strings.TrimSpace(threadID)
+	}
+	return state, nil
+}
+
+// UploadAttachments stores browser files in the requirement's remote business
+// workspace and returns the manifests remote Kodes assigned to them.
+func (assistant *BusinessAssistant) UploadAttachments(ctx context.Context, programID, requirementID int64, workspace string, files []dto.AttachmentUpload) ([]dto.AttachmentView, error) {
+	if assistant.baseURL == "" {
+		return nil, errors.New("未配置远端 Kodes 业务访谈服务")
+	}
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return nil, errors.New("缺少远端 Kodes 业务工作目录")
+	}
+	if len(files) == 0 {
+		return nil, errors.New("没有待上传的文件")
+	}
+	body := &bytes.Buffer{}
+	form := multipart.NewWriter(body)
+	fields := map[string]string{
+		"programId": fmt.Sprintf("%d", programID),
+		"itemKey":   businessItemKey(requirementID),
+		"workspace": workspace,
+	}
+	for name, value := range fields {
+		if err := form.WriteField(name, value); err != nil {
+			return nil, err
+		}
+	}
+	for _, file := range files {
+		part, err := form.CreateFormFile("files", file.Name)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		if strings.TrimSpace(conversation.ThreadID) != "" {
-			threadID = strings.TrimSpace(conversation.ThreadID)
-		}
-		if response, failed := conversation.replyFor(action.TurnID); response != "" && !conversation.Active {
-			return response, nil
-		} else if failed && !conversation.Active {
-			return "", errors.New("远端 Kodes 未能完成业务访谈")
-		}
-		select {
-		case <-requestContext.Done():
-			return "", fmt.Errorf("等待远端 Kodes 业务访谈超时: %w", requestContext.Err())
-		case <-time.After(pollInterval):
+		if _, err := part.Write(file.Data); err != nil {
+			return nil, err
 		}
 	}
+	if err := form.Close(); err != nil {
+		return nil, err
+	}
+	requestContext, cancel := context.WithTimeout(ctx, assistant.timeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, assistant.baseURL+kodesAttachmentsPath, body)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	response, err := assistant.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("远端 Kodes 业务访谈服务不可用: %w", err)
+	}
+	defer response.Body.Close()
+	content, err := readKodesResponse(response)
+	if err != nil {
+		return nil, err
+	}
+	var uploaded kodesAttachmentsResponse
+	if err := json.Unmarshal(content, &uploaded); err != nil {
+		return nil, fmt.Errorf("远端 Kodes 附件返回格式无效: %w", err)
+	}
+	if message := errorMessage(uploaded.Error); message != "" {
+		return nil, fmt.Errorf("远端 Kodes 请求失败: %s", message)
+	}
+	views := make([]dto.AttachmentView, 0, len(uploaded.Attachments))
+	for _, attachment := range uploaded.Attachments {
+		id := strings.TrimSpace(attachment.ID)
+		if id == "" {
+			return nil, errors.New("远端 Kodes 未返回附件标识")
+		}
+		views = append(views, dto.AttachmentView{
+			ID: id, Name: attachment.Name, ContentType: attachment.ContentType,
+			Size: attachment.Size, IsImage: attachment.IsImage,
+		})
+	}
+	return views, nil
+}
+
+// DownloadAttachment reads one stored file back for the console preview.
+func (assistant *BusinessAssistant) DownloadAttachment(ctx context.Context, programID, requirementID int64, workspace, attachmentID string) (dto.AttachmentContent, error) {
+	if assistant.baseURL == "" {
+		return dto.AttachmentContent{}, errors.New("未配置远端 Kodes 业务访谈服务")
+	}
+	workspace = strings.TrimSpace(workspace)
+	attachmentID = strings.TrimSpace(attachmentID)
+	if workspace == "" || attachmentID == "" {
+		return dto.AttachmentContent{}, errors.New("远端业务访谈附件标识无效")
+	}
+	query := url.Values{
+		"programId":    {fmt.Sprintf("%d", programID)},
+		"itemKey":      {businessItemKey(requirementID)},
+		"workspace":    {workspace},
+		"attachmentId": {attachmentID},
+	}
+	requestContext, cancel := context.WithTimeout(ctx, assistant.timeout)
+	defer cancel()
+	response, err := assistant.request(requestContext, http.MethodGet, assistant.baseURL+kodesAttachmentPath+"?"+query.Encode(), nil)
+	if err != nil {
+		return dto.AttachmentContent{}, err
+	}
+	defer response.Body.Close()
+	content, err := readKodesResponse(response)
+	if err != nil {
+		return dto.AttachmentContent{}, err
+	}
+	return dto.AttachmentContent{
+		ContentType: strings.TrimSpace(response.Header.Get("Content-Type")),
+		Data:        content,
+	}, nil
 }
 
 func (assistant *BusinessAssistant) startConversation(ctx context.Context, payload kodesConversationRequest) (kodesConversationAction, error) {
@@ -175,12 +323,13 @@ func (assistant *BusinessAssistant) startConversation(ctx context.Context, paylo
 	return action, nil
 }
 
-func (assistant *BusinessAssistant) getConversation(ctx context.Context, programID int64, itemKey, threadID string) (kodesConversation, error) {
+func (assistant *BusinessAssistant) getConversation(ctx context.Context, programID int64, itemKey, threadID, workspace string) (kodesConversation, error) {
 	query := url.Values{
-		"programId": {fmt.Sprintf("%d", programID)},
-		"itemKey":   {itemKey},
-		"provider":  {"codex"},
-		"workspace": {assistant.workspace},
+		"programId":      {fmt.Sprintf("%d", programID)},
+		"itemKey":        {itemKey},
+		"provider":       {"codex"},
+		"workspace":      {workspace},
+		"businessIntake": {"true"},
 	}
 	if threadID != "" {
 		query.Set("threadId", threadID)
@@ -213,11 +362,6 @@ func (assistant *BusinessAssistant) request(ctx context.Context, method, endpoin
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if assistant.token != "" {
-		// The local delivery Bridge uses this header too. It is an access token
-		// for remote Kodes, not an end-user token forwarded from the browser.
-		request.Header.Set("token", assistant.token)
-	}
 	response, err := assistant.client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("远端 Kodes 业务访谈服务不可用: %w", err)
@@ -249,15 +393,19 @@ func readKodesResponse(response *http.Response) ([]byte, error) {
 	return nil, fmt.Errorf("远端 Kodes 请求失败: HTTP %d", response.StatusCode)
 }
 
-func (conversation kodesConversation) replyFor(turnID string) (string, bool) {
+func (conversation kodesConversation) stateFor(turnID string) dto.ConversationState {
+	state := dto.ConversationState{ThreadID: strings.TrimSpace(conversation.ThreadID), Active: conversation.Active}
 	for index := len(conversation.Turns) - 1; index >= 0; index-- {
 		turn := conversation.Turns[index]
 		if turnID != "" && turn.ID != turnID {
 			continue
 		}
 		if strings.EqualFold(turn.Status, "failed") {
-			return "", true
+			state.Finished = true
+			state.Failed = true
+			return state
 		}
+		replyIndex := -1
 		for itemIndex := len(turn.Items) - 1; itemIndex >= 0; itemIndex-- {
 			item := turn.Items[itemIndex]
 			if item.Type != "agentMessage" && item.Type != "plan" {
@@ -267,13 +415,54 @@ func (conversation kodesConversation) replyFor(turnID string) (string, bool) {
 			if content == "" {
 				continue
 			}
-			return content, false
+			state.Reply = content
+			state.Finished = !conversation.Active
+			replyIndex = itemIndex
+			break
 		}
-		if turnID != "" {
-			return "", false
+		// Progress is read from the same snapshot as the reply: the business
+		// browser polls this API while the turn runs and has no other way to
+		// see what the remote assistant is doing.
+		state.Activities = turn.activities(replyIndex)
+		if replyIndex >= 0 {
+			return state
 		}
+		if !conversation.Active && (strings.EqualFold(turn.Status, "completed") || strings.EqualFold(turn.Status, "cancelled") || strings.EqualFold(turn.Status, "interrupted")) {
+			state.Finished = true
+			state.Failed = !strings.EqualFold(turn.Status, "completed")
+		}
+		return state
 	}
-	return "", false
+	return state
+}
+
+// activities projects the turn's items into display-only progress steps,
+// skipping the business user's own message and the item already reported as
+// the reply.
+func (turn kodesTurn) activities(replyIndex int) []dto.ConversationActivity {
+	activities := make([]dto.ConversationActivity, 0, len(turn.Items))
+	for index, item := range turn.Items {
+		if index == replyIndex || item.Type == "userMessage" || item.Type == "" {
+			continue
+		}
+		text := strings.TrimSpace(firstNonEmpty(item.Text, item.Content, item.Summary))
+		if text == "" && strings.TrimSpace(item.Action) == "" {
+			continue
+		}
+		activities = append(activities, dto.ConversationActivity{
+			ID:     strings.TrimSpace(item.ID),
+			Type:   item.Type,
+			Text:   text,
+			Action: strings.TrimSpace(item.Action),
+			Target: strings.TrimSpace(item.Target),
+			Status: strings.TrimSpace(item.Status),
+			Phase:  strings.TrimSpace(item.Phase),
+		})
+	}
+	if len(activities) == 0 {
+		return nil
+	}
+	return activities
 }
 
 func businessConversationMessage(program dto.ProgramContext, history []dto.MessageView) string {
@@ -284,6 +473,12 @@ func businessConversationMessage(program dto.ProgramContext, history []dto.Messa
 		return businessSystemPrompt(program) + "\n\n业务方本轮输入：\n" + strings.TrimSpace(history[index].Content)
 	}
 	return ""
+}
+
+// businessItemKey is the conversation identity remote Kodes stores a business
+// intake thread and its attachments under.
+func businessItemKey(requirementID int64) string {
+	return fmt.Sprintf("business-requirement-%d", requirementID)
 }
 
 func errorMessage(raw json.RawMessage) string {

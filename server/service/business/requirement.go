@@ -3,6 +3,7 @@ package business
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,6 +13,13 @@ import (
 )
 
 const untitledRequirement = "未命名业务诉求"
+
+const (
+	// 与远端桥的上限保持一致：桥按同样的数量和大小拒收，服务端先挡一道，
+	// 免得把注定失败的上传原样转发出去。
+	maxMessageAttachments = 5
+	maxAttachmentBytes    = 20 * 1024 * 1024
+)
 
 // ListPrograms returns the deliberately small project context that a business
 // user needs before starting a conversation. It does not disclose delivery
@@ -43,7 +51,7 @@ func (s *service) ListRequirements(ctx context.Context, query dto.RequirementQue
 	for _, row := range rows {
 		views = append(views, toRequirementView(row))
 	}
-	return dto.RequirementPage{Total: total, Data: views}, nil
+	return dto.RequirementPage{Total: total, Data: s.withProgramNames(ctx, query.BizLine, views)}, nil
 }
 
 func (s *service) ListCollectedRequirements(ctx context.Context, query dto.CollectedRequirementQuery) (dto.RequirementPage, error) {
@@ -60,7 +68,7 @@ func (s *service) ListCollectedRequirements(ctx context.Context, query dto.Colle
 	for _, row := range rows {
 		views = append(views, toRequirementView(row))
 	}
-	return dto.RequirementPage{Total: total, Data: views}, nil
+	return dto.RequirementPage{Total: total, Data: s.withProgramNames(ctx, query.BizLine, views)}, nil
 }
 
 func (s *service) CreateRequirement(ctx context.Context, req dto.CreateRequirementRequest) (dto.RequirementView, error) {
@@ -81,14 +89,23 @@ func (s *service) CreateRequirement(ctx context.Context, req dto.CreateRequireme
 	if !containsBizLine(req.AccessibleBizLines, bizLine.String()) {
 		return dto.RequirementView{}, errors.New("无权向该项目提交业务需求")
 	}
+	program, err := s.programs.GetProgramContext(ctx, bizLine, req.ProgramID)
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
+	workspace, err := businessWorkspace(req.CreatorUsername, program)
+	if err != nil {
+		return dto.RequirementView{}, err
+	}
 	row := &repository.BusinessRequirement{
-		BizLine:       bizLine.String(),
-		ProgramID:     req.ProgramID,
-		Title:         untitledRequirement,
-		Detail:        "",
-		Status:        RequirementStatusSubmitted,
-		CreatedBy:     creatorID,
-		CreatedByName: strings.TrimSpace(req.CreatorName),
+		BizLine:         bizLine.String(),
+		ProgramID:       req.ProgramID,
+		Title:           untitledRequirement,
+		Detail:          "",
+		Status:          RequirementStatusSubmitted,
+		CreatedBy:       creatorID,
+		CreatedByName:   strings.TrimSpace(req.CreatorName),
+		RemoteWorkspace: workspace,
 	}
 	if err := s.repo.CreateRequirement(ctx, row); err != nil {
 		return dto.RequirementView{}, err
@@ -114,18 +131,7 @@ func (s *service) GetConversation(ctx context.Context, query dto.ConversationQue
 	if err != nil {
 		return dto.ConversationView{}, err
 	}
-	messages, err := s.repo.ListMessages(ctx, query.BizLine.String(), query.RequirementID)
-	if err != nil {
-		return dto.ConversationView{}, err
-	}
-	documents, err := s.repo.ListDocuments(ctx, query.BizLine.String(), query.RequirementID)
-	if err != nil {
-		return dto.ConversationView{}, err
-	}
-	return dto.ConversationView{
-		Requirement: toRequirementView(requirement), Program: program,
-		Messages: toMessageViews(messages), Documents: toDocumentViews(documents),
-	}, nil
+	return s.conversation(ctx, requirement, program)
 }
 
 // GetCollectedConversation exposes the business user's raw viewpoint,
@@ -149,18 +155,7 @@ func (s *service) GetCollectedConversation(ctx context.Context, query dto.Collec
 	if err != nil {
 		return dto.ConversationView{}, err
 	}
-	messages, err := s.repo.ListMessages(ctx, query.BizLine.String(), query.RequirementID)
-	if err != nil {
-		return dto.ConversationView{}, err
-	}
-	documents, err := s.repo.ListDocuments(ctx, query.BizLine.String(), query.RequirementID)
-	if err != nil {
-		return dto.ConversationView{}, err
-	}
-	return dto.ConversationView{
-		Requirement: toRequirementView(requirement), Program: program,
-		Messages: toMessageViews(messages), Documents: toDocumentViews(documents),
-	}, nil
+	return s.conversation(ctx, requirement, program)
 }
 
 // SendMessage persists the business user's statement before making the remote
@@ -186,9 +181,16 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	if err != nil {
 		return dto.SendMessageResult{}, err
 	}
+	if requirement.RemoteStatus == "running" {
+		return dto.SendMessageResult{}, errors.New("AI 正在整理上一条业务诉求，请稍候")
+	}
 	program, err := s.programs.GetProgramContext(ctx, req.BizLine, requirement.ProgramID)
 	if err != nil {
 		return dto.SendMessageResult{}, err
+	}
+	attachmentIDs := trimmedIDs(req.AttachmentIDs)
+	if len(attachmentIDs) > maxMessageAttachments {
+		return dto.SendMessageResult{}, fmt.Errorf("一条消息最多携带 %d 个附件", maxMessageAttachments)
 	}
 	userRow := &repository.BusinessRequirementMessage{
 		BizLine: req.BizLine.String(), RequirementID: requirement.ID, Role: "user", Content: content,
@@ -196,52 +198,264 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	if err := s.repo.CreateMessage(ctx, userRow); err != nil {
 		return dto.SendMessageResult{}, err
 	}
+	// Bind before the remote call: an attachment that cannot be bound is not
+	// this user's to send, and the turn must not start with it.
+	if err := s.repo.BindAttachmentsToMessage(ctx, req.BizLine.String(), requirement.ID, userRow.ID, attachmentIDs); err != nil {
+		return dto.SendMessageResult{}, err
+	}
 	messages, err := s.repo.ListMessages(ctx, req.BizLine.String(), requirement.ID)
 	if err != nil {
 		return dto.SendMessageResult{}, err
 	}
-	reply, err := s.assistant.Reply(ctx, program, requirement.ID, toMessageViews(messages))
+	workspace, err := s.requirementWorkspace(ctx, requirement, program, req.CreatorUsername)
 	if err != nil {
 		return dto.SendMessageResult{}, err
 	}
-	reply = strings.TrimSpace(reply)
+	action, err := s.assistant.Start(ctx, program, requirement.ID, toMessageViews(messages), requirement.RemoteThreadID, workspace, attachmentIDs)
+	if err != nil {
+		// The business statement is already stored. Record the remote failure so
+		// the next conversation read can show a useful recovery hint instead of
+		// making the submitted statement look as if it disappeared.
+		_ = s.repo.UpdateRemoteConversation(ctx, requirement.ID, requirement.RemoteThreadID, requirement.RemoteTurnID, "failed", err.Error())
+		return dto.SendMessageResult{}, err
+	}
+	if action.ThreadID == "" || action.TurnID == "" {
+		return dto.SendMessageResult{}, errors.New("远端 Kodes 未返回会话标识")
+	}
+	if err := s.repo.UpdateRemoteConversation(ctx, requirement.ID, action.ThreadID, action.TurnID, "running", ""); err != nil {
+		return dto.SendMessageResult{}, err
+	}
+	sent := toMessageView(userRow)
+	if len(attachmentIDs) > 0 {
+		attachments, listErr := s.repo.ListAttachments(ctx, req.BizLine.String(), requirement.ID)
+		if listErr != nil {
+			return dto.SendMessageResult{}, listErr
+		}
+		sent.Attachments = attachmentViewsFor(attachments, userRow.ID)
+	}
+	return dto.SendMessageResult{
+		UserMessage: sent, ThreadID: action.ThreadID, TurnID: action.TurnID, Active: action.Active,
+	}, nil
+}
+
+// conversation is the local API equivalent of a local plugin's GET
+// /v1/codex/conversation: every read refreshes the running remote turn once,
+// then returns the server-persisted business records.
+func (s *service) conversation(ctx context.Context, requirement *repository.BusinessRequirement, program dto.ProgramContext) (dto.ConversationView, error) {
+	streamingReply, activities, err := s.refreshRemoteConversation(ctx, requirement, program)
+	if err != nil {
+		// The original business statement is already durable. Keep the chat
+		// readable and expose the remote failure in its snapshot rather than
+		// turning every subsequent GET into an opaque HTTP error.
+		requirement.RemoteStatus = "failed"
+		requirement.RemoteError = err.Error()
+	}
+	messages, err := s.repo.ListMessages(ctx, requirement.BizLine, requirement.ID)
+	if err != nil {
+		return dto.ConversationView{}, err
+	}
+	documents, err := s.repo.ListDocuments(ctx, requirement.BizLine, requirement.ID)
+	if err != nil {
+		return dto.ConversationView{}, err
+	}
+	attachments, err := s.repo.ListAttachments(ctx, requirement.BizLine, requirement.ID)
+	if err != nil {
+		return dto.ConversationView{}, err
+	}
+	messageViews := toMessageViews(messages)
+	for index := range messageViews {
+		messageViews[index].Attachments = attachmentViewsFor(attachments, messageViews[index].ID)
+	}
+	// The browser reads these three as arrays on every poll. A nil Go slice
+	// marshals to JSON null, so keep them empty rather than absent.
+	if messageViews == nil {
+		messageViews = []dto.MessageView{}
+	}
+	documentViews := toDocumentViews(documents)
+	if documentViews == nil {
+		documentViews = []dto.DocumentView{}
+	}
+	if activities == nil {
+		activities = []dto.ConversationActivity{}
+	}
+	return dto.ConversationView{
+		Requirement: toRequirementView(requirement), Program: program,
+		Messages: messageViews, Documents: documentViews,
+		Active: requirement.RemoteStatus == "running", ThreadID: requirement.RemoteThreadID,
+		TurnID: requirement.RemoteTurnID, StreamingReply: streamingReply, StreamingActivities: activities,
+		RemoteError: requirement.RemoteError,
+	}, nil
+}
+
+func (s *service) refreshRemoteConversation(ctx context.Context, requirement *repository.BusinessRequirement, program dto.ProgramContext) (string, []dto.ConversationActivity, error) {
+	if requirement.RemoteStatus != "running" {
+		return "", nil, nil
+	}
+	if s.assistant == nil {
+		return "", nil, s.failRemoteConversation(ctx, requirement, "远端业务访谈服务尚未初始化")
+	}
+	workspace := strings.TrimSpace(requirement.RemoteWorkspace)
+	if workspace == "" {
+		return "", nil, s.failRemoteConversation(ctx, requirement, "业务诉求缺少远端工作目录，请由原业务方重新提交")
+	}
+	state, err := s.assistant.Poll(ctx, program.ProgramID, requirement.ID, requirement.RemoteThreadID, requirement.RemoteTurnID, workspace)
+	if err != nil {
+		return "", nil, s.failRemoteConversation(ctx, requirement, err.Error())
+	}
+	threadID := strings.TrimSpace(state.ThreadID)
+	if threadID == "" {
+		threadID = requirement.RemoteThreadID
+	}
+	if state.Active || !state.Finished {
+		if threadID != requirement.RemoteThreadID {
+			if err := s.repo.UpdateRemoteConversation(ctx, requirement.ID, threadID, requirement.RemoteTurnID, "running", ""); err != nil {
+				return "", nil, err
+			}
+			requirement.RemoteThreadID = threadID
+		}
+		return strings.TrimSpace(state.Reply), state.Activities, nil
+	}
+	if state.Failed {
+		return "", nil, s.failRemoteConversation(ctx, requirement, "远端 Kodes 未能完成业务访谈")
+	}
+	reply := strings.TrimSpace(state.Reply)
 	if reply == "" {
-		return dto.SendMessageResult{}, errors.New("远端 AI 没有返回可用内容")
+		return "", nil, s.failRemoteConversation(ctx, requirement, "远端 Kodes 已结束但没有返回可用内容")
 	}
 	if len([]rune(reply)) > 64000 {
-		return dto.SendMessageResult{}, errors.New("远端 AI 返回内容过长")
-	}
-	assistantRow := &repository.BusinessRequirementMessage{
-		BizLine: req.BizLine.String(), RequirementID: requirement.ID, Role: "assistant", Content: reply,
-	}
-	if err := s.repo.CreateMessage(ctx, assistantRow); err != nil {
-		return dto.SendMessageResult{}, err
-	}
-	documents, err := s.repo.ListDocuments(ctx, req.BizLine.String(), requirement.ID)
-	if err != nil {
-		return dto.SendMessageResult{}, err
-	}
-	version := 1
-	if len(documents) > 0 {
-		version = documents[0].Version + 1
+		return "", nil, s.failRemoteConversation(ctx, requirement, "远端 AI 返回内容过长")
 	}
 	title := requirement.Title
 	if title == untitledRequirement {
-		title = titleFromMessage(content)
+		userMessages, listErr := s.repo.ListMessages(ctx, requirement.BizLine, requirement.ID)
+		if listErr != nil {
+			return "", nil, listErr
+		}
+		for _, message := range userMessages {
+			if message.Role == "user" {
+				title = titleFromMessage(message.Content)
+				break
+			}
+		}
 	}
-	documentRow := &repository.BusinessRequirementDocument{
-		BizLine: req.BizLine.String(), RequirementID: requirement.ID, Type: "ai_intake",
-		Title: "AI 访谈整理 · " + title, Content: reply, Version: version,
+	finalized, err := s.repo.FinalizeRemoteConversation(ctx, repository.RemoteConversationFinalization{
+		BizLine: requirement.BizLine, RequirementID: requirement.ID, ExpectedThreadID: requirement.RemoteThreadID,
+		ThreadID: threadID, TurnID: requirement.RemoteTurnID, Title: title, Reply: reply,
+	})
+	if err != nil {
+		return "", nil, err
 	}
-	if err := s.repo.CreateDocument(ctx, documentRow); err != nil {
-		return dto.SendMessageResult{}, err
+	if !finalized {
+		// Another request completed this same turn while this poll was in
+		// flight. Refresh the canonical row so this response does not report a
+		// stale active state or re-attempt the document write.
+		refreshed, err := s.repo.FindCollectedRequirement(ctx, requirement.BizLine, requirement.ID)
+		if err != nil {
+			return "", nil, err
+		}
+		*requirement = *refreshed
+		return "", nil, nil
 	}
-	if err := s.repo.UpdateRequirementSummary(ctx, requirement.ID, title, reply); err != nil {
-		return dto.SendMessageResult{}, err
+	requirement.Title = title
+	requirement.Detail = reply
+	requirement.RemoteThreadID = threadID
+	requirement.RemoteStatus = "idle"
+	requirement.RemoteError = ""
+	return "", nil, nil
+}
+
+func (s *service) failRemoteConversation(ctx context.Context, requirement *repository.BusinessRequirement, message string) error {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "远端 Kodes 业务访谈失败"
 	}
-	return dto.SendMessageResult{
-		UserMessage: toMessageView(userRow), AssistantMessage: toMessageView(assistantRow), Document: toDocumentView(documentRow),
-	}, nil
+	updated, err := s.repo.FailRunningRemoteConversation(ctx, requirement.ID, requirement.RemoteThreadID, requirement.RemoteTurnID, message)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		refreshed, err := s.repo.FindCollectedRequirement(ctx, requirement.BizLine, requirement.ID)
+		if err != nil {
+			return err
+		}
+		*requirement = *refreshed
+		if requirement.RemoteStatus != "failed" {
+			return nil
+		}
+		if strings.TrimSpace(requirement.RemoteError) != "" {
+			return errors.New(requirement.RemoteError)
+		}
+	}
+	requirement.RemoteStatus = "failed"
+	requirement.RemoteError = message
+	return errors.New(message)
+}
+
+// requirementWorkspace keeps the remote workspace stable after a business
+// submission. Legacy rows created before this field existed receive a
+// best-effort migration when their original business user sends the next turn.
+func (s *service) requirementWorkspace(ctx context.Context, requirement *repository.BusinessRequirement, program dto.ProgramContext, username string) (string, error) {
+	if workspace := strings.TrimSpace(requirement.RemoteWorkspace); workspace != "" {
+		return workspace, nil
+	}
+	workspace, err := businessWorkspace(username, program)
+	if err != nil {
+		return "", err
+	}
+	if err := s.repo.UpdateRemoteWorkspace(ctx, requirement.ID, workspace); err != nil {
+		return "", err
+	}
+	requirement.RemoteWorkspace = workspace
+	return workspace, nil
+}
+
+// businessWorkspace is a logical path, not an absolute server path. The
+// remote Kodes plugin resolves it beneath its configured business workspace
+// root and creates the directory when necessary.
+func businessWorkspace(username string, program dto.ProgramContext) (string, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", errors.New("缺少业务方用户名，无法创建远端工作目录")
+	}
+	owner, err := businessWorkspaceSegment(username, "用户")
+	if err != nil {
+		return "", fmt.Errorf("业务方用户名不能作为工作目录：%w", err)
+	}
+	projectName := strings.TrimSpace(program.Name)
+	if projectName == "" {
+		projectName = strings.TrimSpace(program.ProgramCode)
+	}
+	project, err := businessWorkspaceSegment(projectName, "项目")
+	if err != nil {
+		return "", fmt.Errorf("项目名称不能作为工作目录：%w", err)
+	}
+	return owner + "/业务空间/" + project, nil
+}
+
+func businessWorkspaceSegment(value, fallback string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = fallback
+	}
+	if strings.ContainsAny(value, "/\\") || value == "." || value == ".." {
+		return "", errors.New("不能包含路径分隔符或相对路径")
+	}
+	var builder strings.Builder
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			builder.WriteRune('_')
+			continue
+		}
+		builder.WriteRune(character)
+	}
+	value = strings.Trim(strings.TrimSpace(builder.String()), ".")
+	if value == "" || value == "." || value == ".." {
+		return "", errors.New("目录名称无效")
+	}
+	if len([]rune(value)) > 120 {
+		value = string([]rune(value)[:120])
+	}
+	return value, nil
 }
 
 func containsBizLine(values []string, target string) bool {
@@ -253,11 +467,162 @@ func containsBizLine(values []string, target string) bool {
 	return false
 }
 
+// withProgramNames fills the display fields of a requirement page. Both intake
+// lists are small pages over one business line, so one project lookup per page
+// is cheaper and simpler than joining the delivery-owned project table here.
+func (s *service) withProgramNames(ctx context.Context, bizLine contract.BizLine, views []dto.RequirementView) []dto.RequirementView {
+	if len(views) == 0 || s.programs == nil {
+		return views
+	}
+	programs, err := s.programs.ListProgramContexts(ctx, bizLine)
+	if err != nil {
+		// A naming lookup must never fail the list itself: the caller still
+		// gets every requirement, just without the resolved project name.
+		return views
+	}
+	byID := make(map[int64]dto.ProgramContext, len(programs))
+	for _, program := range programs {
+		byID[program.ProgramID] = program
+	}
+	for index := range views {
+		program, ok := byID[views[index].ProgramID]
+		if !ok {
+			continue
+		}
+		views[index].ProgramName = program.Name
+		views[index].ProgramCode = program.ProgramCode
+	}
+	return views
+}
+
 func toRequirementView(row *repository.BusinessRequirement) dto.RequirementView {
 	return dto.RequirementView{
 		ID: row.ID, BizLine: row.BizLine, ProgramID: row.ProgramID, Title: row.Title, Detail: row.Detail,
 		Status: row.Status, CreatedBy: row.CreatedBy, CreatedByName: row.CreatedByName,
 		CreatedAt: timePtr(row.CreatedTime), UpdatedAt: timePtr(row.UpdatedTime),
+	}
+}
+
+// UploadAttachments stores the business user's files in the requirement's own
+// remote workspace and records their manifests. Files are uploaded before the
+// message that carries them, exactly as the delivery console does.
+func (s *service) UploadAttachments(ctx context.Context, req dto.UploadAttachmentsRequest) ([]dto.AttachmentView, error) {
+	if !req.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if req.RequirementID <= 0 || strings.TrimSpace(req.CreatorID) == "" {
+		return nil, errors.New("缺少业务需求标识或提交人")
+	}
+	if len(req.Files) == 0 {
+		return nil, errors.New("请选择要上传的文件")
+	}
+	if len(req.Files) > maxMessageAttachments {
+		return nil, fmt.Errorf("一次最多上传 %d 个附件", maxMessageAttachments)
+	}
+	for _, file := range req.Files {
+		if len(file.Data) == 0 {
+			return nil, fmt.Errorf("附件 %s 为空", file.Name)
+		}
+		if len(file.Data) > maxAttachmentBytes {
+			return nil, fmt.Errorf("附件 %s 超过 20 MB", file.Name)
+		}
+	}
+	if s.programs == nil || s.assistant == nil {
+		return nil, errors.New("远端业务访谈服务尚未初始化")
+	}
+	requirement, err := s.repo.FindRequirement(ctx, req.BizLine.String(), req.RequirementID, strings.TrimSpace(req.CreatorID))
+	if err != nil {
+		return nil, err
+	}
+	program, err := s.programs.GetProgramContext(ctx, req.BizLine, requirement.ProgramID)
+	if err != nil {
+		return nil, err
+	}
+	// The very first message may already carry files, so resolve the workspace
+	// here exactly as sending does instead of demanding a message first.
+	workspace, err := s.requirementWorkspace(ctx, requirement, program, req.CreatorUsername)
+	if err != nil {
+		return nil, err
+	}
+	uploaded, err := s.assistant.UploadAttachments(ctx, requirement.ProgramID, requirement.ID, workspace, req.Files)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]*repository.BusinessRequirementAttachment, 0, len(uploaded))
+	for _, attachment := range uploaded {
+		rows = append(rows, &repository.BusinessRequirementAttachment{
+			BizLine: req.BizLine.String(), RequirementID: requirement.ID, RemoteID: attachment.ID,
+			Name: attachment.Name, ContentType: attachment.ContentType, Size: attachment.Size,
+			IsImage: attachment.IsImage, CreatedBy: strings.TrimSpace(req.CreatorID),
+		})
+	}
+	if err := s.repo.CreateAttachments(ctx, rows); err != nil {
+		return nil, err
+	}
+	views := make([]dto.AttachmentView, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, toAttachmentView(row))
+	}
+	return views, nil
+}
+
+// GetAttachment reads one stored file back so the console can preview or
+// download it without reaching remote Kodes from the browser.
+func (s *service) GetAttachment(ctx context.Context, query dto.AttachmentQuery) (dto.AttachmentContent, error) {
+	if !query.BizLine.Valid() {
+		return dto.AttachmentContent{}, contract.ErrBizLineRequired
+	}
+	if query.RequirementID <= 0 || strings.TrimSpace(query.AttachmentID) == "" {
+		return dto.AttachmentContent{}, errors.New("附件标识无效")
+	}
+	if s.assistant == nil {
+		return dto.AttachmentContent{}, errors.New("远端业务访谈服务尚未初始化")
+	}
+	requirement, err := s.repo.FindRequirement(ctx, query.BizLine.String(), query.RequirementID, strings.TrimSpace(query.CreatorID))
+	if err != nil {
+		return dto.AttachmentContent{}, err
+	}
+	row, err := s.repo.FindAttachment(ctx, query.BizLine.String(), requirement.ID, strings.TrimSpace(query.AttachmentID))
+	if err != nil {
+		return dto.AttachmentContent{}, err
+	}
+	content, err := s.assistant.DownloadAttachment(ctx, requirement.ProgramID, requirement.ID, requirement.RemoteWorkspace, row.RemoteID)
+	if err != nil {
+		return dto.AttachmentContent{}, err
+	}
+	// The stored manifest is the authority on how this file is presented: the
+	// remote read only proves the bytes are still there.
+	content.Name = row.Name
+	if strings.TrimSpace(row.ContentType) != "" {
+		content.ContentType = row.ContentType
+	}
+	return content, nil
+}
+
+func trimmedIDs(values []string) []string {
+	ids := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+	return ids
+}
+
+func attachmentViewsFor(rows []*repository.BusinessRequirementAttachment, messageID int64) []dto.AttachmentView {
+	var views []dto.AttachmentView
+	for _, row := range rows {
+		if row.MessageID == messageID {
+			views = append(views, toAttachmentView(row))
+		}
+	}
+	return views
+}
+
+func toAttachmentView(row *repository.BusinessRequirementAttachment) dto.AttachmentView {
+	return dto.AttachmentView{
+		ID: row.RemoteID, Name: row.Name, ContentType: row.ContentType,
+		Size: row.Size, IsImage: row.IsImage, CreatedAt: timePtr(row.CreatedTime),
 	}
 }
 

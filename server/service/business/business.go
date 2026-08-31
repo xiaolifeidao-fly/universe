@@ -25,6 +25,8 @@ type Service interface {
 	GetConversation(context.Context, dto.ConversationQuery) (dto.ConversationView, error)
 	GetCollectedConversation(context.Context, dto.CollectedConversationQuery) (dto.ConversationView, error)
 	SendMessage(context.Context, dto.SendMessageRequest) (dto.SendMessageResult, error)
+	UploadAttachments(context.Context, dto.UploadAttachmentsRequest) ([]dto.AttachmentView, error)
+	GetAttachment(context.Context, dto.AttachmentQuery) (dto.AttachmentContent, error)
 }
 
 // ProgramReader only validates the selected project and resolves its space.
@@ -37,9 +39,15 @@ type ProgramReader interface {
 
 // Assistant is the only outward-facing dependency of the business domain.
 // Its implementation is injected at the composition root and calls the
-// remote Kodes service; the domain never invokes a user's local bridge.
+// remote Kodes Bridge with the same POST/GET conversation protocol that the
+// local delivery plugin uses. The domain never invokes a user's local bridge.
 type Assistant interface {
-	Reply(context.Context, dto.ProgramContext, int64, []dto.MessageView) (string, error)
+	Start(context.Context, dto.ProgramContext, int64, []dto.MessageView, string, string, []string) (dto.ConversationAction, error)
+	Poll(context.Context, int64, int64, string, string, string) (dto.ConversationState, error)
+	// UploadAttachments stores browser files in the requirement's remote
+	// business workspace; DownloadAttachment reads one back for preview.
+	UploadAttachments(context.Context, int64, int64, string, []dto.AttachmentUpload) ([]dto.AttachmentView, error)
+	DownloadAttachment(context.Context, int64, int64, string, string) (dto.AttachmentContent, error)
 }
 
 type service struct {

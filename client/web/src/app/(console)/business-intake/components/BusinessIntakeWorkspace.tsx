@@ -7,12 +7,13 @@ import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   type BusinessRequirementConversation,
-  type BusinessRequirementDocument,
   type BusinessRequirementMessage,
   type BusinessRequirementRecord,
   fetchCollectedBusinessRequirementConversation,
   fetchCollectedBusinessRequirements,
 } from "../api/businessIntake.api";
+import { SessionMarkdown } from "../../delivery/components/DeliverySessionMessage";
+import { BusinessRequirementDocuments } from "../../business-workbench/components/BusinessRequirementDocuments";
 
 function formatTime(value: string | undefined, locale: string) {
   if (!value) return "-";
@@ -96,7 +97,7 @@ export function BusinessIntakeWorkspace() {
                 description={(
                   <div>
                     <p>{item.detail || t("businessIntake.draft")}</p>
-                    <span className="manager-mono">{t("businessIntake.project")} #{item.programId} · {t("businessIntake.raisedBy")} {item.createdByName || item.createdBy || "-"} · {formatTime(item.updatedAt || item.createdAt, locale)}</span>
+                    <span className="manager-mono">{t("businessIntake.project")} {item.programName || item.programCode || `#${item.programId}`} · {t("businessIntake.raisedBy")} {item.createdByName || item.createdBy || "-"} · {formatTime(item.updatedAt || item.createdAt, locale)}</span>
                   </div>
                 )}
               />
@@ -125,12 +126,7 @@ export function BusinessIntakeWorkspace() {
               ]}
             />
             <Divider orientation="left">{t("businessIntake.documents")}</Divider>
-            {selected.documents.length ? selected.documents.map((document: BusinessRequirementDocument) => (
-              <details key={document.id} className="manager-business-chat__document" open={document === selected.documents[0]}>
-                <summary>{document.title} · {t("businessIntake.documentVersion").replace("{version}", String(document.version))}</summary>
-                <div>{document.content}</div>
-              </details>
-            )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("businessIntake.noDocuments")} />}
+            <BusinessRequirementDocuments documents={selected.documents} collapsible defaultOpen={false} />
             <Divider orientation="left">{t("businessIntake.conversation")}</Divider>
             <div className="manager-business-intake__messages">
               {selected.messages.map((item: BusinessRequirementMessage) => {
@@ -141,7 +137,7 @@ export function BusinessIntakeWorkspace() {
                       {isBusiness ? t("businessIntake.businessUser") : t("businessIntake.ai")}
                       <span>{formatTime(item.createdAt, locale)}</span>
                     </div>
-                    <div className="manager-business-chat__bubble">{item.content}</div>
+                    <div className="manager-business-chat__bubble"><SessionMarkdown text={item.content} /></div>
                   </article>
                 );
               })}

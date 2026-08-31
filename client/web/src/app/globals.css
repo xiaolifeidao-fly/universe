@@ -8016,7 +8016,9 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .manager-business-chat {
   display: grid;
   grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
-  min-height: min(720px, calc(100vh - 180px));
+  /* 用固定高度而不是 min-height：消息多了只让消息区滚动，输入框始终贴在底部。 */
+  height: calc(100vh - 180px);
+  min-height: 480px;
   overflow: hidden;
   border: 1px solid var(--manager-border);
   border-radius: var(--manager-r-lg);
@@ -8027,6 +8029,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .manager-business-chat__sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--manager-border);
   background: var(--manager-bg-soft);
@@ -8134,18 +8137,142 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .manager-business-chat__project h2 { margin: 3px 0; font-size: 17px; }
 .manager-business-chat__project p { margin: 0; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: 1.5; }
 
-.manager-business-chat__document {
-  margin: 12px 22px 0;
+/* AI 整理文档的版本浏览器：业务工作台的聊天列和收集详情抽屉共用同一套外观。 */
+.business-document {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--manager-border);
   border-radius: var(--manager-r);
   background: var(--manager-bg-soft);
-  color: var(--manager-text-soft);
+}
+
+.business-document__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 12px;
+  border-bottom: 1px solid transparent;
+}
+
+.business-document.is-open .business-document__head { border-bottom-color: var(--manager-border); }
+
+/* 标题占满剩余宽度并单行截断，右侧的版本控件宽度才是稳定的，不会随文档标题跳动。 */
+.business-document__toggle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--manager-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.business-document__toggle.is-static { cursor: default; }
+.business-document__toggle svg { flex: none; color: var(--manager-primary); }
+.business-document__toggle b { overflow: hidden; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+
+.business-document__chevron {
+  flex: none;
+  color: var(--manager-text-faint);
+  font-size: 11px;
+  transition: transform .18s ease;
+}
+
+.business-document.is-open .business-document__chevron { transform: rotate(180deg); }
+
+.business-document__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 版本步进器：左右各一个箭头，中间的下拉给出全部版本和生成时间。
+   翻版本是高频动作，箭头一路点到底比每次都展开下拉快得多。 */
+.business-document__versions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--manager-border);
+  border-radius: 999px;
+  background: var(--manager-surface);
+}
+
+.business-document__versions .ant-select-selector {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.business-document__count {
+  padding: 0 8px 0 2px;
+  color: var(--manager-text-faint);
+  font-size: 11px;
+}
+
+.business-document__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.business-document__option span { color: var(--manager-text-faint); font-size: 11px; }
+
+/* 停在历史版本上必须一眼可辨，否则旧结论会被当成当前结论读。 */
+.business-document__history {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--manager-warning) 26%, var(--manager-border));
+  color: var(--manager-warning);
+  background: color-mix(in srgb, var(--manager-warning) 10%, var(--manager-surface));
   font-size: var(--manager-fs-sm);
 }
 
-.manager-business-chat__document summary { cursor: pointer; padding: 10px 12px; color: var(--manager-primary); font-weight: 650; }
-.manager-business-chat__document strong { display: block; padding: 0 12px 6px; color: var(--manager-text); }
-.manager-business-chat__document div { padding: 0 12px 12px; white-space: pre-wrap; line-height: 1.65; }
+.business-document__history .ant-btn { flex: none; }
+
+.business-document__body {
+  min-height: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--manager-surface);
+}
+
+.business-document__modal .business-document__body { max-height: min(70vh, 720px); }
+
+.business-document__modal-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding-right: 28px;
+}
+
+.business-document__modal-title b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.business-document__modal-title svg { flex: none; color: var(--manager-primary); }
+.business-document__modal .business-document__versions { margin-left: auto; }
+.business-document__modal .ant-modal-body { padding-top: 0; }
+
+/* 聊天列里的文档块：跟随消息区左右对齐，高度封顶后自己滚。 */
+.manager-business-chat__main > .business-document {
+  margin: 12px 22px 0;
+  max-height: 40%;
+}
+
+.manager-business-chat__main > .business-document.is-open { flex: 0 1 auto; }
 
 .manager-business-chat__messages {
   min-height: 0;
@@ -8174,8 +8301,26 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   border-radius: 4px var(--manager-r) var(--manager-r) var(--manager-r);
   color: var(--manager-text);
   background: var(--manager-bg-soft);
-  white-space: pre-wrap;
   line-height: 1.7;
+}
+
+/* 业务侧的气泡和产研侧的会话共用 delivery-session-markdown：排版规则只维护一份。 */
+.manager-business-chat__bubble .delivery-session-markdown { color: inherit; }
+
+/* 业务方自己的气泡是实心主色，Markdown 的默认正文/链接/代码色在上面读不出来。 */
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown strong,
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown h1,
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown h2,
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown h3,
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown h4 { color: #fff; }
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown a { color: #fff; }
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown code {
+  background: rgba(255, 255, 255, .18);
+  color: #fff;
+}
+.manager-business-chat__message--user .manager-business-chat__bubble .delivery-session-markdown blockquote {
+  border-left-color: rgba(255, 255, 255, .5);
+  color: rgba(255, 255, 255, .82);
 }
 
 .manager-business-chat__message--user .manager-business-chat__bubble {
@@ -8183,6 +8328,13 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   border-radius: var(--manager-r) 4px var(--manager-r) var(--manager-r);
   color: #fff;
   background: var(--manager-primary);
+}
+
+/* The remote Bridge's current reply is shown before it is finalized into a
+   server-side message/document. Keep it visually distinct from a saved turn. */
+.manager-business-chat__message--streaming .manager-business-chat__bubble {
+  border-color: color-mix(in srgb, var(--manager-primary) 38%, var(--manager-border));
+  background: color-mix(in srgb, var(--manager-primary-light) 58%, var(--manager-surface));
 }
 
 .manager-business-chat__empty-message {
@@ -8196,13 +8348,79 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 .manager-business-chat__empty-message svg { margin: auto; font-size: 28px; color: var(--manager-primary); }
 
-.manager-business-chat__composer {
+/* 运行中的访谈过程：直接复用交付会话的折叠过程块，业务侧只负责外层留白。 */
+.manager-business-chat__activity {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 10px;
+}
+
+.manager-business-chat__activity .delivery-session-process { margin: 0; }
+
+.manager-business-chat__pending {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+  color: var(--manager-text-faint);
+  font-size: 12px;
+}
+
+.manager-business-chat__composer {
+  display: grid;
   gap: 10px;
   padding: 14px 18px;
   border-top: 1px solid var(--manager-border);
   background: var(--manager-surface);
+}
+
+.manager-business-chat__composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+/* 附件既出现在待发送区，也出现在已发出的消息里，两处用同一套样式。 */
+.manager-business-chat__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.manager-business-chat__attachment {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 4px 6px;
+  border: 1px solid var(--manager-border);
+  border-radius: 8px;
+  background: var(--manager-surface);
+}
+
+.manager-business-chat__attachment img {
+  max-width: 180px;
+  max-height: 120px;
+  border-radius: 6px;
+  cursor: zoom-in;
+  object-fit: cover;
+}
+
+.manager-business-chat__attachment button[type="button"] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  max-width: 200px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--manager-text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
 }
 
 .manager-business-chat__composer .ant-input { resize: none; }
@@ -8254,11 +8472,11 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .manager-business-intake__messages .manager-business-chat__message { max-width: 88%; }
 
 @media (max-width: 760px) {
-  .manager-business-chat { grid-template-columns: minmax(0, 1fr); min-height: calc(100vh - 148px); }
+  .manager-business-chat { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: calc(100vh - 148px); min-height: 480px; }
   .manager-business-chat__sidebar { max-height: 210px; border-right: 0; border-bottom: 1px solid var(--manager-border); }
   .manager-business-chat__sidebar-hint { display: none; }
   .manager-business-chat__session-list { display: flex; overflow-x: auto; overflow-y: hidden; }
   .manager-business-chat__session { min-width: 180px; border-right: 1px solid var(--manager-border); }
   .manager-business-chat__project, .manager-business-chat__messages { padding-left: 14px; padding-right: 14px; }
-  .manager-business-chat__document { margin-left: 14px; margin-right: 14px; }
+  .manager-business-chat__main > .business-document { margin-left: 14px; margin-right: 14px; }
 }

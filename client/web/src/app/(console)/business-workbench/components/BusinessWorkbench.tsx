@@ -1,6 +1,6 @@
 "use client";
 
-import { FileTextOutlined, MessageOutlined, PlusOutlined, SendOutlined } from "@ant-design/icons";
+import { CloseOutlined, FileTextOutlined, MessageOutlined, PaperClipOutlined, PlusOutlined, SendOutlined } from "@ant-design/icons";
 import { Alert, Button, Empty, Form, Input, List, Modal, Select, Spin, Tag, Tooltip, message } from "antd";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
@@ -10,12 +10,22 @@ import {
 	fetchBusinessPrograms,
   fetchBusinessRequirementConversation,
   fetchBusinessRequirements,
+  fetchBusinessRequirementAttachment,
   sendBusinessRequirementMessage,
+  uploadBusinessRequirementAttachments,
+  type BusinessRequirementActivity,
+  type BusinessRequirementAttachment,
   type BusinessRequirementConversation,
   type BusinessRequirementMessage,
   type BusinessRequirementRecord,
 	type BusinessProgramContext,
 } from "../api/businessRequirement.api";
+import type { CodexConversationItem } from "@/api/delivery.api";
+import { SessionMarkdown, SessionProcessGroup, groupSessionItems } from "../../delivery/components/DeliverySessionMessage";
+import { BusinessRequirementDocuments } from "./BusinessRequirementDocuments";
+
+/** 与服务端和远端桥一致的单条消息附件上限。 */
+const MAX_MESSAGE_ATTACHMENTS = 5;
 
 interface NewBusinessRequirementForm {
   programId: number;
@@ -25,6 +35,110 @@ function formatTime(value: string | undefined, locale: string) {
   if (!value) return "";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(locale, { hour12: false });
+}
+
+/**
+ * 远端过程条目转成交付会话用的条目结构，好让这里直接复用需求编辑那套渲染：
+ * 推理、命令、读写文件都收进同一个可展开的过程块，展示口径和产研侧完全一致。
+ */
+function conversationItemsOf(activities: BusinessRequirementActivity[]): CodexConversationItem[] {
+  return activities.map((activity, index) => ({
+    id: activity.id || `${activity.type}-${index}`,
+    type: activity.type,
+    text: activity.text,
+    status: activity.status,
+    phase: activity.phase,
+    action: activity.action,
+    target: activity.target,
+    attachments: [],
+    changes: [],
+  }));
+}
+
+/** 一次消息里的附件：图片直接显示缩略图，其它文件给一个下载入口。 */
+function AttachmentList({
+  bizLine,
+  requirementId,
+  attachments,
+  onRemove,
+}: {
+  bizLine: string;
+  requirementId: number;
+  attachments: BusinessRequirementAttachment[];
+  onRemove?: (attachment: BusinessRequirementAttachment) => void;
+}) {
+  const { t } = useLocale();
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  // 会话在轮询中每 1.5 秒重建一次数组，按 id 收敛依赖，避免图片被反复重新拉取。
+  const imageIds = attachments.filter((item) => item.isImage).map((item) => item.id).join(",");
+
+  useEffect(() => {
+    // 附件走本系统鉴权读回，img 标签直接取地址是拿不到的，只能先取 blob。
+    let cancelled = false;
+    const created: string[] = [];
+    const images = imageIds ? imageIds.split(",") : [];
+    void Promise.all(
+      images.map(async (id) => {
+        try {
+          const blob = await fetchBusinessRequirementAttachment(bizLine, requirementId, id);
+          const url = URL.createObjectURL(blob);
+          created.push(url);
+          return [id, url] as const;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setPreviews(Object.fromEntries(entries.filter(Boolean) as (readonly [string, string])[]));
+    });
+    return () => {
+      cancelled = true;
+      created.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [bizLine, imageIds, requirementId]);
+
+  const download = async (attachment: BusinessRequirementAttachment) => {
+    try {
+      const blob = await fetchBusinessRequirementAttachment(bizLine, requirementId, attachment.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = attachment.name;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error((error as Error).message);
+    }
+  };
+
+  if (!attachments.length) return null;
+  return (
+    <div className="manager-business-chat__attachments">
+      {attachments.map((attachment) => (
+        <div key={attachment.id} className="manager-business-chat__attachment" title={attachment.name}>
+          {attachment.isImage && previews[attachment.id] ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img src={previews[attachment.id]} alt={attachment.name} onClick={() => void download(attachment)} />
+          ) : (
+            <button type="button" onClick={() => void download(attachment)}>
+              <PaperClipOutlined />
+              <span>{attachment.name}</span>
+            </button>
+          )}
+          {onRemove ? (
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              aria-label={t("businessWorkbench.attachment.remove")}
+              onClick={() => onRemove(attachment)}
+            />
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function BusinessWorkbench() {
@@ -41,7 +155,12 @@ export function BusinessWorkbench() {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // 已上传、还没随消息发出的附件。发送成功后清空，发送失败时保留，重试不用再传一遍。
+  const [pending, setPending] = useState<BusinessRequirementAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const loadSequenceRef = useRef(0);
 
   const refreshRequirements = useCallback(async () => {
     if (!activeBusinessLine.id) {
@@ -73,34 +192,58 @@ export function BusinessWorkbench() {
     }
   }, [activeBusinessLine.id]);
 
-  const loadConversation = useCallback(async (requirementId: number) => {
-    if (!activeBusinessLine.id) return;
-    setConversationLoading(true);
-    try {
-      setConversation(await fetchBusinessRequirementConversation(activeBusinessLine.id, requirementId));
+	// 服务端每次 GET 都会同步转查一次远端 Bridge，快慢不定，响应可能乱序到达。
+	// 只让最后发出的那次请求写状态，避免旧快照把新的流式内容顶掉。
+	const loadConversation = useCallback(async (requirementId: number, silent = false) => {
+		if (!activeBusinessLine.id) return;
+		const sequence = ++loadSequenceRef.current;
+		if (!silent) setConversationLoading(true);
+		try {
+			const snapshot = await fetchBusinessRequirementConversation(activeBusinessLine.id, requirementId);
+			if (sequence === loadSequenceRef.current) setConversation(snapshot);
     } catch (error) {
-      setConversation(null);
+			if (sequence === loadSequenceRef.current) setConversation(null);
       message.error((error as Error).message);
     } finally {
-      setConversationLoading(false);
-    }
-  }, [activeBusinessLine.id]);
+		if (!silent) setConversationLoading(false);
+		}
+	}, [activeBusinessLine.id]);
 
   useEffect(() => {
     if (businessLinesLoaded) void refreshRequirements();
   }, [businessLinesLoaded, refreshRequirements]);
 
-  useEffect(() => {
-    if (selectedRequirementId) {
-      void loadConversation(selectedRequirementId);
+	useEffect(() => {
+		if (selectedRequirementId) {
+			void loadConversation(selectedRequirementId);
     } else {
       setConversation(null);
     }
-  }, [loadConversation, selectedRequirementId]);
+	}, [loadConversation, selectedRequirementId]);
+
+	// 与本地插件会话一致：POST 只受理一轮，随后由浏览器轮询本系统的
+	// 会话快照。本系统再转查远端 Bridge，并把完成的内容沉淀为业务文档。
+	// sending 期间不轮询：那时远端会话还没登记成 running，快照会返回 active=false，
+	// 既会把等待态闪掉，也会把轮询自己拆掉，直到 POST 返回才重新开始。
+	// 用「上一次拿到结果后再排下一次」代替固定间隔，慢响应不会堆叠成并发请求。
+	useEffect(() => {
+		if (!selectedRequirementId || sending || !conversation?.active) return undefined;
+		let stopped = false;
+		let timer = 0;
+		const tick = async () => {
+			await loadConversation(selectedRequirementId, true);
+			if (!stopped) timer = window.setTimeout(() => void tick(), 900);
+		};
+		timer = window.setTimeout(() => void tick(), 900);
+		return () => {
+			stopped = true;
+			window.clearTimeout(timer);
+		};
+	}, [conversation?.active, loadConversation, selectedRequirementId, sending]);
 
   useLayoutEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [conversation?.messages.length, conversationLoading]);
+  }, [conversation?.messages?.length, conversation?.streamingReply, conversationLoading]);
 
   const openNewRequirement = () => {
     newForm.resetFields();
@@ -128,20 +271,66 @@ export function BusinessWorkbench() {
     if (!selectedRequirementId || !activeBusinessLine.id || sending) return;
     const content = draft.trim();
     if (!content) return;
+    const attachments = pending;
     setDraft("");
+    setPending([]);
     setSending(true);
+    // 先把这条业务诉求乐观地贴进消息列表并进入等待态：请求还在路上时，
+    // 用户就能看到自己说的话和"AI 正在处理"，落库后的快照会覆盖它。
+    const optimisticId = -Date.now();
+    const optimistic: BusinessRequirementMessage = {
+      id: optimisticId,
+      role: "user",
+      content,
+      attachments,
+      createdAt: new Date().toISOString(),
+    };
+    setConversation((current) =>
+      current ? { ...current, messages: [...(current.messages ?? []), optimistic], active: true } : current,
+    );
     try {
-      await sendBusinessRequirementMessage(activeBusinessLine.id, selectedRequirementId, content);
-      await Promise.all([loadConversation(selectedRequirementId), refreshRequirements()]);
+      await sendBusinessRequirementMessage(
+        activeBusinessLine.id,
+        selectedRequirementId,
+        content,
+        attachments.map((item) => item.id),
+      );
+      await Promise.all([loadConversation(selectedRequirementId, true), refreshRequirements()]);
     } catch (error) {
       // The server records the business user's statement before calling the
       // remote AI, so reloading preserves that statement after a remote error.
       setDraft(content);
-      await loadConversation(selectedRequirementId);
+      setPending(attachments);
+      await loadConversation(selectedRequirementId, true);
       message.error((error as Error).message);
     } finally {
       setSending(false);
     }
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    if (!selectedRequirementId || !activeBusinessLine.id || !files.length) return;
+    if (pending.length + files.length > MAX_MESSAGE_ATTACHMENTS) {
+      message.error(`${t("businessWorkbench.attachment.tooMany")}${MAX_MESSAGE_ATTACHMENTS}`);
+      return;
+    }
+    setUploading(true);
+    try {
+      const uploaded = await uploadBusinessRequirementAttachments(activeBusinessLine.id, selectedRequirementId, files);
+      setPending((current) => [...current, ...uploaded]);
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  /** 粘贴板里的图片和文件直接当附件上传，正文里的文字仍按普通粘贴处理。 */
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files);
+    if (!files.length) return;
+    event.preventDefault();
+    void uploadFiles(files);
   };
 
   const renderMessage = (item: BusinessRequirementMessage) => {
@@ -152,7 +341,14 @@ export function BusinessWorkbench() {
           {isUser ? t("businessWorkbench.message.business") : t("businessWorkbench.message.ai")}
           <span>{formatTime(item.createdAt, locale)}</span>
         </div>
-        <div className="manager-business-chat__bubble">{item.content}</div>
+        <div className="manager-business-chat__bubble"><SessionMarkdown text={item.content} /></div>
+        {item.attachments?.length && selectedRequirementId ? (
+          <AttachmentList
+            bizLine={activeBusinessLine.id}
+            requirementId={selectedRequirementId}
+            attachments={item.attachments}
+          />
+        ) : null}
       </article>
     );
   };
@@ -211,32 +407,78 @@ export function BusinessWorkbench() {
                 <Tag className="manager-mono">{conversation.program.programCode}</Tag>
               </header>
 
-              {conversation.documents[0] ? (
-                <details className="manager-business-chat__document">
-                  <summary>{t("businessWorkbench.document.latest").replace("{version}", String(conversation.documents[0].version))}</summary>
-                  <strong>{conversation.documents[0].title}</strong>
-                  <div>{conversation.documents[0].content}</div>
-                </details>
+			  {conversation.documents?.length ? (
+                <BusinessRequirementDocuments documents={conversation.documents} collapsible defaultOpen={false} />
               ) : null}
 
-              <div className="manager-business-chat__messages">
-                {conversation.messages.length ? conversation.messages.map(renderMessage) : (
+			  <div className="manager-business-chat__messages">
+				{conversation.remoteError ? <Alert type="error" showIcon message={conversation.remoteError} /> : null}
+				{conversation.messages?.length ? conversation.messages.map(renderMessage) : (
                   <div className="manager-business-chat__empty-message">
                     <MessageOutlined />
                     <span>{t("businessWorkbench.conversationEmpty")}</span>
                   </div>
-                )}
-                <div ref={messagesEndRef} />
+				)}
+				{conversation.active && conversation.streamingActivities?.length ? (
+				  <section className="manager-business-chat__activity" aria-live="polite">
+					{groupSessionItems(conversationItemsOf(conversation.streamingActivities)).map((group) => (group.kind === "process" ? (
+					  <SessionProcessGroup items={group.items} key={group.id} />
+					) : (
+					  <div className="manager-business-chat__bubble" key={group.id}><SessionMarkdown text={group.item.text} /></div>
+					)))}
+				  </section>
+				) : null}
+				{conversation.streamingReply ? (
+				  <article className="manager-business-chat__message manager-business-chat__message--streaming">
+					<div className="manager-business-chat__message-meta">
+					  {t("businessWorkbench.message.ai")}
+					  <span>{t("businessWorkbench.aiWorking")}</span>
+					</div>
+					<div className="manager-business-chat__bubble"><SessionMarkdown text={conversation.streamingReply} /></div>
+				  </article>
+				) : null}
+				{conversation.active ? (
+				  <div className="manager-business-chat__pending"><Spin size="small" /><span>{t("businessWorkbench.aiWorking")}</span></div>
+				) : null}
+				<div ref={messagesEndRef} />
               </div>
 
               <footer className="manager-business-chat__composer">
+                {pending.length ? (
+                  <AttachmentList
+                    bizLine={activeBusinessLine.id}
+                    requirementId={selectedRequirementId ?? 0}
+                    attachments={pending}
+                    onRemove={(item) => setPending((current) => current.filter((entry) => entry.id !== item.id))}
+                  />
+                ) : null}
+                <div className="manager-business-chat__composer-row">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(event) => {
+                    void uploadFiles(Array.from(event.target.files ?? []));
+                    event.target.value = "";
+                  }}
+                />
+                <Tooltip title={t("businessWorkbench.attachment.add")}>
+                  <Button
+                    icon={<PaperClipOutlined />}
+                    loading={uploading}
+                    disabled={sending || conversation.active}
+                    onClick={() => fileInputRef.current?.click()}
+                  />
+                </Tooltip>
                 <Input.TextArea
                   value={draft}
                   autoSize={{ minRows: 2, maxRows: 6 }}
                   maxLength={16000}
-                  disabled={sending}
+				  disabled={sending || conversation.active}
                   placeholder={t("businessWorkbench.inputPlaceholder")}
                   onChange={(event) => setDraft(event.target.value)}
+                  onPaste={handlePaste}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -244,9 +486,10 @@ export function BusinessWorkbench() {
                     }
                   }}
                 />
-                <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim()} onClick={() => void sendMessage()}>
+				<Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim() || conversation.active} onClick={() => void sendMessage()}>
                   {t("businessWorkbench.send")}
                 </Button>
+                </div>
               </footer>
             </>
           )}

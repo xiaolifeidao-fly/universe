@@ -13,6 +13,16 @@ type BusinessRequirement struct {
 	Title     string `gorm:"column:title;type:varchar(255)"`
 	Detail    string `gorm:"column:detail;type:mediumtext"`
 	Status    string `gorm:"column:status;type:varchar(16);default:'submitted'"`
+	// Remote conversation state is persisted so the web process can restart
+	// while Kodes is still working and the browser can continue polling.
+	RemoteThreadID string `gorm:"column:remote_thread_id;type:varchar(128)"`
+	RemoteTurnID   string `gorm:"column:remote_turn_id;type:varchar(128)"`
+	RemoteStatus   string `gorm:"column:remote_status;type:varchar(16);default:'idle'"`
+	RemoteError    string `gorm:"column:remote_error;type:varchar(512)"`
+	// RemoteWorkspace is the logical directory resolved by remote Kodes. It is
+	// frozen at submission time so later product/research reads use the
+	// business user's own workspace rather than the current viewer's identity.
+	RemoteWorkspace string `gorm:"column:remote_workspace;type:varchar(512)"`
 
 	CreatedBy     string    `gorm:"column:created_by;type:varchar(64);index:idx_business_requirement_creator,priority:2"`
 	CreatedByName string    `gorm:"column:created_by_name;type:varchar(64)"`
@@ -55,3 +65,29 @@ type BusinessRequirementDocument struct {
 
 func (BusinessRequirementDocument) TableName() string { return "zt_business_requirement_document" }
 func (*BusinessRequirementDocument) Init()            {}
+
+// BusinessRequirementAttachment is the server-side manifest of a file the
+// business user uploaded into an intake conversation. The bytes stay in the
+// remote Kodes business workspace; this row only records what was sent, so
+// the console can list attachments without asking the remote service.
+type BusinessRequirementAttachment struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);index:idx_business_requirement_attachment,priority:1"`
+
+	RequirementID int64 `gorm:"column:requirement_id;type:bigint;index:idx_business_requirement_attachment,priority:2"`
+	// MessageID is zero until the upload is sent with a message. Unsent rows
+	// keep the file reachable for preview while the user is still typing.
+	MessageID int64 `gorm:"column:message_id;type:bigint;index:idx_business_requirement_attachment_message"`
+	// RemoteID is the attachment identifier owned by remote Kodes; it is what
+	// a conversation request and a download both address the file by.
+	RemoteID    string    `gorm:"column:remote_id;type:varchar(128);uniqueIndex:uk_business_requirement_attachment_remote"`
+	Name        string    `gorm:"column:name;type:varchar(255)"`
+	ContentType string    `gorm:"column:content_type;type:varchar(128)"`
+	Size        int64     `gorm:"column:size;type:bigint"`
+	IsImage     bool      `gorm:"column:is_image;type:tinyint(1)"`
+	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)"`
+	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_business_requirement_attachment,priority:3"`
+}
+
+func (BusinessRequirementAttachment) TableName() string { return "zt_business_requirement_attachment" }
+func (*BusinessRequirementAttachment) Init()            {}

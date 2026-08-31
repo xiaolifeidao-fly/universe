@@ -53,8 +53,6 @@ func buildHandlers(_ context.Context, database *gorm.DB) []commonrouters.Handler
 	businessTimeoutSeconds, _ := strconv.Atoi(httpx.Property("business.kodes.timeout_seconds"))
 	businessAssistant := remote.NewBusinessAssistant(
 		httpx.Property("business.kodes.remote_url"),
-		httpx.Property("business.kodes.token"),
-		httpx.Property("business.kodes.workspace"),
 		httpx.Property("business.kodes.model"),
 		httpx.Property("business.kodes.reasoning_effort"),
 		time.Duration(businessTimeoutSeconds)*time.Second,

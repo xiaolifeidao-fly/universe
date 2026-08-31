@@ -55,9 +55,13 @@ type CollectedRequirementQuery struct {
 // A business requirement is raw intake, not a requirement that has entered
 // product/research grooming, task decomposition, or delivery workflow.
 type RequirementView struct {
-	ID            int64      `json:"id"`
-	BizLine       string     `json:"bizLine"`
+	ID      int64  `json:"id"`
+	BizLine string `json:"bizLine"`
+	// ProgramID stays the canonical reference; ProgramName and ProgramCode are
+	// resolved for display so a list does not have to show a bare "#15".
 	ProgramID     int64      `json:"programId"`
+	ProgramName   string     `json:"programName"`
+	ProgramCode   string     `json:"programCode"`
 	Title         string     `json:"title"`
 	Detail        string     `json:"detail"`
 	Status        string     `json:"status"`
@@ -71,6 +75,7 @@ type CreateRequirementRequest struct {
 	ProgramID int64 `json:"programId"`
 
 	CreatorID          string   `json:"-"`
+	CreatorUsername    string   `json:"-"`
 	CreatorName        string   `json:"-"`
 	AccessibleBizLines []string `json:"-"`
 }
@@ -87,10 +92,60 @@ type ProgramContext struct {
 }
 
 type MessageView struct {
-	ID        int64      `json:"id"`
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	CreatedAt *time.Time `json:"createdAt"`
+	ID      int64  `json:"id"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// Attachments are the files the business user sent with this message.
+	// They live in the remote business workspace; only their manifest is
+	// persisted here so the console can list and preview them later.
+	Attachments []AttachmentView `json:"attachments"`
+	CreatedAt   *time.Time       `json:"createdAt"`
+}
+
+// AttachmentView is one stored business-intake file as the console sees it.
+type AttachmentView struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	ContentType string     `json:"contentType"`
+	Size        int64      `json:"size"`
+	IsImage     bool       `json:"isImage"`
+	CreatedAt   *time.Time `json:"createdAt"`
+}
+
+// AttachmentUpload is one browser-provided file on its way to remote Kodes.
+type AttachmentUpload struct {
+	Name        string
+	ContentType string
+	Data        []byte
+}
+
+// AttachmentContent is a stored file read back from remote Kodes for preview
+// or download. Business attachments are capped at 10 MB by the bridge, so the
+// body is carried in memory rather than streamed.
+type AttachmentContent struct {
+	Name        string
+	ContentType string
+	Data        []byte
+}
+
+// UploadAttachmentsRequest carries browser uploads for one business intake
+// conversation. Only the requirement's own creator may add files to it.
+type UploadAttachmentsRequest struct {
+	RequirementID int64
+	Files         []AttachmentUpload
+
+	BizLine         contract.BizLine
+	CreatorID       string
+	CreatorUsername string
+}
+
+// AttachmentQuery reads one stored attachment back for the console.
+type AttachmentQuery struct {
+	RequirementID int64
+	AttachmentID  string
+
+	BizLine   contract.BizLine
+	CreatorID string
 }
 
 type DocumentView struct {
@@ -115,23 +170,77 @@ type CollectedConversationQuery struct {
 	RequirementID int64
 }
 
+// ConversationActivity is one visible step of a running remote turn: a
+// reasoning summary, a command the assistant ran, or a file it touched. It is
+// display-only progress, never persisted as a business message.
+type ConversationActivity struct {
+	ID     string `json:"id"`
+	Type   string `json:"type"`
+	Text   string `json:"text"`
+	Action string `json:"action"`
+	Target string `json:"target"`
+	Status string `json:"status"`
+	Phase  string `json:"phase"`
+}
+
 type ConversationView struct {
 	Requirement RequirementView `json:"requirement"`
 	Program     ProgramContext  `json:"program"`
 	Messages    []MessageView   `json:"messages"`
 	Documents   []DocumentView  `json:"documents"`
+	// Active mirrors the remote Bridge turn. The browser polls this API while
+	// it is true, exactly as it does for a local delivery Bridge conversation.
+	Active   bool   `json:"active"`
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	// StreamingReply is the latest, not-yet-final remote response. It is
+	// intentionally transient: only the terminal AI response is persisted as
+	// a business message and an intake document.
+	StreamingReply string `json:"streamingReply"`
+	// StreamingActivities is what the remote assistant has been doing during
+	// the running turn. It is as transient as StreamingReply: every poll
+	// replaces it, and nothing here survives the turn.
+	StreamingActivities []ConversationActivity `json:"streamingActivities"`
+	RemoteError         string                 `json:"remoteError"`
 }
 
 type SendMessageRequest struct {
 	RequirementID int64  `json:"requirementId"`
 	Content       string `json:"content"`
+	// AttachmentIDs are files already uploaded for this requirement. They are
+	// bound to the message this request creates.
+	AttachmentIDs []string `json:"attachmentIds"`
 
-	BizLine   contract.BizLine `json:"-"`
-	CreatorID string           `json:"-"`
+	BizLine         contract.BizLine `json:"-"`
+	CreatorID       string           `json:"-"`
+	CreatorUsername string           `json:"-"`
 }
 
 type SendMessageResult struct {
-	UserMessage      MessageView  `json:"userMessage"`
-	AssistantMessage MessageView  `json:"assistantMessage"`
-	Document         DocumentView `json:"document"`
+	UserMessage MessageView `json:"userMessage"`
+	ThreadID    string      `json:"threadId"`
+	TurnID      string      `json:"turnId"`
+	Active      bool        `json:"active"`
+}
+
+// ConversationAction is the asynchronous acknowledgement returned by the
+// remote Kodes Bridge after POST /v1/codex/conversation.
+type ConversationAction struct {
+	ThreadID string
+	TurnID   string
+	Active   bool
+}
+
+// ConversationState is the latest snapshot read from the remote Kodes
+// Bridge. Reply may be a current incremental response while the turn is
+// active, or the terminal response once it has finished.
+type ConversationState struct {
+	ThreadID string
+	Active   bool
+	Finished bool
+	Failed   bool
+	Reply    string
+	// Activities are the turn's progress steps in the order the remote
+	// assistant produced them, excluding the item reported as Reply.
+	Activities []ConversationActivity
 }
