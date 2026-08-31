@@ -136,7 +136,7 @@ func (assistant *BusinessAssistant) Start(ctx context.Context, req dto.Conversat
 	if req.RequirementID <= 0 {
 		return dto.ConversationAction{}, errors.New("业务需求标识无效")
 	}
-	message := businessConversationMessage(req.Program, req.History, req.References)
+	message := businessConversationMessage(req.Program, req.History, req.References, req.Mode)
 	if message == "" {
 		return dto.ConversationAction{}, errors.New("缺少业务方消息")
 	}
@@ -465,12 +465,16 @@ func (turn kodesTurn) activities(replyIndex int) []dto.ConversationActivity {
 	return activities
 }
 
-func businessConversationMessage(program dto.ProgramContext, history []dto.MessageView, references []dto.DocumentReference) string {
+func businessConversationMessage(program dto.ProgramContext, history []dto.MessageView, references []dto.DocumentReference, mode string) string {
+	prompt := businessSystemPrompt(program)
+	if mode == dto.ConversationModeDocument {
+		prompt = businessDocumentPrompt(program)
+	}
 	for index := len(history) - 1; index >= 0; index-- {
 		if history[index].Role != "user" || strings.TrimSpace(history[index].Content) == "" {
 			continue
 		}
-		return businessSystemPrompt(program) + businessReferenceBlock(references) +
+		return prompt + businessReferenceBlock(references) +
 			"\n\n业务方本轮输入：\n" + strings.TrimSpace(history[index].Content)
 	}
 	return ""
@@ -543,5 +547,29 @@ func businessSystemPrompt(program dto.ProgramContext) string {
 当前项目：%s（%s）
 项目说明：%s
 
-请围绕该项目理解用户的业务背景、问题、目标、受影响对象和预期结果。每次回答都先回应用户，再给出可执行的初步整理；信息不足时提出少量具体问题。可使用“已了解”“初步需求点”“待澄清”等简短小节。不要编造事实、不要承诺研发排期，也不要把内容写成产研任务或技术方案。你的回复会作为业务方原始观点的服务端文档，供后续产品产研继续梳理。`, program.Name, program.ProgramCode, program.Summary)
+请围绕该项目理解用户的业务背景、问题、目标、受影响对象和预期结果。每次回答都先回应用户，再给出可执行的初步整理；信息不足时提出少量具体问题。可使用“已了解”“初步需求点”“待澄清”等简短小节。不要编造事实、不要承诺研发排期，也不要把内容写成产研任务或技术方案。你的回复会作为业务方原始观点的服务端文档，供后续产品产研继续梳理。
+
+追问要克制：同一件事不要反复追问，一轮最多问 2 到 3 个真正影响理解的问题，其余先按已知信息整理并标注“待澄清”。业务方随时可以点界面上的「确认文档」，让你停止追问、直接产出完整文档，所以不必为了凑齐信息而一直提问。`, program.Name, program.ProgramCode, program.Summary)
+}
+
+// businessDocumentPrompt is the turn the 「确认文档」 button starts. The
+// business user has decided the interview is good enough, so the assistant
+// stops asking and turns everything said so far into one document. Gaps are
+// written down as gaps: an invented answer is worse than an open question.
+func businessDocumentPrompt(program dto.ProgramContext) string {
+	return fmt.Sprintf(`你是一位面向业务方的需求访谈顾问。业务方刚刚点了「确认文档」，表示访谈到此为止，请把已经聊到的内容整理成一份可以直接交给产品产研的业务诉求文档。
+
+当前项目：%s（%s）
+项目说明：%s
+
+请基于本次会话的全部内容（业务方的原话、附件、引用资料）输出一份结构化中文文档，依次包含这些小节：
+1. 业务背景与现状
+2. 要解决的问题
+3. 目标与预期效果（能量化的写清口径）
+4. 涉及角色与使用场景（谁、在什么情况下、怎么用）
+5. 具体诉求清单（逐条编号，标注优先级）
+6. 约束与边界（时间、合规、依赖，以及明确不做的事）
+7. 待澄清事项（仍然影响判断的问题，逐条列出）
+
+写作要求：只使用会话里出现过的事实，缺失的内容写“待补充”并说明缺什么，绝不编造；比平时的访谈整理写得更详细完整，正文不要少于 800 字，但也不要为了凑字数重复。整篇只输出这份文档：结尾不要再追问，不要写产研任务、技术方案或研发排期。这份文档会作为业务方原始诉求的正式记录留档。`, program.Name, program.ProgramCode, program.Summary)
 }

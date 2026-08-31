@@ -35,6 +35,10 @@ type RemoteConversationFinalization struct {
 	TurnID           string
 	Title            string
 	Reply            string
+	// DocumentTitle names the version this turn produces. The confirmed
+	// document and an ordinary interview summary share one lineage, so the
+	// title is what tells a reader which kind of version they are looking at.
+	DocumentTitle string
 }
 
 type BusinessRepository struct {
@@ -122,6 +126,20 @@ func (r *BusinessRepository) UpdateRemoteConversation(ctx context.Context, requi
 	}).Error
 }
 
+// StartRemoteConversation marks a turn as running and records what it was
+// asked to produce. Mode is written only here: the poll that finalizes the
+// turn runs in a different request and has nothing else to read it from.
+func (r *BusinessRepository) StartRemoteConversation(ctx context.Context, requirementID int64, threadID, turnID, mode string) error {
+	return r.Db.WithContext(ctx).Model(&BusinessRequirement{}).Where("id = ?", requirementID).Updates(map[string]any{
+		"remote_thread_id": threadID,
+		"remote_turn_id":   turnID,
+		"remote_status":    "running",
+		"remote_error":     "",
+		"remote_mode":      mode,
+		"updated_time":     time.Now(),
+	}).Error
+}
+
 func (r *BusinessRepository) UpdateRemoteWorkspace(ctx context.Context, requirementID int64, workspace string) error {
 	return r.Db.WithContext(ctx).Model(&BusinessRequirement{}).Where("id = ?", requirementID).Updates(map[string]any{
 		"remote_workspace": workspace,
@@ -183,7 +201,7 @@ func (r *BusinessRepository) FinalizeRemoteConversation(ctx context.Context, inp
 		}
 		if err := tx.Create(&BusinessRequirementDocument{
 			BizLine: input.BizLine, RequirementID: input.RequirementID, Type: "ai_intake",
-			Title: "AI 访谈整理 · " + input.Title, Content: input.Reply, Version: version, CreatedTime: now,
+			Title: input.DocumentTitle, Content: input.Reply, Version: version, CreatedTime: now,
 		}).Error; err != nil {
 			return err
 		}
@@ -194,6 +212,7 @@ func (r *BusinessRepository) FinalizeRemoteConversation(ctx context.Context, inp
 			"remote_turn_id":   input.TurnID,
 			"remote_status":    "idle",
 			"remote_error":     "",
+			"remote_mode":      "",
 			"updated_time":     now,
 		}).Error
 	})

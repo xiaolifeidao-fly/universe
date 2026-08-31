@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS `zt_business_requirement` (
   `remote_turn_id`   varchar(128) NOT NULL DEFAULT '',
   `remote_status`    varchar(16)  NOT NULL DEFAULT 'idle',
   `remote_error`     varchar(512) NOT NULL DEFAULT '',
+  `remote_mode`      varchar(16)  NOT NULL DEFAULT '',
   `remote_workspace` varchar(512) NOT NULL DEFAULT '',
   `created_by`      varchar(64)  NOT NULL,
   `created_by_name` varchar(64)  NOT NULL,

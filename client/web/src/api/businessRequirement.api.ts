@@ -65,6 +65,8 @@ export class BusinessRequirementDocument {
   title = "";
   content = "";
   version = 0;
+  /** 业务方点「确认文档」产出的那一版；其余是每轮访谈自动沉淀的整理。 */
+  confirmed = false;
   createdAt?: string;
 }
 
@@ -116,16 +118,23 @@ export async function fetchBusinessRequirementConversation(bizLine: string, requ
   return getData(BusinessRequirementConversation, "/business/requirement", withBizLine(bizLine, { requirementId }));
 }
 
+/**
+ * 一轮业务访谈的动作。statement 是业务方自己说话；document 是点了「确认文档」，
+ * 由服务端换一套提示词让 AI 停止追问、直接把已聊到的内容写成完整文档。
+ */
+export type BusinessConversationMode = "statement" | "document";
+
 export async function sendBusinessRequirementMessage(
   bizLine: string,
   requirementId: number,
   content: string,
   attachmentIds: string[] = [],
   referenceDocumentIds: number[] = [],
+  mode: BusinessConversationMode = "statement",
 ) {
   const response = await instance.post<ApiResponse<SendBusinessRequirementMessageResult>>(
     "/business/requirement/messages",
-    { requirementId, content, attachmentIds, referenceDocumentIds },
+    { requirementId, content, attachmentIds, referenceDocumentIds, mode },
     { params: withBizLine(bizLine) },
   );
   return unwrapApiResponse(response.data);

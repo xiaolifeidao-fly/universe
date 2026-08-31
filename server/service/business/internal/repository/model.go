@@ -19,6 +19,11 @@ type BusinessRequirement struct {
 	RemoteTurnID   string `gorm:"column:remote_turn_id;type:varchar(128)"`
 	RemoteStatus   string `gorm:"column:remote_status;type:varchar(16);default:'idle'"`
 	RemoteError    string `gorm:"column:remote_error;type:varchar(512)"`
+	// RemoteMode tells what the running turn was asked to produce: an ordinary
+	// interview reply, or the detailed document the business user confirmed.
+	// It is persisted because the turn is finalized by a later poll request,
+	// which otherwise could not tell the two apart.
+	RemoteMode string `gorm:"column:remote_mode;type:varchar(16)"`
 	// RemoteWorkspace is the logical directory resolved by remote Kodes. It is
 	// frozen at submission time so later product/research reads use the
 	// business user's own workspace rather than the current viewer's identity.

@@ -108,10 +108,13 @@ export function BusinessRequirementDocuments({
           title: item.title,
           time: formatTime(item.createdAt, locale),
           isLatest: position === 0,
+          confirmed: item.confirmed,
         }))}
         optionRender={(option) => (
           <div className="business-document__option">
             <b>{option.label}</b>
+            {/* 确认文档和每轮的访谈整理共用一条版本线，下拉里不标出来就只能逐版点开认。 */}
+            {option.data.confirmed ? <Tag color="green">{t("businessDocument.confirmed")}</Tag> : null}
             {option.data.isLatest ? <Tag color="blue">{t("businessDocument.latest")}</Tag> : null}
             <span className="manager-mono">{option.data.time}</span>
           </div>
@@ -174,6 +177,7 @@ export function BusinessRequirementDocuments({
           </div>
         )}
         <div className="business-document__actions">
+          {current.confirmed ? <Tag color="green">{t("businessDocument.confirmed")}</Tag> : null}
           {isLatest ? <Tag color="blue">{t("businessDocument.latest")}</Tag> : null}
           {versionPicker}
           <Tooltip title={copied ? t("businessDocument.copied") : t("businessDocument.copy")}>
@@ -207,6 +211,7 @@ export function BusinessRequirementDocuments({
           <div className="business-document__modal-title">
             <FileTextOutlined />
             <b>{current.title}</b>
+            {current.confirmed ? <Tag color="green">{t("businessDocument.confirmed")}</Tag> : null}
             {isLatest ? <Tag color="blue">{t("businessDocument.latest")}</Tag> : null}
             {versionPicker}
           </div>

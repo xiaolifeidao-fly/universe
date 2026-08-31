@@ -1,6 +1,6 @@
 "use client";
 
-import { CloseOutlined, FileTextOutlined, MessageOutlined, PaperClipOutlined, PlusOutlined, SendOutlined } from "@ant-design/icons";
+import { CloseOutlined, FileDoneOutlined, FileTextOutlined, MessageOutlined, PaperClipOutlined, PlusOutlined, SendOutlined } from "@ant-design/icons";
 import { Alert, Button, Empty, Form, List, Modal, Select, Spin, Tag, Tooltip, message } from "antd";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
@@ -326,6 +326,40 @@ export function BusinessWorkbench() {
     }
   };
 
+  /**
+   * 「确认文档」：访谈聊到够用了就在这里收口，让 AI 停止追问、直接把已经说过的
+   * 内容整理成一份完整文档。输入框里没写完的话不丢，作为补充说明一起带上。
+   *
+   * 这里不做乐观气泡：那句「确认文档」的原话由服务端写进消息表，前端再拼一遍
+   * 只会在快照回来时闪一下不一致的文案。
+   */
+  const confirmDocument = async () => {
+    if (!selectedRequirementId || !activeBusinessLine.id || sending || conversation?.active) return;
+    const supplement = draft.trim();
+    const attachments = pending;
+    const documents = referenced;
+    setSending(true);
+    try {
+      await sendBusinessRequirementMessage(
+        activeBusinessLine.id,
+        selectedRequirementId,
+        supplement,
+        attachments.map((item) => item.id),
+        documents.map((item) => item.documentId),
+        "document",
+      );
+      setDraft("");
+      setPending([]);
+      setReferenced([]);
+      await Promise.all([loadConversation(selectedRequirementId, true), refreshRequirements()]);
+      message.success(t("businessWorkbench.confirmDocumentStarted"));
+    } catch (error) {
+      message.error((error as Error).message);
+    } finally {
+      setSending(false);
+    }
+  };
+
   const uploadFiles = async (files: File[]) => {
     if (!selectedRequirementId || !activeBusinessLine.id || !files.length) return;
     if (pending.length + files.length > MAX_MESSAGE_ATTACHMENTS) {
@@ -505,6 +539,16 @@ export function BusinessWorkbench() {
                     void sendMessage();
                   }}
                 />
+                <Tooltip title={t("businessWorkbench.confirmDocumentTip")}>
+                  <Button
+                    icon={<FileDoneOutlined />}
+                    loading={sending}
+                    disabled={conversation.active || !conversation.messages?.length}
+                    onClick={() => void confirmDocument()}
+                  >
+                    {t("businessWorkbench.confirmDocument")}
+                  </Button>
+                </Tooltip>
 				<Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim() || conversation.active} onClick={() => void sendMessage()}>
                   {t("businessWorkbench.send")}
                 </Button>

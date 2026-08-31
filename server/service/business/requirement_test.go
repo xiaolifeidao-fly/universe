@@ -48,3 +48,38 @@ func TestTrimmedIDsDropsBlanks(t *testing.T) {
 		t.Fatalf("unexpected ids: %#v", ids)
 	}
 }
+
+func TestConversationModeOfAcceptsOnlyKnownActions(t *testing.T) {
+	// 老前端不带 mode，必须继续当普通发言处理。
+	if mode, err := conversationModeOf(""); err != nil || mode != dto.ConversationModeStatement {
+		t.Fatalf("unexpected default mode: %q %v", mode, err)
+	}
+	if mode, err := conversationModeOf(" document "); err != nil || mode != dto.ConversationModeDocument {
+		t.Fatalf("unexpected document mode: %q %v", mode, err)
+	}
+	if _, err := conversationModeOf("delete"); err == nil {
+		t.Fatal("expected unknown mode to be rejected")
+	}
+}
+
+func TestSupplementOfKeepsOnlyRealInput(t *testing.T) {
+	if supplement := supplementOf("   "); supplement != "" {
+		t.Fatalf("blank supplement should be dropped: %q", supplement)
+	}
+	if supplement := supplementOf("只覆盖华东"); supplement != "\n\n补充说明：\n只覆盖华东" {
+		t.Fatalf("unexpected supplement: %q", supplement)
+	}
+}
+
+func TestContainsUserMessageIgnoresBlankAndAssistantRows(t *testing.T) {
+	rows := []*repository.BusinessRequirementMessage{
+		{Role: "assistant", Content: "请问你的目标是什么？"},
+		{Role: "user", Content: "   "},
+	}
+	if containsUserMessage(rows) {
+		t.Fatal("blank user rows must not count as something to document")
+	}
+	if !containsUserMessage(append(rows, &repository.BusinessRequirementMessage{Role: "user", Content: "想做直播"})) {
+		t.Fatal("expected a real business statement to count")
+	}
+}

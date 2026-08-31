@@ -149,11 +149,16 @@ type AttachmentQuery struct {
 }
 
 type DocumentView struct {
-	ID        int64      `json:"id"`
-	Type      string     `json:"type"`
-	Title     string     `json:"title"`
-	Content   string     `json:"content"`
-	Version   int        `json:"version"`
+	ID      int64  `json:"id"`
+	Type    string `json:"type"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+	Version int    `json:"version"`
+	// Confirmed marks the version the business user asked for with 「确认文档」,
+	// as opposed to the summary every interview turn leaves behind. The two
+	// share one version line, so the browser needs this to label them apart
+	// without parsing the title itself.
+	Confirmed bool       `json:"confirmed"`
 	CreatedAt *time.Time `json:"createdAt"`
 }
 
@@ -215,7 +220,19 @@ type ConversationStartRequest struct {
 	Workspace     string
 	AttachmentIDs []string
 	References    []DocumentReference
+	// Mode is ConversationModeStatement for an ordinary interview turn, or
+	// ConversationModeDocument once the business user has confirmed that the
+	// assistant should stop asking and write the document.
+	Mode string
 }
+
+// The two things a business intake turn can be asked to do. A statement turn
+// keeps interviewing; a document turn stops asking and writes the detailed
+// business document from everything said so far.
+const (
+	ConversationModeStatement = "statement"
+	ConversationModeDocument  = "document"
+)
 
 // DocumentReferenceQuery lists the intake documents a business user may attach
 // with @ while writing the next message. Candidates are scoped to the project
@@ -259,6 +276,11 @@ type SendMessageRequest struct {
 	// AttachmentIDs are files already uploaded for this requirement. They are
 	// bound to the message this request creates.
 	AttachmentIDs []string `json:"attachmentIds"`
+	// Mode is empty or ConversationModeStatement for ordinary input, and
+	// ConversationModeDocument when the business user pressed 「确认文档」.
+	// A document turn accepts an empty Content: pressing the button is itself
+	// the instruction, and anything typed alongside it is a supplement.
+	Mode string `json:"mode"`
 
 	BizLine         contract.BizLine `json:"-"`
 	CreatorID       string           `json:"-"`

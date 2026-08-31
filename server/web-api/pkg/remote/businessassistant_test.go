@@ -203,6 +203,7 @@ func TestBusinessConversationMessageLabelsReferences(t *testing.T) {
 		dto.ProgramContext{ProgramID: 1, Name: "业务项目", ProgramCode: "biz-1"},
 		[]dto.MessageView{{Role: "user", Content: "这次想做直播"}},
 		[]dto.DocumentReference{{RequirementTitle: "上次访谈", Title: "AI 访谈整理", Version: 3, Content: "结论：先做选品"}},
+		dto.ConversationModeStatement,
 	)
 	if !strings.Contains(message, "业务方引用的既有资料") {
 		t.Fatalf("reference block missing: %s", message)
@@ -221,8 +222,28 @@ func TestBusinessConversationMessageSkipsEmptyReference(t *testing.T) {
 		dto.ProgramContext{ProgramID: 1},
 		[]dto.MessageView{{Role: "user", Content: "继续"}},
 		[]dto.DocumentReference{{RequirementTitle: "空访谈", Title: "空文档", Version: 1, Content: "   "}},
+		dto.ConversationModeStatement,
 	)
 	if strings.Contains(message, "空文档") {
 		t.Fatalf("empty reference should be dropped: %s", message)
+	}
+}
+
+// 「确认文档」这一轮必须换掉访谈提示词：业务方要的是文档，不是又一轮追问。
+func TestBusinessConversationMessageSwitchesToTheDocumentPrompt(t *testing.T) {
+	history := []dto.MessageView{{Role: "user", Content: "【确认文档】请不要再追问"}}
+	program := dto.ProgramContext{ProgramID: 1, Name: "业务项目", ProgramCode: "biz-1"}
+
+	document := businessConversationMessage(program, history, nil, dto.ConversationModeDocument)
+	if !strings.Contains(document, "业务方刚刚点了「确认文档」") || !strings.Contains(document, "待澄清事项") {
+		t.Fatalf("document prompt missing: %s", document)
+	}
+	if strings.Contains(document, "信息不足时提出少量具体问题") {
+		t.Fatalf("document turn must not keep the interview instructions: %s", document)
+	}
+
+	statement := businessConversationMessage(program, history, nil, dto.ConversationModeStatement)
+	if strings.Contains(statement, "业务方刚刚点了「确认文档」") {
+		t.Fatalf("statement turn must keep the interview prompt: %s", statement)
 	}
 }

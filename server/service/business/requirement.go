@@ -14,6 +14,18 @@ import (
 
 const untitledRequirement = "未命名业务诉求"
 
+// 两种文档标题：一份是访谈过程中每轮自动沉淀的整理，一份是业务方点「确认文档」
+// 后产出的正式诉求文档。它们共用同一条版本线，靠标题区分，翻版本时一眼能认出
+// 哪一版是业务方自己确认要落地的那份。
+const (
+	interviewDocumentTitlePrefix = "AI 访谈整理 · "
+	confirmedDocumentTitlePrefix = "业务诉求文档 · "
+)
+
+// 业务方点「确认文档」时替他说的那句话。它照常落成一条 user 消息：对话里必须
+// 看得出这一版文档是谁、在哪一步要求产出的，否则文档会像凭空冒出来。
+const confirmDocumentStatement = "【确认文档】请不要再追问，基于目前对话把我的业务诉求整理成一份完整的文档。"
+
 const (
 	// 与远端桥的上限保持一致：桥按同样的数量和大小拒收，服务端先挡一道，
 	// 免得把注定失败的上传原样转发出去。
@@ -225,8 +237,12 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	if req.RequirementID <= 0 || strings.TrimSpace(req.CreatorID) == "" {
 		return dto.SendMessageResult{}, errors.New("缺少业务需求标识或提交人")
 	}
+	mode, err := conversationModeOf(req.Mode)
+	if err != nil {
+		return dto.SendMessageResult{}, err
+	}
 	content := strings.TrimSpace(req.Content)
-	if content == "" {
+	if content == "" && mode != dto.ConversationModeDocument {
 		return dto.SendMessageResult{}, errors.New("请输入想法或问题")
 	}
 	if len([]rune(content)) > 16000 {
@@ -241,6 +257,17 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	}
 	if requirement.RemoteStatus == "running" {
 		return dto.SendMessageResult{}, errors.New("AI 正在整理上一条业务诉求，请稍候")
+	}
+	if mode == dto.ConversationModeDocument {
+		// 一句话都还没说就确认文档，AI 只能凭空编：先要求业务方把诉求讲出来。
+		spoken, err := s.repo.ListMessages(ctx, req.BizLine.String(), requirement.ID)
+		if err != nil {
+			return dto.SendMessageResult{}, err
+		}
+		if !containsUserMessage(spoken) {
+			return dto.SendMessageResult{}, errors.New("还没有可整理的内容，请先说明你的业务诉求")
+		}
+		content = confirmDocumentStatement + supplementOf(content)
 	}
 	program, err := s.programs.GetProgramContext(ctx, req.BizLine, requirement.ProgramID)
 	if err != nil {
@@ -276,7 +303,7 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	action, err := s.assistant.Start(ctx, dto.ConversationStartRequest{
 		Program: program, RequirementID: requirement.ID, History: toMessageViews(messages),
 		ThreadID: requirement.RemoteThreadID, Workspace: workspace,
-		AttachmentIDs: attachmentIDs, References: references,
+		AttachmentIDs: attachmentIDs, References: references, Mode: mode,
 	})
 	if err != nil {
 		// The business statement is already stored. Record the remote failure so
@@ -288,7 +315,7 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	if action.ThreadID == "" || action.TurnID == "" {
 		return dto.SendMessageResult{}, errors.New("远端 Kodes 未返回会话标识")
 	}
-	if err := s.repo.UpdateRemoteConversation(ctx, requirement.ID, action.ThreadID, action.TurnID, "running", ""); err != nil {
+	if err := s.repo.StartRemoteConversation(ctx, requirement.ID, action.ThreadID, action.TurnID, mode); err != nil {
 		return dto.SendMessageResult{}, err
 	}
 	sent := toMessageView(userRow)
@@ -404,9 +431,14 @@ func (s *service) refreshRemoteConversation(ctx context.Context, requirement *re
 			}
 		}
 	}
+	documentTitle := interviewDocumentTitlePrefix + title
+	if requirement.RemoteMode == dto.ConversationModeDocument {
+		documentTitle = confirmedDocumentTitlePrefix + title
+	}
 	finalized, err := s.repo.FinalizeRemoteConversation(ctx, repository.RemoteConversationFinalization{
 		BizLine: requirement.BizLine, RequirementID: requirement.ID, ExpectedThreadID: requirement.RemoteThreadID,
 		ThreadID: threadID, TurnID: requirement.RemoteTurnID, Title: title, Reply: reply,
+		DocumentTitle: documentTitle,
 	})
 	if err != nil {
 		return "", nil, err
@@ -427,6 +459,7 @@ func (s *service) refreshRemoteConversation(ctx context.Context, requirement *re
 	requirement.RemoteThreadID = threadID
 	requirement.RemoteStatus = "idle"
 	requirement.RemoteError = ""
+	requirement.RemoteMode = ""
 	return "", nil, nil
 }
 
@@ -714,7 +747,10 @@ func toDocumentViews(rows []*repository.BusinessRequirementDocument) []dto.Docum
 
 func toDocumentView(row *repository.BusinessRequirementDocument) dto.DocumentView {
 	return dto.DocumentView{
-		ID: row.ID, Type: row.Type, Title: row.Title, Content: row.Content, Version: row.Version, CreatedAt: timePtr(row.CreatedTime),
+		ID: row.ID, Type: row.Type, Title: row.Title, Content: row.Content, Version: row.Version,
+		// 标题就是这两类文档的分界线，写入时由本包决定，这里按同一个常量读回来。
+		Confirmed: strings.HasPrefix(row.Title, confirmedDocumentTitlePrefix),
+		CreatedAt: timePtr(row.CreatedTime),
 	}
 }
 
@@ -728,6 +764,38 @@ func titleFromMessage(value string) string {
 		return untitledRequirement
 	}
 	return value
+}
+
+// conversationModeOf normalises what the browser asked this turn to do. An
+// empty mode stays an ordinary statement so older clients keep working.
+func conversationModeOf(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "", dto.ConversationModeStatement:
+		return dto.ConversationModeStatement, nil
+	case dto.ConversationModeDocument:
+		return dto.ConversationModeDocument, nil
+	default:
+		return "", errors.New("未知的业务访谈动作")
+	}
+}
+
+func containsUserMessage(rows []*repository.BusinessRequirementMessage) bool {
+	for _, row := range rows {
+		if row.Role == "user" && strings.TrimSpace(row.Content) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// supplementOf appends whatever the business user typed next to 「确认文档」.
+// It is written as a supplement rather than as this turn's whole input: the
+// button already carries the instruction, and the box is usually empty.
+func supplementOf(content string) string {
+	if content = strings.TrimSpace(content); content == "" {
+		return ""
+	}
+	return "\n\n补充说明：\n" + content
 }
 
 func timePtr(value time.Time) *time.Time { return &value }
