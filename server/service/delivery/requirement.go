@@ -42,14 +42,15 @@ func (s *service) ListRequirements(ctx context.Context, query dto.RequirementQue
 		}
 	}
 	rows, total, err := s.repo.ListRequirements(ctx, repository.RequirementQuery{
-		BizLine:    query.BizLine.String(),
-		ProgramID:  query.ProgramID,
-		Keyword:    strings.TrimSpace(query.Keyword),
-		Status:     strings.TrimSpace(query.Status),
-		RelatedTo:  relatedTo,
-		AssignedTo: assignedTo,
-		Offset:     query.Offset(),
-		Limit:      query.Limit(),
+		BizLine:     query.BizLine.String(),
+		ProgramID:   query.ProgramID,
+		Keyword:     strings.TrimSpace(query.Keyword),
+		Status:      strings.TrimSpace(query.Status),
+		TimePlanKey: strings.TrimSpace(query.TimePlanKey),
+		RelatedTo:   relatedTo,
+		AssignedTo:  assignedTo,
+		Offset:      query.Offset(),
+		Limit:       query.Limit(),
 	})
 	if err != nil {
 		return dto.RequirementPage{}, err
@@ -928,6 +929,7 @@ func toRequirementView(row *repository.DeliveryRequirement) dto.RequirementView 
 		Detail:                   row.Detail,
 		ReferenceRequirementKeys: requirementReferencesOf(row.ReferenceRequirementKeys),
 		ReferenceItemKeys:        requirementItemReferencesOf(row.ReferenceItemKeys),
+		TimePlanKey:              row.TimePlanKey,
 		PlannedStartAt:           row.PlannedStartAt,
 		PlannedEndAt:             row.PlannedEndAt,
 		Status:                   row.Status,

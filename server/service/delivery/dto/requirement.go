@@ -26,13 +26,15 @@ type RequirementView struct {
 	// ReferenceRequirementKeys 是需求详情里 @ 引用的历史需求；插件按这些键取各自的大纲产物地址。
 	ReferenceRequirementKeys []string `json:"referenceRequirementKeys"`
 	// ReferenceItemKeys 是需求详情里 @ 引用的既有任务；插件按这些键读取任务需求文档。
-	ReferenceItemKeys []string   `json:"referenceItemKeys"`
-	PlannedStartAt    *time.Time `json:"plannedStartAt"`
-	PlannedEndAt      *time.Time `json:"plannedEndAt"`
-	Status            string     `json:"status"`
-	Mode              string     `json:"mode"`
-	StartPhase        string     `json:"startPhase"`
-	SplitTasks        bool       `json:"splitTasks"`
+	ReferenceItemKeys []string `json:"referenceItemKeys"`
+	// TimePlanKey 是需求关联的时间计划；空串表示还没排进任何计划。
+	TimePlanKey    string     `json:"timePlanKey"`
+	PlannedStartAt *time.Time `json:"plannedStartAt"`
+	PlannedEndAt   *time.Time `json:"plannedEndAt"`
+	Status         string     `json:"status"`
+	Mode           string     `json:"mode"`
+	StartPhase     string     `json:"startPhase"`
+	SplitTasks     bool       `json:"splitTasks"`
 	// PreGenerateTaskDocuments 控制确认拆解后是否预生成每条任务的需求文档。
 	// GenerateTaskOutline 保留在响应中，兼容尚未升级的旧面板和本地桥接器。
 	PreGenerateTaskDocuments bool `json:"preGenerateTaskDocuments"`
@@ -117,8 +119,10 @@ type RequirementQuery struct {
 	ProgramID int64            `form:"programId"`
 	Keyword   string           `form:"keyword"`
 	Status    string           `form:"status"`
-	Scope     string           `form:"scope"`
-	ActorID   string           `form:"-"`
+	// TimePlanKey 传 none 只看未排期的需求；传计划键只看该计划下的需求；留空不限定。
+	TimePlanKey string `form:"timePlanKey"`
+	Scope       string `form:"scope"`
+	ActorID     string `form:"-"`
 }
 
 // SaveRequirementRequest RequirementKey 为空表示新建；带 key 表示更新，

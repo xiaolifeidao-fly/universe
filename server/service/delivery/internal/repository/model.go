@@ -111,6 +111,44 @@ type DeliveryModule struct {
 func (d *DeliveryModule) TableName() string { return "zt_delivery_module" }
 func (d *DeliveryModule) Init()             {}
 
+// DeliveryTimePlan 时间计划：项目按交付节奏切出来的一个时间窗口，
+// 在 Git 上对应一条从基准分支切出的发布分支（默认 release/{截止日期}）。
+//
+// 它和需求是一对多的弱引用：需求上的 time_plan_key 指向这里的 plan_key，
+// 计划被删除只把需求那一列清空，已经建出来的分支不受影响。
+type DeliveryTimePlan struct {
+	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_time_plan,priority:1;index:idx_dlv_time_plan_end,priority:1" description:"业务线"`
+
+	ProgramID int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_time_plan,priority:2;index:idx_dlv_time_plan_end,priority:2" description:"所属项目"`
+	PlanKey   string `gorm:"column:plan_key;type:varchar(64);uniqueIndex:uk_dlv_time_plan,priority:3" description:"时间计划业务键 如 plan-1760000000000"`
+
+	Name    string     `gorm:"column:name;type:varchar(255)" description:"时间计划名称"`
+	StartAt *time.Time `gorm:"column:start_at;type:timestamp;null" description:"计划开始时间"`
+	// EndAt 同时决定默认分支名 release/{截止日期}，所以它是必填。
+	EndAt  *time.Time `gorm:"column:end_at;type:timestamp;null;index:idx_dlv_time_plan_end,priority:3" description:"计划截止时间"`
+	Status string     `gorm:"column:status;type:varchar(16);default:active" description:"active 进行中 / done 已发布 / archived 已归档"`
+
+	// 分支实际创建仍由本机桥接完成，这里只记录关联结果。
+	BaseBranch          string     `gorm:"column:base_branch;type:varchar(255)" description:"切出计划分支时使用的基准分支"`
+	Branch              string     `gorm:"column:branch;type:varchar(255)" description:"计划分支，默认 release/{截止日期}"`
+	BranchCreatedAt     *time.Time `gorm:"column:branch_created_at;type:timestamp NULL" description:"计划分支最近创建并关联的时间"`
+	BaseSyncedAt        *time.Time `gorm:"column:base_synced_at;type:timestamp NULL" description:"最近一次把基线分支回合进计划分支的时间"`
+	RequirementMergedAt *time.Time `gorm:"column:requirement_merged_at;type:timestamp NULL" description:"最近一次把需求分支合并进计划分支的时间"`
+	BasePublishedAt     *time.Time `gorm:"column:base_published_at;type:timestamp NULL" description:"最近一次把计划分支回推合并进基线分支的时间"`
+
+	Version int `gorm:"column:version;default:1" description:"乐观锁版本"`
+
+	CreatedBy     string    `gorm:"column:created_by;type:varchar(64)" description:"创建人标识"`
+	CreatedByName string    `gorm:"column:created_by_name;type:varchar(64)" description:"创建人显示名"`
+	UpdatedBy     string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`
+	CreatedTime   time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+	UpdatedTime   time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
+}
+
+func (d *DeliveryTimePlan) TableName() string { return "zt_delivery_time_plan" }
+func (d *DeliveryTimePlan) Init()             {}
+
 // DeliveryRequirement 需求：项目与任务之间缺失的那一层。
 //
 // 一次「新增需求」产出一批任务：需求记录「要做什么、谁负责」，任务记录「拆成了哪些活」。
@@ -120,9 +158,9 @@ func (d *DeliveryModule) Init()             {}
 // 「和我有关的需求」用 LIKE '%,3,%' 就能命中，不用再开一张关联表。
 type DeliveryRequirement struct {
 	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_requirement,priority:1;index:idx_dlv_requirement_program,priority:1" description:"业务线"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_requirement,priority:1;index:idx_dlv_requirement_program,priority:1;index:idx_dlv_requirement_time_plan,priority:1" description:"业务线"`
 
-	ProgramID      int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_requirement,priority:2;index:idx_dlv_requirement_program,priority:2" description:"所属项目"`
+	ProgramID      int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_requirement,priority:2;index:idx_dlv_requirement_program,priority:2;index:idx_dlv_requirement_time_plan,priority:2" description:"所属项目"`
 	RequirementKey string `gorm:"column:requirement_key;type:varchar(64);uniqueIndex:uk_dlv_requirement,priority:3" description:"需求业务键 如 req-20260813-01"`
 
 	Name   string `gorm:"column:name;type:varchar(255)" description:"需求名称"`
@@ -133,6 +171,9 @@ type DeliveryRequirement struct {
 	// ReferenceItemKeys 是需求详情里 @ 引用的既有任务键，形如 ,task-a,task-b,。
 	// 拆解会话据此把被引用任务的需求文档地址交给插件，正文由插件按需读取。
 	ReferenceItemKeys string `gorm:"column:reference_item_keys;type:varchar(2048)" description:"@ 引用的既有任务键，形如 ,task-a,task-b,"`
+	// TimePlanKey 是需求关联的时间计划键；空串表示这条需求还没排进任何时间计划。
+	// 它是弱引用：时间计划被删除时只清这一列，不影响需求本身和它的分支。
+	TimePlanKey string `gorm:"column:time_plan_key;type:varchar(64);index:idx_dlv_requirement_time_plan,priority:3" description:"关联的时间计划键；空串表示未排期到任何计划"`
 	// PlannedStartAt / PlannedEndAt 是需求的计划时间窗口；为空表示尚未排期。
 	PlannedStartAt *time.Time `gorm:"column:planned_start_at;type:timestamp;null" description:"需求计划开始时间"`
 	PlannedEndAt   *time.Time `gorm:"column:planned_end_at;type:timestamp;null" description:"需求计划结束时间"`

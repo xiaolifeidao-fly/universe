@@ -44,6 +44,18 @@ type Service interface {
 	SaveModule(ctx context.Context, req dto.SaveModuleRequest) error
 	DeleteModule(ctx context.Context, req dto.DeleteModuleRequest) error
 
+	// ---------- 时间计划 ----------
+	// 时间计划是项目的交付时间窗口，对应一条从基准分支切出的发布分支。
+	// 服务端只存元数据与分支关联，Git 动作全部在本机桥接执行。
+	ListTimePlans(ctx context.Context, query dto.TimePlanQuery) (dto.TimePlanPage, error)
+	GetTimePlan(ctx context.Context, bizLine contract.BizLine, programID int64, planKey string) (dto.TimePlanView, error)
+	ListTimePlanRequirements(ctx context.Context, query dto.TimePlanRequirementQuery) ([]dto.TimePlanRequirementView, error)
+	SaveTimePlan(ctx context.Context, req dto.SaveTimePlanRequest) (dto.TimePlanView, error)
+	BindTimePlanBranch(ctx context.Context, req dto.BindTimePlanBranchRequest) (dto.TimePlanView, error)
+	RecordTimePlanMerge(ctx context.Context, req dto.RecordTimePlanMergeRequest) (dto.TimePlanView, error)
+	DeleteTimePlan(ctx context.Context, req dto.DeleteTimePlanRequest) error
+	BindRequirementTimePlan(ctx context.Context, req dto.BindRequirementTimePlanRequest) (dto.RequirementView, error)
+
 	// ---------- 需求 ----------
 	ListRequirements(ctx context.Context, query dto.RequirementQuery) (dto.RequirementPage, error)
 	GetRequirement(ctx context.Context, bizLine contract.BizLine, programID int64, requirementKey string) (dto.RequirementView, error)

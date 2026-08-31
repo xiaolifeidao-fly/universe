@@ -5,6 +5,7 @@ import {
   BranchesOutlined,
   BulbOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   CloseCircleOutlined,
 	CopyOutlined,
   DownOutlined,
@@ -144,6 +145,7 @@ const DELIVERY_NAV_GROUP: NavGroup = {
     { key: "/my-work", label: "nav.myWork", icon: <InboxOutlined /> },
 		{ key: "/business-intake", label: "nav.businessIntake", icon: <FileTextOutlined /> },
     { key: "/delivery", label: "nav.deliveryBoard", icon: <span>🗂️</span> },
+    { key: "/time-plans", label: "nav.timePlans", icon: <ClockCircleOutlined /> },
     { key: "/panorama", label: "nav.panorama", icon: <span>🌐</span> },
   ],
 };

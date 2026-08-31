@@ -64,6 +64,7 @@
 | `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计文件的 OSS 对象索引；正文只在私有 OSS | 原型没有 |
 | `zt_delivery_stage` | 推进阶段（现状 / 第一步 … 终局） | `stages[]` |
 | `zt_delivery_module` | 能力模块 + 权重（数据回传 30% …） | `modules[]` |
+| `zt_delivery_time_plan` | 时间计划：项目的交付时间窗口，对应一条从基准分支切出的发布分支（默认 `release/{截止日期}`） | 原型没有 |
 | `zt_delivery_requirement` | 需求：项目与任务之间的一层；含可选的计划开始/结束时间；专业模式可在任务拆解确认后生成关联 HTML 原型；需求测试用例与总体测试报告独立保存 | 原型没有 |
 | `zt_delivery_requirement_event` | 需求自身的变更流水；与任务流水按时间聚合为需求时间线 | 原型没有 |
 | `zt_delivery_requirement_planning_session` | 需求拆解会话目录（聊天列表）；对话正文在执行器自己的会话缓存里，这里只存 `thread_id` | 原型没有 |
@@ -105,6 +106,8 @@ oss.path_style=false
 PRIMARY KEY      (id)                            uk_dlv_program_code      (program_code)
 uk_dlv_stage     (biz_line, program_id, stage_key)      idx_dlv_stage_seq    (biz_line, program_id, seq)
 uk_dlv_module    (biz_line, program_id, module_key)     idx_dlv_module_seq   (biz_line, program_id, seq)
+uk_dlv_time_plan (biz_line, program_id, plan_key)       idx_dlv_time_plan_end (biz_line, program_id, end_at)
+idx_dlv_requirement_time_plan (biz_line, program_id, time_plan_key)
 uk_dlv_item      (biz_line, program_id, item_key)       idx_dlv_item_board   (biz_line, program_id, stage_key, status)
                                                         idx_dlv_item_module  (biz_line, program_id, module_key, status)
 uk_dlv_planning_batch   (biz_line, program_id, batch_key)
@@ -203,6 +206,22 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 已有需求表升级到支持需求级测试用例、总体测试报告及其聊天会话目录时，执行
 [`migrations/20260816_delivery_requirement_testing.sql`](migrations/20260816_delivery_requirement_testing.sql)。
 该脚本可安全重复执行；它会补齐测试字段、索引和 `zt_delivery_requirement_testing_session` 会话目录表。
+
+已有库升级到时间计划时，执行
+[`migrations/20260831_delivery_time_plan.sql`](migrations/20260831_delivery_time_plan.sql)。
+该脚本可安全重复执行；它建 `zt_delivery_time_plan` 并给需求表补可为空的 `time_plan_key`。
+**存量需求不回填计划** —— 猜出来的排期比空着更难纠正。
+
+时间计划这一层的三条约束：
+
+- **一条分支只能挂一个计划。** 同一个项目里两个计划共用一条分支时，「这条分支代表哪一批需求」
+  就没有答案了，两边的合并记录也会互相覆盖，所以 service 层直接拒绝。
+- **服务端不执行任何 Git 命令。** 建分支、回合基线、合并需求分支、回推基线全部发生在本机桥接的
+  项目工作目录里（`/v1/codex/git/merge-preview` 与 `/v1/codex/git/merge`）；服务端只在浏览器
+  回报成功后记录 `base_synced_at` / `requirement_merged_at` / `base_published_at` 三个时间点，
+  不复核合并结果对不对。
+- **需求对计划是弱引用。** 删计划只把需求的 `time_plan_key` 清空，已经建出来的分支一概不动 ——
+  删排期不是删代码。
 
 已有交付表升级到支持需求拆解批次时，执行
 [`migrations/20260827_delivery_planning_batch.sql`](migrations/20260827_delivery_planning_batch.sql)。

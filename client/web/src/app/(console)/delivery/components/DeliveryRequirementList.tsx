@@ -2,6 +2,7 @@
 
 import {
 	BranchesOutlined,
+	CalendarOutlined,
 	CloudDownloadOutlined,
 	ClockCircleOutlined,
   DeleteOutlined,
@@ -77,6 +78,8 @@ interface DeliveryRequirementListProps {
   onOutline: (requirement: DeliveryRequirementRecord) => void;
 	/** 需求时间线包含需求本身及其下所有任务的变动。 */
   onTimeline: (requirement: DeliveryRequirementRecord) => void;
+  /** 关联时间计划：决定这条需求属于哪一批发布，不改需求正文也不动分支。 */
+  onTimePlan: (requirement: DeliveryRequirementRecord) => void;
 	/** 项目级 Git 关闭时，历史需求的分支信息也不能操作或展示。 */
 	projectGitEnabled: boolean;
   /** 用户显式确认后才会进入分支切换步骤。 */
@@ -121,6 +124,7 @@ export function DeliveryRequirementList({
   onTest,
 	onOutline,
 	onTimeline,
+  onTimePlan,
 	projectGitEnabled,
 	onGitCheck,
 	gitWorkspaceStatus,
@@ -358,6 +362,20 @@ export function DeliveryRequirementList({
               onClick={(event) => {
                 event.stopPropagation();
                 onTimeline(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.requirement.timePlan")}>
+            <Button
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<CalendarOutlined />}
+              disabled={disabled}
+              aria-label={t("delivery.requirement.timePlan")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTimePlan(requirement);
               }}
             />
           </Tooltip>

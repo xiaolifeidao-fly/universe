@@ -50,6 +50,7 @@ import { DeliveryRequirementList } from "./DeliveryRequirementList";
 import { DeliveryRequirementAssignModal } from "./DeliveryRequirementAssignModal";
 import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
+import { DeliveryRequirementTimePlanModal } from "./DeliveryRequirementTimePlanModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
 import { DeliveryOnboardingGuide } from "./DeliveryOnboardingGuide";
 import { DeliveryGitWorkspaceBadge } from "./DeliveryGitWorkspaceBadge";
@@ -188,6 +189,8 @@ export function DeliveryWorkspace() {
   const [editingRequirement, setEditingRequirement] = useState<DeliveryRequirementRecord | null>(null);
   const [startRequirementTesting, setStartRequirementTesting] = useState(false);
 	const [timelineRequirement, setTimelineRequirement] = useState<DeliveryRequirementRecord | null>(null);
+	// 关联时间计划的那条需求；为空表示弹窗关闭。
+	const [timePlanRequirement, setTimePlanRequirement] = useState<DeliveryRequirementRecord | null>(null);
 	const [gitRequirement, setGitRequirement] = useState<DeliveryRequirementRecord | null>(null);
 	/** 需求卡片点「去设置 Git / 去设置工作目录」时就地打开的项目偏好设置，以及要停在哪个页签。 */
 	const [preferenceProgram, setPreferenceProgram] = useState<DeliveryProgramRecord | null>(null);
@@ -1127,6 +1130,7 @@ export function DeliveryWorkspace() {
           }}
 		  onOutline={setOutlineRequirement}
 		  onTimeline={setTimelineRequirement}
+		  onTimePlan={setTimePlanRequirement}
 		  projectGitEnabled={Boolean(selectedProgram?.gitEnabled)}
 		  onGitCheck={openGitCheck}
 		  gitWorkspaceStatus={gitWorkspaceStatus}
@@ -1464,6 +1468,13 @@ export function DeliveryWorkspace() {
           setEditingRequirement((current) => (current?.requirementKey === requirement.requirementKey ? requirement : current));
           void refreshRequirement(requirement.requirementKey);
         }}
+      />
+
+      <DeliveryRequirementTimePlanModal
+        requirement={timePlanRequirement}
+        programId={programId}
+        onClose={() => setTimePlanRequirement(null)}
+        onBound={() => void refreshRequirements()}
       />
 
       <DeliveryRequirementTimelineDrawer

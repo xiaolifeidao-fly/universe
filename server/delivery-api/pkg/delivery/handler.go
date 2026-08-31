@@ -21,6 +21,7 @@ import (
 	"delivery-api/pkg/programs"
 	"delivery-api/pkg/requirements"
 	"delivery-api/pkg/snapshots"
+	"delivery-api/pkg/timeplans"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,6 +37,7 @@ func NewHandler(deliveryService deliveryservice.Service, bizLineService bizline.
 		businessrequirements.NewHandler(businessService),
 		programs.NewHandler(deliveryService, identityService),
 		requirements.NewHandler(deliveryService, identityService),
+		timeplans.NewHandler(deliveryService, identityService),
 		items.NewHandler(deliveryService, identityService),
 		executionbatches.NewHandler(deliveryService),
 		boards.NewHandler(deliveryService),

@@ -108,6 +108,37 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_module` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------------------
+-- 3.4 时间计划：项目的交付时间窗口，在 Git 上对应一条从基准分支切出的发布分支
+--     默认分支名 release/{截止日期}。需求通过 time_plan_key 弱引用它，
+--     计划删除只清空需求那一列，已经建出来的分支不受影响。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_time_plan` (
+  `id`              bigint       NOT NULL AUTO_INCREMENT,
+  `biz_line`        varchar(32)  NOT NULL,
+  `program_id`      bigint       NOT NULL,                     -- 所属项目
+  `plan_key`        varchar(64)  NOT NULL,                     -- 计划业务键 如 plan-1760000000000
+  `name`            varchar(255) NOT NULL DEFAULT '',          -- 计划名称
+  `start_at`        timestamp    NULL,                         -- 计划开始时间
+  `end_at`          timestamp    NULL,                         -- 计划截止时间；同时决定默认分支名
+  `status`          varchar(16)  NOT NULL DEFAULT 'active',    -- active 进行中 / done 已发布 / archived 已归档
+  `base_branch`     varchar(255) NOT NULL DEFAULT '',          -- 切出计划分支时使用的基准分支
+  `branch`          varchar(255) NOT NULL DEFAULT '',          -- 计划分支，默认 release/{截止日期}
+  `branch_created_at` timestamp  NULL,                         -- 计划分支最近创建并关联的时间
+  `base_synced_at`  timestamp    NULL,                         -- 最近一次把基线分支回合进计划分支
+  `requirement_merged_at` timestamp NULL,                      -- 最近一次把需求分支合并进计划分支
+  `base_published_at` timestamp  NULL,                         -- 最近一次把计划分支回推合并进基线分支
+  `version`         bigint       NOT NULL DEFAULT 1,           -- 乐观锁版本
+  `created_by`      varchar(64)  NOT NULL DEFAULT '',
+  `created_by_name` varchar(64)  NOT NULL DEFAULT '',
+  `updated_by`      varchar(64)  NOT NULL DEFAULT '',
+  `created_time`    timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time`    timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_time_plan` (`biz_line`, `program_id`, `plan_key`),
+  KEY `idx_dlv_time_plan_end` (`biz_line`, `program_id`, `end_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
 -- 3.5 需求：项目与任务之间的那一层
 --     一次「新增需求」产出一批任务，这批任务共享同一个 requirement_key；
 --     拆解会话也挂在需求上，追问时要把已经建出来的任务列表一并带给执行器。
@@ -122,6 +153,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   `detail`          mediumtext   NOT NULL,                     -- 需求详细信息
   `reference_requirement_keys` varchar(1024) NOT NULL DEFAULT '', -- 详情里 @ 引用的历史需求键，存成 ,req-a,req-b,
   `reference_item_keys` varchar(2048) NOT NULL DEFAULT '',       -- 详情里 @ 引用的既有任务键，存成 ,task-a,task-b,
+  `time_plan_key`   varchar(64)  NOT NULL DEFAULT '',           -- 关联的时间计划键；空串表示还没排进任何计划
   `status`          varchar(16)  NOT NULL DEFAULT 'open',      -- open 进行中 / done 已完成 / dropped 不做
   `mode`            varchar(16)  NOT NULL DEFAULT 'professional', -- simple 简易（直接进动作执行）/ professional 专业
   `start_phase`     varchar(16)  NOT NULL DEFAULT 'requirement',  -- 拆出的任务从哪个阶段起步
@@ -157,6 +189,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_requirement` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_dlv_requirement` (`biz_line`, `program_id`, `requirement_key`),
   KEY `idx_dlv_requirement_program` (`biz_line`, `program_id`),
+  KEY `idx_dlv_requirement_time_plan` (`biz_line`, `program_id`, `time_plan_key`),
   KEY `idx_dlv_requirement_testing` (`biz_line`, `program_id`, `testing_status`),
   KEY `idx_dlv_requirement_testing_cases` (`biz_line`, `program_id`, `testing_cases_status`),
   KEY `idx_dlv_requirement_creator` (`created_by`)

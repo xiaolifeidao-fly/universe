@@ -9,19 +9,25 @@ import (
 	"gorm.io/gorm"
 )
 
+// TimePlanFilterNone 是需求列表「未排期」筛选项的取值：它不是某个计划的键，
+// 而是「time_plan_key 为空」这一条件的显式写法。
+const TimePlanFilterNone = "none"
+
 // ---------- 需求 ----------
 
 // RequirementQuery 需求列表条件。RelatedTo 命中「创建人 / 主负责人 / 辅助人是我」，
 // AssignedTo 只命中「主负责人 / 辅助人是我」；两者空值均表示不限定。
 type RequirementQuery struct {
-	BizLine    string
-	ProgramID  int64
-	Keyword    string
-	Status     string
-	RelatedTo  string
-	AssignedTo string
-	Offset     int
-	Limit      int
+	BizLine   string
+	ProgramID int64
+	Keyword   string
+	Status    string
+	// TimePlanKey 为 "none" 表示只看还没排进任何时间计划的需求；其余非空值按计划键精确匹配。
+	TimePlanKey string
+	RelatedTo   string
+	AssignedTo  string
+	Offset      int
+	Limit       int
 }
 
 func (r *DeliveryRepository) requirementScope(ctx context.Context, q RequirementQuery) *gorm.DB {
@@ -34,6 +40,11 @@ func (r *DeliveryRepository) requirementScope(ctx context.Context, q Requirement
 	if q.Keyword != "" {
 		like := "%" + q.Keyword + "%"
 		tx = tx.Where("name LIKE ? OR detail LIKE ? OR requirement_key LIKE ?", like, like, like)
+	}
+	if q.TimePlanKey == TimePlanFilterNone {
+		tx = tx.Where("time_plan_key = ''")
+	} else if q.TimePlanKey != "" {
+		tx = tx.Where("time_plan_key = ?", q.TimePlanKey)
 	}
 	if q.RelatedTo != "" {
 		member := "%," + q.RelatedTo + ",%"

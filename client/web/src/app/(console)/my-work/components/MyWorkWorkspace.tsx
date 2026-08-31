@@ -11,6 +11,7 @@ import {
   ExperimentOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
+  CalendarOutlined,
   HistoryOutlined,
   MessageOutlined,
   PlusOutlined,
@@ -46,6 +47,7 @@ import { copyTextToClipboard } from "@/utils/clipboard";
 import { requirementMentionPlainText } from "../../delivery/components/DeliveryRequirementDetailInput";
 import { DeliveryRequirementAssignModal } from "../../delivery/components/DeliveryRequirementAssignModal";
 import { DeliveryRequirementGitCheckModal } from "../../delivery/components/DeliveryRequirementGitCheckModal";
+import { DeliveryRequirementTimePlanModal } from "../../delivery/components/DeliveryRequirementTimePlanModal";
 import { DeliveryRequirementTimelineDrawer } from "../../delivery/components/DeliveryRequirementTimelineDrawer";
 import { DeliveryRequirementProgressModal } from "../../delivery/components/DeliveryRequirementProgressModal";
 import { DeliveryRequirementOutlineModal } from "../../delivery/components/DeliveryTaskOutline";
@@ -119,6 +121,8 @@ export function MyWorkWorkspace() {
   const [outlineRecord, setOutlineRecord] = useState<MyWorkRequirement | null>(null);
   // 快速指派：只改负责人与协助人，不进需求编辑窗口。
   const [assignRecord, setAssignRecord] = useState<MyWorkRequirement | null>(null);
+  // 关联时间计划的那条需求；为空表示弹窗关闭。
+  const [timePlanRecord, setTimePlanRecord] = useState<MyWorkRequirement | null>(null);
   const [timelineRecord, setTimelineRecord] = useState<MyWorkRequirement | null>(null);
 	const [progressRecord, setProgressRecord] = useState<MyWorkRequirement | null>(null);
   const [gitRecord, setGitRecord] = useState<MyWorkRequirement | null>(null);
@@ -852,6 +856,17 @@ export function MyWorkWorkspace() {
                         />
                       </Tooltip>
                     ) : null}
+                    {record.canWrite ? (
+                      <Tooltip title={t("delivery.requirement.timePlan")}>
+                        <Button
+                          aria-label={t("delivery.requirement.timePlan")}
+                          type="text"
+                          size="small"
+                          icon={<CalendarOutlined />}
+                          onClick={() => setTimePlanRecord(record)}
+                        />
+                      </Tooltip>
+                    ) : null}
                     <Tooltip title={t("delivery.requirement.shareLink")}>
                       <Button
                         aria-label={t("delivery.requirement.shareLink")}
@@ -957,6 +972,14 @@ export function MyWorkWorkspace() {
         onClose={() => setAssignRecord(null)}
         // 指派后当前用户可能已不再与这条需求相关，整表重取比就地改更贴近工作台的口径。
         onAssigned={() => setReloadKey((value) => value + 1)}
+      />
+
+      <DeliveryRequirementTimePlanModal
+        requirement={timePlanRecord}
+        programId={timePlanRecord?.programId ?? 0}
+        onClose={() => setTimePlanRecord(null)}
+        // 关联只改计划键，不影响这条需求还在不在我的工作台，就地重取一遍列表即可。
+        onBound={() => setReloadKey((value) => value + 1)}
       />
 
       <DeliveryRequirementTimelineDrawer

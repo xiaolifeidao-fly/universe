@@ -191,6 +191,9 @@ export class DeliveryRequirementRecord {
   /** 仅专业模式可设置；任务确认写入后可再次确认生成需求 HTML 原型。 */
   generatePrototype = false;
 
+  /** 关联的时间计划键；空串表示这条需求还没排进任何时间计划。 */
+  timePlanKey = "";
+
   /**
    * 本条需求是否需要一个专属 Git 分支；分支由本机桥接在项目工作目录中创建。
    * undefined 表示这条需求没单独设置过，调用方回落到偏好设置里的默认值。
@@ -1632,6 +1635,8 @@ export interface RequirementPageQuery {
   scope?: "mine" | "assigned" | "";
   keyword?: string;
   status?: RequirementStatus | "";
+  /** 传 none 只看未排期的需求；传计划键只看该计划下的需求；留空不限定。 */
+  timePlanKey?: string;
   pageIndex?: number;
   pageSize?: number;
 }
@@ -3431,4 +3436,352 @@ export async function stopCodexEnvironmentSetup(threadId = "", provider: AITool 
     { timeout: 20000 },
   );
   return plainToInstance(CodexEnvironmentSetupActionResult, response.data);
+}
+
+// ---------------------------------------------------------------------------
+// 时间计划
+//
+// 时间计划是项目的交付时间窗口，在 Git 上对应一条从基准分支切出的发布分支
+// （默认 release/{截止日期}）。服务端只存计划元数据与分支关联；建分支和三个方向的
+// 合并都发生在本机桥接的项目工作目录里，成功后再由浏览器把事实回写服务端。
+// ---------------------------------------------------------------------------
+
+export const TIME_PLAN_STATUSES = ["active", "done", "archived"] as const;
+
+export type TimePlanStatus = (typeof TIME_PLAN_STATUSES)[number];
+
+/** 三个合并方向：基线→计划、需求分支→计划、计划→基线。 */
+export const TIME_PLAN_MERGE_KINDS = ["base", "requirement", "publish"] as const;
+
+export type TimePlanMergeKind = (typeof TIME_PLAN_MERGE_KINDS)[number];
+
+export class DeliveryTimePlanRecord {
+  planKey = "";
+
+  programId = 0;
+
+  name = "";
+
+  startAt?: string;
+
+  /** 截止时间同时决定默认分支名 release/{YYYYMMDD}，服务端要求必填。 */
+  endAt?: string;
+
+  status: TimePlanStatus = "active";
+
+  baseBranch = "";
+
+  branch = "";
+
+  branchCreatedAt?: string;
+
+  /** 三个方向各记各的最近一次成功时间，互不覆盖。 */
+  baseSyncedAt?: string;
+
+  requirementMergedAt?: string;
+
+  basePublishedAt?: string;
+
+  requirementCount = 0;
+
+  /** 乐观锁版本，编辑计划时必须原样带回服务端。 */
+  version = 0;
+
+  createdBy = "";
+
+  createdByName = "";
+
+  createdAt?: string;
+
+  updatedBy = "";
+
+  updatedAt?: string;
+}
+
+/** 合并需求分支弹窗的数据源：只带分支相关字段，不含需求正文。 */
+export class TimePlanRequirementRecord {
+  requirementKey = "";
+
+  name = "";
+
+  status: RequirementStatus = "open";
+
+  gitBranch = "";
+
+  gitBaseBranch = "";
+
+  gitEnabled = false;
+}
+
+export interface TimePlanPageQuery {
+  programId: number;
+  status?: TimePlanStatus | "";
+  keyword?: string;
+  pageIndex?: number;
+  pageSize?: number;
+}
+
+export async function fetchTimePlans(query: TimePlanPageQuery) {
+  return getPage(DeliveryTimePlanRecord, "/delivery/time-plans", {
+    pageIndex: 1,
+    pageSize: 200,
+    ...query,
+  });
+}
+
+export async function fetchTimePlan(programId: number, planKey: string) {
+  return getData(DeliveryTimePlanRecord, "/delivery/time-plan", { programId, planKey });
+}
+
+export async function fetchTimePlanRequirements(programId: number, planKey: string) {
+  return getDataList(TimePlanRequirementRecord, "/delivery/time-plan/requirements", { programId, planKey });
+}
+
+export interface SaveTimePlanPayload {
+  programId: number;
+  /** 留空表示新建；带 planKey 表示更新，更新必须带上读到的 version。 */
+  planKey?: string;
+  name: string;
+  startAt?: string;
+  endAt: string;
+  status?: TimePlanStatus;
+  baseBranch?: string;
+  /** 留空时由服务端按截止日期生成 release/{YYYYMMDD}。 */
+  branch?: string;
+  version?: number;
+}
+
+export async function saveTimePlan(payload: SaveTimePlanPayload) {
+  const response = await instance.post<ApiResponse<DeliveryTimePlanRecord>>("/delivery/time-plan/save", payload);
+  return plainToInstance(DeliveryTimePlanRecord, unwrapApiResponse(response.data));
+}
+
+/** 本机建出计划分支后回写关联；不复用编辑版号，避免和用户编辑计划抢乐观锁。 */
+export async function bindTimePlanBranch(programId: number, planKey: string, baseBranch: string, branch: string) {
+  const response = await instance.post<ApiResponse<DeliveryTimePlanRecord>>("/delivery/time-plan/branch/bind", {
+    programId,
+    planKey,
+    baseBranch,
+    branch,
+  });
+  return plainToInstance(DeliveryTimePlanRecord, unwrapApiResponse(response.data));
+}
+
+/** 本机合并成功后记录一次事实；服务端不复核合并结果，只留「最近什么时候合过」。 */
+export async function recordTimePlanMerge(programId: number, planKey: string, kind: TimePlanMergeKind) {
+  const response = await instance.post<ApiResponse<DeliveryTimePlanRecord>>("/delivery/time-plan/merge/record", {
+    programId,
+    planKey,
+    kind,
+  });
+  return plainToInstance(DeliveryTimePlanRecord, unwrapApiResponse(response.data));
+}
+
+export async function deleteTimePlan(programId: number, planKey: string) {
+  const response = await instance.post<ApiResponse<null>>("/delivery/time-plan/delete", { programId, planKey });
+  return unwrapApiResponse(response.data);
+}
+
+/** 工作台与任务面板需求列表上的「关联时间计划」；planKey 传空串表示解除关联。 */
+export async function bindRequirementTimePlan(programId: number, requirementKey: string, planKey: string) {
+  const response = await instance.post<ApiResponse<DeliveryRequirementRecord>>("/delivery/requirement/time-plan/bind", {
+    programId,
+    requirementKey,
+    planKey,
+  });
+  const requirement = plainToInstance(DeliveryRequirementRecord, unwrapApiResponse(response.data));
+  requirement.owners = plainToInstance(RequirementMember, requirement.owners ?? []);
+  requirement.assistants = plainToInstance(RequirementMember, requirement.assistants ?? []);
+  requirement.referenceRequirementKeys = requirement.referenceRequirementKeys ?? [];
+  requirement.referenceItemKeys = requirement.referenceItemKeys ?? [];
+  return requirement;
+}
+
+// ---------- 本机桥接：分支合并 ----------
+
+/** 一条来源分支在某个工程里的合并预览。 */
+export class CodexGitMergeSource {
+  branch = "";
+
+  /** 这个工程里没有这条分支时为 false：不是每个工程都参与每条需求。 */
+  exists = false;
+
+  sourceRef = "";
+
+  /** 相对合并基准改动的文件数，不含目标分支上别人的提交。 */
+  changedFiles = 0;
+
+  commits = 0;
+}
+
+export class CodexGitMergeProject {
+  /** 空串表示根工作目录，其余是一级子项目的目录名。 */
+  path = "";
+
+  name = "";
+
+  workspace = "";
+
+  hasTarget = false;
+
+  targetRef = "";
+
+  dirty = false;
+
+  currentBranch = "";
+
+  /** 该工程内所有来源分支合起来会动到的文件数，已去重。 */
+  changedFiles = 0;
+
+  sources: CodexGitMergeSource[] = [];
+
+  error = "";
+}
+
+export class CodexGitMergePreview {
+  workspace = "";
+
+  target = "";
+
+  sources: string[] = [];
+
+  projects: CodexGitMergeProject[] = [];
+}
+
+export class CodexGitMergeOutcome {
+  branch = "";
+
+  merged = false;
+
+  upToDate = false;
+
+  conflict = false;
+
+  /** 这个工程里没有这条来源分支，本轮跳过。 */
+  missing = false;
+
+  /** 冲突由 AI 解决后完成的合并。 */
+  resolved = false;
+
+  conflictFiles: string[] = [];
+
+  output = "";
+}
+
+/** AI 解决冲突的说明：面板要把「解决了什么」原样展示给用户。 */
+export class CodexGitMergeResolution {
+  project = "";
+
+  branch = "";
+
+  files: string[] = [];
+
+  status = "";
+
+  summary = "";
+}
+
+export class CodexGitMergeProjectResult {
+  path = "";
+
+  name = "";
+
+  branch = "";
+
+  merged: CodexGitMergeOutcome[] = [];
+
+  resolutions: CodexGitMergeResolution[] = [];
+
+  pushed = false;
+
+  /** 这个工程里没有目标分支，本轮不参与。 */
+  skipped = false;
+
+  error = "";
+}
+
+export class CodexGitMergeResult {
+  target = "";
+
+  sources: string[] = [];
+
+  remote = "";
+
+  pushed = false;
+
+  /** 合并失败的工程名；整体 200 不代表每个工程都合上了。 */
+  failed: string[] = [];
+
+  results: CodexGitMergeProjectResult[] = [];
+}
+
+/**
+ * 合并预览：目标分支 ← 若干来源分支，按工程列出各自会动多少文件。
+ * 预览会先 fetch 远端，比普通接口慢一个量级，超时按 fetch 的量级给。
+ */
+export async function fetchCodexGitMergePreview(programId: number, target: string, sources: string[]) {
+  const response = await instance.get<CodexGitMergePreview>(`${CODEX_BRIDGE_URL}/v1/codex/git/merge-preview`, {
+    // sources 用重复参数传，不拼逗号串：Git 分支名本身允许带逗号。
+    params: bridgeWorkspaceParams(programId, { programId, target, sources }),
+    paramsSerializer: { indexes: null },
+    timeout: 300000,
+  });
+  const preview = plainToInstance(CodexGitMergePreview, response.data);
+  preview.projects = (response.data.projects ?? []).map((project) => {
+    const record = plainToInstance(CodexGitMergeProject, project);
+    record.sources = plainToInstance(CodexGitMergeSource, project.sources ?? []);
+    return record;
+  });
+  preview.sources = (response.data.sources ?? []).map((branch) => String(branch || "")).filter(Boolean);
+  return preview;
+}
+
+/**
+ * 执行合并：目标分支 ← 若干来源分支，冲突交给 AI 解决后再推送。
+ * 可能要等 AI 处理多个工程的冲突，超时按多轮会话的量级给，不按普通接口给。
+ */
+export async function mergeCodexGitBranches(
+  programId: number,
+  target: string,
+  sources: string[],
+  options: {
+    /** 勾选的子项目目录名；不传表示只合根工作目录。 */
+    targets?: string[];
+    /** 根工作目录没被勾选时置真，这一轮只处理子项目。 */
+    skipRoot?: boolean;
+    /** 关掉只在本机合，不推送；默认合完就推。 */
+    push?: boolean;
+    provider?: AITool;
+    model?: string;
+    reasoningEffort?: AIReasoningEffort;
+    fastMode?: boolean;
+  } = {},
+) {
+  const provider = options.provider ?? "codex";
+  const response = await instance.post<CodexGitMergeResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/git/merge`,
+    bridgeWorkspaceParams(programId, {
+      programId,
+      target,
+      sources,
+      targets: options.targets ?? [],
+      provider,
+      ...(options.skipRoot ? { skipRoot: true } : {}),
+      ...(options.push === false ? { push: false } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+      ...(provider === "claude" && options.fastMode ? { fastMode: true } : {}),
+    }),
+    { timeout: 40 * 60 * 1000 },
+  );
+  const result = plainToInstance(CodexGitMergeResult, response.data);
+  result.sources = (response.data.sources ?? []).map((branch) => String(branch || "")).filter(Boolean);
+  result.failed = (response.data.failed ?? []).map((name) => String(name || "")).filter(Boolean);
+  result.results = (response.data.results ?? []).map((project) => {
+    const record = plainToInstance(CodexGitMergeProjectResult, project);
+    record.merged = plainToInstance(CodexGitMergeOutcome, project.merged ?? []);
+    record.resolutions = plainToInstance(CodexGitMergeResolution, project.resolutions ?? []);
+    return record;
+  });
+  return result;
 }
