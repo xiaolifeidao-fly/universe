@@ -125,31 +125,31 @@ type kodesErrorResponse struct {
 // Start mirrors the local Bridge's POST behaviour: create or continue a turn
 // and return its cursor immediately. The business domain persists the user's
 // statement before calling here, so a remote failure never loses that input.
-func (assistant *BusinessAssistant) Start(ctx context.Context, program dto.ProgramContext, requirementID int64, history []dto.MessageView, threadID, workspace string, attachmentIDs []string) (dto.ConversationAction, error) {
+func (assistant *BusinessAssistant) Start(ctx context.Context, req dto.ConversationStartRequest) (dto.ConversationAction, error) {
 	if assistant.baseURL == "" {
 		return dto.ConversationAction{}, errors.New("未配置远端 Kodes 业务访谈服务")
 	}
-	workspace = strings.TrimSpace(workspace)
+	workspace := strings.TrimSpace(req.Workspace)
 	if workspace == "" {
 		return dto.ConversationAction{}, errors.New("缺少远端 Kodes 业务工作目录")
 	}
-	if requirementID <= 0 {
+	if req.RequirementID <= 0 {
 		return dto.ConversationAction{}, errors.New("业务需求标识无效")
 	}
-	message := businessConversationMessage(program, history)
+	message := businessConversationMessage(req.Program, req.History, req.References)
 	if message == "" {
 		return dto.ConversationAction{}, errors.New("缺少业务方消息")
 	}
 
 	requestContext, cancel := context.WithTimeout(ctx, assistant.timeout)
 	defer cancel()
-	itemKey := businessItemKey(requirementID)
+	itemKey := businessItemKey(req.RequirementID)
 	action, err := assistant.startConversation(requestContext, kodesConversationRequest{
-		ProgramID:       program.ProgramID,
+		ProgramID:       req.Program.ProgramID,
 		ItemKey:         itemKey,
 		Message:         message,
-		ThreadID:        strings.TrimSpace(threadID),
-		AttachmentIDs:   attachmentIDs,
+		ThreadID:        strings.TrimSpace(req.ThreadID),
+		AttachmentIDs:   req.AttachmentIDs,
 		BusinessIntake:  true,
 		Provider:        "codex",
 		Workspace:       workspace,
@@ -465,14 +465,44 @@ func (turn kodesTurn) activities(replyIndex int) []dto.ConversationActivity {
 	return activities
 }
 
-func businessConversationMessage(program dto.ProgramContext, history []dto.MessageView) string {
+func businessConversationMessage(program dto.ProgramContext, history []dto.MessageView, references []dto.DocumentReference) string {
 	for index := len(history) - 1; index >= 0; index-- {
 		if history[index].Role != "user" || strings.TrimSpace(history[index].Content) == "" {
 			continue
 		}
-		return businessSystemPrompt(program) + "\n\n业务方本轮输入：\n" + strings.TrimSpace(history[index].Content)
+		return businessSystemPrompt(program) + businessReferenceBlock(references) +
+			"\n\n业务方本轮输入：\n" + strings.TrimSpace(history[index].Content)
 	}
 	return ""
+}
+
+// 一份被 @ 引用的文档整篇进提示词的上限。历史访谈整理通常几千字，
+// 截断点放在这里，既保得住结论，也不会把单轮提示词撑爆。
+const maxReferenceRunes = 8000
+
+// businessReferenceBlock renders the documents the business user attached with
+// @. They are explicitly labelled as reference material from other interviews
+// so the assistant cites them instead of treating them as this turn's input.
+func businessReferenceBlock(references []dto.DocumentReference) string {
+	if len(references) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString("\n\n业务方引用的既有资料（来自本项目其它访谈，仅供参考，不要当成本轮诉求）：")
+	for _, reference := range references {
+		content := strings.TrimSpace(reference.Content)
+		if runes := []rune(content); len(runes) > maxReferenceRunes {
+			content = string(runes[:maxReferenceRunes]) + "\n……（内容过长已截断）"
+		}
+		if content == "" {
+			continue
+		}
+		builder.WriteString(fmt.Sprintf(
+			"\n\n【%s · %s（第 %d 版）】\n%s",
+			strings.TrimSpace(reference.RequirementTitle), strings.TrimSpace(reference.Title), reference.Version, content,
+		))
+	}
+	return builder.String()
 }
 
 // businessItemKey is the conversation identity remote Kodes stores a business

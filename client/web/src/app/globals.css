@@ -3982,6 +3982,21 @@ select {
 }
 
 /* @ 候选始终占同一块区域：Tab 切换和候选数量变化都不改变弹层位置与尺寸。 */
+/* 业务访谈的 @ 面板没有分栏，高度跟着内容走。交付那套是固定 256px 的双栏面板，
+   直接套用会让「没有候选」变成一整块空白幕布。 */
+.business-mention-dropdown .ant-mentions-dropdown-menu {
+  max-height: 256px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.business-mention-dropdown .delivery-conversation-mention-empty {
+  padding: 12px 14px;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-sm);
+  text-align: center;
+}
+
 .delivery-conversation-mention-dropdown {
   display: flex;
   width: 100%;

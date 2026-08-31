@@ -25,6 +25,7 @@ type Service interface {
 	GetConversation(context.Context, dto.ConversationQuery) (dto.ConversationView, error)
 	GetCollectedConversation(context.Context, dto.CollectedConversationQuery) (dto.ConversationView, error)
 	SendMessage(context.Context, dto.SendMessageRequest) (dto.SendMessageResult, error)
+	ListDocumentReferences(context.Context, dto.DocumentReferenceQuery) ([]dto.DocumentReferenceView, error)
 	UploadAttachments(context.Context, dto.UploadAttachmentsRequest) ([]dto.AttachmentView, error)
 	GetAttachment(context.Context, dto.AttachmentQuery) (dto.AttachmentContent, error)
 }
@@ -42,7 +43,7 @@ type ProgramReader interface {
 // remote Kodes Bridge with the same POST/GET conversation protocol that the
 // local delivery plugin uses. The domain never invokes a user's local bridge.
 type Assistant interface {
-	Start(context.Context, dto.ProgramContext, int64, []dto.MessageView, string, string, []string) (dto.ConversationAction, error)
+	Start(context.Context, dto.ConversationStartRequest) (dto.ConversationAction, error)
 	Poll(context.Context, int64, int64, string, string, string) (dto.ConversationState, error)
 	// UploadAttachments stores browser files in the requirement's remote
 	// business workspace; DownloadAttachment reads one back for preview.

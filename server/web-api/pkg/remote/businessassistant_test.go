@@ -56,9 +56,15 @@ func TestBusinessAssistantUsesRemoteKodesConversationProtocol(t *testing.T) {
 	defer server.Close()
 
 	assistant := NewBusinessAssistant(server.URL, "kodes-model", "medium", 2*time.Second)
-	action, err := assistant.Start(context.Background(), dto.ProgramContext{
-		ProgramID: 42, ProgramCode: "biz-42", Name: "业务项目", Summary: "供业务方提交诉求",
-	}, 7, []dto.MessageView{{Role: "user", Content: "希望简化登录"}}, "thread-previous", "alice/业务空间/业务项目", nil)
+	action, err := assistant.Start(context.Background(), dto.ConversationStartRequest{
+		Program: dto.ProgramContext{
+			ProgramID: 42, ProgramCode: "biz-42", Name: "业务项目", Summary: "供业务方提交诉求",
+		},
+		RequirementID: 7,
+		History:       []dto.MessageView{{Role: "user", Content: "希望简化登录"}},
+		ThreadID:      "thread-previous",
+		Workspace:     "alice/业务空间/业务项目",
+	})
 	if err != nil {
 		t.Fatalf("Start returned error: %v", err)
 	}
@@ -83,7 +89,11 @@ func TestBusinessAssistantUsesRemoteKodesConversationProtocol(t *testing.T) {
 
 func TestBusinessAssistantRequiresBusinessWorkspace(t *testing.T) {
 	assistant := NewBusinessAssistant("https://kodes.example", "", "", time.Second)
-	_, err := assistant.Start(context.Background(), dto.ProgramContext{ProgramID: 1}, 1, []dto.MessageView{{Role: "user", Content: "测试"}}, "", "", nil)
+	_, err := assistant.Start(context.Background(), dto.ConversationStartRequest{
+		Program:       dto.ProgramContext{ProgramID: 1},
+		RequirementID: 1,
+		History:       []dto.MessageView{{Role: "user", Content: "测试"}},
+	})
 	if err == nil || !strings.Contains(err.Error(), "业务工作目录") {
 		t.Fatalf("expected workspace error, got %v", err)
 	}
@@ -183,5 +193,36 @@ func TestBusinessAssistantUploadsAndReadsBackAttachments(t *testing.T) {
 	}
 	if string(content.Data) != "png-bytes" || content.ContentType != "image/png" {
 		t.Fatalf("unexpected attachment content: %#v", content)
+	}
+}
+
+// @ 引用必须以「既有资料」的身份进提示词，而不是混进本轮诉求：
+// 混进去的话，助手会把旧访谈的结论当成业务方这次新提的要求。
+func TestBusinessConversationMessageLabelsReferences(t *testing.T) {
+	message := businessConversationMessage(
+		dto.ProgramContext{ProgramID: 1, Name: "业务项目", ProgramCode: "biz-1"},
+		[]dto.MessageView{{Role: "user", Content: "这次想做直播"}},
+		[]dto.DocumentReference{{RequirementTitle: "上次访谈", Title: "AI 访谈整理", Version: 3, Content: "结论：先做选品"}},
+	)
+	if !strings.Contains(message, "业务方引用的既有资料") {
+		t.Fatalf("reference block missing: %s", message)
+	}
+	if !strings.Contains(message, "【上次访谈 · AI 访谈整理（第 3 版）】") || !strings.Contains(message, "结论：先做选品") {
+		t.Fatalf("reference body missing: %s", message)
+	}
+	if strings.Index(message, "业务方引用的既有资料") > strings.Index(message, "业务方本轮输入") {
+		t.Fatalf("reference block must precede this turn's input: %s", message)
+	}
+}
+
+// 空内容的引用不该在提示词里留下一个只有标题的空壳。
+func TestBusinessConversationMessageSkipsEmptyReference(t *testing.T) {
+	message := businessConversationMessage(
+		dto.ProgramContext{ProgramID: 1},
+		[]dto.MessageView{{Role: "user", Content: "继续"}},
+		[]dto.DocumentReference{{RequirementTitle: "空访谈", Title: "空文档", Version: 1, Content: "   "}},
+	)
+	if strings.Contains(message, "空文档") {
+		t.Fatalf("empty reference should be dropped: %s", message)
 	}
 }

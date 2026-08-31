@@ -1,7 +1,7 @@
 "use client";
 
 import { FileSearchOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Alert, Button, Descriptions, Divider, Drawer, Empty, List, Spin, Tag, message } from "antd";
+import { Alert, Button, Divider, Drawer, Empty, List, Spin, message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -114,17 +114,6 @@ export function BusinessIntakeWorkspace() {
       >
         {detailLoading && !selected ? <div className="manager-business-intake__loading"><Spin size="large" /></div> : selected ? (
           <>
-            <Descriptions
-              bordered
-              size="small"
-              column={{ xs: 1, sm: 2 }}
-              items={[
-                { key: "program", label: t("businessIntake.project"), children: <span>{selected.program.name || selected.program.programCode} <Tag className="manager-mono">{selected.program.programCode}</Tag></span> },
-                { key: "user", label: t("businessIntake.raisedBy"), children: selected.requirement.createdByName || selected.requirement.createdBy || "-" },
-                { key: "time", label: t("businessIntake.submittedAt"), children: <span className="manager-mono">{formatTime(selected.requirement.createdAt, locale)}</span> },
-                { key: "status", label: t("businessIntake.status"), children: <Tag color="blue">{t("businessIntake.statusSubmitted")}</Tag> },
-              ]}
-            />
             <Divider orientation="left">{t("businessIntake.documents")}</Divider>
             <BusinessRequirementDocuments documents={selected.documents} collapsible defaultOpen={false} />
             <Divider orientation="left">{t("businessIntake.conversation")}</Divider>

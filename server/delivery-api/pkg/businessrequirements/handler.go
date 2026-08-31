@@ -35,6 +35,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/requirement/messages", h.sendMessage)
 	api.POST("/requirement/attachments", h.uploadAttachments)
 	api.GET("/requirement/attachment", h.getAttachment)
+	api.GET("/requirement/references", h.listDocumentReferences)
 
 	collection := group.Group("/business/research", httpx.RequireProductResearch())
 	collection.GET("/requirements", h.listCollectedRequirements)
@@ -119,6 +120,34 @@ func (h *Handler) getConversation(context *gin.Context) {
 		BizLine: contract.BizLine(bizLine), RequirementID: query.RequirementID, CreatorID: principal.ID,
 	})
 	httpx.JSON(context, conversation, err)
+}
+
+// listDocumentReferences powers the @ picker in the intake composer: the
+// documents this project's earlier interviews already produced.
+func (h *Handler) listDocumentReferences(context *gin.Context) {
+	principal, ok := requireBusinessUser(context)
+	if !ok {
+		return
+	}
+	var query struct {
+		BizLine       string `form:"bizLine"`
+		RequirementID int64  `form:"requirementId"`
+		Keyword       string `form:"keyword"`
+	}
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	bizLine := strings.TrimSpace(query.BizLine)
+	if err := httpx.AuthorizeBizLine(context, bizLine); err != nil {
+		httpx.JSON(context, nil, err)
+		return
+	}
+	references, err := h.service.ListDocumentReferences(context.Request.Context(), dto.DocumentReferenceQuery{
+		BizLine: contract.BizLine(bizLine), RequirementID: query.RequirementID,
+		CreatorID: principal.ID, Keyword: strings.TrimSpace(query.Keyword),
+	})
+	httpx.JSON(context, references, err)
 }
 
 func (h *Handler) sendMessage(context *gin.Context) {

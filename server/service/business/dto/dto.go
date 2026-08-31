@@ -204,9 +204,58 @@ type ConversationView struct {
 	RemoteError         string                 `json:"remoteError"`
 }
 
+// ConversationStartRequest is everything one remote interview turn needs. It
+// replaced a long positional argument list so adding turn context (references,
+// attachments) does not keep widening the Assistant interface.
+type ConversationStartRequest struct {
+	Program       ProgramContext
+	RequirementID int64
+	History       []MessageView
+	ThreadID      string
+	Workspace     string
+	AttachmentIDs []string
+	References    []DocumentReference
+}
+
+// DocumentReferenceQuery lists the intake documents a business user may attach
+// with @ while writing the next message. Candidates are scoped to the project
+// the current requirement belongs to.
+type DocumentReferenceQuery struct {
+	BizLine       contract.BizLine
+	RequirementID int64
+	CreatorID     string
+	Keyword       string
+}
+
+// DocumentReferenceView is one @-able document in the picker. It carries no
+// content: the browser only needs to name it, and the body is resolved
+// server-side when the message is actually sent.
+type DocumentReferenceView struct {
+	DocumentID       int64      `json:"documentId"`
+	RequirementID    int64      `json:"requirementId"`
+	RequirementTitle string     `json:"requirementTitle"`
+	Title            string     `json:"title"`
+	Version          int        `json:"version"`
+	CreatedAt        *time.Time `json:"createdAt"`
+}
+
+// DocumentReference is a resolved @ mention handed to the remote assistant as
+// read-only prompt context. Referenced documents are never re-persisted into
+// the current requirement: they stay owned by the interview that produced them.
+type DocumentReference struct {
+	RequirementID    int64
+	RequirementTitle string
+	Title            string
+	Version          int
+	Content          string
+}
+
 type SendMessageRequest struct {
-	RequirementID int64  `json:"requirementId"`
-	Content       string `json:"content"`
+	RequirementID int64 `json:"requirementId"`
+	// ReferenceDocumentIDs are the @-attached intake documents of the same
+	// project. They are prompt context for this turn only.
+	ReferenceDocumentIDs []int64 `json:"referenceDocumentIds"`
+	Content              string  `json:"content"`
 	// AttachmentIDs are files already uploaded for this requirement. They are
 	// bound to the message this request creates.
 	AttachmentIDs []string `json:"attachmentIds"`

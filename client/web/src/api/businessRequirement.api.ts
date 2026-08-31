@@ -49,6 +49,16 @@ export class BusinessRequirementMessage {
   createdAt?: string;
 }
 
+/** @ 候选：本项目其它访谈已经沉淀下来的整理文档，只给名字，正文在发送时由服务端解析。 */
+export class BusinessDocumentReference {
+	documentId = 0;
+	requirementId = 0;
+	requirementTitle = "";
+	title = "";
+	version = 0;
+	createdAt?: string;
+}
+
 export class BusinessRequirementDocument {
   id = 0;
   type = "ai_intake";
@@ -111,13 +121,23 @@ export async function sendBusinessRequirementMessage(
   requirementId: number,
   content: string,
   attachmentIds: string[] = [],
+  referenceDocumentIds: number[] = [],
 ) {
   const response = await instance.post<ApiResponse<SendBusinessRequirementMessageResult>>(
     "/business/requirement/messages",
-    { requirementId, content, attachmentIds },
+    { requirementId, content, attachmentIds, referenceDocumentIds },
     { params: withBizLine(bizLine) },
   );
   return unwrapApiResponse(response.data);
+}
+
+/** @ 面板的候选文档。keyword 为空时给最近的一批，输入后由服务端按标题过滤。 */
+export async function fetchBusinessDocumentReferences(bizLine: string, requirementId: number, keyword = "") {
+  return getDataList(
+    BusinessDocumentReference,
+    "/business/requirement/references",
+    withBizLine(bizLine, { requirementId, keyword }),
+  );
 }
 
 /** 先上传、再随消息发出：和交付会话一样，附件在发送前就已经落到远端工作目录。 */

@@ -1,18 +1,20 @@
 "use client";
 
 import { CloseOutlined, FileTextOutlined, MessageOutlined, PaperClipOutlined, PlusOutlined, SendOutlined } from "@ant-design/icons";
-import { Alert, Button, Empty, Form, Input, List, Modal, Select, Spin, Tag, Tooltip, message } from "antd";
+import { Alert, Button, Empty, Form, List, Modal, Select, Spin, Tag, Tooltip, message } from "antd";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import {
   createBusinessRequirement,
+	fetchBusinessDocumentReferences,
 	fetchBusinessPrograms,
   fetchBusinessRequirementConversation,
   fetchBusinessRequirements,
   fetchBusinessRequirementAttachment,
   sendBusinessRequirementMessage,
   uploadBusinessRequirementAttachments,
+  type BusinessDocumentReference,
   type BusinessRequirementActivity,
   type BusinessRequirementAttachment,
   type BusinessRequirementConversation,
@@ -23,9 +25,13 @@ import {
 import type { CodexConversationItem } from "@/api/delivery.api";
 import { SessionMarkdown, SessionProcessGroup, groupSessionItems } from "../../delivery/components/DeliverySessionMessage";
 import { BusinessRequirementDocuments } from "./BusinessRequirementDocuments";
+import { BusinessRequirementMentionInput } from "./BusinessRequirementMentionInput";
 
 /** 与服务端和远端桥一致的单条消息附件上限。 */
 const MAX_MESSAGE_ATTACHMENTS = 5;
+
+/** 与服务端 maxMessageReferences 一致：@ 进来的文档整篇进提示词，多了会淹没本轮诉求。 */
+const MAX_MESSAGE_REFERENCES = 5;
 
 interface NewBusinessRequirementForm {
   programId: number;
@@ -158,6 +164,8 @@ export function BusinessWorkbench() {
   // 已上传、还没随消息发出的附件。发送成功后清空，发送失败时保留，重试不用再传一遍。
   const [pending, setPending] = useState<BusinessRequirementAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  // 本轮 @ 引用的历史文档。和附件一样，发送成功后清空、失败时保留可重试。
+  const [referenced, setReferenced] = useState<BusinessDocumentReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const loadSequenceRef = useRef(0);
@@ -214,6 +222,7 @@ export function BusinessWorkbench() {
   }, [businessLinesLoaded, refreshRequirements]);
 
 	useEffect(() => {
+		setReferenced([]);
 		if (selectedRequirementId) {
 			void loadConversation(selectedRequirementId);
     } else {
@@ -245,6 +254,11 @@ export function BusinessWorkbench() {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [conversation?.messages?.length, conversation?.streamingReply, conversationLoading]);
 
+  const searchDocumentReferences = useCallback(async (keyword: string) => {
+    if (!selectedRequirementId || !activeBusinessLine.id) return [];
+    return fetchBusinessDocumentReferences(activeBusinessLine.id, selectedRequirementId, keyword);
+  }, [activeBusinessLine.id, selectedRequirementId]);
+
   const openNewRequirement = () => {
     newForm.resetFields();
 		if (programs.length === 1) newForm.setFieldValue("programId", programs[0].programId);
@@ -272,8 +286,10 @@ export function BusinessWorkbench() {
     const content = draft.trim();
     if (!content) return;
     const attachments = pending;
+    const documents = referenced;
     setDraft("");
     setPending([]);
+    setReferenced([]);
     setSending(true);
     // 先把这条业务诉求乐观地贴进消息列表并进入等待态：请求还在路上时，
     // 用户就能看到自己说的话和"AI 正在处理"，落库后的快照会覆盖它。
@@ -294,6 +310,7 @@ export function BusinessWorkbench() {
         selectedRequirementId,
         content,
         attachments.map((item) => item.id),
+        documents.map((item) => item.documentId),
       );
       await Promise.all([loadConversation(selectedRequirementId, true), refreshRequirements()]);
     } catch (error) {
@@ -301,6 +318,7 @@ export function BusinessWorkbench() {
       // remote AI, so reloading preserves that statement after a remote error.
       setDraft(content);
       setPending(attachments);
+      setReferenced(documents);
       await loadConversation(selectedRequirementId, true);
       message.error((error as Error).message);
     } finally {
@@ -471,19 +489,20 @@ export function BusinessWorkbench() {
                     onClick={() => fileInputRef.current?.click()}
                   />
                 </Tooltip>
-                <Input.TextArea
+                <BusinessRequirementMentionInput
                   value={draft}
-                  autoSize={{ minRows: 2, maxRows: 6 }}
-                  maxLength={16000}
-				  disabled={sending || conversation.active}
+                  onChange={setDraft}
+                  disabled={sending || conversation.active}
                   placeholder={t("businessWorkbench.inputPlaceholder")}
-                  onChange={(event) => setDraft(event.target.value)}
+                  maxReferences={MAX_MESSAGE_REFERENCES}
+                  references={referenced}
+                  onReferencesChange={setReferenced}
+                  onSearchCandidates={searchDocumentReferences}
                   onPaste={handlePaste}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void sendMessage();
-                    }
+                  onPressEnter={(event) => {
+                    if (event.shiftKey) return;
+                    event.preventDefault();
+                    void sendMessage();
                   }}
                 />
 				<Button type="primary" icon={<SendOutlined />} loading={sending} disabled={!draft.trim() || conversation.active} onClick={() => void sendMessage()}>

@@ -19,6 +19,9 @@ const (
 	// 免得把注定失败的上传原样转发出去。
 	maxMessageAttachments = 5
 	maxAttachmentBytes    = 20 * 1024 * 1024
+	// 一条消息里能 @ 的历史文档数。整篇文档都会进提示词，引多了会把业务方
+	// 本轮真正想说的话淹没在旧材料里。
+	maxMessageReferences = 5
 )
 
 // ListPrograms returns the deliberately small project context that a business
@@ -158,6 +161,61 @@ func (s *service) GetCollectedConversation(ctx context.Context, query dto.Collec
 	return s.conversation(ctx, requirement, program)
 }
 
+// ListDocumentReferences offers the business user the interview documents that
+// already exist in the same project, so a new conversation can point at earlier
+// conclusions with @ instead of restating them.
+func (s *service) ListDocumentReferences(ctx context.Context, query dto.DocumentReferenceQuery) ([]dto.DocumentReferenceView, error) {
+	if !query.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if query.RequirementID <= 0 || strings.TrimSpace(query.CreatorID) == "" {
+		return nil, errors.New("缺少业务需求标识或提交人")
+	}
+	requirement, err := s.repo.FindRequirement(ctx, query.BizLine.String(), query.RequirementID, strings.TrimSpace(query.CreatorID))
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.ListProgramDocuments(ctx, repository.ProgramDocumentQuery{
+		BizLine: query.BizLine.String(), ProgramID: requirement.ProgramID, CreatorID: requirement.CreatedBy,
+		ExcludeRequirementID: requirement.ID, Keyword: strings.TrimSpace(query.Keyword),
+	})
+	if err != nil {
+		return nil, err
+	}
+	views := make([]dto.DocumentReferenceView, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, dto.DocumentReferenceView{
+			DocumentID: row.ID, RequirementID: row.RequirementID, RequirementTitle: row.RequirementTitle,
+			Title: row.Title, Version: row.Version, CreatedAt: timePtr(row.CreatedTime),
+		})
+	}
+	return views, nil
+}
+
+// referencesFor resolves @-attached documents into prompt context. Unknown or
+// out-of-project ids are dropped rather than rejected: the picker is a
+// convenience, and a stale id must not block the business user's message.
+func (s *service) referencesFor(ctx context.Context, bizLine string, programID int64, creatorID string, ids []int64) ([]dto.DocumentReference, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if len(ids) > maxMessageReferences {
+		return nil, fmt.Errorf("一条消息最多引用 %d 份文档", maxMessageReferences)
+	}
+	rows, err := s.repo.FindProgramDocuments(ctx, bizLine, programID, creatorID, ids)
+	if err != nil {
+		return nil, err
+	}
+	references := make([]dto.DocumentReference, 0, len(rows))
+	for _, row := range rows {
+		references = append(references, dto.DocumentReference{
+			RequirementID: row.RequirementID, RequirementTitle: row.RequirementTitle,
+			Title: row.Title, Version: row.Version, Content: row.Content,
+		})
+	}
+	return references, nil
+}
+
 // SendMessage persists the business user's statement before making the remote
 // call. A temporary remote outage therefore never loses the user's input.
 func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (dto.SendMessageResult, error) {
@@ -211,7 +269,15 @@ func (s *service) SendMessage(ctx context.Context, req dto.SendMessageRequest) (
 	if err != nil {
 		return dto.SendMessageResult{}, err
 	}
-	action, err := s.assistant.Start(ctx, program, requirement.ID, toMessageViews(messages), requirement.RemoteThreadID, workspace, attachmentIDs)
+	references, err := s.referencesFor(ctx, req.BizLine.String(), requirement.ProgramID, requirement.CreatedBy, req.ReferenceDocumentIDs)
+	if err != nil {
+		return dto.SendMessageResult{}, err
+	}
+	action, err := s.assistant.Start(ctx, dto.ConversationStartRequest{
+		Program: program, RequirementID: requirement.ID, History: toMessageViews(messages),
+		ThreadID: requirement.RemoteThreadID, Workspace: workspace,
+		AttachmentIDs: attachmentIDs, References: references,
+	})
 	if err != nil {
 		// The business statement is already stored. Record the remote failure so
 		// the next conversation read can show a useful recovery hint instead of

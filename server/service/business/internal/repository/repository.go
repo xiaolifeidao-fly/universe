@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"common/middleware/db"
@@ -215,6 +216,101 @@ func (r *BusinessRepository) CreateMessage(ctx context.Context, row *BusinessReq
 func (r *BusinessRepository) ListDocuments(ctx context.Context, bizLine string, requirementID int64) ([]*BusinessRequirementDocument, error) {
 	var rows []*BusinessRequirementDocument
 	if err := r.Db.WithContext(ctx).Where("biz_line = ? AND requirement_id = ?", bizLine, requirementID).Order("version desc, id desc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// 明确列出投影的列：`document.*` 里的 biz_line / type 用不到，而 title 在两张表
+// 里同名，靠通配符选出来会被 r.title 覆盖。
+const programDocumentColumns = `zt_business_requirement_document.id AS id,
+	zt_business_requirement_document.requirement_id AS requirement_id,
+	zt_business_requirement_document.title AS title,
+	zt_business_requirement_document.content AS content,
+	zt_business_requirement_document.version AS version,
+	zt_business_requirement_document.created_time AS created_time,
+	r.title AS requirement_title`
+
+// ProgramDocument is one @-able document plus the interview it came from.
+// It is a flat projection on purpose: embedding the document row would make the
+// join's extra column depend on GORM's embedded-struct scanning rules.
+type ProgramDocument struct {
+	ID               int64     `gorm:"column:id"`
+	RequirementID    int64     `gorm:"column:requirement_id"`
+	RequirementTitle string    `gorm:"column:requirement_title"`
+	Title            string    `gorm:"column:title"`
+	Content          string    `gorm:"column:content"`
+	Version          int       `gorm:"column:version"`
+	CreatedTime      time.Time `gorm:"column:created_time"`
+}
+
+// ProgramDocumentQuery selects earlier interview documents of one project.
+// ExcludeRequirementID drops the conversation the user is currently in: its own
+// documents are already part of that thread and are noise in the @ picker.
+//
+// CreatorID is required. The workbench only ever shows a business user their
+// own intake, so the @ picker must not become a side channel into another
+// user's interviews in the same project.
+type ProgramDocumentQuery struct {
+	BizLine              string
+	ProgramID            int64
+	CreatorID            string
+	ExcludeRequirementID int64
+	Keyword              string
+	Limit                int
+}
+
+// ListProgramDocuments returns the latest interview documents of one project,
+// newest first. Only the newest version of each requirement/type is offered:
+// attaching an outdated revision of the same document is almost never what the
+// business user means by "the document from that conversation".
+func (r *BusinessRepository) ListProgramDocuments(ctx context.Context, query ProgramDocumentQuery) ([]*ProgramDocument, error) {
+	limit := query.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	db := r.Db.WithContext(ctx).
+		Model(&BusinessRequirementDocument{}).
+		Select(programDocumentColumns).
+		Joins("JOIN zt_business_requirement r ON r.id = zt_business_requirement_document.requirement_id AND r.biz_line = zt_business_requirement_document.biz_line").
+		Where("zt_business_requirement_document.biz_line = ? AND r.program_id = ? AND r.created_by = ?", query.BizLine, query.ProgramID, query.CreatorID).
+		// 只留每个需求+类型的最高版本，避免同一份文档的十几个历史版本挤满候选列表。
+		Where(`zt_business_requirement_document.version = (
+			SELECT MAX(d2.version) FROM zt_business_requirement_document d2
+			WHERE d2.biz_line = zt_business_requirement_document.biz_line
+			  AND d2.requirement_id = zt_business_requirement_document.requirement_id
+			  AND d2.type = zt_business_requirement_document.type)`)
+	if query.ExcludeRequirementID > 0 {
+		db = db.Where("zt_business_requirement_document.requirement_id <> ?", query.ExcludeRequirementID)
+	}
+	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		db = db.Where("zt_business_requirement_document.title LIKE ? OR r.title LIKE ?", like, like)
+	}
+	var rows []*ProgramDocument
+	if err := db.Order("zt_business_requirement_document.created_time desc").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// FindProgramDocuments resolves @-attached documents back to their content.
+// It re-applies the project and creator scope rather than trusting the ids the
+// browser sent: a forged id must not read another project's or another user's
+// interview into this prompt.
+func (r *BusinessRepository) FindProgramDocuments(ctx context.Context, bizLine string, programID int64, creatorID string, ids []int64) ([]*ProgramDocument, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var rows []*ProgramDocument
+	err := r.Db.WithContext(ctx).
+		Model(&BusinessRequirementDocument{}).
+		Select(programDocumentColumns).
+		Joins("JOIN zt_business_requirement r ON r.id = zt_business_requirement_document.requirement_id AND r.biz_line = zt_business_requirement_document.biz_line").
+		Where("zt_business_requirement_document.biz_line = ? AND r.program_id = ? AND r.created_by = ? AND zt_business_requirement_document.id IN ?", bizLine, programID, creatorID, ids).
+		Order("zt_business_requirement_document.created_time asc").
+		Find(&rows).Error
+	if err != nil {
 		return nil, err
 	}
 	return rows, nil
