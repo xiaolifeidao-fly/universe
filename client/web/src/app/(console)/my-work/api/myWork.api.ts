@@ -14,6 +14,7 @@ import {
   fetchItems,
   fetchModules,
   fetchPrograms,
+  fetchRequirement,
   fetchRequirements,
   fetchStages,
 } from "@/api/delivery.api";
@@ -113,6 +114,32 @@ export async function fetchMyWorkRequirements(businessLine: BusinessLine): Promi
   return rows
     .flat()
     .sort((left, right) => (right.createdAt ?? "").localeCompare(left.createdAt ?? ""));
+}
+
+/**
+ * 分享链接落到工作台时只取被分享的这一条需求。
+ * 分享出去的需求未必与接收者相关、也未必还是进行中，指望它出现在常规列表里是不成立的，
+ * 所以这里按项目 + 需求键直查，再补齐卡片要用的项目上下文。
+ * 当前空间读不到这个项目（无权限或不在这条业务线下）时返回 null，交给调用方提示。
+ */
+export async function fetchMyWorkSharedRequirement(
+  businessLine: BusinessLine,
+  programId: number,
+  requirementKey: string,
+): Promise<MyWorkRequirement | null> {
+  const programs = await fetchPrograms(businessLine.id);
+  const program = programs.find((item) => item.programId === programId);
+  if (!program) return null;
+  const requirement = await fetchRequirement(programId, requirementKey);
+  return Object.assign(new MyWorkRequirement(), requirement, {
+    programName: program.name,
+    programCode: program.programCode,
+    businessCode: program.bizLine || businessLine.id,
+    spaceName: businessLine.label,
+    canWrite: program.canWrite,
+    programGitEnabled: program.gitEnabled,
+    programGitBaseBranch: program.gitBaseBranch,
+  });
 }
 
 /**

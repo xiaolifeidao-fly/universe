@@ -24,7 +24,7 @@ import {
   UsergroupAddOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Empty, Input, Modal, Popconfirm, Segmented, Select, Spin, Tooltip, message } from "antd";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAIPreferences } from "@/ai-preferences/AIPreferencesProvider";
 import {
@@ -62,6 +62,7 @@ import {
   fetchMyWorkPrograms,
   fetchMyWorkProgramContext,
   fetchMyWorkRequirements,
+  fetchMyWorkSharedRequirement,
   MyWorkRequirement,
   type MyWorkGitWorkspace,
   type MyWorkProgramContext,
@@ -101,9 +102,21 @@ function includesCurrentUser(members: MyWorkRequirement["owners"], userId: strin
 
 export function MyWorkWorkspace() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t, locale } = useLocale();
   const { preferences } = useAIPreferences();
-  const { activeBusinessLine, businessLinesLoaded } = useBusinessLine();
+  const {
+    activeBusinessLine,
+    businessLines,
+    businessLinesLoaded,
+    setActiveBusinessLine,
+  } = useBusinessLine();
+  // 分享链接直接落在工作台：地址栏写死业务线、项目和需求键，打开后只展示被分享的这一条。
+  const sharedRequirementKey = (searchParams?.get("requirementKey") ?? "").trim();
+  const sharedProgramId = Number(searchParams?.get("programId")) || 0;
+  const sharedBizLine = (searchParams?.get("bizLine") ?? "").trim();
+  const [sharedOnly, setSharedOnly] = useState(Boolean(sharedRequirementKey && sharedProgramId));
+  const sharedMode = sharedOnly && Boolean(sharedRequirementKey && sharedProgramId);
   const [records, setRecords] = useState<MyWorkRequirement[]>([]);
   const [loading, setLoading] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -154,15 +167,49 @@ export function MyWorkWorkspace() {
     [records],
   );
 
+  // 分享链接写死了业务线，打开时不受接收者本地记忆的上下文影响。
+  // 只在链接首次落地时对齐一次：地址栏里的 bizLine 会一直留着，若每次渲染都强行对齐，
+  // 用户在顶部切换业务线会被立刻拉回分享链接里的那条，看起来就是「切换没作用」。
+  const appliedSharedBizLineRef = useRef("");
+  useEffect(() => {
+    if (!sharedBizLine || !businessLinesLoaded) return;
+    if (appliedSharedBizLineRef.current === sharedBizLine) return;
+    // 业务线列表还没包含这条（无权限或编码已失效）时不记账，避免把一次有效对齐吞掉。
+    if (!businessLines.some((line) => line.id === sharedBizLine)) return;
+    appliedSharedBizLineRef.current = sharedBizLine;
+    if (sharedBizLine !== activeBusinessLine.id) {
+      setActiveBusinessLine(sharedBizLine);
+    }
+  }, [activeBusinessLine.id, businessLines, businessLinesLoaded, setActiveBusinessLine, sharedBizLine]);
+
+  // 分享链接的业务线还没对齐时先别拉列表，否则会先闪一遍旧空间的全部需求。
+  const awaitingSharedBizLine = Boolean(
+    sharedMode
+    && sharedBizLine
+    && sharedBizLine !== activeBusinessLine.id
+    && (!businessLinesLoaded || businessLines.some((line) => line.id === sharedBizLine)),
+  );
+
   useEffect(() => {
     if (!businessLinesLoaded) return;
     if (!activeBusinessLine.id) {
       setRecords([]);
       return;
     }
+    if (awaitingSharedBizLine) return;
     let active = true;
     setLoading(true);
-    fetchMyWorkRequirements(activeBusinessLine)
+    // 分享进来时只直查这一条：它未必与当前用户相关，也未必还在进行中，
+    // 走工作台常规口径（与我相关 + 进行中）多半根本查不到。
+    const load = sharedMode
+      ? fetchMyWorkSharedRequirement(activeBusinessLine, sharedProgramId, sharedRequirementKey)
+        .then((record) => {
+          if (record) return [record];
+          message.error(t("myWork.programMissing"));
+          return [];
+        })
+      : fetchMyWorkRequirements(activeBusinessLine);
+    load
       .then((next) => {
         if (active) setRecords(next);
       })
@@ -175,14 +222,34 @@ export function MyWorkWorkspace() {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [activeBusinessLine, businessLinesLoaded, reloadKey]);
+  }, [
+    activeBusinessLine,
+    awaitingSharedBizLine,
+    businessLinesLoaded,
+    reloadKey,
+    sharedMode,
+    sharedProgramId,
+    sharedRequirementKey,
+    t,
+  ]);
+
+  /** 退出分享视角：清掉地址栏里的分享参数，回到当前空间与我相关的全部需求。 */
+  const exitSharedRequirement = useCallback(() => {
+    setSharedOnly(false);
+    router.replace("/my-work");
+  }, [router]);
 
   // 换空间后原来的项目筛选多半已不在这批数据里，回到「所有项目」更符合预期。
+  // 顶部手动换空间也意味着不再看那条分享的需求，顺手退出分享视角。
+  const loadedBizLineRef = useRef(activeBusinessLine.id);
   useEffect(() => {
     setProgramFilter("all");
     setKeyword("");
     setCurrentBranchOnly(false);
-  }, [activeBusinessLine.id]);
+    if (loadedBizLineRef.current === activeBusinessLine.id) return;
+    loadedBizLineRef.current = activeBusinessLine.id;
+    if (sharedBizLine && activeBusinessLine.id !== sharedBizLine) exitSharedRequirement();
+  }, [activeBusinessLine.id, exitSharedRequirement, sharedBizLine]);
 
   // 只有挂了 Git 的项目才去问本机桥接，避免为纯文档项目发无意义的请求。
   const gitProgramIds = useMemo(
@@ -294,11 +361,12 @@ export function MyWorkWorkspace() {
   }, [filteredRecords, removingKeys, userId]);
 
   // 三类身份互不排斥：同一条需求可以既是我提出的，又由我负责或协助。
-  const recordsOfCurrentType = useMemo(() => filteredRecords.filter((record) => {
+  // 分享进来的需求不一定与当前用户有任何关系，按身份筛会把它筛没，这里直接放行。
+  const recordsOfCurrentType = useMemo(() => (sharedMode ? filteredRecords : filteredRecords.filter((record) => {
     if (workType === "created") return record.createdBy === userId;
     if (workType === "owner") return includesCurrentUser(record.owners, userId);
     return includesCurrentUser(record.assistants, userId);
-  }), [filteredRecords, userId, workType]);
+  })), [filteredRecords, sharedMode, userId, workType]);
 
   const sortedRecords = useMemo(() => {
     const list = [...recordsOfCurrentType];
@@ -512,8 +580,9 @@ export function MyWorkWorkspace() {
     }
   }, []);
 
+  // 分享链接落回工作台本身：接收者打开只会看到被分享的这一条需求。
   const handleShare = useCallback(async (requirement: DeliveryRequirementRecord) => {
-    const link = new URL("/delivery", window.location.origin);
+    const link = new URL("/my-work", window.location.origin);
     link.searchParams.set("bizLine", activeBusinessLine.id);
     link.searchParams.set("programId", String(requirement.programId));
     link.searchParams.set("requirementKey", requirement.requirementKey);
@@ -611,69 +680,87 @@ export function MyWorkWorkspace() {
           </div>
         </div>
 
-        {/* 三类身份既是统计也是筛选：数字和切换合成一排，不再上下重复两遍。 */}
-        <div className="my-work-roles" role="tablist" aria-label={t("myWork.type")}>
-          {([
-            { value: "created", label: t("myWork.statCreated"), count: stats.created },
-            { value: "owner", label: t("myWork.statOwner"), count: stats.owner },
-            { value: "assistant", label: t("myWork.statAssistant"), count: stats.assistant },
-          ] as { value: MyWorkType; label: string; count: number }[]).map((role) => (
-            <button
-              key={role.value}
-              type="button"
-              role="tab"
-              aria-selected={workType === role.value}
-              className={`my-work-role${workType === role.value ? " is-active" : ""}`}
-              onClick={() => setWorkType(role.value)}
-            >
-              <b className="manager-mono">{role.count}</b>
-              <span>{role.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* 项目筛选与关键词搜索单独一行，跟身份 tab 分开，条件多时不会把 tab 挤换行。 */}
-        <div className="my-work-filters">
-          <Select
-            className="my-work-filters__program"
-            popupClassName="my-work-filters__dropdown"
-            aria-label={t("myWork.filterProgram")}
-            showSearch
-            suffixIcon={<FolderOpenOutlined />}
-            optionFilterProp="label"
-            value={programFilter}
-            onChange={(value) => setProgramFilter(value)}
-            options={[{ value: "all" as const, label: t("myWork.allPrograms") }, ...programOptions]}
-          />
-          <Input
-            className="my-work-filters__search"
-            allowClear
-            value={keyword}
-            prefix={<SearchOutlined />}
-            placeholder={t("myWork.searchPlaceholder")}
-            onChange={(event) => setKeyword(event.target.value)}
-          />
-          <Tooltip
-            title={currentBranchKeys.size
-              ? t("myWork.currentBranchFilterHint")
-              : t("myWork.currentBranchFilterEmpty")}
-          >
-            {/* 禁用态的按钮不触发 Tooltip，套一层容器保证「没有匹配」也有解释。 */}
-            <span className="my-work-filters__branch-wrap">
-              <Button
-                className={`my-work-filters__branch${currentBranchOnly ? " is-active" : ""}`}
-                aria-pressed={currentBranchOnly}
-                disabled={!currentBranchKeys.size}
-                loading={gitLoading && !currentBranchKeys.size}
-                icon={<BranchesOutlined />}
-                onClick={() => setCurrentBranchOnly((value) => !value)}
-              >
-                {t("myWork.currentBranchFilter")}
-                <b className="manager-mono">{currentBranchKeys.size}</b>
-              </Button>
+        {sharedMode ? (
+          /* 分享视角：这一屏只讲被分享的那条需求，身份分组和筛选条都没有意义，先收起来。 */
+          <div className="my-work-shared-banner">
+            <ShareAltOutlined />
+            <span className="my-work-shared-banner__text">
+              {t("myWork.sharedRequirement")}
+              <code className="manager-mono">{sharedRequirementKey}</code>
             </span>
-          </Tooltip>
-        </div>
+            <Button type="link" size="small" onClick={exitSharedRequirement}>
+              {t("myWork.sharedRequirementExit")}
+            </Button>
+          </div>
+        ) : null}
+
+        {sharedMode ? null : (
+          <>
+          {/* 三类身份既是统计也是筛选：数字和切换合成一排，不再上下重复两遍。 */}
+          <div className="my-work-roles" role="tablist" aria-label={t("myWork.type")}>
+            {([
+              { value: "created", label: t("myWork.statCreated"), count: stats.created },
+              { value: "owner", label: t("myWork.statOwner"), count: stats.owner },
+              { value: "assistant", label: t("myWork.statAssistant"), count: stats.assistant },
+            ] as { value: MyWorkType; label: string; count: number }[]).map((role) => (
+              <button
+                key={role.value}
+                type="button"
+                role="tab"
+                aria-selected={workType === role.value}
+                className={`my-work-role${workType === role.value ? " is-active" : ""}`}
+                onClick={() => setWorkType(role.value)}
+              >
+                <b className="manager-mono">{role.count}</b>
+                <span>{role.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* 项目筛选与关键词搜索单独一行，跟身份 tab 分开，条件多时不会把 tab 挤换行。 */}
+          <div className="my-work-filters">
+            <Select
+              className="my-work-filters__program"
+              popupClassName="my-work-filters__dropdown"
+              aria-label={t("myWork.filterProgram")}
+              showSearch
+              suffixIcon={<FolderOpenOutlined />}
+              optionFilterProp="label"
+              value={programFilter}
+              onChange={(value) => setProgramFilter(value)}
+              options={[{ value: "all" as const, label: t("myWork.allPrograms") }, ...programOptions]}
+            />
+            <Input
+              className="my-work-filters__search"
+              allowClear
+              value={keyword}
+              prefix={<SearchOutlined />}
+              placeholder={t("myWork.searchPlaceholder")}
+              onChange={(event) => setKeyword(event.target.value)}
+            />
+            <Tooltip
+              title={currentBranchKeys.size
+                ? t("myWork.currentBranchFilterHint")
+                : t("myWork.currentBranchFilterEmpty")}
+            >
+              {/* 禁用态的按钮不触发 Tooltip，套一层容器保证「没有匹配」也有解释。 */}
+              <span className="my-work-filters__branch-wrap">
+                <Button
+                  className={`my-work-filters__branch${currentBranchOnly ? " is-active" : ""}`}
+                  aria-pressed={currentBranchOnly}
+                  disabled={!currentBranchKeys.size}
+                  loading={gitLoading && !currentBranchKeys.size}
+                  icon={<BranchesOutlined />}
+                  onClick={() => setCurrentBranchOnly((value) => !value)}
+                >
+                  {t("myWork.currentBranchFilter")}
+                  <b className="manager-mono">{currentBranchKeys.size}</b>
+                </Button>
+              </span>
+            </Tooltip>
+          </div>
+          </>
+        )}
       </header>
 
       {loading && !sortedRecords.length ? (
@@ -693,7 +780,7 @@ export function MyWorkWorkspace() {
             const cardKey = `${record.bizLine}:${record.programId}:${record.requirementKey}`;
             return (
               <article
-                className={`my-work-card${currentBranchOnly && currentBranchKeys.has(record.requirementKey) ? " is-current-branch" : ""}${removingKeys.has(record.requirementKey) ? " is-removing" : ""}`}
+                className={`my-work-card${currentBranchOnly && currentBranchKeys.has(record.requirementKey) ? " is-current-branch" : ""}${sharedMode ? " is-shared" : ""}${removingKeys.has(record.requirementKey) ? " is-removing" : ""}`}
                 aria-hidden={removingKeys.has(record.requirementKey) || undefined}
                 key={cardKey}
               >
@@ -974,9 +1061,11 @@ export function MyWorkWorkspace() {
       ) : (
         <section className="manager-data-card my-work-empty">
           <Empty
-            description={currentBranchOnly
-              ? t("myWork.currentBranchEmptyList")
-              : filtering ? t("myWork.emptyBySearch") : t(`myWork.empty.${workType}`)}
+            description={sharedMode
+              ? t("myWork.sharedRequirementMissing")
+              : currentBranchOnly
+                ? t("myWork.currentBranchEmptyList")
+                : filtering ? t("myWork.emptyBySearch") : t(`myWork.empty.${workType}`)}
           />
         </section>
       )}

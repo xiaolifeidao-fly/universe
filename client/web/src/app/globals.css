@@ -7440,6 +7440,33 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	background: var(--manager-primary-light) !important;
 }
 
+/* 分享视角提示条：地址栏带着分享参数进来时替掉身份筛选那一排。 */
+.my-work-shared-banner {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	border: 1px solid color-mix(in srgb, var(--manager-primary) 32%, var(--manager-border));
+	border-radius: 10px;
+	background: var(--manager-primary-light);
+	color: var(--manager-text-soft);
+}
+
+.my-work-shared-banner .anticon { color: var(--manager-primary); }
+
+.my-work-shared-banner__text {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+}
+
+.my-work-shared-banner__text code {
+	color: var(--manager-primary);
+	font-weight: 600;
+}
+
 /* 身份筛选：统计与切换合二为一，按内容宽度排成一行小胶囊，不占满整行。 */
 .my-work-roles {
 	display: flex;
@@ -7697,6 +7724,14 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 @media (prefers-reduced-motion: reduce) {
 	.my-work-card.is-removing { animation-duration: 1ms; }
 }
+
+/* 分享进来的那一条：与「当前分支」同一套选中描边，打开就知道看的是哪条。 */
+.my-work-card.is-shared {
+	border-color: var(--manager-primary);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--manager-primary) 32%, transparent);
+}
+
+.my-work-card.is-shared::before { opacity: 1; }
 
 /* 命中当前分支的卡片：品牌色描边常亮，一眼能从列表里认出来。 */
 .my-work-card.is-current-branch {

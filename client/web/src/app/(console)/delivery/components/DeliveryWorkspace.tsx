@@ -837,9 +837,10 @@ export function DeliveryWorkspace() {
     queryAllRequirements();
   }, [queryAllRequirements]);
 
+  // 分享链接一律指向工作台：接收者打开后只看到被分享的这一条需求，
+  // 不用先在任务看板里被整屏的项目上下文淹没。
   const handleShareRequirement = useCallback(async (requirement: DeliveryRequirementRecord) => {
-    const link = new URL(window.location.href);
-    link.search = "";
+    const link = new URL("/my-work", window.location.origin);
     link.searchParams.set("bizLine", activeBusinessLine.id);
     link.searchParams.set("programId", String(requirement.programId));
     link.searchParams.set("requirementKey", requirement.requirementKey);
