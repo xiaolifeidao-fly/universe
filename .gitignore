@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 /server/web-api/configs/application.properties
+/server/app-api/configs/application.properties
 
 # OS/editor artifacts
 .DS_Store
@@ -20,4 +21,17 @@
 /server/web-api/run/
 /client/web/*.tar.gz
 /server/web-api/*.tar.gz
+/server/app-api/bin/
+/server/app-api/logs/
+/server/app-api/package/
+/server/app-api/run/
+/server/app-api/*.tar.gz
+/client/app/node_modules/
+/client/app/.next/
+/client/app/tsconfig.tsbuildinfo
+/client/app/logs/
+/client/app/package/
+/client/app/run/
+/client/app/*.tar.gz
 
+.codex/delivery-task-*

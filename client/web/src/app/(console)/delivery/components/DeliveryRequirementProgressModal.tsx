@@ -477,12 +477,17 @@ export function DeliveryRequirementProgressModal({
     }
   }, [configFor, load, programId, t]);
 
-  /** 全部停止：在跑的任务逐个中断，还在排队的批量 / 串行队列一并取消。 */
+  /** 全部停止：在跑的任务逐个中断，还在排队的批量 / 串行队列一并取消，服务端的执行批次一并收尾。 */
   const stopAll = useCallback(async () => {
     setStoppingAll(true);
     try {
       const result = await stopAllCodexExecutions(programId, preferences.globalTool);
-      message.success(fill(t("delivery.progress.stopAllDone"), { count: result.itemKeys.length }));
+      message.success(
+        fill(t("delivery.progress.stopAllDone"), {
+          count: result.itemKeys.length,
+          batches: result.cancelledBatchIds.length,
+        }),
+      );
       window.setTimeout(() => void load(true), 500);
     } catch (nextError) {
       message.error((nextError as Error).message);

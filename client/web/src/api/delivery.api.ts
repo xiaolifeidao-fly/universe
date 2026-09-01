@@ -3097,6 +3097,9 @@ export class CodexStopAllResult {
 
   /** 被取消的批量 / 串行队列。 */
   queueIds: string[] = [];
+
+  /** 被服务端强制收尾的执行批次；本地已经没有队列时，这里才是真正解锁任务的动作。 */
+  cancelledBatchIds: string[] = [];
 }
 
 /** 停掉一个项目下所有任务执行：在跑的中断，排队的取消。 */

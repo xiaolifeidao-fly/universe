@@ -6,3 +6,9 @@ import "context"
 type CloudObjectStorage interface {
 	Put(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (storedObjectKey string, err error)
 }
+
+// CommandNotifier only wakes a user's worker up after the command and its audit
+// event are committed. Redis is one implementation; it never owns command state.
+type CommandNotifier interface {
+	NotifyPendingCommand(ctx context.Context, userID, commandID string) error
+}

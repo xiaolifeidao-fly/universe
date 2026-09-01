@@ -116,11 +116,11 @@ func TestNormalizeProgress(t *testing.T) {
 }
 
 func TestNormalizeCloudSyncScopesKeepsOnlyDeclaredScopesInStableOrder(t *testing.T) {
-	scopes, err := normalizeCloudSyncScopes([]string{"design", "chat", "design", "requirement"})
+	scopes, err := normalizeCloudSyncScopes([]string{"execution", "design", "chat", "attachment", "prototype", "test", "design", "requirement"})
 	if err != nil {
 		t.Fatalf("合法云端同步类别不应报错：%v", err)
 	}
-	if got, want := strings.Join(scopes, ","), "chat,requirement,design"; got != want {
+	if got, want := strings.Join(scopes, ","), "chat,requirement,design,test,prototype,execution,attachment"; got != want {
 		t.Fatalf("云端同步类别顺序或去重错误：got=%s want=%s", got, want)
 	}
 	if _, err := normalizeCloudSyncScopes([]string{"chat", "source"}); err == nil {
@@ -355,6 +355,28 @@ func TestNormalizeRequirementItemReferencesKeepsValidUniqueKeys(t *testing.T) {
 	}
 }
 
+func TestExecutionBatchIsDeadFollowsHeartbeat(t *testing.T) {
+	now := time.Now()
+	fresh := now.Add(-time.Second)
+	stale := now.Add(-ExecutionBatchHeartbeatTTL - time.Minute)
+	if executionBatchIsDead(&repository.DeliveryExecutionBatch{HeartbeatAt: &fresh}, now) {
+		t.Fatal("刚续过心跳的批次不能被判死")
+	}
+	if !executionBatchIsDead(&repository.DeliveryExecutionBatch{HeartbeatAt: &stale}, now) {
+		t.Fatal("心跳过期的批次必须判死，否则任务被永久锁住")
+	}
+	// 升级前建的批次没有心跳字段，退回启动时间判断。
+	if !executionBatchIsDead(&repository.DeliveryExecutionBatch{StartedAt: &stale}, now) {
+		t.Fatal("没有心跳的老批次应按启动时间判死")
+	}
+	if executionBatchIsDead(&repository.DeliveryExecutionBatch{StartedAt: &fresh}, now) {
+		t.Fatal("刚启动的老批次不能被判死")
+	}
+	if !executionBatchIsDead(&repository.DeliveryExecutionBatch{CreatedTime: stale}, now) {
+		t.Fatal("既没有心跳也没有启动时间时应按创建时间判死")
+	}
+}
+
 func TestExecutionBatchStateTransitions(t *testing.T) {
 	if err := validateExecutionBatchItemTransition(ExecutionBatchItemPending, ExecutionBatchItemRunning); err != nil {
 		t.Fatalf("pending -> running should be valid: %v", err)
@@ -364,6 +386,10 @@ func TestExecutionBatchStateTransitions(t *testing.T) {
 	}
 	if err := validateExecutionBatchItemTransition(ExecutionBatchItemCompleted, ExecutionBatchItemBlocked); err == nil {
 		t.Fatal("completed batch item must not become blocked")
+	}
+	// 启动前就已经完成的任务会被直接记完成跳过；不放行的话批次里会留下收不了尾的 pending。
+	if err := validateExecutionBatchItemTransition(ExecutionBatchItemPending, ExecutionBatchItemCompleted); err != nil {
+		t.Fatalf("pending -> completed should be valid: %v", err)
 	}
 	if _, err := normalizeExecutionBatchMode("sequence"); err != nil {
 		t.Fatalf("sequence should be a valid execution batch mode: %v", err)

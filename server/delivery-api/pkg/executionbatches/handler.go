@@ -23,6 +23,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/execution-batch/create", h.create)
 	api.POST("/execution-batch/item/status", h.updateItem)
 	api.POST("/execution-batch/finalize", h.finalize)
+	api.POST("/execution-batch/cancel", h.cancel)
+	api.POST("/execution-batch/heartbeat", h.heartbeat)
 	api.POST("/execution-batch/notification/read", h.markNotificationRead)
 	api.GET("/execution-batch", h.get)
 	api.GET("/execution-batch/notifications", h.listNotifications)
@@ -82,6 +84,37 @@ func (h *Handler) finalize(context *gin.Context) {
 	req.ActorID = httpx.CallerID(context)
 	view, err := h.service.FinalizeExecutionBatch(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
+}
+
+// cancel 强制关闭运行中的批次：桥接自己收不了尾时（断网、重启、线程已退出），
+// 这是把任务从批次里解锁出来的唯一入口。
+func (h *Handler) cancel(context *gin.Context) {
+	var req deliverydto.CancelExecutionBatchRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveManagedProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	views, err := h.service.CancelExecutionBatches(context.Request.Context(), req)
+	httpx.JSON(context, views, err)
+}
+
+// heartbeat 执行端定期上报仍在运行的批次，返回服务端认可的那部分。
+func (h *Handler) heartbeat(context *gin.Context) {
+	var req deliverydto.ExecutionBatchHeartbeatRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	if !h.resolveManagedProgramBizLine(context, req.ProgramID, &req.BizLine) {
+		return
+	}
+	req.ActorID = httpx.CallerID(context)
+	running, err := h.service.HeartbeatExecutionBatches(context.Request.Context(), req)
+	httpx.JSON(context, running, err)
 }
 
 func (h *Handler) listNotifications(context *gin.Context) {

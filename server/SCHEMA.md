@@ -61,7 +61,7 @@
 | 表 | 作用 | 原型出处 |
 |---|---|---|
 | `zt_delivery_program` | 交付项目（印尼业务 = 一行） | `meta` |
-| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计文件的 OSS 对象索引；正文只在私有 OSS | 原型没有 |
+| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计、测试、原型、执行产物与附件的 OSS 对象索引；正文只在私有 OSS | 原型没有 |
 | `zt_delivery_stage` | 推进阶段（现状 / 第一步 … 终局） | `stages[]` |
 | `zt_delivery_module` | 能力模块 + 权重（数据回传 30% …） | `modules[]` |
 | `zt_delivery_time_plan` | 时间计划：项目的交付时间窗口，对应一条从基准分支切出的发布分支（默认 `release/{截止日期}`） | 原型没有 |
@@ -74,6 +74,10 @@
 | `zt_delivery_item_dependency` | 任务依赖有向边（前置 → 后置），`source_side` / `target_side` 持久化两端连接边框 | 任务面板依赖连线 |
 | `zt_delivery_item_event` | 流水：状态流转 / 进度改动 / 进展评论；事件中冻结 `requirement_key`，供需求时间线回溯 | 原型没有，看板的价值主要在这 |
 | `zt_delivery_snapshot` | 每日进度快照，趋势与三维图历史 | 原型没有 |
+| `zt_delivery_command` | 用户提交的远程命令、租约、取消请求和最终结果；数据库权威 | 移动端远程执行 |
+| `zt_delivery_command_event` | 命令审计与 SSE 游标事件流 | 移动端远程执行 |
+| `zt_delivery_command_worker` | 按用户和业务线登记的插件及最近心跳 | 移动端远程执行 |
+| `zt_delivery_command_worker_workspace` | Worker 已配置的项目工作目录映射，不保存绝对路径 | 移动端远程执行 |
 
 ### 隔离维度
 
@@ -168,11 +172,19 @@ uk_dlv_snapshot  (biz_line, program_id, stat_date, module_key)
 - `zt_delivery_execution_batch`（执行批次）回答「这一次批量/串行跑了哪些任务、结果如何」，一批任务可以被执行无数次
 - 任务对拆解批次是弱引用：`planning_batch_key` 非必填，批次被删也不影响任务
 
+**⑦ 用户命令中心由数据库裁决领取，Redis 不保存命令正文。**
+
+- `zt_delivery_command` 是用户提交、租约、取消请求、重试次数、最终结果的唯一权威记录；Redis 只保存不含参数的短时 `command_id` 唤醒提示，丢失提示时 Worker 仍可回退查询数据库。
+- 同一 `(biz_line, user_id, idempotency_key)` 只对应一条命令。并发重试返回同一记录，不能产生第二次本地执行。
+- 领取以 `UPDATE ... WHERE state = 'pending' AND cancel_requested = false` 原子完成；只有更新成功的 Worker 持有随机 `lease_token`，续租、活动和最终回传都必须同时匹配该 token 与 `worker_id`。
+- `pending`、`leased` 或 `running` 都以两分钟为恢复窗口。未领取命令会重新发送最多三次领取通知后进入 `timed_out`；失联租约低于三次领取尝试时回到 `pending`，否则进入 `timed_out`。每次转变都会写入 `zt_delivery_command_event`，重新调度会再次发送 Redis 唤醒提示。
+- Worker 仅登记已配置本机工作目录的 `(biz_line, program_id)` 映射。绝不上传、保存或下发本机绝对路径；领取查询只会返回同一用户、同一业务线、同一项目且能力匹配的命令。
+
 ### 建表
 
 两条路，结构完全一致，走哪条都行。
 
-**① 直接跑 SQL：** [`server/delivery.sql`](delivery.sql)，八张表的 DDL 都在里面。
+**① 直接跑 SQL：** [`server/delivery.sql`](delivery.sql)，交付域表的 DDL 都在里面。
 
 ```bash
 mysql -h <host> -P <port> -u <user> -p <database> < server/delivery.sql
@@ -251,7 +263,7 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 
 已有项目表升级到项目级云端同步时，执行
 [`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。
-该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档和设计文档会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。
+该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档、设计文档、测试资料、原型、执行产物和附件会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。
 服务端上传到私有 OSS 后，数据库仅保存对象键、大小和 SHA-256 校验值。
 
 已有需求表升级到支持需求详情里 @ 引用历史需求时，执行
@@ -264,8 +276,18 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 分别记录一次批次的启动事实和批次内每条任务的进度快照。缺这两张表时，任务面板批量执行会直接报
 `Table 'xxx.zt_delivery_execution_batch' doesn't exist`。
 
+已有 `zt_delivery_execution_batch` 升级到心跳判死时，执行
+[`migrations/20260905_delivery_execution_batch_heartbeat.sql`](migrations/20260905_delivery_execution_batch_heartbeat.sql)。
+它补上 `heartbeat_at`：执行端每隔 30 秒续一次心跳，超过 3 分钟没续上就按执行端已经不在了处理，
+批次被自动收尾并放行里面的任务。缺这个字段时，一次断网或执行进程退出就会让批次永远停在 `running`，
+批次里的任务再也启动不了（报「任务正在其他执行批次中」）。
+
 已有需求表升级到支持需求详情里 @ 引用既有任务时，执行
 [`migrations/20260818_delivery_requirement_task_references.sql`](migrations/20260818_delivery_requirement_task_references.sql)。
 该脚本可安全重复执行；它补齐的 `reference_item_keys` 默认为空串，存量需求没有任务关联。
+
+已有库启用移动端用户命令中心前，执行
+[`migrations/20260903_delivery_command_center.sql`](migrations/20260903_delivery_command_center.sql)。
+该脚本可安全重复执行；它建立权威命令、审计事件、插件注册和工作目录映射四张表。命令输入与结果不写 Redis，本机路径和 Worker 凭证也不得写入任意一张表。
 
 省掉 `-file` 就只建表。**DDL 不在服务启动时跑** —— 线上建表不该是进程启动的副作用。

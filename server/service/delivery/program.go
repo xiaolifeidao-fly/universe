@@ -26,7 +26,14 @@ var (
 
 const maxCloudSyncFileBytes = 8 * 1024 * 1024
 
-var cloudSyncScopeSet = map[string]struct{}{"chat": {}, "requirement": {}, "design": {}}
+var cloudSyncScopeSet = map[string]struct{}{
+	"chat": {}, "requirement": {}, "design": {}, "test": {},
+	"prototype": {}, "execution": {}, "attachment": {},
+}
+
+var cloudSyncScopeOrder = []string{
+	"chat", "requirement", "design", "test", "prototype", "execution", "attachment",
+}
 
 // ---------- 项目 ----------
 
@@ -252,6 +259,74 @@ func (s *service) UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSy
 	return toCloudSyncFileView(row), nil
 }
 
+// ListCloudSyncFiles exposes a project-scoped document directory only while
+// cloud sync remains enabled. The returned metadata contains no OSS credentials
+// or local machine paths.
+func (s *service) ListCloudSyncFiles(ctx context.Context, query dto.CloudSyncFileQuery) ([]dto.CloudSyncFileView, error) {
+	if !query.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if query.ProgramID <= 0 {
+		return nil, errors.New("缺少项目标识")
+	}
+	category := strings.TrimSpace(query.Category)
+	if category != "" {
+		if _, ok := cloudSyncScopeSet[category]; !ok {
+			return nil, errors.New("云端同步类别无效")
+		}
+	}
+	program, err := s.repo.FindProgram(ctx, query.BizLine.String(), query.ProgramID)
+	if err != nil {
+		return nil, translate(err)
+	}
+	if !program.CloudSyncEnabled {
+		return nil, errors.New("当前项目未启用云端同步")
+	}
+	if category != "" && !cloudSyncScopeEnabled(program.CloudSyncScopes, category) {
+		return nil, errors.New("当前项目未启用该类云端同步")
+	}
+	rows, err := s.repo.ListCloudSyncFiles(ctx, query.BizLine.String(), query.ProgramID, category)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]dto.CloudSyncFileView, 0, len(rows))
+	for _, row := range rows {
+		if cloudSyncScopeEnabled(program.CloudSyncScopes, row.Category) {
+			views = append(views, toCloudSyncFileView(row))
+		}
+	}
+	return views, nil
+}
+
+func (s *service) GetCloudSyncFile(ctx context.Context, bizLine contract.BizLine, programID int64, category, relativePath string) (dto.CloudSyncFileView, error) {
+	if !bizLine.Valid() {
+		return dto.CloudSyncFileView{}, contract.ErrBizLineRequired
+	}
+	if programID <= 0 {
+		return dto.CloudSyncFileView{}, errors.New("缺少项目标识")
+	}
+	category = strings.TrimSpace(category)
+	if _, ok := cloudSyncScopeSet[category]; !ok {
+		return dto.CloudSyncFileView{}, errors.New("云端同步类别无效")
+	}
+	relativePath, err := normalizeCloudSyncRelativePath(relativePath)
+	if err != nil {
+		return dto.CloudSyncFileView{}, err
+	}
+	program, err := s.repo.FindProgram(ctx, bizLine.String(), programID)
+	if err != nil {
+		return dto.CloudSyncFileView{}, translate(err)
+	}
+	if !program.CloudSyncEnabled || !cloudSyncScopeEnabled(program.CloudSyncScopes, category) {
+		return dto.CloudSyncFileView{}, errors.New("当前项目未启用该类云端同步")
+	}
+	row, err := s.repo.FindCloudSyncFile(ctx, bizLine.String(), programID, category, relativePath)
+	if err != nil {
+		return dto.CloudSyncFileView{}, translate(err)
+	}
+	return toCloudSyncFileView(row), nil
+}
+
 func normalizeCloudSyncScopes(raw []string) ([]string, error) {
 	seen := map[string]struct{}{}
 	for _, value := range raw {
@@ -262,7 +337,7 @@ func normalizeCloudSyncScopes(raw []string) ([]string, error) {
 		seen[scope] = struct{}{}
 	}
 	scopes := make([]string, 0, len(seen))
-	for _, scope := range []string{"chat", "requirement", "design"} {
+	for _, scope := range cloudSyncScopeOrder {
 		if _, ok := seen[scope]; ok {
 			scopes = append(scopes, scope)
 		}
@@ -377,6 +452,6 @@ func toCloudSyncFileView(row *repository.DeliveryCloudSyncFile) dto.CloudSyncFil
 	updated := row.UpdatedTime
 	return dto.CloudSyncFileView{
 		ProgramID: row.ProgramID, Category: row.Category, RelativePath: row.RelativePath,
-		ContentType: row.ContentType, Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated,
+		ContentType: row.ContentType, Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated, ObjectKey: row.ObjectKey,
 	}
 }

@@ -39,7 +39,13 @@ const (
 const dateLayout = "2006-01-02"
 
 const (
-	maxExecutionMetadataBytes = 8192
+	maxExecutionMetadataBytes      = 8192
+	maxCommandInputBytes           = 64 * 1024
+	maxCommandResultBytes          = 512 * 1024
+	maxCommandEventBytes           = 64 * 1024
+	maxCommandAttachmentCount      = 5
+	maxCommandAttachmentBytes      = 20 * 1024 * 1024
+	maxCommandAttachmentTotalBytes = maxCommandAttachmentCount * maxCommandAttachmentBytes
 	// 拆解上下文要带上整份基线键集合与本轮产出，8KB 不够用，单独放宽。
 	maxPlanningMetadataBytes = 256 * 1024
 	// MEDIUMTEXT 最多约 16MB；留出请求体与编码余量，单份文档限制为 8MB。
@@ -48,6 +54,30 @@ const (
 	maxBenefitTagCount = 6
 	maxBenefitTagRunes = 32
 )
+
+const (
+	CommandStatePending   = "pending"
+	CommandStateLeased    = "leased"
+	CommandStateRunning   = "running"
+	CommandStateSucceeded = "succeeded"
+	CommandStateFailed    = "failed"
+	CommandStateCancelled = "cancelled"
+	CommandStateTimedOut  = "timed_out"
+)
+
+const (
+	commandLeaseDuration = 2 * time.Minute
+	maxCommandAttempts   = 3
+	maxCommandDispatches = 3
+)
+
+var commandStates = map[string]struct{}{
+	CommandStatePending: {}, CommandStateLeased: {}, CommandStateRunning: {},
+	CommandStateSucceeded: {}, CommandStateFailed: {}, CommandStateCancelled: {}, CommandStateTimedOut: {},
+}
+
+var commandTypePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
+var commandAttachmentIDPattern = regexp.MustCompile(`^attachment-[a-f0-9]{32}$`)
 
 var statusOrder = []string{StatusTodo, StatusDoing, StatusDone, StatusBlocked, StatusDropped}
 

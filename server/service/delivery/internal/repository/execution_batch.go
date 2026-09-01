@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"gorm.io/gorm/clause"
@@ -116,6 +117,57 @@ func (r *DeliveryRepository) FindActiveExecutionBatchItemKeys(ctx context.Contex
 		Where("batch_item.biz_line = ? AND batch_item.program_id = ? AND batch_item.item_key IN ? AND batch.status = ?", bizLine, programID, itemKeys, "running").
 		Order("batch_item.item_key asc").Scan(&keys).Error
 	return keys, err
+}
+
+// ListRunningExecutionBatches 锁定并返回仍在运行的批次；batchID 为空表示整个项目。
+// 强制收尾要在锁上做，避免和桥接自己的收尾请求并发写成两种结果。
+func (r *DeliveryRepository) ListRunningExecutionBatches(ctx context.Context, bizLine string, programID int64, batchID string) ([]*DeliveryExecutionBatch, error) {
+	query := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatch{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("biz_line = ? AND program_id = ? AND status = ?", bizLine, programID, "running")
+	if strings.TrimSpace(batchID) != "" {
+		query = query.Where("batch_id = ?", batchID)
+	}
+	var rows []*DeliveryExecutionBatch
+	err := query.Order("id asc").Find(&rows).Error
+	return rows, err
+}
+
+// TouchExecutionBatchHeartbeats 续上执行端心跳，只认还在运行的批次。
+func (r *DeliveryRepository) TouchExecutionBatchHeartbeats(ctx context.Context, bizLine string, programID int64, batchIDs []string) (int64, error) {
+	if len(batchIDs) == 0 {
+		return 0, nil
+	}
+	now := time.Now()
+	tx := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatch{}).
+		Where("biz_line = ? AND program_id = ? AND batch_id IN ? AND status = ?", bizLine, programID, batchIDs, "running").
+		Updates(map[string]any{"heartbeat_at": &now, "updated_time": now})
+	return tx.RowsAffected, tx.Error
+}
+
+// FilterRunningExecutionBatchIDs 从一组批次号里挑出服务端仍认为在运行的，执行端据此收敛自己的队列。
+func (r *DeliveryRepository) FilterRunningExecutionBatchIDs(ctx context.Context, bizLine string, programID int64, batchIDs []string) ([]string, error) {
+	if len(batchIDs) == 0 {
+		return []string{}, nil
+	}
+	running := make([]string, 0, len(batchIDs))
+	err := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatch{}).
+		Where("biz_line = ? AND program_id = ? AND batch_id IN ? AND status = ?", bizLine, programID, batchIDs, "running").
+		Order("id asc").
+		Pluck("batch_id", &running).Error
+	return running, err
+}
+
+// UpdateExecutionBatchItemsByStatus 批量改写批次内处于指定状态的任务，用于强制收尾时一次性收口未完成项。
+func (r *DeliveryRepository) UpdateExecutionBatchItemsByStatus(ctx context.Context, bizLine string, programID int64, batchID string, fromStatuses []string, values map[string]any) (int64, error) {
+	if len(fromStatuses) == 0 {
+		return 0, nil
+	}
+	values["updated_time"] = time.Now()
+	tx := r.Db.WithContext(ctx).Model(&DeliveryExecutionBatchItem{}).
+		Where("biz_line = ? AND program_id = ? AND batch_id = ? AND status IN ?", bizLine, programID, batchID, fromStatuses).
+		Updates(values)
+	return tx.RowsAffected, tx.Error
 }
 
 func (r *DeliveryRepository) UpdateExecutionBatchItem(ctx context.Context, bizLine string, programID int64, batchID, itemKey string, values map[string]any) (int64, error) {

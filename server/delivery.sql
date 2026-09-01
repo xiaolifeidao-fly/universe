@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
 	`git_base_branch` varchar(255) NOT NULL DEFAULT '',           -- 启用后新需求默认基准分支
 	`git_chat_sync_enabled` boolean NOT NULL DEFAULT FALSE,       -- 是否将结束的聊天记录归档到工作目录 chat/
 	`cloud_sync_enabled` boolean NOT NULL DEFAULT FALSE,          -- 是否启用选定内容的云端同步
-	`cloud_sync_scopes` varchar(128) NOT NULL DEFAULT '',         -- chat,requirement,design 的规范化逗号列表
+	`cloud_sync_scopes` varchar(128) NOT NULL DEFAULT '',         -- chat,requirement,design,test,prototype,execution,attachment 的规范化逗号列表
   `created_by`   varchar(64)  NOT NULL,
   `updated_by`   varchar(64)  NOT NULL,
   `created_time` timestamp    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -44,14 +44,14 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_program` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -------------------------------------------------------------------------
--- 1.5 项目云端文件：由本机桥接显式上传的聊天、需求与设计文档快照
+-- 1.5 项目云端文件：由本机桥接显式上传的聊天、需求、设计、测试、原型、执行产物与附件快照
 --     正文只存私有 OSS；数据库只存项目相对路径、OSS 对象键与校验元数据。
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `zt_delivery_cloud_sync_file` (
   `id`            bigint        NOT NULL AUTO_INCREMENT,
   `biz_line`      varchar(32)   NOT NULL,
   `program_id`    bigint        NOT NULL,
-  `category`      varchar(16)   NOT NULL,                       -- chat / requirement / design
+	`category`      varchar(16)   NOT NULL,                       -- chat / requirement / design / test / prototype / execution / attachment
   `relative_path` varchar(1024) NOT NULL,                       -- 项目工作目录内相对路径
   `relative_path_hash` char(64) NOT NULL,                       -- relative_path 的 SHA-256，唯一键里的定长替身
   `content_type`  varchar(128)  NOT NULL,
@@ -291,7 +291,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_item` (
   `kind`         varchar(16)   NOT NULL,                       -- gap 坑点 / capability 能力 / asset 已具备
   `prototype_task` boolean      NOT NULL DEFAULT FALSE,         -- 历史兼容字段；新方案不再创建原型图任务
   `title`        varchar(255)  NOT NULL,
-  `description`  varchar(1024) NOT NULL,
+  `description`  text          NOT NULL,                       -- 任务说明；无任务需求文档时是执行阶段唯一的需求输入
   `benefit_tags` text          NOT NULL,                       -- 任务收益或作用标签 JSON 数组
   `requirement_document` mediumtext NOT NULL,                  -- 旧需求文档正文，迁移后仅兼容读取
   `requirement_document_path` varchar(512) NOT NULL,           -- 固定相对路径 doc/{module}/{task}/文档.md
@@ -377,6 +377,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_execution_batch` (
   `blocked_count`          bigint       NOT NULL,
   `summary`                varchar(2048) NOT NULL,
   `notification_read_at`   timestamp    NULL,                  -- 启动者点击完成提醒的时间
+  `heartbeat_at`           timestamp    NULL,                  -- 执行侧最近一次心跳；停了就判定批次已死
   `started_at`             timestamp    NULL,
   `finished_at`            timestamp    NULL,
   `created_by`             varchar(64)  NOT NULL,
@@ -514,4 +515,100 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_snapshot` (
   `created_time`   timestamp     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_dlv_snapshot` (`biz_line`, `program_id`, `stat_date`, `module_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -------------------------------------------------------------------------
+-- 10. 用户命令中心：命令、领取租约和审计由数据库保存；Redis 只作通知。
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `zt_delivery_command` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `biz_line` varchar(32) NOT NULL,
+  `command_id` varchar(64) NOT NULL,
+  `program_id` bigint NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `command_type` varchar(64) NOT NULL,
+  `idempotency_key` varchar(128) NOT NULL,
+  `input_json` mediumtext NOT NULL,
+  `result_json` mediumtext NOT NULL,
+  `error_message` varchar(1024) NOT NULL DEFAULT '',
+  `state` varchar(16) NOT NULL,
+  `progress` int NOT NULL DEFAULT 0,
+  `cancel_requested` boolean NOT NULL DEFAULT FALSE,
+  `lease_token` varchar(64) NOT NULL DEFAULT '',
+  `lease_worker_id` varchar(64) NOT NULL DEFAULT '',
+  `lease_expires_at` timestamp NULL,
+  `dispatch_count` int NOT NULL DEFAULT 1,
+  `attempt_count` int NOT NULL DEFAULT 0,
+  `started_at` timestamp NULL,
+  `finished_at` timestamp NULL,
+  `version` bigint NOT NULL DEFAULT 1,
+  `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_command_id` (`biz_line`, `command_id`),
+  UNIQUE KEY `uk_dlv_command_idempotency` (`biz_line`, `user_id`, `idempotency_key`),
+  KEY `idx_dlv_command_queue` (`biz_line`, `user_id`, `state`, `program_id`, `created_time`),
+  KEY `idx_dlv_command_user` (`biz_line`, `user_id`, `program_id`, `state`),
+  KEY `idx_dlv_command_lease` (`biz_line`, `lease_expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `zt_delivery_command_event` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `biz_line` varchar(32) NOT NULL,
+  `command_id` varchar(64) NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `kind` varchar(32) NOT NULL,
+  `state` varchar(16) NOT NULL,
+  `message` varchar(1024) NOT NULL DEFAULT '',
+  `data_json` mediumtext NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_dlv_command_event_stream` (`biz_line`, `command_id`, `id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Mobile task conversation uploads. The app API holds the bytes until a mapped
+-- Worker downloads them; workspace paths never cross the service boundary.
+CREATE TABLE IF NOT EXISTS `zt_delivery_command_attachment` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `biz_line` varchar(32) NOT NULL,
+  `attachment_id` varchar(64) NOT NULL,
+  `program_id` bigint NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `item_key` varchar(128) NOT NULL,
+  `name` varchar(160) NOT NULL,
+  `content_type` varchar(128) NOT NULL,
+  `size` bigint NOT NULL,
+  `content` longblob NOT NULL,
+  `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_command_attachment` (`biz_line`, `attachment_id`),
+  KEY `idx_dlv_command_attachment_owner` (`biz_line`, `user_id`, `program_id`, `created_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `zt_delivery_command_worker` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `biz_line` varchar(32) NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `worker_id` varchar(64) NOT NULL,
+  `display_name` varchar(128) NOT NULL DEFAULT '',
+  `capabilities_json` text NOT NULL,
+  `last_heartbeat_at` timestamp NOT NULL,
+  `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_command_worker` (`biz_line`, `user_id`, `worker_id`),
+  KEY `idx_dlv_command_worker_heartbeat` (`biz_line`, `user_id`, `worker_id`, `last_heartbeat_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `zt_delivery_command_worker_workspace` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `biz_line` varchar(32) NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `worker_id` varchar(64) NOT NULL,
+  `program_id` bigint NOT NULL,
+  `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_dlv_command_workspace` (`biz_line`, `user_id`, `worker_id`, `program_id`),
+  KEY `idx_dlv_command_workspace_worker` (`biz_line`, `user_id`, `worker_id`, `program_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

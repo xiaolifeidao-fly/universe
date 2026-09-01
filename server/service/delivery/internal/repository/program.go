@@ -166,6 +166,28 @@ func (r *DeliveryRepository) UpsertCloudSyncFile(ctx context.Context, row *Deliv
 	return row, nil
 }
 
+func (r *DeliveryRepository) ListCloudSyncFiles(ctx context.Context, bizLine string, programID int64, category string) ([]*DeliveryCloudSyncFile, error) {
+	tx := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).
+		Where("biz_line = ? AND program_id = ?", bizLine, programID)
+	if category != "" {
+		tx = tx.Where("category = ?", category)
+	}
+	var rows []*DeliveryCloudSyncFile
+	err := tx.Order("category asc, relative_path asc").Find(&rows).Error
+	return rows, err
+}
+
+func (r *DeliveryRepository) FindCloudSyncFile(ctx context.Context, bizLine string, programID int64, category, relativePath string) (*DeliveryCloudSyncFile, error) {
+	var row DeliveryCloudSyncFile
+	err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).
+		Where("biz_line = ? AND program_id = ? AND category = ? AND relative_path_hash = ?", bizLine, programID, category, CloudSyncRelativePathHash(relativePath)).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
 // MoveProgramBizLine 迁移项目及其全部交付数据。调用方必须包在同一事务中，
 // 这样任一表的唯一键冲突都会让整次迁移回滚。
 func (r *DeliveryRepository) MoveProgramBizLine(

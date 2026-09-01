@@ -92,6 +92,15 @@ type CloudSyncFileView struct {
 	Size         int64      `json:"size"`
 	SHA256       string     `json:"sha256"`
 	UpdatedAt    *time.Time `json:"updatedAt"`
+	ObjectKey    string     `json:"-"`
+}
+
+// CloudSyncFileQuery lists only metadata for a project's enabled cloud file
+// categories. Object keys never leave the application boundary.
+type CloudSyncFileQuery struct {
+	BizLine   contract.BizLine `json:"-"`
+	ProgramID int64            `json:"programId" form:"programId"`
+	Category  string           `json:"category" form:"category"`
 }
 
 // MigrateProgramRequest 把一个项目及其交付数据完整迁移到目标业务线。

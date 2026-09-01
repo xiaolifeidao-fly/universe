@@ -1,4 +1,4 @@
-// Package objectstore 提供服务端调用阿里云 OSS 的最小 PUT 适配器。
+// Package objectstore 提供服务端调用阿里云 OSS 的最小读写适配器。
 //
 // 它使用 OSS V1 签名，避免让领域服务依赖某一版 SDK；桶保持私有，下载授权应另行签发。
 package objectstore
@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,6 +45,15 @@ type AliyunOSS struct {
 	httpClient      *http.Client
 	now             func() time.Time
 }
+
+// ObjectContent is a private object returned through a server-authorized read.
+// The object key and OSS credentials are deliberately not returned to callers.
+type ObjectContent struct {
+	ContentType string
+	Data        []byte
+}
+
+const maxObjectReadBytes = 8 * 1024 * 1024
 
 // NewAliyunOSS 校验配置并构造一个用于服务端同步的 OSS 客户端。
 func NewAliyunOSS(config OSSConfig) (*AliyunOSS, error) {
@@ -138,6 +148,82 @@ func (c *AliyunOSS) Put(ctx context.Context, objectKey, contentType string, cont
 		return "", fmt.Errorf("OSS 上传失败: status=%d, body=%s", response.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return key, nil
+}
+
+// Get reads a previously stored object using a server-side OSS V1 signature.
+// objectKey must be the persisted key returned by Put, including any configured
+// prefix; applying the prefix again would point at a different object.
+func (c *AliyunOSS) Get(ctx context.Context, objectKey string) (ObjectContent, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	date := c.now().UTC().Format(http.TimeFormat)
+	stringToSign := strings.Join([]string{http.MethodGet, "", "", date}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	authorization := "OSS " + c.accessKeyID + ":" + base64.StdEncoding.EncodeToString(signer.Sum(nil))
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.objectURL(key), nil)
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("构造 OSS 读取请求失败: %w", err)
+	}
+	request.Header.Set("Date", date)
+	request.Header.Set("Authorization", authorization)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("读取 OSS 失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return ObjectContent{}, fmt.Errorf("OSS 读取失败: status=%d, body=%s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if response.ContentLength > maxObjectReadBytes {
+		return ObjectContent{}, errors.New("OSS 对象不能超过 8MB")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxObjectReadBytes+1))
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("读取 OSS 正文失败: %w", err)
+	}
+	if len(data) > maxObjectReadBytes {
+		return ObjectContent{}, errors.New("OSS 对象不能超过 8MB")
+	}
+	contentType := strings.TrimSpace(response.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return ObjectContent{ContentType: contentType, Data: data}, nil
+}
+
+// SignedURL creates a short-lived GET URL for a private object. It exposes
+// neither the access key secret nor local file paths; callers still have to
+// pass app-level authorization before this method is reached.
+func (c *AliyunOSS) SignedURL(objectKey string, expiresAt time.Time) (string, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return "", fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	expiresAt = expiresAt.UTC()
+	if !expiresAt.After(c.now().UTC()) {
+		return "", errors.New("OSS 签名地址已过期")
+	}
+	expires := strconv.FormatInt(expiresAt.Unix(), 10)
+	stringToSign := strings.Join([]string{http.MethodGet, "", "", expires}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	signature := base64.StdEncoding.EncodeToString(signer.Sum(nil))
+
+	parsed, err := url.Parse(c.objectURL(key))
+	if err != nil {
+		return "", fmt.Errorf("构造 OSS 签名地址失败: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("OSSAccessKeyId", c.accessKeyID)
+	query.Set("Expires", expires)
+	query.Set("Signature", signature)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func (c *AliyunOSS) objectURL(key string) string {

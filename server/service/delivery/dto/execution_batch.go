@@ -77,6 +77,28 @@ type FinalizeExecutionBatchRequest struct {
 	ActorName string           `json:"actorName"`
 }
 
+// CancelExecutionBatchRequest 强制关闭仍在运行的执行批次。
+// BatchID 为空表示关闭该项目下全部运行中的批次：本地桥接可能因为断网、重启或进程被杀
+// 已经丢失批次上下文，这时只能按项目整体收口，否则批次里的任务会被永久锁住。
+type CancelExecutionBatchRequest struct {
+	BizLine   contract.BizLine `json:"-"`
+	ProgramID int64            `json:"programId"`
+	BatchID   string           `json:"batchId"`
+	Reason    string           `json:"reason"`
+	ActorID   string           `json:"-"`
+	ActorName string           `json:"actorName"`
+}
+
+// ExecutionBatchHeartbeatRequest 是执行端的「我还活着」上报。心跳停掉的批次会被服务端判死收尾，
+// 否则断网或进程退出之后，批次里的任务再也没法启动。
+type ExecutionBatchHeartbeatRequest struct {
+	BizLine   contract.BizLine `json:"-"`
+	ProgramID int64            `json:"programId"`
+	BatchIDs  []string         `json:"batchIds"`
+	ActorID   string           `json:"-"`
+	ActorName string           `json:"actorName"`
+}
+
 type ExecutionBatchNotificationQuery struct {
 	BizLine   contract.BizLine `form:"-"`
 	ProgramID int64            `form:"programId"`
