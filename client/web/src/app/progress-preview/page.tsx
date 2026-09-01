@@ -74,7 +74,6 @@ export default function ProgressPreviewPage() {
       requirement={requirement}
       previewProgress={progress}
       onClose={() => undefined}
-      onOpenItem={() => undefined}
     />
   );
 }

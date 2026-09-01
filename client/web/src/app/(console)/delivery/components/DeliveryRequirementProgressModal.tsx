@@ -24,20 +24,29 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   DELIVERY_STATUSES,
   DeliveryBoardColumn,
+  advanceDeliveryPhase,
+  deleteItem,
   fetchCodexBridgeHealth,
   fetchItems,
+  fetchModules,
+  fetchProgramMembers,
   fetchRequirementProgress,
   fetchRequirements,
+  fetchStages,
+  patchItem,
   startCodexExecution,
   startCodexExecutionBatch,
   stopAllCodexExecutions,
   stopCodexConversation,
   type DeliveryExecutionBatchRecord,
   type DeliveryItemRecord,
+  type DeliveryModuleRecord,
   type DeliveryPlanningBatchRecord,
   type DeliveryRequirementProgressRecord,
   type DeliveryRequirementRecord,
+  type DeliveryStageRecord,
   type DeliveryStatus,
+  type PatchItemPayload,
 } from "@/api/delivery.api";
 import {
   effortForConfig,
@@ -47,7 +56,9 @@ import {
 } from "@/ai-preferences/AIPreferencesProvider";
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { notifyDeliveryTasksChanged } from "@/api/deliveryTaskEvents";
 import { DeliveryDependencyLayer } from "./DeliveryDependencyLayer";
+import { DeliveryItemDrawer } from "./DeliveryItemDrawer";
 import { DeliveryTaskDocumentPanel } from "./DeliveryTaskDocument";
 import { DeliveryTaskSessionModal } from "./DeliveryTaskSessionModal";
 
@@ -58,7 +69,6 @@ interface DeliveryRequirementProgressModalProps {
   bizLine: BusinessLineId;
   requirement: DeliveryRequirementRecord | null;
   onClose: () => void;
-  onOpenItem?: (item: DeliveryItemRecord) => void;
   previewProgress?: DeliveryRequirementProgressRecord;
 }
 
@@ -250,7 +260,6 @@ export function DeliveryRequirementProgressModal({
   bizLine,
   requirement,
   onClose,
-  onOpenItem,
   previewProgress,
 }: DeliveryRequirementProgressModalProps) {
   const { t } = useLocale();
@@ -275,7 +284,14 @@ export function DeliveryRequirementProgressModal({
   const [stoppingKey, setStoppingKey] = useState("");
   const [stoppingAll, setStoppingAll] = useState(false);
   const [chatItem, setChatItem] = useState<DeliveryItemRecord | null>(null);
+  const [startTestingCases, setStartTestingCases] = useState(false);
   const [documentItem, setDocumentItem] = useState<DeliveryItemRecord | null>(null);
+  // 点任务卡片就地开编辑抽屉：进度窗自己备齐编辑要用的阶段、模块和成员候选，不指望调用方准备。
+  const [editItem, setEditItem] = useState<DeliveryItemRecord | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [stages, setStages] = useState<DeliveryStageRecord[]>([]);
+  const [modules, setModules] = useState<DeliveryModuleRecord[]>([]);
+  const [ownerOptions, setOwnerOptions] = useState<Array<{ value: string; label: string }>>([]);
 
   const load = useCallback(async (silent = false) => {
     if (!open || !programId || !requirement) return;
@@ -292,14 +308,22 @@ export function DeliveryRequirementProgressModal({
 
   const loadContext = useCallback(async () => {
     if (!open || !programId || !requirement || previewProgress) return;
-    const [items, requirementPage, health] = await Promise.all([
+    const [items, requirementPage, health, stageList, moduleList, memberList] = await Promise.all([
       fetchItems(programId, requirement.requirementKey).catch(() => null),
       fetchRequirements({ programId, pageIndex: 1 }).catch(() => null),
       fetchCodexBridgeHealth(programId, preferences.globalTool).catch(() => null),
+      fetchStages(programId).catch(() => null),
+      fetchModules(programId).catch(() => null),
+      fetchProgramMembers(programId).catch(() => null),
     ]);
     setItemCatalog(items?.data ?? []);
     setRequirements(requirementPage?.data ?? []);
     setBridgeReady(Boolean(health?.ready));
+    setStages(stageList ?? []);
+    setModules(moduleList ?? []);
+    setOwnerOptions((memberList ?? [])
+      .filter((member) => Boolean(member.id))
+      .map((member) => ({ value: member.id, label: member.displayName || member.username || member.id })));
   }, [open, preferences.globalTool, previewProgress, programId, requirement]);
 
   useEffect(() => {
@@ -308,7 +332,9 @@ export function DeliveryRequirementProgressModal({
       setError("");
       setSelectedKeys([]);
       setChatItem(null);
+      setStartTestingCases(false);
       setDocumentItem(null);
+      setEditItem(null);
       setBridgeReady(false);
       setConstraintsOpen(false);
       setExecutionConstraints("");
@@ -376,10 +402,9 @@ export function DeliveryRequirementProgressModal({
     return contexts;
   }, [progress?.batches]);
 
+  /** 点任务卡片就在进度窗里就地开编辑抽屉，不再关窗跳走。 */
   const openItem = (item: DeliveryItemRecord) => {
-    if (!onOpenItem) return;
-    onClose();
-    onOpenItem(item);
+    setEditItem(item);
   };
 
   const selectableItems = useMemo(
@@ -509,6 +534,64 @@ export function DeliveryRequirementProgressModal({
     setConstraintsOpen(true);
   }, []);
 
+  /** 抽屉里改任务：改完就地刷新进度，抽屉本身留在当前任务上。 */
+  const saveItem = useCallback(async (payload: Omit<PatchItemPayload, "programId">) => {
+    setEditSaving(true);
+    try {
+      const saved = await patchItem({ ...payload, programId });
+      setEditItem(saved);
+      message.success(t("delivery.saved"));
+      notifyDeliveryTasksChanged();
+      await Promise.all([load(true), loadContext()]);
+      return true;
+    } catch (nextError) {
+      message.error((nextError as Error).message);
+      return false;
+    } finally {
+      setEditSaving(false);
+    }
+  }, [load, loadContext, programId, t]);
+
+  const removeItem = useCallback(async (itemKey: string) => {
+    try {
+      await deleteItem(programId, itemKey);
+      setEditItem(null);
+      notifyDeliveryTasksChanged();
+      await Promise.all([load(true), loadContext()]);
+      return true;
+    } catch (nextError) {
+      message.error((nextError as Error).message);
+      return false;
+    }
+  }, [load, loadContext, programId]);
+
+  const advanceItemPhase = useCallback(async (phase: "requirement" | "development", item: DeliveryItemRecord) => {
+    try {
+      const [advanced] = await advanceDeliveryPhase({
+        programId,
+        phase,
+        items: [{ itemKey: item.itemKey, version: item.version }],
+      });
+      if (advanced) setEditItem(advanced);
+      message.success(t("delivery.phase.advanced"));
+      await load(true);
+      return true;
+    } catch (nextError) {
+      message.error((nextError as Error).message);
+      return false;
+    }
+  }, [load, programId, t]);
+
+  /** 「执行后续」：按进度窗当前的排序，从这条任务起往后的可执行任务整批发起。 */
+  const executeFollowing = useCallback(async (item: DeliveryItemRecord) => {
+    const ordered = (progress?.items ?? []).filter(selectable).sort(taskOrder);
+    const from = ordered.findIndex((candidate) => candidate.itemKey === item.itemKey);
+    if (from < 0) return false;
+    setEditItem(null);
+    askConstraints(ordered.slice(from));
+    return false;
+  }, [askConstraints, progress?.items]);
+
   const taskNode = (item: DeliveryItemRecord) => {
     const batch = batchByItem.get(item.itemKey);
     const canStart = selectable(item);
@@ -532,7 +615,6 @@ export function DeliveryRequirementProgressModal({
         </span>
         <button
           className="delivery-progress-node__body"
-          disabled={!onOpenItem}
           type="button"
           onClick={() => openItem(item)}
         >
@@ -776,7 +858,7 @@ export function DeliveryRequirementProgressModal({
                             const context = batchByItem.get(item.itemKey);
                             const reason = context?.message || item.note;
                             return (
-                              <button disabled={!onOpenItem} key={item.itemKey} type="button" onClick={() => openItem(item)}>
+                              <button key={item.itemKey} type="button" onClick={() => openItem(item)}>
                                 <span>
                                   <b>{item.title || item.itemKey}</b>
                                   <code className="manager-mono">{item.itemKey}</code>
@@ -784,7 +866,7 @@ export function DeliveryRequirementProgressModal({
                                 {reason ? <small title={reason}>{reason}</small> : (
                                   <small><UserOutlined /> {item.ownerName || t("delivery.requirement.unassigned")}</small>
                                 )}
-                                {onOpenItem ? <RightOutlined /> : null}
+                                <RightOutlined />
                               </button>
                             );
                           })}
@@ -841,9 +923,14 @@ export function DeliveryRequirementProgressModal({
         requirements={requirements}
         itemCatalog={itemCatalog}
         codexBridgeReady={bridgeReady}
-        onClose={() => setChatItem(null)}
+        startTestingCasesOnOpen={startTestingCases}
+        onClose={() => {
+          setChatItem(null);
+          setStartTestingCases(false);
+        }}
         onOpenEditor={(item) => {
           setChatItem(null);
+          setStartTestingCases(false);
           openItem(item);
         }}
         onChanged={() => load(true)}
@@ -865,6 +952,34 @@ export function DeliveryRequirementProgressModal({
           scroll="cap"
         />
       </Modal>
+
+      <DeliveryItemDrawer
+        open={Boolean(editItem)}
+        item={editItem}
+        bizLine={bizLine}
+        programId={programId}
+        stages={stages}
+        modules={modules}
+        items={itemCatalog.length ? itemCatalog : progress?.items ?? []}
+        ownerOptions={ownerOptions}
+        submitting={editSaving}
+        codexBridgeReady={bridgeReady}
+        executing={startingKey === editItem?.itemKey}
+        onClose={() => setEditItem(null)}
+        onSave={saveItem}
+        onExecute={async (item) => {
+          await startItem(item);
+          return true;
+        }}
+        onOpenTestingCasesChat={(item, startNewConversation = false) => {
+          setEditItem(null);
+          setStartTestingCases(startNewConversation);
+          setChatItem(item);
+        }}
+        onExecuteFollowing={executeFollowing}
+        onDelete={removeItem}
+        onAdvancePhase={advanceItemPhase}
+      />
     </Modal>
   );
 }

@@ -200,3 +200,127 @@ export function DeliveryHtmlFrame({
     />
   );
 }
+
+/** 要在新标签页里一起带上的一页原型或 HTML 文档，path 是工作区相对路径。 */
+export interface DeliveryHtmlPage {
+  path: string;
+  html: string;
+  assets?: DeliveryHtmlAsset[];
+}
+
+function escapeStandaloneTitle(value: string) {
+  return value.replace(/[&<>"]/g, (character) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[character] ?? character
+  ));
+}
+
+/** JSON 直接写进 <script> 里，正文出现 </script 会把脚本提前收尾。 */
+function guardInlineJson(value: unknown) {
+  return JSON.stringify(value).replace(/<\/(script)/gi, "<\\/$1");
+}
+
+/**
+ * 把整套 HTML 打包成一份能独立在新标签页打开的外壳文档。
+ *
+ * 新标签页拿到的是 blob 地址，这种地址没有目录：页里 `overview.html` 这类同目录链接一点，
+ * 浏览器解析出来的不是合法 blob 地址，直接跳成 about:blank#blocked，看着就是「所有导航都点不动」。
+ * 外壳把所有页都带在身上，页内点链接时换算成工作区路径，再给内层 iframe 换一份新的 blob 正文，
+ * 导航、前进后退都跟本地打开一套静态页一样；页内锚点、外链和页内脚本仍保持浏览器原本的行为。
+ */
+export function buildStandaloneHtmlDocument({
+  pages,
+  startPath,
+  title,
+  missingPageText,
+}: {
+  pages: DeliveryHtmlPage[];
+  startPath: string;
+  title: string;
+  missingPageText: string;
+}) {
+  const bundle: Record<string, string> = {};
+  for (const page of pages) {
+    if (!page.path) continue;
+    bundle[page.path] = withStandaloneBridge(inlineHtmlAssets(page.html, page.assets), page.path);
+  }
+  return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeStandaloneTitle(title)}</title><style>
+html, body { margin: 0; height: 100%; background: #fff; }
+iframe { display: block; width: 100%; height: 100%; border: 0; }
+</style></head><body>
+<iframe id="stage" title="${escapeStandaloneTitle(title)}"></iframe>
+<script>
+(() => {
+  const PAGES = ${guardInlineJson(bundle)};
+  const MISSING = ${guardInlineJson(missingPageText)};
+  const stage = document.getElementById("stage");
+  let currentUrl = "";
+
+  const resolve = (currentPath, href) => {
+    const target = href.split("#")[0].split("?")[0].trim();
+    if (!target) return "";
+    const segments = currentPath.split("/").slice(0, -1);
+    for (const part of target.split("/")) {
+      if (!part || part === ".") continue;
+      if (part === "..") { segments.pop(); continue; }
+      segments.push(part);
+    }
+    return segments.join("/");
+  };
+
+  const show = (path) => {
+    const html = PAGES[path];
+    if (html === undefined) return false;
+    // 一次只留一份正文地址，来回翻页不至于把每一页都留在内存里。
+    const next = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+    stage.src = next;
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+    currentUrl = next;
+    return true;
+  };
+
+  window.addEventListener("message", (event) => {
+    const payload = event.data;
+    if (event.source !== stage.contentWindow || !payload || typeof payload !== "object") return;
+    if (payload.type !== ${JSON.stringify(FRAME_NAVIGATE_MESSAGE)}) return;
+    if (typeof payload.href !== "string" || typeof payload.path !== "string") return;
+    const path = resolve(payload.path, payload.href);
+    if (!show(path)) {
+      window.alert(MISSING + "：" + payload.href);
+      return;
+    }
+    history.pushState({ path }, "");
+  });
+
+  // 外壳自己没换地址，浏览器的后退键得由这里把上一页放回去。
+  window.addEventListener("popstate", (event) => {
+    const path = event.state && event.state.path;
+    show(typeof path === "string" ? path : ${JSON.stringify(startPath)});
+  });
+
+  history.replaceState({ path: ${JSON.stringify(startPath)} }, "");
+  show(${JSON.stringify(startPath)});
+})();
+</script>
+</body></html>`;
+}
+
+/** 页内指向同目录另一页的相对链接自己跳不动，改成上报给外壳换页。 */
+function withStandaloneBridge(html: string, path: string) {
+  const bridge = `<script>
+(() => {
+  const path = ${JSON.stringify(path)};
+  document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    if (!anchor) return;
+    const href = anchor.getAttribute("href") || "";
+    if (!href || href.charAt(0) === "#" || href.slice(0, 2) === "//" || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    if (!/\\.html?($|[?#])/i.test(href)) return;
+    event.preventDefault();
+    window.parent.postMessage({ type: ${JSON.stringify(FRAME_NAVIGATE_MESSAGE)}, path, href }, "*");
+  }, true);
+})();
+</script>`;
+  return /<\/body\s*>/i.test(html) ? html.replace(/<\/body\s*>/i, `${bridge}</body>`) : `${html}${bridge}`;
+}

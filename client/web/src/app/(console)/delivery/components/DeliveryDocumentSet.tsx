@@ -31,7 +31,7 @@ import {
   type DeliveryDocumentScope,
 } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
+import { buildStandaloneHtmlDocument, DeliveryHtmlFrame, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { SessionDocumentText } from "./DeliverySessionMessage";
 import {
   SessionFilePreviewModal,
@@ -52,8 +52,7 @@ function escapeHtml(value: string) {
 }
 
 /** 非 HTML 文档在新标签页用本地只读页承载，避免 Markdown 被浏览器当纯文本下载。 */
-function browserDocument(content: string, title: string, isHtml: boolean) {
-  if (isHtml) return content;
+function browserDocument(content: string, title: string) {
   return `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
 body { margin: 0; background: #f2f5f9; color: #101828; font: 14px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -93,6 +92,16 @@ export interface DeliveryDocumentSetProps {
   /** 兜底正文也允许在本地浏览器中打开，给尚未迁移为工作区文件的历史产物使用。 */
   browserContent?: string;
   browserTitle?: string;
+  /**
+   * 文档栏目共用一个目录时，指定默认打开的工作区相对路径。
+   * 例如测试用例和测试报告都位于 doc/test/<键>/，但各自页面必须打开对应主文档。
+   */
+  preferredPath?: string;
+  /**
+   * 首选文件尚未生成时是否退回栏目主文档。测试报告页必须关闭这个开关，
+   * 否则报告缺失时会意外显示测试用例。
+   */
+  fallbackToPrimary?: boolean;
   emptyText?: string;
   /** 只读栏目（例如仅供查看的测试报告）传 false。 */
   editable?: boolean;
@@ -118,6 +127,8 @@ function useDocumentSet(
   subjectKey: string,
   ready: boolean,
   refreshToken: string | number = "",
+  preferredPath = "",
+  fallbackToPrimary = true,
 ) {
   const [files, setFiles] = useState<DeliveryDocumentFile[]>([]);
   const [directory, setDirectory] = useState("");
@@ -127,7 +138,7 @@ function useDocumentSet(
   const [reading, setReading] = useState(false);
 
   const reload = useCallback(
-    async (preferredPath = "") => {
+    async (pathToKeep = preferredPath) => {
       if (!programId || !subjectKey || !ready) {
         setFiles([]);
         setDirectory("");
@@ -141,9 +152,9 @@ function useDocumentSet(
         setDirectory(documentSet.directory);
         setFiles(documentSet.files);
         // 刷新后尽量停在用户原来看的那份文档上，只有它没了才回到主文档。
-        const selected = preferredPath && documentSet.files.some((file) => file.path === preferredPath)
-          ? preferredPath
-          : documentSet.primaryPath;
+        const selected = pathToKeep && documentSet.files.some((file) => file.path === pathToKeep)
+          ? pathToKeep
+          : fallbackToPrimary ? documentSet.primaryPath : "";
         setPath(selected);
         if (!selected) setDocument(null);
       } catch (error) {
@@ -158,12 +169,12 @@ function useDocumentSet(
     },
     // refreshToken 只用于触发重新拉取，正文本身不依赖它。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [programId, ready, refreshToken, scope, subjectKey],
+    [fallbackToPrimary, preferredPath, programId, ready, refreshToken, scope, subjectKey],
   );
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void reload(preferredPath);
+  }, [preferredPath, reload]);
 
   // 只读选中的那一份：一个栏目可能有几十份文档，不该为了预览把整个目录都读进来。
   useEffect(() => {
@@ -385,6 +396,8 @@ function DocumentSetView({
   fallback,
   browserContent,
   browserTitle,
+  preferredPath,
+  fallbackToPrimary,
   emptyText,
   editable = true,
   uploadable = false,
@@ -402,6 +415,8 @@ function DocumentSetView({
     subjectKey,
     codexBridgeReady,
     refreshToken,
+    preferredPath,
+    fallbackToPrimary,
   );
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState(false);
@@ -510,11 +525,17 @@ function DocumentSetView({
     const content = contentForBrowser;
     if (!content.trim()) return;
     const isHtmlDocument = Boolean(document?.content) && /\.html?$/i.test(path);
-    // 新标签页同样是 blob 地址，样式脚本得先内联，否则打开的是一份没有样式的裸页面。
-    const body = isHtmlDocument ? inlineHtmlAssets(content, document?.assets) : content;
-    const url = URL.createObjectURL(new Blob([
-      browserDocument(body, path.slice(path.lastIndexOf("/") + 1) || browserTitle || t("delivery.docset.file"), isHtmlDocument),
-    ], { type: "text/html;charset=utf-8" }));
+    const name = path.slice(path.lastIndexOf("/") + 1) || browserTitle || t("delivery.docset.file");
+    // 新标签页同样是 blob 地址：样式脚本得先内联，页间的相对链接也得由外壳换页，否则一点就跳空白。
+    const body = isHtmlDocument
+      ? buildStandaloneHtmlDocument({
+        pages: [{ path, html: content, assets: document?.assets }],
+        startPath: path,
+        title: name,
+        missingPageText: t("delivery.docset.missingPage"),
+      })
+      : browserDocument(content, name);
+    const url = URL.createObjectURL(new Blob([body], { type: "text/html;charset=utf-8" }));
     const opened = window.open(url, "_blank", "noopener");
     if (!opened) message.warning(t("delivery.docset.openBlocked"));
     // 新标签页加载完就不再需要这个地址了，留着只会一直占内存。

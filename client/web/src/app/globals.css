@@ -3462,14 +3462,32 @@ select {
 		background: var(--manager-surface);
 }
 
+/* 标题条和下面的页签是同一块表头：只在页签底下留一条分隔线，中间不再断开。 */
 .delivery-task-session-modal .ant-modal-header {
 	margin-bottom: 0;
-	padding: 16px 20px;
-	border-bottom: 1px solid var(--manager-border);
-	background: var(--manager-surface);
+	padding: 15px 68px 13px 22px;
+	border-bottom: 0;
+	background: linear-gradient(180deg, var(--manager-panel), var(--manager-surface));
 }
 
-.delivery-task-session-modal .ant-modal-close { top: 17px; right: 20px; }
+.delivery-task-session-modal .ant-modal-close {
+	top: 12px;
+	right: 16px;
+	width: 34px;
+	height: 34px;
+	border: 1px solid transparent;
+	border-radius: var(--manager-r-sm);
+	color: var(--manager-text-faint);
+	transition: background var(--manager-t), border-color var(--manager-t), color var(--manager-t);
+}
+
+.delivery-task-session-modal .ant-modal-close:hover {
+	border-color: color-mix(in srgb, var(--manager-danger) 32%, var(--manager-border));
+	background: color-mix(in srgb, var(--manager-danger) 8%, transparent);
+	color: var(--manager-danger);
+}
+
+.delivery-task-session-modal .ant-modal-close .ant-modal-close-x { font-size: var(--manager-fs-sm); line-height: 32px; }
 
 /* 拆解会话不再使用全局弹窗标题，三栏工作区从顶部直接开始。 */
 .delivery-planning-session-modal .ant-modal-content { grid-template-rows: minmax(0, 1fr); }
@@ -3532,6 +3550,24 @@ select {
 /* 需求名和项目名之间的分隔点，读起来是「需求 · 所属项目」。 */
 .delivery-session-title > b + small::before,
 .delivery-planning-session-title__heading > b + small::before { content: "· "; }
+
+/* 任务详情表头：任务键是标识不是正文，收成一枚淡底 chip，别和任务名抢注意力。 */
+.delivery-task-session-modal .delivery-session-title { padding-right: 0; gap: 10px; }
+
+.delivery-task-session-modal .delivery-session-title > b { font-weight: 650; }
+
+.delivery-task-session-modal .delivery-session-title > small.manager-mono {
+	flex: 0 1 auto;
+	padding: 2px 7px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-sm);
+	background: var(--manager-panel);
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	line-height: 1.5;
+}
+
+.delivery-task-session-modal .delivery-session-title > b + small::before { content: none; }
 
 .delivery-planning-session-title__created-at {
 	color: var(--manager-text-faint);
@@ -4661,10 +4697,10 @@ select {
 	background: var(--manager-panel);
 }
 
-/* 拆解 / 代码 review / 测试三栏：窄侧栏放不下 antd Tabs，用等宽小页签自己排。 */
+/* 拆解 / 代码 review / 测试 / 微调四栏：窄侧栏放不下 antd Tabs，用等宽小页签自己排。 */
 .delivery-session-history__tabs {
 	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
+	grid-template-columns: repeat(4, minmax(0, 1fr));
 	gap: 2px;
 	margin: 8px 8px 0;
 	padding: 2px;
@@ -4938,6 +4974,40 @@ select {
 	overflow: hidden;
 	background: var(--manager-bg);
 }
+
+/* 任务详情的聊天与微调都是完整工作区，Tabs 自己占满弹窗余高，内容区才不会被默认的 auto 高度截断。 */
+.delivery-task-session-workspace-tabs {
+	display: grid;
+	min-height: 0;
+	height: 100%;
+	grid-template-rows: auto minmax(0, 1fr);
+}
+
+.delivery-task-session-workspace-tabs > .ant-tabs-nav {
+	margin: 0;
+	padding: 0 22px;
+	border-bottom: 1px solid var(--manager-border);
+	background: var(--manager-surface);
+}
+
+.delivery-task-session-workspace-tabs > .ant-tabs-nav::before { border-bottom: 0; }
+
+.delivery-task-session-workspace-tabs > .ant-tabs-nav .ant-tabs-tab {
+	padding: 9px 2px 11px;
+	font-size: var(--manager-fs-sm);
+	font-weight: 500;
+}
+
+.delivery-task-session-workspace-tabs > .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab { margin-left: 22px; }
+
+.delivery-task-session-workspace-tabs > .ant-tabs-content-holder,
+.delivery-task-session-workspace-tabs .ant-tabs-content,
+.delivery-task-session-workspace-tabs .ant-tabs-tabpane {
+	min-height: 0;
+	height: 100%;
+}
+
+.delivery-task-session-workspace-tabs .ant-tabs-tabpane { overflow: hidden; }
 
 /* 收起需求信息后右上角空出来的位置：分支、变更数量和推送入口浮在会话之上。 */
 .delivery-requirement-git-panel {
@@ -5302,6 +5372,23 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .delivery-session-toolbar__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .delivery-session-toolbar__document-toggle.ant-btn { color: var(--manager-primary); }
 .delivery-session-toolbar__document-toggle.ant-btn:not(.ant-btn-text) { border-color: color-mix(in srgb, var(--manager-primary) 36%, var(--manager-border)); background: color-mix(in srgb, var(--manager-primary) 7%, var(--manager-surface)); }
+
+/* 任务详情窗的工具条：连接状态收成一枚淡底徽章，右侧动作靠得更紧，整条比通用工具条矮一档。 */
+.delivery-task-session-modal .delivery-session-toolbar {
+	min-height: 50px;
+	padding: 8px 18px;
+	background: var(--manager-panel);
+}
+
+.delivery-task-session-modal .delivery-session-toolbar > span {
+	flex: 0 1 auto;
+	padding: 4px 10px;
+	border: 1px solid var(--manager-border);
+	border-radius: 999px;
+	background: var(--manager-surface);
+}
+
+.delivery-task-session-modal .delivery-session-toolbar__actions { gap: 6px; }
 
 .delivery-session-transcript {
 	min-height: 0;

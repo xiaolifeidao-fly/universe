@@ -652,9 +652,21 @@ export function DeliveryItemDrawer({
                           key: "testing",
                           label: t("delivery.session.document.testing"),
                           children: (
-                            <section className="delivery-document-panel">
-                              <ExecutionResultText value={activeItem.testingReport} fallback={t("delivery.document.testingEmpty")} />
-                            </section>
+                            <DeliveryDocumentSetPanel
+                              programId={programId}
+                              scope="task-testing"
+                              subjectKey={activeItem.itemKey}
+                              codexBridgeReady={codexBridgeReady}
+                              preferredPath={`doc/test/${activeItem.itemKey}/测试报告.md`}
+                              fallbackToPrimary={false}
+                              editable={false}
+                              scroll="cap"
+                              emptyText={t("delivery.document.testingEmpty")}
+                              browserContent={activeItem.testingReport}
+                              browserTitle={t("delivery.document.testing")}
+                              refreshToken={activeItem.testingReport}
+                              fallback={<ExecutionResultText value={activeItem.testingReport} fallback={t("delivery.document.testingEmpty")} />}
+                            />
                           ),
                         },
                       ]}

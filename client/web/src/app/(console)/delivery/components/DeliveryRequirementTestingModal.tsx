@@ -51,6 +51,7 @@ import { useStickToBottom } from "../hooks/useStickToBottom";
 import { DeliveryConversationMentionInput, type DeliveryConversationMentionCatalog, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
+import { DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -243,6 +244,7 @@ export function DeliveryRequirementTestingModal({
 
   const active = Boolean(conversation?.active && !newConversation);
   const report = conversation?.testingReport || requirement?.testingReport || "";
+  const reportPath = requirementKey ? `doc/test/${requirementKey}/测试报告.md` : "";
   const testingStatus = conversation?.testingStatus || requirement?.testingStatus || "todo";
   const testingCases = conversation?.testingCases || requirement?.testingCases || "";
   const testingCasesPath = conversation?.testingCasesPath || requirement?.testingCasesPath || "";
@@ -458,7 +460,26 @@ export function DeliveryRequirementTestingModal({
                 </div>,
               },
               { key: "cases", label: t("delivery.requirement.testingCases"), children: <div className="delivery-session-document">{testingCasesPath ? <code className="delivery-session-document__path">{testingCasesPath}</code> : null}<SessionDocumentText value={testingCases} fallback={t("delivery.requirement.testingCasesEmpty")} /></div> },
-              { key: "report", label: t("delivery.requirement.testingReport"), children: <div className="delivery-session-document"><SessionDocumentText value={report} fallback={t("delivery.requirement.testingReportEmpty")} /></div> },
+              {
+                key: "report",
+                label: t("delivery.requirement.testingReport"),
+                children: (
+                  <DeliveryDocumentSetPanel
+                    programId={programId}
+                    scope="requirement-testing"
+                    subjectKey={requirementKey}
+                    codexBridgeReady={codexBridgeReady}
+                    preferredPath={reportPath}
+                    fallbackToPrimary={false}
+                    editable={false}
+                    emptyText={t("delivery.requirement.testingReportEmpty")}
+                    browserContent={report}
+                    browserTitle={t("delivery.requirement.testingReport")}
+                    refreshToken={active ? "running" : "idle"}
+                    fallback={<SessionDocumentText value={report} fallback={t("delivery.requirement.testingReportEmpty")} />}
+                  />
+                ),
+              },
             ]}
           />
           <footer

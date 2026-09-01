@@ -36,7 +36,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
 import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
-import { DeliveryHtmlFrame, inlineHtmlAssets, resolveFrameHref } from "./DeliveryHtmlFrame";
+import { buildStandaloneHtmlDocument, DeliveryHtmlFrame, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useImeCompositionGuard } from "@/utils/ime";
 import {
@@ -67,6 +67,7 @@ import {
 	pushCodexGitBranch,
   fetchCodexRequirementPrototype,
   fetchCodexRequirementPrototypeConversation,
+  fetchCodexRequirementFineTuningConversation,
   fetchCodexRequirementReviewConversation,
   fetchCodexRequirementTestingConversation,
   fetchCodexPlanningConversation,
@@ -110,6 +111,7 @@ import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryRequirementReviewModal } from "./DeliveryRequirementReviewModal";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
+import { DeliveryFineTuningSession } from "./DeliveryFineTuningSession";
 import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
 import {
   MAX_ATTACHMENTS,
@@ -245,6 +247,7 @@ export function DeliveryRequirementSessionModal({
   );
   const planningProvider = planningConfig.tool;
   const testingProvider = configFor("productTesting").tool;
+  const fineTuningProvider = configFor("actionExecution").tool;
   // 会话里所有露出工具名的地方都跟着场景选的 provider 走，不再写死 Codex。
   const toolName = toolDisplayName(planningProvider);
   const [conversation, setConversation] = useState<CodexPlanningConversation | null>(null);
@@ -336,13 +339,18 @@ export function DeliveryRequirementSessionModal({
   const [historyTab, setHistoryTab] = useState<DeliveryHistoryTab>("planning");
   const [testingConversations, setTestingConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [reviewConversations, setReviewConversations] = useState<CodexPlanningSessionSummary[]>([]);
+  const [fineTuningConversations, setFineTuningConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [reviewWorkspaceOpen, setReviewWorkspaceOpen] = useState(false);
+  const [fineTuningWorkspaceOpen, setFineTuningWorkspaceOpen] = useState(false);
   const [reviewThreadId, setReviewThreadId] = useState("");
   const [startNewReviewConversation, setStartNewReviewConversation] = useState(false);
+  const [fineTuningThreadId, setFineTuningThreadId] = useState("");
+  const [startNewFineTuningConversation, setStartNewFineTuningConversation] = useState(false);
   const [testingThreadId, setTestingThreadId] = useState("");
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
   const [outlineFullscreen, setOutlineFullscreen] = useState(false);
   const [testingFullscreen, setTestingFullscreen] = useState(false);
+  const [testingReportFullscreen, setTestingReportFullscreen] = useState(false);
   const [prototypeFullscreen, setPrototypeFullscreen] = useState(false);
   const [prototypeViewportFullscreen, setPrototypeViewportFullscreen] = useState(false);
   const [prototype, setPrototype] = useState<CodexRequirementPrototype | null>(null);
@@ -483,6 +491,19 @@ export function DeliveryRequirementSessionModal({
     }
   }, [codexBridgeReady, programId, requirementKey, testingProvider]);
 
+  const loadFineTuningHistory = useCallback(async () => {
+    if (!programId || !requirementKey || !codexBridgeReady) {
+      setFineTuningConversations([]);
+      return;
+    }
+    try {
+      const next = await fetchCodexRequirementFineTuningConversation(programId, requirementKey, "", fineTuningProvider);
+      setFineTuningConversations(next.conversations);
+    } catch (error) {
+      message.error((error as Error).message);
+    }
+  }, [codexBridgeReady, fineTuningProvider, programId, requirementKey]);
+
   // 自动写进来的那个名字（先是占位名，随后是 AI 标题）；用户自己改过就不再跟着变。
   const autoNameRef = useRef("");
 	useEffect(() => {
@@ -514,12 +535,17 @@ export function DeliveryRequirementSessionModal({
       setReviewConversations([]);
       setReviewThreadId("");
       setStartNewReviewConversation(false);
+      setFineTuningWorkspaceOpen(false);
+      setFineTuningConversations([]);
+      setFineTuningThreadId("");
+      setStartNewFineTuningConversation(false);
       setHistoryTab("planning");
       setTestingConversations([]);
       setTestingThreadId("");
       setStartNewTestingConversation(false);
       setOutlineFullscreen(false);
       setTestingFullscreen(false);
+      setTestingReportFullscreen(false);
       setPrototypeFullscreen(false);
       setPrototypeViewportFullscreen(false);
       setPrototype(null);
@@ -705,7 +731,8 @@ export function DeliveryRequirementSessionModal({
     if (!open || !requirementKey) return;
     void loadTestingHistory();
     void loadReviewHistory();
-  }, [loadReviewHistory, loadTestingHistory, open, requirementKey]);
+    void loadFineTuningHistory();
+  }, [loadFineTuningHistory, loadReviewHistory, loadTestingHistory, open, requirementKey]);
 
   const loadPrototype = useCallback(async () => {
     if (!open || !requirementKey || !codexBridgeReady) {
@@ -887,11 +914,16 @@ export function DeliveryRequirementSessionModal({
   }, [prototype, selectedPrototypeFile, t]);
 
   const openPrototypeInBrowser = () => {
-    const html = selectedPrototypeFile?.html ?? "";
-    if (!html.trim()) return;
-    // 新标签页也是 blob 地址，同目录的样式脚本先内联，否则打开的原型没有样式。
+    const current = selectedPrototypeFile;
+    if (!current?.html.trim()) return;
+    // 新标签页也是 blob 地址：没有目录，同目录的样式脚本得先内联，页间导航也得由外壳自己接管。
     const url = URL.createObjectURL(new Blob([
-      inlineHtmlAssets(html, selectedPrototypeFile?.assets),
+      buildStandaloneHtmlDocument({
+        pages: prototype?.files.length ? prototype.files : [current],
+        startPath: current.path,
+        title: `${t("delivery.prototype.preview")} · ${current.name}`,
+        missingPageText: t("delivery.prototype.missingPage"),
+      }),
     ], { type: "text/html;charset=utf-8" }));
     const opened = window.open(url, "_blank", "noopener");
     if (!opened) message.warning(t("delivery.docset.openBlocked"));
@@ -1556,6 +1588,11 @@ export function DeliveryRequirementSessionModal({
       setStartNewReviewConversation(false);
       void loadReviewHistory();
     }
+    if (fineTuningWorkspaceOpen) {
+      setFineTuningWorkspaceOpen(false);
+      setStartNewFineTuningConversation(false);
+      void loadFineTuningHistory();
+    }
     if (threadId) selectConversation(threadId);
     else startNewConversation();
   };
@@ -1564,6 +1601,8 @@ export function DeliveryRequirementSessionModal({
     setHistoryTab("review");
     setTestingWorkspaceOpen(false);
     setStartNewTestingConversation(false);
+    setFineTuningWorkspaceOpen(false);
+    setStartNewFineTuningConversation(false);
     setReviewThreadId(threadId);
     setStartNewReviewConversation(startNew);
     setReviewWorkspaceOpen(true);
@@ -1573,9 +1612,22 @@ export function DeliveryRequirementSessionModal({
     setHistoryTab("testing");
     setReviewWorkspaceOpen(false);
     setStartNewReviewConversation(false);
+    setFineTuningWorkspaceOpen(false);
+    setStartNewFineTuningConversation(false);
     setTestingThreadId(threadId);
     setStartNewTestingConversation(startNewConversation);
     setTestingWorkspaceOpen(true);
+  };
+
+  const openFineTuningConversation = (threadId = "", startNewConversation = false) => {
+    setHistoryTab("fineTuning");
+    setReviewWorkspaceOpen(false);
+    setStartNewReviewConversation(false);
+    setTestingWorkspaceOpen(false);
+    setStartNewTestingConversation(false);
+    setFineTuningThreadId(threadId);
+    setStartNewFineTuningConversation(startNewConversation);
+    setFineTuningWorkspaceOpen(true);
   };
 
   useEffect(() => {
@@ -2028,21 +2080,26 @@ export function DeliveryRequirementSessionModal({
           planningConversations={conversation?.conversations ?? []}
           reviewConversations={reviewConversations}
           testingConversations={testingConversations}
-          selectedKind={testingWorkspaceOpen ? "testing" : reviewWorkspaceOpen ? "review" : "planning"}
+          fineTuningConversations={fineTuningConversations}
+          selectedKind={testingWorkspaceOpen ? "testing" : reviewWorkspaceOpen ? "review" : fineTuningWorkspaceOpen ? "fineTuning" : "planning"}
           selectedThreadId={testingWorkspaceOpen
             ? (startNewTestingConversation ? "" : testingThreadId)
             : reviewWorkspaceOpen
               ? (startNewReviewConversation ? "" : reviewThreadId)
+              : fineTuningWorkspaceOpen
+                ? (startNewFineTuningConversation ? "" : fineTuningThreadId)
               : newConversation ? "" : switchingThreadId || conversation?.threadId || ""}
           draft={testingWorkspaceOpen
             ? startNewTestingConversation ? { kind: "testing" as const, title: `${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`, subtitle: `${t("delivery.testingCases.status")} · ${t("delivery.requirement.testingDraft")}` } : null
             : reviewWorkspaceOpen
               ? startNewReviewConversation ? { kind: "review" as const, title: `${t("delivery.review.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.review.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
+              : fineTuningWorkspaceOpen
+                ? startNewFineTuningConversation ? { kind: "fineTuning" as const, title: `${t("delivery.fineTuning.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.fineTuning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
               : newConversation ? { kind: "planning" as const, title: t("delivery.session.newConversation"), subtitle: `${t("delivery.planning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null}
-          onSelect={(kind, threadId) => (kind === "planning" ? openPlanningConversation(threadId) : kind === "review" ? openReviewConversation(threadId) : openTestingConversation(threadId))}
-          onNew={(tab) => (tab === "planning" ? openPlanningConversation("") : tab === "review" ? openReviewConversation("", true) : openTestingConversation("", true))}
-          newDisabled={testingWorkspaceOpen || reviewWorkspaceOpen ? !requirementKey : active || !requirementKey}
-          newDisabledTip={!testingWorkspaceOpen && !reviewWorkspaceOpen && active ? t("delivery.session.newDisabled") : ""}
+          onSelect={(kind, threadId) => (kind === "planning" ? openPlanningConversation(threadId) : kind === "review" ? openReviewConversation(threadId) : kind === "testing" ? openTestingConversation(threadId) : openFineTuningConversation(threadId))}
+          onNew={(tab) => (tab === "planning" ? openPlanningConversation("") : tab === "review" ? openReviewConversation("", true) : tab === "testing" ? openTestingConversation("", true) : openFineTuningConversation("", true))}
+          newDisabled={testingWorkspaceOpen || reviewWorkspaceOpen || fineTuningWorkspaceOpen ? !requirementKey : active || !requirementKey}
+          newDisabledTip={!testingWorkspaceOpen && !reviewWorkspaceOpen && !fineTuningWorkspaceOpen && active ? t("delivery.session.newDisabled") : ""}
           testingTitleFallback={`${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`}
         />
 
@@ -2072,6 +2129,25 @@ export function DeliveryRequirementSessionModal({
           onChanged={async () => {
             await loadReviewHistory();
             setMentionFilesToken((token) => token + 1);
+          }}
+        />
+        ) : fineTuningWorkspaceOpen && saved ? (
+        <DeliveryFineTuningSession
+          scope="requirement"
+          resourceKey={requirementKey}
+          resourceName={saved.name || requirementKey}
+          programId={programId}
+          codexBridgeReady={codexBridgeReady}
+          mainOnly
+          startNewConversationOnOpen={startNewFineTuningConversation}
+          initialThreadId={fineTuningThreadId}
+          onConversationStateChange={({ threadId, isNew }) => {
+            setFineTuningThreadId(threadId);
+            setStartNewFineTuningConversation(isNew);
+          }}
+          onChanged={async () => {
+            await onChanged();
+            await loadFineTuningHistory();
           }}
         />
         ) : testingWorkspaceOpen && saved ? (
@@ -2693,11 +2769,27 @@ export function DeliveryRequirementSessionModal({
                 children: (
                   <section className="delivery-planning-result" aria-label={t("delivery.requirement.testingReport")}>
                     <header>
-                      <span>{saved?.testingReportPath || requirement?.testingReportPath || t("delivery.requirement.testingReport")}</span>
+                      <span>{requirementKey ? `doc/test/${requirementKey}/测试报告.md` : t("delivery.requirement.testingReport")}</span>
                     </header>
-                    <SessionDocumentText
-                      value={saved?.testingReport || requirement?.testingReport || ""}
-                      fallback={t("delivery.requirement.testingReportEmpty")}
+                    <DeliveryDocumentSetPanel
+                      programId={programId}
+                      scope="requirement-testing"
+                      subjectKey={requirementKey}
+                      codexBridgeReady={codexBridgeReady}
+                      preferredPath={requirementKey ? `doc/test/${requirementKey}/测试报告.md` : ""}
+                      fallbackToPrimary={false}
+                      editable={false}
+                      emptyText={t("delivery.requirement.testingReportEmpty")}
+                      browserContent={saved?.testingReport || requirement?.testingReport || ""}
+                      browserTitle={t("delivery.requirement.testingReport")}
+                      onExpand={() => setTestingReportFullscreen(true)}
+                      refreshToken={active ? "running" : "idle"}
+                      fallback={(
+                        <SessionDocumentText
+                          value={saved?.testingReport || requirement?.testingReport || ""}
+                          fallback={t("delivery.requirement.testingReportEmpty")}
+                        />
+                      )}
                     />
                   </section>
                 ),
@@ -2801,6 +2893,21 @@ export function DeliveryRequirementSessionModal({
         browserContent={saved?.testingCases || requirement?.testingCases || ""}
         browserTitle={t("delivery.requirement.testingCases")}
         onClose={() => setTestingFullscreen(false)}
+      />
+      <DeliveryDocumentSetModal
+        open={testingReportFullscreen}
+        programId={programId}
+        scope="requirement-testing"
+        subjectKey={requirementKey}
+        codexBridgeReady={codexBridgeReady}
+        preferredPath={requirementKey ? `doc/test/${requirementKey}/测试报告.md` : ""}
+        fallbackToPrimary={false}
+        editable={false}
+        title={`${t("delivery.requirement.testingReport")} · ${requirement?.name || requirementKey}`}
+        emptyText={t("delivery.requirement.testingReportEmpty")}
+        browserContent={saved?.testingReport || requirement?.testingReport || ""}
+        browserTitle={t("delivery.requirement.testingReport")}
+        onClose={() => setTestingReportFullscreen(false)}
       />
       <Modal
         className={`delivery-document-set-modal delivery-prototype-preview-modal${prototypeViewportFullscreen ? " is-fullscreen" : ""}`}

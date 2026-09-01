@@ -7,10 +7,10 @@ import { toolDisplayName, type AITool } from "@/ai-preferences/AIPreferencesProv
 import type { CodexPlanningSessionSummary } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
 
-/** 需求聊天历史按用途分栏：拆解、代码 review、测试各自一列，互不混排。 */
-export type DeliveryHistoryTab = "planning" | "review" | "testing";
+/** 需求聊天历史按用途分栏：拆解、代码 review、测试、微调各自隔离。 */
+export type DeliveryHistoryTab = "planning" | "review" | "testing" | "fineTuning";
 
-export const DELIVERY_HISTORY_TABS: DeliveryHistoryTab[] = ["planning", "review", "testing"];
+export const DELIVERY_HISTORY_TABS: DeliveryHistoryTab[] = ["planning", "review", "testing", "fineTuning"];
 
 interface DeliverySessionHistoryTabsProps {
   activeTab: DeliveryHistoryTab;
@@ -18,6 +18,7 @@ interface DeliverySessionHistoryTabsProps {
   planningConversations: CodexPlanningSessionSummary[];
   reviewConversations?: CodexPlanningSessionSummary[];
   testingConversations: CodexPlanningSessionSummary[];
+  fineTuningConversations?: CodexPlanningSessionSummary[];
   /** 当前正在看的是哪一类会话的哪条线程，用来点亮列表项。 */
   selectedKind: DeliveryHistoryTab;
   selectedThreadId: string;
@@ -34,7 +35,8 @@ interface DeliverySessionHistoryTabsProps {
 function entrySubtitle(kind: DeliveryHistoryTab, executorType: AITool, t: (key: string) => string) {
   const label = kind === "planning"
     ? t("delivery.planning.title")
-    : kind === "review" ? t("delivery.review.title") : t("delivery.testingCases.status");
+    : kind === "review" ? t("delivery.review.title")
+      : kind === "testing" ? t("delivery.testingCases.status") : t("delivery.fineTuning.title");
   return [label, toolDisplayName(executorType)].filter(Boolean).join(" · ");
 }
 
@@ -44,6 +46,7 @@ export function DeliverySessionHistoryTabs({
   planningConversations,
   reviewConversations = [],
   testingConversations,
+  fineTuningConversations = [],
   selectedKind,
   selectedThreadId,
   draft = null,
@@ -55,7 +58,10 @@ export function DeliverySessionHistoryTabs({
 }: DeliverySessionHistoryTabsProps) {
   const { t } = useLocale();
   const kind = activeTab;
-  const entries = activeTab === "planning" ? planningConversations : activeTab === "review" ? reviewConversations : testingConversations;
+  const entries = activeTab === "planning"
+    ? planningConversations
+    : activeTab === "review" ? reviewConversations
+      : activeTab === "testing" ? testingConversations : fineTuningConversations;
   const tabDraft = draft && draft.kind === activeTab ? draft : null;
   const entryTitle = (title: string) => title || (kind === "testing" && testingTitleFallback ? testingTitleFallback : t("delivery.session.untitled"));
 
@@ -115,7 +121,11 @@ export function DeliverySessionHistoryTabs({
           </button>
         ))}
         {!tabDraft && !entries.length ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t(activeTab === "review" ? "delivery.session.historyTab.reviewEmpty" : "delivery.session.historyEmpty")} />
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t(
+            activeTab === "review"
+              ? "delivery.session.historyTab.reviewEmpty"
+              : activeTab === "fineTuning" ? "delivery.fineTuning.historyEmpty" : "delivery.session.historyEmpty",
+          )} />
         ) : null}
       </div>
     </aside>

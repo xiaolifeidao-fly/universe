@@ -8,6 +8,7 @@ import {
   ClockCircleOutlined,
   CloudDownloadOutlined,
   DeleteOutlined,
+  EllipsisOutlined,
   ExperimentOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
@@ -689,11 +690,12 @@ export function MyWorkWorkspace() {
               && !workspaceUnset;
             // 工作区正停在这条需求的分支上且还有未提交改动时不许删：改动会失去对应的需求上下文。
             const deleteBlocked = Boolean(gitState?.current && gitState?.dirty);
+            const cardKey = `${record.bizLine}:${record.programId}:${record.requirementKey}`;
             return (
               <article
                 className={`my-work-card${currentBranchOnly && currentBranchKeys.has(record.requirementKey) ? " is-current-branch" : ""}${removingKeys.has(record.requirementKey) ? " is-removing" : ""}`}
                 aria-hidden={removingKeys.has(record.requirementKey) || undefined}
-                key={`${record.bizLine}:${record.programId}:${record.requirementKey}`}
+                key={cardKey}
               >
                 <header className="my-work-card__head">
                   <div className="my-work-card__identity">
@@ -876,24 +878,6 @@ export function MyWorkWorkspace() {
                         onClick={() => void handleShare(record)}
                       />
                     </Tooltip>
-                    <Tooltip title={t("delivery.requirement.startTesting")}>
-                      <Button
-                        aria-label={t("delivery.requirement.startTesting")}
-                        type="text"
-                        size="small"
-                        icon={<ExperimentOutlined />}
-                        onClick={() => void openSession(record, true)}
-                      />
-                    </Tooltip>
-                    <Tooltip title={t("delivery.requirement.viewTimeline")}>
-                      <Button
-                        aria-label={t("delivery.requirement.viewTimeline")}
-                        type="text"
-                        size="small"
-                        icon={<HistoryOutlined />}
-                        onClick={() => setTimelineRecord(record)}
-                      />
-                    </Tooltip>
                     {record.canWrite ? (
                       <Dropdown
                         trigger={["click"]}
@@ -949,6 +933,38 @@ export function MyWorkWorkspace() {
                         </Tooltip>
                       </Popconfirm>
                     ) : null}
+                    {/* 低频入口收进这里：菜单是竖着一条条展开的，不再往动作行后面平铺。 */}
+                    <Dropdown
+                      trigger={["click"]}
+                      placement="bottomRight"
+                      menu={{
+                        items: [
+                          {
+                            key: "test",
+                            icon: <ExperimentOutlined />,
+                            label: t("delivery.requirement.startTesting"),
+                          },
+                          {
+                            key: "timeline",
+                            icon: <HistoryOutlined />,
+                            label: t("delivery.requirement.viewTimeline"),
+                          },
+                        ],
+                        onClick: ({ key }) => {
+                          if (key === "test") void openSession(record, true);
+                          if (key === "timeline") setTimelineRecord(record);
+                        },
+                      }}
+                    >
+                      <Tooltip title={t("delivery.requirement.moreActions")}>
+                        <Button
+                          aria-label={t("delivery.requirement.moreActions")}
+                          type="text"
+                          size="small"
+                          icon={<EllipsisOutlined />}
+                        />
+                      </Tooltip>
+                    </Dropdown>
                   </div>
                 </footer>
               </article>
@@ -995,10 +1011,6 @@ export function MyWorkWorkspace() {
         bizLine={progressRecord?.bizLine ?? activeBusinessLine.id}
         requirement={progressRecord}
         onClose={() => setProgressRecord(null)}
-        onOpenItem={(item) => {
-          const target = progressRecord;
-          if (target) openBoard(target, item.itemKey);
-        }}
       />
 
       <DeliveryRequirementGitCheckModal

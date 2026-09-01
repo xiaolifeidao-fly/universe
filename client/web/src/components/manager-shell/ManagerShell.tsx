@@ -215,6 +215,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	const isAdmin = authUser?.role === "admin";
 	const hasBusiness = hasAuthPersona("business", authUser);
 	const hasProductResearch = hasAuthPersona("product_research", authUser);
+	const shouldRemindTaskPlannerPlugin = !hasBusiness;
 	const navEntries = useMemo(() => navEntriesFor(isAdmin, hasBusiness, hasProductResearch), [hasBusiness, hasProductResearch, isAdmin]);
 	const navGroups = useMemo(() => navEntries.filter(isNavGroup), [navEntries]);
   const [collapsed, setCollapsed] = useState(false);
@@ -424,22 +425,23 @@ export function ManagerShell({ children }: ManagerShellProps) {
 			return true;
 		} catch {
 			setTaskPlannerInstallation(null);
-			if (showMissingPlugin) setTaskPlannerInstallOpen(true);
+			if (showMissingPlugin && shouldRemindTaskPlannerPlugin) setTaskPlannerInstallOpen(true);
 			return false;
 		} finally {
 			setTaskPlannerHealthLoading(false);
 		}
-	}, [advanceSilentTaskPlannerUpdate]);
+	}, [advanceSilentTaskPlannerUpdate, shouldRemindTaskPlannerPlugin]);
 
 	// The shell remains mounted during console navigation. Check immediately and
 	// then once a minute so a newly published GitHub version is noticed without a refresh.
 	useEffect(() => {
-		void checkTaskPlannerHealth(true);
+		setTaskPlannerInstallOpen(false);
+		void checkTaskPlannerHealth(shouldRemindTaskPlannerPlugin);
 		const timer = window.setInterval(() => {
 			void checkTaskPlannerHealth(false);
 		}, TASK_PLANNER_UPDATE_INTERVAL_MS);
 		return () => window.clearInterval(timer);
-	}, [checkTaskPlannerHealth]);
+	}, [checkTaskPlannerHealth, shouldRemindTaskPlannerPlugin]);
 
 	useEffect(() => {
 		if (!taskPlannerInstallation || !["resolving", "downloading", "validating", "installing", "restart_required", "restarting"].includes(taskPlannerInstallation.status)) return;
@@ -940,7 +942,7 @@ export function ManagerShell({ children }: ManagerShellProps) {
 		  />
 		</Drawer>
 		<Modal
-		  open={taskPlannerInstallOpen}
+		  open={taskPlannerInstallOpen && shouldRemindTaskPlannerPlugin}
 		  title={t("delivery.plugin.title")}
 		  closable
 		  maskClosable

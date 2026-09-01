@@ -189,7 +189,8 @@ export function DeliveryRequirementGitCheckModal({
           key="pull"
           type="primary"
           loading={preparing}
-          disabled={Boolean(pushing || statusLoading || subprojectsLoading || status?.dirty)}
+          /* 脏工作区照样能拉：快进拉取不会覆盖未提交改动，真冲突了 git 会自己拒绝并报出原因。 */
+          disabled={Boolean(pushing || statusLoading || subprojectsLoading)}
           onClick={() => void confirm()}
         >
           {t("delivery.requirement.gitPullLatest")}

@@ -6,6 +6,7 @@ import {
 	CloudDownloadOutlined,
 	ClockCircleOutlined,
   DeleteOutlined,
+  EllipsisOutlined,
   ExperimentOutlined,
   FileTextOutlined,
   FolderOpenOutlined,
@@ -254,6 +255,7 @@ export function DeliveryRequirementList({
     const isSelected = requirement.requirementKey === selectedKey;
     const statusChanging = changingStatusKey === requirement.requirementKey;
 		const gitState = gitStateOf(requirement);
+
 		// 仓库都还没初始化时，需求分支无从谈起，先把「去初始化」这件事摆在卡片上。
 		// 工作目录都没选的话，先提示选目录：Git 那步在目录定下来之前无从判断。
 		const gitUninitialized = projectGitEnabled && gitWorkspaceUninitialized && !workspaceUnset;
@@ -338,33 +340,6 @@ export function DeliveryRequirementList({
               />
             </Tooltip>
           </Dropdown>
-          <Tooltip title={t("delivery.requirement.startTesting")}>
-            <Button
-              type="text"
-              size="small"
-              shape="circle"
-              icon={<ExperimentOutlined />}
-              disabled={disabled}
-              aria-label={t("delivery.requirement.startTesting")}
-              onClick={(event) => {
-                event.stopPropagation();
-                onTest(requirement);
-              }}
-            />
-          </Tooltip>
-          <Tooltip title={t("delivery.requirement.viewTimeline")}>
-            <Button
-              type="text"
-              size="small"
-              shape="circle"
-              icon={<HistoryOutlined />}
-              aria-label={t("delivery.requirement.viewTimeline")}
-              onClick={(event) => {
-                event.stopPropagation();
-                onTimeline(requirement);
-              }}
-            />
-          </Tooltip>
           <Tooltip title={t("delivery.requirement.timePlan")}>
             <Button
               type="text"
@@ -467,6 +442,42 @@ export function DeliveryRequirementList({
               </Tooltip>
             </Popconfirm>
           )}
+          {/* 低频入口收进这里：菜单是竖着一条条展开的，不再往动作行后面平铺。 */}
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomRight"
+            menu={{
+              items: [
+                {
+                  key: "test",
+                  icon: <ExperimentOutlined />,
+                  label: t("delivery.requirement.startTesting"),
+                  disabled,
+                },
+                {
+                  key: "timeline",
+                  icon: <HistoryOutlined />,
+                  label: t("delivery.requirement.viewTimeline"),
+                },
+              ],
+              onClick: ({ key, domEvent }) => {
+                domEvent.stopPropagation();
+                if (key === "test") onTest(requirement);
+                if (key === "timeline") onTimeline(requirement);
+              },
+            }}
+          >
+            <Tooltip title={t("delivery.requirement.moreActions")}>
+              <Button
+                type="text"
+                size="small"
+                shape="circle"
+                icon={<EllipsisOutlined />}
+                aria-label={t("delivery.requirement.moreActions")}
+                onClick={(event) => event.stopPropagation()}
+              />
+            </Tooltip>
+          </Dropdown>
         </div>
 		<div className="delivery-requirement-card__details" aria-label={t("delivery.requirement.list")}>
 		  <span className="delivery-requirement-card__detail delivery-requirement-card__detail--owner" title={`${t("delivery.requirement.owners")}: ${ownerNames}`}>

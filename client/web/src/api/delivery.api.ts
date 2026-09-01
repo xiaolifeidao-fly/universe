@@ -1402,6 +1402,44 @@ export class CodexRequirementReviewActionResult {
   active = false;
 }
 
+/** 已交付需求的自由微调会话；和 review、测试会话完全隔离。 */
+export class CodexRequirementFineTuningConversation {
+  programId = 0;
+
+  requirementKey = "";
+
+  threadId = "";
+
+  executorType: AITool = "codex";
+
+  turns: CodexConversationTurn[] = [];
+
+  conversations: CodexPlanningSessionSummary[] = [];
+
+  active = false;
+
+  activeTurnId = "";
+}
+
+/** 单个任务的自由微调会话；不领取任务、不改变任务阶段。 */
+export class CodexTaskFineTuningConversation {
+  programId = 0;
+
+  itemKey = "";
+
+  threadId = "";
+
+  executorType: AITool = "codex";
+
+  turns: CodexConversationTurn[] = [];
+
+  conversations: CodexConversationSummary[] = [];
+
+  active = false;
+
+  activeTurnId = "";
+}
+
 /** 任务级预先测试用例会话；与任务执行会话隔离，永远不领取或推进任务。 */
 export class CodexTaskTestingCasesConversation {
   programId = 0;
@@ -3273,6 +3311,133 @@ export async function stopCodexRequirementReviewConversation(
     { timeout: 20000 },
   );
   return plainToInstance(CodexRequirementReviewActionResult, response.data);
+}
+
+function hydrateFineTuningConversation<T extends CodexRequirementFineTuningConversation | CodexTaskFineTuningConversation>(
+  Conversation: new () => T,
+  data: T,
+) {
+  const conversation = plainToInstance(Conversation, data);
+  conversation.turns = plainToInstance(CodexConversationTurn, data.turns ?? []).map((turn) => {
+    turn.items = plainToInstance(CodexConversationItem, turn.items ?? []).map((item) => {
+      item.attachments = plainToInstance(CodexConversationAttachment, item.attachments ?? []);
+      item.changes = plainToInstance(CodexConversationChange, item.changes ?? []);
+      return item;
+    });
+    return turn;
+  });
+  return conversation;
+}
+
+export interface SendCodexFineTuningMessageOptions {
+  threadId?: string;
+  newConversation?: boolean;
+  provider?: AITool;
+  model?: string;
+  reasoningEffort?: AIReasoningEffort;
+  fastMode?: boolean;
+}
+
+export async function fetchCodexRequirementFineTuningConversation(
+  programId: number,
+  requirementKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.get<CodexRequirementFineTuningConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-fine-tuning`, {
+    params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
+    timeout: 20000,
+  });
+  const conversation = hydrateFineTuningConversation(CodexRequirementFineTuningConversation, response.data);
+  conversation.conversations = plainToInstance(CodexPlanningSessionSummary, response.data.conversations ?? []);
+  return conversation;
+}
+
+export async function sendCodexRequirementFineTuningMessage(
+  programId: number,
+  requirementKey: string,
+  message: string,
+  options: SendCodexFineTuningMessageOptions = {},
+) {
+  const provider = options.provider ?? "codex";
+  const response = await instance.post<CodexRequirementReviewActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-fine-tuning`,
+    bridgeWorkspaceParams(programId, {
+      programId, requirementKey, provider, message: message.trim(),
+      ...(options.threadId ? { threadId: options.threadId } : {}),
+      ...(options.newConversation ? { newConversation: true } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+      ...(provider === "claude" && options.fastMode ? { fastMode: true } : {}),
+    }),
+    { timeout: 30000 },
+  );
+  return plainToInstance(CodexRequirementReviewActionResult, response.data);
+}
+
+export async function stopCodexRequirementFineTuningConversation(
+  programId: number,
+  requirementKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.post<CodexRequirementReviewActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-fine-tuning/stop`,
+    bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexRequirementReviewActionResult, response.data);
+}
+
+export async function fetchCodexTaskFineTuningConversation(
+  programId: number,
+  itemKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.get<CodexTaskFineTuningConversation>(`${CODEX_BRIDGE_URL}/v1/codex/task-fine-tuning`, {
+    params: bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
+    timeout: 20000,
+  });
+  const conversation = hydrateFineTuningConversation(CodexTaskFineTuningConversation, response.data);
+  conversation.conversations = plainToInstance(CodexConversationSummary, response.data.conversations ?? []);
+  return conversation;
+}
+
+export async function sendCodexTaskFineTuningMessage(
+  programId: number,
+  itemKey: string,
+  message: string,
+  options: SendCodexFineTuningMessageOptions = {},
+) {
+  const provider = options.provider ?? "codex";
+  const response = await instance.post<CodexConversationActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/task-fine-tuning`,
+    bridgeWorkspaceParams(programId, {
+      programId, itemKey, provider, message: message.trim(),
+      ...(options.threadId ? { threadId: options.threadId } : {}),
+      ...(options.newConversation ? { newConversation: true } : {}),
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+      ...(provider === "claude" && options.fastMode ? { fastMode: true } : {}),
+    }),
+    { timeout: 30000 },
+  );
+  return plainToInstance(CodexConversationActionResult, response.data);
+}
+
+export async function stopCodexTaskFineTuningConversation(
+  programId: number,
+  itemKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.post<CodexConversationActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/task-fine-tuning/stop`,
+    bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexConversationActionResult, response.data);
 }
 
 export async function uploadCodexPlanningAttachments(

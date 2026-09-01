@@ -81,6 +81,8 @@ import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
+import { DeliveryFineTuningSession } from "./DeliveryFineTuningSession";
+import { DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 
 interface DeliveryTaskSessionModalProps {
   open: boolean;
@@ -204,6 +206,7 @@ export function DeliveryTaskSessionModal({
   const [testingWorkspaceOpen, setTestingWorkspaceOpen] = useState(false);
   const [testingThreadId, setTestingThreadId] = useState("");
   const [startNewTestingConversation, setStartNewTestingConversation] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<"chat" | "fineTuning">("chat");
   const [mentionCatalog, setMentionCatalog] = useState<{
     requirements: DeliveryRequirementRecord[];
     items: DeliveryItemRecord[];
@@ -367,6 +370,7 @@ export function DeliveryTaskSessionModal({
       setTestingWorkspaceOpen(false);
       setTestingThreadId("");
       setStartNewTestingConversation(false);
+      setWorkspaceTab("chat");
       return;
     }
     void load();
@@ -630,7 +634,15 @@ export function DeliveryTaskSessionModal({
       ) : t("delivery.session.title")}
     >
       {activeItem ? (
-        testingWorkspaceOpen ? (
+        <Tabs
+          className="delivery-task-session-workspace-tabs"
+          activeKey={workspaceTab}
+          onChange={(key) => setWorkspaceTab(key as "chat" | "fineTuning")}
+          items={[
+            {
+              key: "chat",
+              label: t("delivery.session.chat"),
+              children: testingWorkspaceOpen ? (
           <DeliveryTaskTestingCasesModal
             embedded
             open
@@ -655,7 +667,7 @@ export function DeliveryTaskSessionModal({
               await load();
             }}
           />
-        ) : (
+              ) : (
         <div
           className={`delivery-session-shell${documentsOpen ? " has-documents" : ""}${resizingDocuments ? " is-resizing-documents" : ""}`}
           ref={sessionShellRef}
@@ -907,13 +919,48 @@ export function DeliveryTaskSessionModal({
                 {
                   key: "testing",
                   label: t("delivery.session.document.testing"),
-                  children: <SessionDocumentText value={activeItem.testingReport} fallback={t("delivery.document.testingEmpty")} />,
+                  children: (
+                    <DeliveryDocumentSetPanel
+                      programId={programId}
+                      scope="task-testing"
+                      subjectKey={activeItem.itemKey}
+                      codexBridgeReady={codexBridgeReady}
+                      preferredPath={`doc/test/${activeItem.itemKey}/测试报告.md`}
+                      fallbackToPrimary={false}
+                      editable={false}
+                      emptyText={t("delivery.document.testingEmpty")}
+                      browserContent={activeItem.testingReport}
+                      browserTitle={t("delivery.document.testing")}
+                      refreshToken={activeItem.testingReport}
+                      fallback={<SessionDocumentText value={activeItem.testingReport} fallback={t("delivery.document.testingEmpty")} />}
+                    />
+                  ),
                 },
               ]}
             />
           </aside>
         </div>
-        )
+              ),
+            },
+            {
+              key: "fineTuning",
+              label: t("delivery.fineTuning.tab"),
+              children: (
+                <DeliveryFineTuningSession
+                  scope="task"
+                  resourceKey={activeItem.itemKey}
+                  resourceName={activeItem.title || activeItem.itemKey}
+                  programId={programId}
+                  codexBridgeReady={codexBridgeReady}
+                  onChanged={async () => {
+                    await onChanged();
+                    await load();
+                  }}
+                />
+              ),
+            },
+          ]}
+        />
       ) : null}
     </Modal>
   );
