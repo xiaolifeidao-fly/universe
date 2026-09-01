@@ -1,4 +1,4 @@
 [submodule "plugin/delivery-task-planner"]
-	path = plugin/delivery-task-planner
+	path = delivery-task-planner
 	url = git@github.com:xiaolifeidao-fly/delivery-task-planner.git
 	branch = main
