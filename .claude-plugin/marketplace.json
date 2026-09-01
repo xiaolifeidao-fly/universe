@@ -10,7 +10,7 @@
       "name": "delivery-task-planner",
       "description": "在 Universe 交付任务面板中创建项目、里程碑、模块，并把需求拆解为带依赖关系的任务批量写入。",
       "category": "productivity",
-      "source": "../delivery-task-planner"
+      "source": "./delivery-task-planner"
     }
   ]
 }
