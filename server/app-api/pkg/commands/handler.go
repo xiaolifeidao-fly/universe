@@ -57,6 +57,8 @@ func (h *Handler) Register(api *gin.RouterGroup) {
 	commands.GET("/:commandID/events", h.events)
 
 	workers := api.Group("/workers", httpx.RequireProductResearch())
+	// 只有这一条是给客户端读的：手机端在提交命令前先问「执行电脑在不在」。
+	workers.GET("/status", h.workerStatus)
 	workers.POST("/register", h.registerWorker)
 	workers.POST("/heartbeat", h.heartbeat)
 	workers.POST("/commands/claim", h.claim)
@@ -182,6 +184,24 @@ func (h *Handler) cancel(context *gin.Context) {
 	req.UserID = httpx.CallerID(context)
 	req.CommandID = context.Param("commandID")
 	view, err := h.service.RequestCommandCancellation(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) workerStatus(context *gin.Context) {
+	bizLine, ok := requireBizLine(context)
+	if !ok {
+		return
+	}
+	programID, err := strconv.ParseInt(strings.TrimSpace(context.DefaultQuery("programId", "0")), 10, 64)
+	if err != nil {
+		httpx.Fail(context, "项目标识格式不正确")
+		return
+	}
+	if programID > 0 && httpx.AuthorizeProgramInBizLine(context, bizLine.String(), programID) != nil {
+		httpx.Fail(context, "无权访问该项目")
+		return
+	}
+	view, err := h.service.GetCommandWorkerStatus(context.Request.Context(), bizLine, httpx.CallerID(context), programID)
 	httpx.JSON(context, view, err)
 }
 

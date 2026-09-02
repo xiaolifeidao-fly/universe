@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, ClipboardList, Cloud, FolderSearch, ListTree, Plus, RefreshCw } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, Cloud, Coins, FolderOpen, ListTree, Plus, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/api/client";
 import { getProgram, listItems, listRequirements, type DeliveryItem, type ProgramSummary, type RequirementSummary } from "@/api/management.api";
 import { EmptyState } from "@/components/empty-state";
 import { LoadingState } from "@/components/loading-state";
 import { ProjectStatus } from "@/components/project-status";
+import { UsageSheet } from "@/components/workbench/usage-sheet";
 
 export function ProjectDetailScreen() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -36,7 +37,7 @@ export function ProjectDetailScreen() {
           <div><p className="eyebrow">项目</p><h1>找不到此项目</h1></div>
           <Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={20} /></Link>
         </div>
-        <EmptyState icon={<FolderSearch size={21} />} title="项目数据尚不可用" description={error || "请返回列表或在连接恢复后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} />
+        <EmptyState icon={<FolderOpen size={21} />} title="项目数据尚不可用" description={error || "请返回列表或在连接恢复后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} />
       </main>
     );
   }
@@ -48,7 +49,7 @@ export function ProjectDetailScreen() {
           <p className="eyebrow">项目详情</p>
           <h1>{project.name}</h1>
         </div>
-        <div className="stack-actions"><button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新项目" title="刷新项目"><RefreshCw size={19} /></button><Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={20} /></Link></div>
+        <div className="stack-actions"><button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新项目" title="刷新项目"><RotateCw size={19} /></button><Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={20} /></Link></div>
       </div>
       <section className="detail-hero">
         <ProjectStatus status={project.status} />
@@ -67,12 +68,46 @@ export function ProjectDetailScreen() {
       </section>
       <section className="card section">
         <div className="section-heading"><span>需求</span>{project.canWrite ? <Link className="icon-button small-icon-button" href={`/projects/${programId}/requirements/new`} aria-label="新建需求" title="新建需求"><Plus size={18} /></Link> : null}</div>
-        {requirements.length ? <div className="compact-list">{requirements.map((requirement) => <Link className="compact-row" href={`/projects/${programId}/requirements/${requirement.requirementKey}`} key={requirement.requirementKey}><div><strong>{requirement.name || "未命名需求"}</strong><p>{requirement.itemCount} 条任务 · {requirement.status === "done" ? "已完成" : requirement.status === "dropped" ? "不做" : "进行中"}</p></div><ClipboardList size={18} aria-hidden="true" /></Link>)}</div> : <p className="muted">还没有需求。{project.canWrite ? "可通过右上角添加。" : ""}</p>}
+        {requirements.length ? <div className="compact-list">{requirements.map((requirement) => <RequirementRow key={requirement.requirementKey} programId={programId} requirement={requirement} />)}</div> : <p className="muted">还没有需求。{project.canWrite ? "可通过右上角添加。" : ""}</p>}
       </section>
       <section className="card section">
         <div className="section-heading"><span>任务与依赖</span><ListTree size={19} aria-hidden="true" /></div>
-        {items.length ? <div className="compact-list">{items.map((item) => <Link className="compact-row" href={`/projects/${programId}/tasks/${item.itemKey}`} key={item.itemKey}><div><strong>{item.title}</strong><p>{item.dependsOnItemKeys.length ? `前置：${item.dependsOnItemKeys.join("、")}` : "无前置依赖"}</p></div><span className={`status ${item.status === "blocked" ? "is-danger" : item.status === "done" ? "is-active" : "is-warning"}`}>{item.progress}%</span></Link>)}</div> : <p className="muted">需求拆解后会显示任务和依赖。</p>}
+        {items.length ? <div className="compact-list">{items.map((item) => <Link className="compact-row" href={`/projects/${programId}/tasks/${item.itemKey}`} key={item.itemKey}><div><strong>{item.title}</strong><p>{item.dependsOnItemKeys.length ? `前置：${item.dependsOnItemKeys.join("、")}` : "无前置依赖"}</p></div><span className={`status ${item.status === "blocked" ? "is-danger" : item.status === "done" ? "is-success" : "is-active"}`}>{item.progress}%</span></Link>)}</div> : <p className="muted">需求拆解后会显示任务和依赖。</p>}
       </section>
     </main>
+  );
+}
+
+
+/** 需求列表的一行：点标题进需求详情，右边那颗按钮直接看这条需求花了多少。 */
+function RequirementRow({ programId, requirement }: { programId: number; requirement: RequirementSummary }) {
+  const [usageOpen, setUsageOpen] = useState(false);
+  const statusText = requirement.status === "done" ? "已完成" : requirement.status === "dropped" ? "不做" : "进行中";
+  return (
+    <div className="compact-row-group">
+      <Link className="compact-row" href={`/projects/${programId}/requirements/${requirement.requirementKey}`}>
+        <div>
+          <strong>{requirement.name || "未命名需求"}</strong>
+          <p>{requirement.itemCount} 条任务 · {statusText}</p>
+        </div>
+        <ClipboardCheck size={18} aria-hidden="true" />
+      </Link>
+      <button
+        className="icon-button small-icon-button"
+        type="button"
+        onClick={() => setUsageOpen(true)}
+        aria-label={`查看 ${requirement.name || requirement.requirementKey} 的消耗`}
+        title="消耗"
+      >
+        <Coins size={18} />
+      </button>
+      <UsageSheet
+        open={usageOpen}
+        programId={programId}
+        requirementKey={requirement.requirementKey}
+        requirementName={requirement.name}
+        onClose={() => setUsageOpen(false)}
+      />
+    </div>
   );
 }

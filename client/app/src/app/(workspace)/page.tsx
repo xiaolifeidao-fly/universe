@@ -1,5 +1,11 @@
-import { OverviewScreen } from "@/components/screens/overview-screen";
+import { Suspense } from "react";
+import { LoadingState } from "@/components/loading-state";
+import { WorkbenchScreen } from "@/components/workbench/workbench-screen";
 
-export default function HomePage() {
-  return <OverviewScreen />;
+export default function WorkbenchPage() {
+  return (
+    <Suspense fallback={<LoadingState title="正在打开工作台" />}>
+      <WorkbenchScreen />
+    </Suspense>
+  );
 }

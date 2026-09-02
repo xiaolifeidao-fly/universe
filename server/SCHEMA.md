@@ -69,8 +69,8 @@
 | `zt_delivery_requirement_event` | 需求自身的变更流水；与任务流水按时间聚合为需求时间线 | 原型没有 |
 | `zt_delivery_requirement_planning_session` | 需求拆解会话目录（聊天列表）；对话正文在执行器自己的会话缓存里，这里只存 `thread_id` | 原型没有 |
 | `zt_delivery_requirement_planning_batch` | 需求拆解批次：一次「拆解并写入任务」算一批，任务进度按批次成行展示 | 原型没有 |
-| `zt_delivery_item` | 推进任务，看板主体；`requirement_key` 指向所属需求，`planning_batch_key` 指向来源拆解批次（非必填）；测试用例可与研发并行生成，`prototype_task` 仅保留历史兼容 | `tasks[]` |
-| `zt_delivery_item_execution_session` | 任务与外部执行器会话的通用绑定及独立状态 | 原型没有，供自动执行引擎使用 |
+| `zt_delivery_item` | 推进任务，看板主体；`requirement_key` 指向所属需求，`planning_batch_key` 指向来源拆解批次（非必填）；测试用例可与研发并行生成，`prototype_task` 仅保留历史兼容；`last_run_*` / `total_run_duration_ms` / `run_count` 记执行耗时 | `tasks[]` |
+| `zt_delivery_item_execution_session` | 任务与外部执行器会话的通用绑定及独立状态；`run_started_at` / `run_finished_at` 是一轮运行的边界，耗时按这两个时刻结算后累加到任务上 | 原型没有，供自动执行引擎使用 |
 | `zt_delivery_item_dependency` | 任务依赖有向边（前置 → 后置），`source_side` / `target_side` 持久化两端连接边框 | 任务面板依赖连线 |
 | `zt_delivery_item_event` | 流水：状态流转 / 进度改动 / 进展评论；事件中冻结 `requirement_key`，供需求时间线回溯 | 原型没有，看板的价值主要在这 |
 | `zt_delivery_snapshot` | 每日进度快照，趋势与三维图历史 | 原型没有 |
@@ -91,13 +91,18 @@
 `web-api/configs/application.properties` 配置写入**私有**阿里云 OSS，数据库仅保存对象键和校验元数据：
 
 ```properties
-oss.endpoint=https://oss-cn-hangzhou.aliyuncs.com
-oss.bucket=your-private-bucket
-oss.access_key_id=your-access-key-id
-oss.access_key_secret=your-access-key-secret
-oss.prefix=universe/delivery
-# 仅兼容 MinIO / 测试端点时设为 true；阿里云 OSS 保持 false 或省略。
-oss.path_style=false
+oss.enabled=true
+oss.dirPrefix=universe/delivery
+# 可填写完整 URL；省略协议时服务端默认使用 HTTPS。
+oss.endpoint=oss-cn-hangzhou.aliyuncs.com
+oss.bucketName=your-private-bucket
+oss.accessKeyId=your-access-key-id
+oss.accessKeySecret=your-access-key-secret
+# app-api 的 OSS 短时签名下载地址有效期，单位为秒。
+oss.expireTime=600
+# 当前服务端同步直接上传并受控读取，预留给未来异步上传回调 / 临时令牌场景。
+oss.callbackUrl=
+oss.tokenExpireTime=300
 ```
 
 存量库须执行 [`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。

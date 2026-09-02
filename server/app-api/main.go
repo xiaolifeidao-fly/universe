@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"common/objectstore"
 	"service/bizline"
 	"service/business"
+	"service/businessassistant"
 	"service/delivery"
 	deliverydto "service/delivery/dto"
 	"service/identity"
@@ -26,7 +26,7 @@ import (
 
 func main() {
 	database := httpx.Boot("app-api")
-	storage, err := newObjectStorage()
+	storage, signedURLTTL, err := newObjectStorage()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -39,9 +39,18 @@ func main() {
 	deliveryService := delivery.NewWithCommandNotifier(database, storage, queue)
 	tokenTTL, _ := strconv.Atoi(httpx.Property("auth.token_ttl_seconds"))
 	identityService := identity.New(database, deliveryService, httpx.Property("auth.token_secret"), time.Duration(tokenTTL)*time.Second)
-	// Remote business-assistant wiring remains the deployment concern of the
-	// bridge. The app API still delegates intake reads and creation to business.
-	businessService := business.New(database, local.BusinessProgramReader{Service: deliveryService}, nil)
+	// 业务访谈的传输方式和控制台同一套配置：手机端提的诉求和 PC 端提的落在同一
+	// 张表上，装配不一致会让同一条诉求在两个入口得到两种行为。
+	businessTimeoutSeconds, _ := strconv.Atoi(httpx.Property("business.kodes.timeout_seconds"))
+	businessAssistant := businessassistant.New(businessassistant.Config{
+		Transport:       httpx.Property("business.kodes.transport"),
+		RemoteURL:       httpx.Property("business.kodes.remote_url"),
+		WorkerUserID:    httpx.Property("business.kodes.worker_user_id"),
+		Model:           httpx.Property("business.kodes.model"),
+		ReasoningEffort: httpx.Property("business.kodes.reasoning_effort"),
+		Timeout:         time.Duration(businessTimeoutSeconds) * time.Second,
+	}, deliveryService)
+	businessService := business.New(database, local.BusinessProgramReader{Service: deliveryService}, businessAssistant)
 	pushService := push.New(database, push.Config{
 		VAPIDPublicKey: httpx.Property("push.vapid_public_key"), VAPIDPrivateKey: httpx.Property("push.vapid_private_key"), VAPIDSubject: httpx.Property("push.vapid_subject"),
 	})
@@ -52,6 +61,7 @@ func main() {
 	bizLineService := bizline.New(database, deliveryService)
 	routers.ConfigureAuthenticator(identityService)
 	go reconcileLoop(deliveryService, pushService)
+	go purgeLoop(deliveryService)
 	address := strings.TrimSpace(os.Getenv("APP_API_ADDR"))
 	if address == "" {
 		address = strings.TrimSpace(httpx.Property("server.address"))
@@ -60,7 +70,7 @@ func main() {
 		address = ":10002"
 	}
 	log.Printf("app-api listening on %s", address)
-	if err := http.ListenAndServe(address, routers.New(deliveryService, identityService, businessService, storage, pushService, queue, bizLineService)); err != nil {
+	if err := http.ListenAndServe(address, routers.New(deliveryService, identityService, businessService, storage, signedURLTTL, pushService, queue, bizLineService)); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -82,28 +92,29 @@ func reconcileLoop(commandService delivery.CommandService, notifier interface {
 	}
 }
 
-func newObjectStorage() (*objectstore.AliyunOSS, error) {
-	endpoint := strings.TrimSpace(httpx.Property("oss.endpoint"))
-	bucket := strings.TrimSpace(httpx.Property("oss.bucket"))
-	accessKeyID := strings.TrimSpace(httpx.Property("oss.access_key_id"))
-	accessKeySecret := strings.TrimSpace(httpx.Property("oss.access_key_secret"))
-	if endpoint == "" && bucket == "" && accessKeyID == "" && accessKeySecret == "" {
-		return nil, nil
+// purgeLoop 把命令表当执行痕迹维护，而不是当日志表堆着：会话页每几秒就落一条快照
+// 命令，不清理的话表和事件行会无上限地涨。每轮只删一批，慢慢追平即可。
+func purgeLoop(commandService delivery.CommandService) {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		if _, err := commandService.PurgeFinishedCommands(context.Background()); err != nil {
+			log.Printf("app-api purge finished commands: %v", err)
+		}
 	}
-	pathStyle, err := strconv.ParseBool(strings.TrimSpace(httpx.Property("oss.path_style")))
-	if strings.TrimSpace(httpx.Property("oss.path_style")) == "" {
-		pathStyle = false
-		err = nil
-	}
+}
+
+func newObjectStorage() (*objectstore.AliyunOSS, time.Duration, error) {
+	config, err := objectstore.LoadAliyunOSSDeployment(httpx.Property)
 	if err != nil {
-		return nil, fmt.Errorf("oss.path_style 必须为 true 或 false: %w", err)
+		return nil, 0, err
 	}
-	storage, err := objectstore.NewAliyunOSS(objectstore.OSSConfig{
-		Endpoint: endpoint, Bucket: bucket, AccessKeyID: accessKeyID, AccessKeySecret: accessKeySecret,
-		Prefix: httpx.Property("oss.prefix"), PathStyle: pathStyle,
-	})
+	storage, err := config.NewClient()
 	if err != nil {
-		return nil, fmt.Errorf("初始化 OSS 云存储失败: %w", err)
+		return nil, 0, err
 	}
-	return storage, nil
+	if !config.Enabled {
+		log.Print("app-api OSS is disabled")
+	}
+	return storage, config.SignedURLTTL, nil
 }

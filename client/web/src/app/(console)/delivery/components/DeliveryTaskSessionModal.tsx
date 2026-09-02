@@ -78,7 +78,7 @@ import {
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
-import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, SessionTurnUsage, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
 import { DeliveryFineTuningSession } from "./DeliveryFineTuningSession";
@@ -755,6 +755,7 @@ export function DeliveryTaskSessionModal({
                         <TranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />
                       )))}
                       <SessionChangeSummary items={turn.items} programId={programId} />
+                      <SessionTurnUsage usage={turn.usage} />
                     </Fragment>
                   ))
                 ) : (
@@ -776,6 +777,9 @@ export function DeliveryTaskSessionModal({
                   </div>
                 ) : null}
                 {active ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
+                {!newConversation && conversation?.usage?.totalTokens
+                  ? <SessionTurnUsage usage={conversation.usage} label={t("delivery.usage.sessionTotal")} />
+                  : null}
               </Spin>}
             </div>
             <footer

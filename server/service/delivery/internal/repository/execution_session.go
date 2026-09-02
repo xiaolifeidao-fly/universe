@@ -82,9 +82,15 @@ func (r *DeliveryRepository) UpsertItemExecutionSession(ctx context.Context, row
 			"status":              row.Status,
 			"progress":            row.Progress,
 			"metadata_json":       row.MetadataJSON,
-			"updated_by":          row.UpdatedBy,
-			"version":             gorm.Expr("version + 1"),
-			"updated_time":        now,
+			// 运行计时由 Service 依据「这次绑定是开一轮新的，还是收一轮旧的」算好后传进来，
+			// Repository 只负责落库。
+			"run_started_at":        row.RunStartedAt,
+			"run_finished_at":       row.RunFinishedAt,
+			"last_run_duration_ms":  row.LastRunDurationMs,
+			"total_run_duration_ms": row.TotalRunDurationMs,
+			"updated_by":            row.UpdatedBy,
+			"version":               gorm.Expr("version + 1"),
+			"updated_time":          now,
 		}).Error
 }
 

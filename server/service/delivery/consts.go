@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -69,6 +70,47 @@ const (
 	commandLeaseDuration = 2 * time.Minute
 	maxCommandAttempts   = 3
 	maxCommandDispatches = 3
+	// commandWorkerOnlineWindow decides whether a registered Worker still counts as
+	// serving a project. The plugin heartbeats once a minute, so a few missed beats
+	// must not disqualify it while a slow turn is running.
+	commandWorkerOnlineWindow = 5 * time.Minute
+)
+
+// 只读快照类命令是移动端为了铺开一屏内容而发的：会话正文、Git 状态和改动列表都
+// 几秒读一次。它们不写工作目录，也不代表用户发起了一次动作，所以运行记录不列、
+// 通知不推、留存期也只按小时算 —— 真正值得回看的是执行类命令。
+var readOnlyCommandTypes = map[string]struct{}{
+	"task.session": {}, "task.planning-session": {}, "requirement.usage": {},
+	"git.status": {}, "git.branches": {}, "git.changes": {}, "git.change": {},
+	"git.projects": {}, "git.merge-preview": {}, "git.workspace-check": {},
+}
+
+// IsReadOnlyCommand 让 app-api 的通知策略和交付域共用同一份命令分类：
+// 新增一种快照命令只要落进上面的表，运行记录与推送就同时收敛。
+func IsReadOnlyCommand(commandType string) bool {
+	_, ok := readOnlyCommandTypes[strings.ToLower(strings.TrimSpace(commandType))]
+	return ok
+}
+
+func readOnlyCommandTypeList() []string {
+	types := make([]string, 0, len(readOnlyCommandTypes))
+	for commandType := range readOnlyCommandTypes {
+		types = append(types, commandType)
+	}
+	sort.Strings(types)
+	return types
+}
+
+// 快照命令过了这个岁数就没人要了：手机端等 90 秒就放弃，界面回来后重新问一次。
+// Worker 掉线几分钟再上来时，先把积压的旧快照丢掉，别让新请求排在它们后面。
+const readOnlyCommandStaleWindow = 2 * time.Minute
+
+// 命令与事件行是可再生的执行痕迹，不是账本：快照命令留一小时够排查一次卡顿，
+// 执行类命令留一个月够回溯一轮迭代，再久的行只会把表撑大。
+const (
+	readOnlyCommandRetention = time.Hour
+	commandRetention         = 30 * 24 * time.Hour
+	commandPurgeBatch        = 500
 )
 
 var commandStates = map[string]struct{}{

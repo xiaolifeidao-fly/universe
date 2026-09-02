@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Command, LogIn } from "lucide-react";
 import { signIn } from "@/api/auth.api";
 import { ApiError } from "@/api/client";
-import { getSession, saveSession } from "@/lib/auth";
+import { canAccessWorkspaceRoute, defaultWorkspaceRoute, getSession, saveSession } from "@/lib/auth";
 import { getLastRoute } from "@/lib/navigation";
 
 export function LoginScreen() {
@@ -28,7 +28,10 @@ export function LoginScreen() {
       const session = await signIn(username.trim(), password);
       saveSession(session, remember);
       const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next?.startsWith("/") ? next : getLastRoute() || "/");
+      const remembered = getLastRoute();
+      const fallback = defaultWorkspaceRoute(session);
+      const target = next?.startsWith("/") ? next : remembered || fallback;
+      router.replace(canAccessWorkspaceRoute(target, session) ? target : fallback);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "暂时无法登录，请稍后重试。");
     } finally {

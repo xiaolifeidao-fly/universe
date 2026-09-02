@@ -21,6 +21,13 @@
       "runtimeArgs": ["--prefix", "client/web", "run", "dev", "--", "-p", "7897"],
       "port": 7897,
       "autoPort": false
+    },
+    {
+      "name": "app-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "client/app", "run", "dev", "--", "-p", "7896"],
+      "port": 7896,
+      "autoPort": false
     }
   ]
 }

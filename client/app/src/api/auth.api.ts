@@ -1,5 +1,5 @@
 import { request } from "@/api/client";
-import type { MobileSession, MobileUser } from "@/lib/auth";
+import type { MobileSession, MobileUser, WorkPersona } from "@/lib/auth";
 
 interface LoginResponse {
   token: string;
@@ -8,6 +8,8 @@ interface LoginResponse {
     username: string;
     displayName?: string;
     writableBizLines?: string[];
+    persona?: WorkPersona;
+    personas?: WorkPersona[];
   };
 }
 
@@ -26,6 +28,20 @@ export async function signIn(username: string, password: string): Promise<Mobile
     username: response.user.username,
     displayName: response.user.displayName || response.user.username,
     writableBizLines: response.user.writableBizLines ?? [],
+    persona: response.user.persona ?? response.user.personas?.[0] ?? "product_research",
+    personas: response.user.personas?.length ? response.user.personas : [response.user.persona ?? "product_research"],
   };
   return { token: response.token, user, bizLine: "" };
+}
+
+export async function getCurrentUser(): Promise<MobileUser> {
+  const response = await request<LoginResponse["user"]>("/auth/me");
+  return {
+    id: response.id,
+    username: response.username,
+    displayName: response.displayName || response.username,
+    writableBizLines: response.writableBizLines ?? [],
+    persona: response.persona ?? response.personas?.[0] ?? "product_research",
+    personas: response.personas?.length ? response.personas : [response.persona ?? "product_research"],
+  };
 }

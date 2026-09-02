@@ -108,7 +108,7 @@ import { DeliveryConversationMentionInput, type DeliveryConversationMentionFile 
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
-import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, SessionTurnUsage, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliveryRequirementReviewModal } from "./DeliveryRequirementReviewModal";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
 import { DeliveryFineTuningSession } from "./DeliveryFineTuningSession";
@@ -2270,6 +2270,7 @@ export function DeliveryRequirementSessionModal({
                     <PlanningTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />
                   )))}
                   <SessionChangeSummary items={turn.items} programId={programId} />
+                  <SessionTurnUsage usage={turn.usage} />
                 </Fragment>
               ))
             ) : (
@@ -3033,6 +3034,7 @@ export function DeliveryRequirementSessionModal({
                     <PlanningTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />
                   )))}
                   <SessionChangeSummary items={turn.items} programId={programId} />
+                  <SessionTurnUsage usage={turn.usage} />
                 </Fragment>
               )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.prototype.editEmpty")} />}
               {prototypeEditActive ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}

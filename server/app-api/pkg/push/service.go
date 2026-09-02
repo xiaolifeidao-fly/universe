@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"service/delivery"
 	"service/delivery/dto"
 
 	"github.com/SherClockHolmes/webpush-go"
@@ -201,7 +202,25 @@ type notificationPayload struct {
 	} `json:"data"`
 }
 
+// 只有「用户按下去、然后要等」的命令值得响一次。会话页每几秒读一次快照、停止
+// 请求本身、以及服务端替业务访谈发起的回合都不该把手机点亮 —— 一轮拆解期间光是
+// 快照命令就有上百条，全推等于把通知栏变成噪音，用户下次会直接关掉权限。
+func notifiableCommand(commandType string) bool {
+	commandType = strings.ToLower(strings.TrimSpace(commandType))
+	if delivery.IsReadOnlyCommand(commandType) || strings.HasPrefix(commandType, "business.") {
+		return false
+	}
+	switch commandType {
+	case "task.stop", "task.stop-all", "task.planning-stop":
+		return false
+	}
+	return true
+}
+
 func commandPayload(command dto.CommandView) (notificationPayload, bool) {
+	if !notifiableCommand(command.CommandType) {
+		return notificationPayload{}, false
+	}
 	var payload notificationPayload
 	payload.Tag = "delivery-command-" + command.CommandID
 	payload.Data.CommandID = command.CommandID
@@ -252,10 +271,26 @@ func commandTargets(raw json.RawMessage) (itemKey, requirementKey string) {
 	return strings.TrimSpace(input.ItemKey), strings.TrimSpace(input.RequirementKey)
 }
 
+// commandNotificationURL 把通知落在用户真正要去的那一屏。
+//
+// 点开一条「AI 回复已完成」，想看的是那段回复，而不是一张命令列表 —— 会话类命令
+// 因此直落对应的对话页。落不到具体会话的（批量执行、Git 写操作）才回运行记录，
+// 在那里能看到进度、活动和结果。
 func commandNotificationURL(command dto.CommandView, itemKey, requirementKey string) string {
+	program := strconv.FormatInt(command.ProgramID, 10)
+	switch command.CommandType {
+	case "task.planning", "task.planning-stop":
+		if requirementKey != "" {
+			return "/workbench/requirements/" + url.PathEscape(requirementKey) + "/chat?programId=" + program
+		}
+	case "task.conversation", "task.execute", "task.stop":
+		if itemKey != "" {
+			return "/workbench/tasks/" + url.PathEscape(itemKey) + "/chat?programId=" + program
+		}
+	}
 	query := url.Values{}
 	query.Set("commandId", command.CommandID)
-	query.Set("programId", strconv.FormatInt(command.ProgramID, 10))
+	query.Set("programId", program)
 	if itemKey != "" {
 		query.Set("itemKey", itemKey)
 	}

@@ -307,6 +307,11 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_item` (
   `testing_status`     varchar(16) NOT NULL DEFAULT 'todo',    -- 测试阶段：todo/doing/done/blocked/dropped
   `status`       varchar(16)   NOT NULL,                       -- todo/doing/done/blocked/dropped
   `progress`     bigint        NOT NULL,                       -- 0-100，done 强制 100，dropped 不计入统计
+  `last_run_started_at`   timestamp NULL,                      -- 最近一轮执行开始时间；还在跑时结束时间为空
+  `last_run_finished_at`  timestamp NULL,                      -- 最近一轮执行结束时间
+  `last_run_duration_ms`  bigint    NOT NULL DEFAULT 0,        -- 最近一轮执行耗时毫秒
+  `total_run_duration_ms` bigint    NOT NULL DEFAULT 0,        -- 历次执行累计耗时毫秒，只增不减
+  `run_count`             bigint    NOT NULL DEFAULT 0,        -- 已结束的执行轮次数
   `owner_id`     varchar(64)   NOT NULL,                       -- 鉴权落地前先空着，只用 owner_name
   `owner_name`   varchar(64)   NOT NULL,
   `due_date`     date          NULL,                           -- 截止日期，可空
@@ -346,6 +351,10 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_item_execution_session` (
   `status`              varchar(16)  NOT NULL,                   -- pending/running/completed/blocked/closed
   `progress`            bigint       NOT NULL DEFAULT 0,         -- 运行实例完成进度 0-100
   `metadata_json`       text         NOT NULL,                   -- 执行器扩展元数据 JSON 对象
+  `run_started_at`      timestamp    NULL,                       -- 本轮运行开始时间，绑定成运行中时写
+  `run_finished_at`     timestamp    NULL,                       -- 本轮运行结束时间，收到终态时写
+  `last_run_duration_ms`  bigint     NOT NULL DEFAULT 0,         -- 最近一轮运行耗时毫秒
+  `total_run_duration_ms` bigint     NOT NULL DEFAULT 0,         -- 该会话历次运行累计耗时毫秒
   `version`             bigint       NOT NULL DEFAULT 1,         -- 乐观锁版本
   `created_by`          varchar(64)  NOT NULL,
   `updated_by`          varchar(64)  NOT NULL,

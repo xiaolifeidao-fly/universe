@@ -39,6 +39,14 @@ export interface CommandAttachment {
   createdAt: string;
 }
 
+export interface WorkerStatus {
+  online: boolean;
+  workerId: string;
+  displayName: string;
+  lastHeartbeatAt: string | null;
+  onlineWindowSeconds: number;
+}
+
 export interface SubmitCommandInput {
   programId: number;
   commandType: string;
@@ -51,10 +59,24 @@ interface CommandPage {
   data: CommandSummary[];
 }
 
-export function listCommands(programId?: number) {
-  const query = new URLSearchParams({ limit: "40" });
+/**
+ * 运行记录只列用户发起过的动作。
+ *
+ * 会话页每几秒读一次快照，那些命令由服务端默认挡在列表之外；排查通道时传
+ * includeReadOnly 才会连快照一起列出来。
+ */
+export function listCommands(programId?: number, includeReadOnly = false) {
+  const query = new URLSearchParams({ pageSize: "40" });
   if (programId) query.set("programId", String(programId));
+  if (includeReadOnly) query.set("includeReadOnly", "true");
   return request<CommandPage>(`/commands?${query.toString()}`);
+}
+
+/** 执行电脑是否还在听这个项目：提交命令前先问一次，别让用户等超时才发现插件没开。 */
+export function getWorkerStatus(programId: number) {
+  const query = new URLSearchParams();
+  if (programId) query.set("programId", String(programId));
+  return request<WorkerStatus>(`/workers/status?${query.toString()}`);
 }
 
 export function getCommand(commandId: string) {

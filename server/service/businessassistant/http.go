@@ -1,5 +1,13 @@
-// Package remote contains server-side clients for external services.
-package remote
+// Package businessassistant implements the business.Assistant port: the two
+// transports a business interview turn can travel over.
+//
+// It is not a domain package. It sits beside the domains because both API
+// binaries (the console's web-api and the mobile app-api) inject the same
+// implementation, and a deployable unit must not carry business logic of its
+// own. Being one package also keeps the two transports honest: the interview
+// prompt, workspace naming and item key are written once and shared, so
+// switching transports cannot change what the assistant is asked.
+package businessassistant
 
 import (
 	"bytes"
@@ -507,6 +515,21 @@ func businessReferenceBlock(references []dto.DocumentReference) string {
 		))
 	}
 	return builder.String()
+}
+
+// businessConversationState projects a raw bridge conversation snapshot into the
+// business domain's turn state. The command transport receives that snapshot
+// verbatim from the Worker, so both transports project it here rather than
+// growing a second copy of the reply/activity rules.
+func businessConversationState(raw json.RawMessage, turnID string) (dto.ConversationState, error) {
+	var conversation kodesConversation
+	if err := json.Unmarshal(raw, &conversation); err != nil {
+		return dto.ConversationState{}, fmt.Errorf("业务访谈会话快照格式无效: %w", err)
+	}
+	if message := errorMessage(conversation.Error); message != "" {
+		return dto.ConversationState{}, errors.New(message)
+	}
+	return conversation.stateFor(strings.TrimSpace(turnID)), nil
 }
 
 // businessItemKey is the conversation identity remote Kodes stores a business

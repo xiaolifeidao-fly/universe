@@ -150,6 +150,38 @@ func (r *DeliveryRepository) UpdateItemTestingCases(
 	return tx.RowsAffected, tx.Error
 }
 
+// StartItemRun 记下这条任务最近一轮执行的开始时刻。
+//
+// 执行计时不走乐观锁，也不动 version 和 updated_time：写它的是执行侧的回合边界，
+// 和面板上的人工编辑互不相干；递增版本会把正在编辑这条任务的人挤掉。
+func (r *DeliveryRepository) StartItemRun(
+	ctx context.Context, bizLine string, programID int64, itemKey string, startedAt time.Time,
+) error {
+	return r.Db.WithContext(ctx).Model(&DeliveryItem{}).
+		Where("biz_line = ? AND program_id = ? AND item_key = ?", bizLine, programID, itemKey).
+		Updates(map[string]any{
+			"last_run_started_at":  startedAt,
+			"last_run_finished_at": nil,
+		}).Error
+}
+
+// FinishItemRun 结算一轮执行：最近一轮按本轮覆盖，累计耗时和轮次只增不减。
+// 累计用 SQL 表达式自增，同一条任务的多个阶段会话并发收尾时不会互相覆盖。
+func (r *DeliveryRepository) FinishItemRun(
+	ctx context.Context, bizLine string, programID int64, itemKey string,
+	startedAt, finishedAt time.Time, durationMs int64,
+) error {
+	return r.Db.WithContext(ctx).Model(&DeliveryItem{}).
+		Where("biz_line = ? AND program_id = ? AND item_key = ?", bizLine, programID, itemKey).
+		Updates(map[string]any{
+			"last_run_started_at":   startedAt,
+			"last_run_finished_at":  finishedAt,
+			"last_run_duration_ms":  durationMs,
+			"total_run_duration_ms": gorm.Expr("total_run_duration_ms + ?", durationMs),
+			"run_count":             gorm.Expr("run_count + 1"),
+		}).Error
+}
+
 func (r *DeliveryRepository) DeleteItem(ctx context.Context, bizLine string, programID int64, itemKey string) (int64, error) {
 	tx := r.Db.WithContext(ctx).
 		Where("biz_line = ? AND program_id = ? AND item_key = ?", bizLine, programID, itemKey).

@@ -838,6 +838,40 @@ select {
   box-shadow: var(--manager-shadow);
 }
 
+/* ─── Empty state ───
+   页面级「暂无数据」统一图标大小与文案排版，避免各页面各写一套 antd Empty
+   （有的用默认图、有的用 PRESENTED_IMAGE_SIMPLE，看起来不是一套东西）。
+   直接加在 <Empty className="manager-empty-state" /> 上，不改变外层容器逻辑。 */
+
+.manager-empty-state {
+  padding: var(--manager-sp-8) var(--manager-sp-4);
+}
+
+.manager-empty-state .ant-empty-image {
+  height: 100px;
+  margin-bottom: var(--manager-sp-3);
+}
+
+.manager-empty-state .ant-empty-description {
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-sm);
+  line-height: var(--manager-lh-snug);
+}
+
+/* 抽屉 / 列表内嵌的次级空态：图标和留白按比例缩小，避免在窄容器里显得比内容还醒目。 */
+.manager-empty-state--compact {
+  padding: var(--manager-sp-5) var(--manager-sp-3);
+}
+
+.manager-empty-state--compact .ant-empty-image {
+  height: 64px;
+  margin-bottom: var(--manager-sp-2);
+}
+
+.manager-empty-state--compact .ant-empty-description {
+  font-size: var(--manager-fs-xs);
+}
+
 /* ─── KPI tile (prototype .tile) ─── */
 
 /* ─── Operations board ─── */
@@ -1401,6 +1435,134 @@ select {
   width: 150px;
 }
 
+.manager-login-layout {
+  position: relative;
+  z-index: 1;
+  min-height: calc(100vh - 96px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(24px, 5vw, 64px);
+}
+
+.manager-login-layout__form {
+  display: flex;
+  justify-content: center;
+}
+
+.manager-login-layout__form > * {
+  width: 100%;
+  max-width: 440px;
+}
+
+/* ─── Login hero (品牌 + 功能亮点，撑起登录页右侧原本的大片留白) ─── */
+
+.manager-login-hero {
+  position: relative;
+  padding: 12px clamp(8px, 2vw, 32px) 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--manager-sp-6);
+}
+
+.manager-login-hero__glow {
+  position: absolute;
+  z-index: 0;
+  inset: -80px -40px auto -80px;
+  height: 360px;
+  pointer-events: none;
+  background: radial-gradient(420px 300px at 20% 20%, var(--manager-primary-light), transparent 70%);
+}
+
+.manager-login-hero__grid {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(16, 24, 40, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 24, 40, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse 100% 80% at 30% 30%, #000 40%, transparent 85%);
+}
+
+.manager-login-hero__brand,
+.manager-login-hero__tagline,
+.manager-login-hero__features {
+  position: relative;
+  z-index: 1;
+}
+
+.manager-login-hero__brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.manager-login-hero__tagline {
+  margin: 0;
+  max-width: 30em;
+  font-family: var(--manager-serif);
+  font-size: clamp(22px, 2.4vw, 30px);
+  line-height: var(--manager-lh-snug);
+  color: var(--manager-text);
+}
+
+.manager-login-hero__features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--manager-sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manager-login-hero__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--manager-sp-3);
+}
+
+.manager-login-hero__features li > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manager-login-hero__features b {
+  font-size: var(--manager-fs-base);
+  color: var(--manager-text);
+}
+
+.manager-login-hero__features small {
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-login-hero__feature-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--manager-r);
+  background: var(--manager-primary-light);
+  color: var(--manager-primary);
+  font-size: 16px;
+}
+
+@media (max-width: 992px) {
+  .manager-login-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-login-hero {
+    display: none;
+  }
+}
+
 /* ─── Stagger Animations ─── */
 
 .manager-stagger-1,
@@ -1916,7 +2078,24 @@ select {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  row-gap: 10px;
+  column-gap: 12px;
+}
+
+/* 工具栏按「批量操作 / 视图切换 / 筛选」分组，组内挨得近、组间用竖线隔开，
+   避免十几个控件在一条 flex-wrap 里挤成看不出层次的一片。 */
+.delivery-toolbar__group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 9px;
+}
+
+.delivery-toolbar__divider {
+  align-self: stretch;
+  width: 1px;
+  min-height: 24px;
+  background: var(--manager-border);
 }
 
 .delivery-owner-highlight-select { min-width: 196px; }
@@ -4419,6 +4598,20 @@ select {
 	color: var(--manager-blue) !important;
 }
 
+/* 消耗是每天都要看一眼的账，和会话一样从工具操作里挑出来，用琥珀色区分开。 */
+.delivery-requirement-card__actions .ant-btn.delivery-requirement-action--usage {
+	border: 1px solid color-mix(in srgb, var(--manager-amber) 42%, transparent);
+	background: color-mix(in srgb, var(--manager-amber) 16%, transparent);
+	color: var(--manager-amber);
+	font-size: 14px;
+}
+
+.delivery-requirement-card__actions .ant-btn.delivery-requirement-action--usage:hover {
+	border-color: var(--manager-amber) !important;
+	background: color-mix(in srgb, var(--manager-amber) 26%, transparent) !important;
+	color: var(--manager-amber) !important;
+}
+
 /* 主负责人 / 需求状态 / 时间 / 分支各自一枚彩色胶囊，按内容占宽而不是等分格子，同样高度里能塞下更多信息。 */
 .delivery-requirement-card__details {
 	display: flex;
@@ -6191,7 +6384,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 .delivery-progress__summary {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto;
+	grid-template-columns: auto auto minmax(0, 1fr) auto;
 	align-items: center;
 	gap: 20px;
 	padding-bottom: 20px;
@@ -6211,6 +6404,23 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 .delivery-progress__meter b { color: var(--manager-text); font-size: var(--manager-fs-sm); }
 .delivery-progress__meter small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); white-space: nowrap; }
+
+/* 全部任务的累计执行耗时：和整体进度并排，是这条需求「跑了多久」的那个数。 */
+.delivery-progress-duration {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: center;
+	gap: 2px 10px;
+	padding-left: 20px;
+	border-left: 1px solid var(--manager-border);
+}
+
+.delivery-progress-duration__icon { grid-row: 1 / span 3; color: var(--manager-text-faint); font-size: 17px; }
+.delivery-progress-duration b { color: var(--manager-text); font-size: var(--manager-fs-lg); font-variant-numeric: tabular-nums; }
+.delivery-progress-duration small { color: var(--manager-text); font-size: var(--manager-fs-xs); white-space: nowrap; }
+.delivery-progress-duration em { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); font-style: normal; white-space: nowrap; }
+.delivery-progress-duration.is-running .delivery-progress-duration__icon,
+.delivery-progress-duration.is-running b { color: var(--manager-cyan); }
 
 .delivery-progress__stats {
 	display: grid;
@@ -6426,6 +6636,10 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	font-size: var(--manager-fs-micro);
 }
 
+/* 卡片只有 248px：任务号 + 阶段占一行，消耗另起一行，挤在一起会顶到右侧操作列。 */
+.delivery-progress-node__meta { display: grid; align-content: start; gap: 4px; }
+.delivery-progress-node__meta-line { display: flex; min-width: 0; align-items: center; gap: 6px; }
+
 .delivery-progress-node__meta code,
 .delivery-progress-node__batch code {
 	min-width: 0;
@@ -6435,6 +6649,350 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 }
 
 .delivery-progress-node__meta em { flex: 0 0 auto; font-style: normal; }
+
+/* 执行耗时：任务卡片上单占一行，正在跑的那一轮每秒自己走。 */
+.delivery-progress-node__duration {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+}
+
+.delivery-progress-node__duration em,
+.delivery-progress-node__duration i { display: inline-flex; gap: 4px; align-items: baseline; font-style: normal; }
+.delivery-progress-node__duration b { color: var(--manager-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.delivery-progress-node__duration.is-running,
+.delivery-progress-node__duration.is-running b { color: var(--manager-cyan); }
+
+/* 消耗：任务卡片上跟在阶段后面，需求消耗弹窗里分段列出。 */
+.delivery-usage-tags {
+	display: inline-flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px;
+}
+
+.delivery-usage-tags .ant-tag {
+	margin-inline-end: 0;
+	padding-inline: 6px;
+	background: var(--manager-panel);
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	line-height: 18px;
+}
+
+.delivery-usage-tags .delivery-usage-tags__cost { font-variant-numeric: tabular-nums; }
+
+/* 会话里的用量：跟在改动汇总后面，是一行不抢戏的小字。 */
+.delivery-session-usage {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	margin: 6px 0 12px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+}
+
+.delivery-session-usage em { font-style: normal; }
+.delivery-session-usage i { font-style: normal; opacity: 0.8; }
+
+/* 需求消耗弹窗：顶上三格给结论，下面两张列宽一致的账表回答「花在哪」。 */
+.delivery-usage-modal .ant-modal-content {
+	padding: 0;
+	border-radius: var(--manager-r-xl);
+	box-shadow: var(--manager-shadow-lg);
+	overflow: hidden;
+}
+
+.delivery-usage-modal .ant-modal-header {
+	margin: 0;
+	padding: 18px 24px 14px;
+	border-bottom: 1px solid var(--manager-border);
+	background: linear-gradient(180deg, var(--manager-surface), var(--manager-bg-soft));
+}
+
+/* 高度封在 780px：顶上三格和分账固定，表格自己滚，弹窗不会长到出屏。 */
+.delivery-usage-modal .ant-modal-body {
+	/* 定死而不是封顶：切页签时两张表行数不一样，弹窗不能跟着一会高一会矮。 */
+	height: calc(min(780px, 100vh - 80px) - 62px);
+	padding: 18px 24px 22px;
+	background: var(--manager-bg-soft);
+	overflow: auto;
+}
+.delivery-usage-modal .ant-modal-close { top: 16px; inset-inline-end: 16px; }
+
+.delivery-usage-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+
+.delivery-usage-title span {
+	font-size: var(--manager-fs-lg);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.delivery-usage-title em {
+	overflow: hidden;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-sm);
+	font-style: normal;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.delivery-usage-body { display: grid; gap: 12px; }
+
+/* 结论三格：总量、花费、耗时。数字用等宽大号，其余都退到小字。 */
+.delivery-usage-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+.delivery-usage-tile {
+	position: relative;
+	padding: 14px 16px 15px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-lg);
+	background: var(--manager-surface);
+	box-shadow: var(--manager-shadow-sm);
+	overflow: hidden;
+}
+
+.delivery-usage-tile::before {
+	content: "";
+	position: absolute;
+	inset: 0 0 auto 0;
+	height: 2px;
+	background: linear-gradient(90deg, var(--manager-primary), rgba(79, 70, 229, 0));
+}
+
+.delivery-usage-tile__label {
+	display: block;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.delivery-usage-tile__value {
+	display: block;
+	margin-top: 6px;
+	font-family: var(--manager-mono);
+	font-size: var(--manager-fs-2xl);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	line-height: 1.1;
+	letter-spacing: -0.02em;
+}
+
+.delivery-usage-tile__value small {
+	margin-left: 6px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+	font-weight: 400;
+	letter-spacing: 0;
+}
+
+.delivery-usage-tile__meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	margin-top: 8px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-xs);
+}
+
+.delivery-usage-tile__meta em { font-style: normal; }
+
+.delivery-usage-card--tabs { padding: 0 16px 6px; }
+
+/* 页签就是这张卡的标题栏：跟卡片同宽，底线压住表头。 */
+.delivery-usage-tabs .ant-tabs-nav { margin: 0 0 4px; }
+.delivery-usage-tabs .ant-tabs-nav::before { border-bottom-color: var(--manager-border); }
+.delivery-usage-tabs .ant-tabs-tab { padding: 12px 2px; font-size: var(--manager-fs-sm); font-weight: 600; }
+.delivery-usage-tabs .ant-tabs-tab + .ant-tabs-tab { margin-left: 20px; }
+.delivery-usage-tabs .ant-tabs-extra-content em { font-style: normal; }
+
+.delivery-usage-card {
+	padding: 14px 16px 6px;
+	border: 1px solid var(--manager-border);
+	border-radius: var(--manager-r-lg);
+	background: var(--manager-surface);
+	box-shadow: var(--manager-shadow-sm);
+}
+
+.delivery-usage-heading {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	margin: 0 0 10px;
+	font-size: var(--manager-fs-sm);
+	font-weight: 600;
+}
+
+.delivery-usage-heading em { font-style: normal; font-size: var(--manager-fs-micro); font-weight: 400; }
+
+.delivery-usage-toggle {
+	margin-inline-start: auto;
+	height: 24px;
+	padding-inline: 8px;
+	color: var(--manager-primary);
+	font-size: var(--manager-fs-xs);
+}
+
+.delivery-usage-toggle .anticon { font-size: 10px; }
+
+/* 执行器分账：横条给量级，右边给明细。两家的计价分开，所以永远分两行。 */
+.delivery-usage-provider {
+	display: grid;
+	grid-template-columns: 88px minmax(110px, 1fr) auto;
+	align-items: center;
+	gap: 14px;
+	padding: 10px 0;
+	border-top: 1px solid var(--manager-border);
+	font-size: var(--manager-fs-sm);
+}
+
+.delivery-usage-provider:first-child { border-top: 0; }
+.delivery-usage-provider.is-empty { color: var(--manager-text-faint); }
+.delivery-usage-provider__name { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.delivery-usage-provider__bar { display: flex; align-items: center; gap: 10px; }
+
+.delivery-usage-provider__bar em {
+	min-width: 34px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	font-style: normal;
+	text-align: right;
+}
+
+.delivery-usage-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--manager-border-strong); }
+.delivery-usage-dot.is-codex { background: var(--manager-cyan); }
+.delivery-usage-dot.is-claude { background: var(--manager-violet); }
+
+.delivery-usage-bar {
+	position: relative;
+	flex: 1;
+	height: 6px;
+	border-radius: 999px;
+	background: var(--manager-panel-muted);
+	overflow: hidden;
+}
+
+.delivery-usage-bar b { display: block; height: 100%; border-radius: 999px; background: var(--manager-text-faint); transition: width var(--manager-t); }
+.delivery-usage-bar.is-codex b { background: var(--manager-cyan); }
+.delivery-usage-bar.is-claude b { background: var(--manager-violet); }
+
+.delivery-usage-nums { display: flex; align-items: center; gap: 10px; font-size: var(--manager-fs-xs); font-variant-numeric: tabular-nums; }
+.delivery-usage-nums em { font-style: normal; }
+.delivery-usage-nums i { color: var(--manager-text-faint); font-style: normal; }
+.delivery-usage-muted { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); }
+
+/* 两张账表：表头压成小字标签，只留行分隔线，数字等宽——列要能上下对着看。 */
+.delivery-usage-table .ant-table { background: transparent; font-size: var(--manager-fs-sm); }
+
+/*
+ * 表头和合计行靠 sticky 钉住，不用 antd 的 scroll.y。
+ * scroll.y 会把表头、表体、合计行拆成三张表各自算宽度，滚动条一出现就错位；
+ * 一张表 + sticky 只有一套列宽，永远对得齐。高度封在这里，行多了自己滚。
+ */
+.delivery-usage-table .ant-table-content { height: 330px; overflow: auto; scrollbar-width: thin; }
+
+/* 页签内容区同样定死，没有表格的空态（任务一条都没跑过）也占同样的高度。 */
+.delivery-usage-tabs .ant-tabs-content-holder { height: 330px; }
+.delivery-usage-tabs .ant-tabs-tabpane { height: 100%; }
+
+.delivery-usage-tabs .ant-tabs-tabpane > .ant-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	margin: 0;
+}
+
+.delivery-usage-table .ant-table-thead > tr > th {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	padding: 6px 12px;
+	border-bottom: 1px solid var(--manager-border);
+	/* 吸顶的表头必须是不透明的，否则滚上来的行会从底下透出来。 */
+	background: var(--manager-surface);
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	font-weight: 600;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.delivery-usage-table .ant-table-thead > tr > th::before { display: none !important; }
+.delivery-usage-table .ant-table-tbody > tr > td { padding: 9px 12px; border-bottom: 1px solid var(--manager-border); }
+.delivery-usage-table .ant-table-tbody > tr:last-child > td { border-bottom: 0; }
+.delivery-usage-table .ant-table-tbody > tr:hover > td { background: var(--manager-bg-soft); }
+/* 没跑过的入口也留一行，但整行调淡：它回答的是「这块一分没花」，不该跟有账的行抢注意力。 */
+.delivery-usage-table .ant-table-tbody > tr.is-empty > td { color: var(--manager-text-faint); }
+.delivery-usage-table .ant-table-tbody > tr.is-empty .delivery-usage-dot { background: var(--manager-panel-muted); }
+
+.delivery-usage-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.delivery-usage-name b { font-weight: 500; }
+
+.delivery-usage-chip {
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: var(--manager-panel);
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	font-style: normal;
+}
+
+/* 合计那一格：数字底下压一条占比微条，一眼看出这行在整条需求里占多少。 */
+.delivery-usage-total { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.delivery-usage-total em { font-style: normal; }
+
+.delivery-usage-total__bar {
+	position: relative;
+	width: 72px;
+	height: 3px;
+	border-radius: 999px;
+	background: var(--manager-panel-muted);
+}
+
+.delivery-usage-total__bar::after {
+	content: "";
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: var(--share, 0%);
+	border-radius: 999px;
+	background: var(--manager-primary);
+	opacity: 0.7;
+}
+
+/* 花费是另一种单位，给它另一个色：Codex 不计价，钱和 token 的分布本来就不一样。 */
+.delivery-usage-total__bar.is-cost::after { background: var(--manager-amber); }
+
+.delivery-usage-share {
+	margin-left: 6px;
+	color: var(--manager-text-faint);
+	font-size: var(--manager-fs-micro);
+	font-weight: 400;
+}
+
+.delivery-usage-cell-num { font-variant-numeric: tabular-nums; }
+/* 还在跑的那一轮，耗时这一格实时走；和任务卡片上的进行中用同一个颜色。 */
+.delivery-usage-cell-num .is-running { color: var(--manager-cyan); }
+.delivery-usage-summary-row > td { background: var(--manager-panel); font-weight: 600; }
+
+.delivery-usage-table .ant-table-summary > tr > td {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	border-top: 1px solid var(--manager-border);
+}
+.delivery-usage-hint { margin: 2px 2px 0; line-height: 1.6; }
+
+@media (max-width: 860px) {
+	.delivery-usage-hero { grid-template-columns: 1fr; }
+	.delivery-usage-provider { grid-template-columns: 1fr; gap: 6px; }
+}
 .delivery-progress-node__batch { color: var(--manager-cyan); }
 .delivery-progress-node__open { align-self: center; color: var(--manager-text-faint); font-size: 10px; }
 
@@ -6527,6 +7085,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	.delivery-progress-title > code { flex-basis: 100%; }
 	.delivery-progress__summary { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
 	.delivery-progress__meter { grid-column: 1; }
+	.delivery-progress-duration { grid-column: 1 / -1; padding-left: 0; border-left: 0; }
 	.delivery-progress__summary > .ant-btn { grid-column: 2; grid-row: 1; }
 	.delivery-progress__stats { grid-column: 1 / -1; grid-template-columns: repeat(5, minmax(78px, 1fr)); overflow-x: auto; padding-bottom: 4px; }
 	.delivery-progress__groups { grid-template-columns: minmax(0, 1fr); }
@@ -7994,6 +8553,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .my-work-card__actions .my-work-action.is-progress { --action-tone: var(--manager-cyan); }
 .my-work-card__actions .my-work-action.is-outline { --action-tone: var(--manager-violet); }
 .my-work-card__actions .my-work-action.is-branch { --action-tone: var(--manager-success); }
+.my-work-card__actions .my-work-action.is-usage { --action-tone: var(--manager-amber); }
 
 @media (max-width: 640px) {
 	.my-work-grid { grid-template-columns: minmax(0, 1fr); }

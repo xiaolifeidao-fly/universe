@@ -701,7 +701,7 @@ export function ProgramManagementWorkspace() {
 					</Space>
 				</div>
 				{programs.length === 0 && !loading ? (
-					<Empty description={t("programs.empty")} />
+					<Empty className="manager-empty-state" description={t("programs.empty")} />
 				) : (
 					<div className="manager-table">
 						<Table<DeliveryProgramRecord>
@@ -813,7 +813,7 @@ export function ProgramManagementWorkspace() {
 							</Tooltip>
 						</div>
 						{stages.length === 0 && !stagesLoading ? (
-							<Empty description={t("programs.stages.empty")} />
+							<Empty className="manager-empty-state manager-empty-state--compact" description={t("programs.stages.empty")} />
 						) : (
 							<div className="manager-table">
 								<Table<DeliveryStageRecord>
@@ -857,7 +857,7 @@ export function ProgramManagementWorkspace() {
 							</Tooltip>
 						</div>
 						{modules.length === 0 && !modulesLoading ? (
-							<Empty description={t("programs.modules.empty")} />
+							<Empty className="manager-empty-state manager-empty-state--compact" description={t("programs.modules.empty")} />
 						) : (
 							<div className="manager-table">
 								<Table<DeliveryModuleRecord>

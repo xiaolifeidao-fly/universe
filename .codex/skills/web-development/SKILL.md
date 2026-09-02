@@ -34,9 +34,11 @@ version: 1.0.0
 
 ## Reference Navigation
 
-- `references/frontend-architecture.md` — 目录结构与路由组、**API 层归属规则**、axios 三个读函数与写法约束、bizLine 贯穿、鉴权与代理链路、状态管理与 hooks 抽取
-- `references/frontend-new-page-guide.md` — 新增页面 / mock 页改造真接口的分步清单
-- `references/frontend-design-system.md` — `manager-*` CSS 变量与类名清单、antd theme token、页面骨架模板、表格与 KPI 写法
+`references/` 下每篇 11k-14k 字符，**按需下钻，不要开局先读**：读进来的正文会在本轮之后的每一次模型请求里被重发一遍。常规改动（改已有组件、调样式、加字段、接一个已有页面的新接口）靠本文件的「强制约束」「目录结构速查」「常用文件索引」和真实代码就够。对得上号时才打开对应那一篇，且只读相关章节：
+
+- `references/frontend-architecture.md` — 目录结构与路由组、**API 层归属规则**、axios 三个读函数与写法约束、bizLine 贯穿、鉴权与代理链路、状态管理与 hooks 抽取。**新增页面、动鉴权/代理链路、抽 hooks 时读。**
+- `references/frontend-new-page-guide.md` — 新增页面 / mock 页改造真接口的分步清单。**做这两件事时读。**
+- `references/frontend-design-system.md` — `manager-*` CSS 变量与类名清单、antd theme token、页面骨架模板、表格与 KPI 写法。**要新增 `manager-*` 类名或改设计系统时读；套用已有类名先 `grep -n "manager-xxx" src/app/globals.css` 看那一段。**
 
 ## 目录结构速查
 

@@ -2,8 +2,11 @@
 .env
 .env.*
 !.env.example
-/server/web-api/configs/application.properties
-/server/app-api/configs/application.properties
+server/web-api/configs/application.properties
+server/web-api/configs/application_dev.properties
+server/app-api/configs/application.properties
+# 只有 *.example.properties 进版本库，真配置一律本地持有。
+!server/**/configs/*.example.properties
 
 # OS/editor artifacts
 .DS_Store

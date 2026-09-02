@@ -114,14 +114,18 @@ type RequirementProgressQuery struct {
 
 // RequirementProgressView 同时返回任务图和执行批次。任务是完整计划，批次只说明当前或历史运行上下文。
 type RequirementProgressView struct {
-	RequirementKey  string               `json:"requirementKey"`
-	RequirementName string               `json:"requirementName"`
-	TotalCount      int                  `json:"totalCount"`
-	CountedCount    int                  `json:"countedCount"`
-	Progress        float64              `json:"progress"`
-	StatusCounts    map[string]int       `json:"statusCounts"`
-	Items           []ItemView           `json:"items"`
-	Batches         []ExecutionBatchView `json:"batches"`
+	RequirementKey  string         `json:"requirementKey"`
+	RequirementName string         `json:"requirementName"`
+	TotalCount      int            `json:"totalCount"`
+	CountedCount    int            `json:"countedCount"`
+	Progress        float64        `json:"progress"`
+	StatusCounts    map[string]int `json:"statusCounts"`
+	// TotalRunDurationMs 是这条需求下全部任务的执行耗时之和（毫秒），
+	// RunCount 是它们已结束的执行轮次总数。
+	TotalRunDurationMs int64                `json:"totalRunDurationMs"`
+	RunCount           int                  `json:"runCount"`
+	Items              []ItemView           `json:"items"`
+	Batches            []ExecutionBatchView `json:"batches"`
 	// PlanningBatches 是这条需求拆解过几批任务；任务用 planningBatchKey 归到某一批。
 	PlanningBatches []PlanningBatchView `json:"planningBatches"`
 }

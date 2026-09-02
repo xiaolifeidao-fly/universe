@@ -516,6 +516,15 @@ type DeliveryItem struct {
 	TestingStatus     string `gorm:"column:testing_status;type:varchar(16);default:todo;index:idx_dlv_item_testing,priority:3" description:"测试阶段：todo/doing/done/blocked/dropped"`
 	Progress          int    `gorm:"column:progress" description:"进度 0-100，done 强制 100，dropped 不计入统计"`
 
+	// 执行耗时：每一轮执行实例开始与结束时各写一次，累计值只增不减。
+	// 一条任务会被反复执行（再做一次、追问、批量重跑），面板既要看最近一轮花了多久，
+	// 也要看这条任务到现在一共花了多久，所以最近一轮和累计分开存。
+	LastRunStartedAt   *time.Time `gorm:"column:last_run_started_at;type:timestamp NULL" description:"最近一轮执行开始时间"`
+	LastRunFinishedAt  *time.Time `gorm:"column:last_run_finished_at;type:timestamp NULL" description:"最近一轮执行结束时间"`
+	LastRunDurationMs  int64      `gorm:"column:last_run_duration_ms;default:0" description:"最近一轮执行耗时毫秒"`
+	TotalRunDurationMs int64      `gorm:"column:total_run_duration_ms;default:0" description:"历次执行累计耗时毫秒"`
+	RunCount           int        `gorm:"column:run_count;default:0" description:"已结束的执行轮次数"`
+
 	OwnerID   string     `gorm:"column:owner_id;type:varchar(64)" description:"负责人标识，鉴权落地前先存名字"`
 	OwnerName string     `gorm:"column:owner_name;type:varchar(64)" description:"负责人显示名"`
 	DueDate   *time.Time `gorm:"column:due_date;type:date;null" description:"截止日期"`
@@ -551,6 +560,13 @@ type DeliveryItemExecutionSession struct {
 	Progress          int    `gorm:"column:progress;default:0" description:"本次运行实例完成进度 0-100"`
 	MetadataJSON      string `gorm:"column:metadata_json;type:text" description:"执行器扩展元数据 JSON"`
 	Version           int    `gorm:"column:version;default:1" description:"乐观锁版本"`
+
+	// 一行会话记录被同一任务的历次运行复用，这三列描述的是「最近一轮」：
+	// 绑定成运行中时写开始时间，收到终态时写结束时间并算出这一轮的耗时。
+	RunStartedAt       *time.Time `gorm:"column:run_started_at;type:timestamp NULL" description:"本轮运行开始时间"`
+	RunFinishedAt      *time.Time `gorm:"column:run_finished_at;type:timestamp NULL" description:"本轮运行结束时间"`
+	LastRunDurationMs  int64      `gorm:"column:last_run_duration_ms;default:0" description:"最近一轮运行耗时毫秒"`
+	TotalRunDurationMs int64      `gorm:"column:total_run_duration_ms;default:0" description:"该会话历次运行累计耗时毫秒"`
 
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人"`
 	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`

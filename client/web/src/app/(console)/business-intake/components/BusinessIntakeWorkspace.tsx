@@ -85,7 +85,7 @@ export function BusinessIntakeWorkspace() {
         <List<BusinessRequirementRecord>
           className="manager-business-intake__list"
           loading={loading}
-          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("businessIntake.empty")} /> }}
+          locale={{ emptyText: <Empty className="manager-empty-state manager-empty-state--compact" description={t("businessIntake.empty")} /> }}
           dataSource={requirements}
           renderItem={(item) => (
             <List.Item className="manager-business-intake__item" actions={[

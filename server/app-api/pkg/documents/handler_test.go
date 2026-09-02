@@ -35,14 +35,18 @@ func (d testDirectory) GetCloudSyncFile(context.Context, contract.BizLine, int64
 	return d.file, nil
 }
 
-type testObjectReader struct{ reads int }
+type testObjectReader struct {
+	reads           int
+	signedExpiresAt time.Time
+}
 
 func (r *testObjectReader) Get(context.Context, string) (objectstore.ObjectContent, error) {
 	r.reads++
 	return objectstore.ObjectContent{ContentType: "text/markdown", Data: []byte("# mobile document")}, nil
 }
 
-func (r *testObjectReader) SignedURL(string, time.Time) (string, error) {
+func (r *testObjectReader) SignedURL(_ string, expiresAt time.Time) (string, error) {
+	r.signedExpiresAt = expiresAt
 	return "https://oss.example/signed", nil
 }
 
@@ -56,7 +60,7 @@ func TestPreviewRequiresProjectPermissionAndDoesNotExposeObjectKey(t *testing.T)
 	router := gin.New()
 	NewHandler(testDirectory{file: dto.CloudSyncFileView{
 		ProgramID: 7, Category: "design", RelativePath: "design/mobile.md", ContentType: "text/markdown", ObjectKey: "private-key",
-	}}, objects).Register(router.Group("/api"))
+	}}, objects, time.Minute).Register(router.Group("/api"))
 
 	allowed := httptest.NewRequest(http.MethodGet, "/api/documents/preview?programId=7&category=design&relativePath=design/mobile.md", nil)
 	allowed.Header.Set("token", "valid")
@@ -80,6 +84,29 @@ func TestPreviewRequiresProjectPermissionAndDoesNotExposeObjectKey(t *testing.T)
 	router.ServeHTTP(listingRecorder, listing)
 	if listingRecorder.Code != http.StatusOK || string(listingRecorder.Body.Bytes()) == "" || contains(listingRecorder.Body.String(), "private-key") {
 		t.Fatalf("文档目录不能泄露对象键：%s", listingRecorder.Body.String())
+	}
+}
+
+func TestSignedURLUsesConfiguredExpiry(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
+		ID: "42", Persona: "product_research", Personas: []string{"product_research"}, ProgramIDs: []int64{7},
+	}})
+	defer httpx.SetUserAuthenticator(nil)
+	objects := &testObjectReader{}
+	handler := NewHandler(testDirectory{file: dto.CloudSyncFileView{
+		ProgramID: 7, Category: "design", RelativePath: "design/mobile.md", ObjectKey: "private-key",
+	}}, objects, 10*time.Minute)
+	now := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	handler.now = func() time.Time { return now }
+	router := gin.New()
+	handler.Register(router.Group("/api"))
+	request := httptest.NewRequest(http.MethodGet, "/api/documents/url?programId=7&category=design&relativePath=design/mobile.md", nil)
+	request.Header.Set("token", "valid")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !objects.signedExpiresAt.Equal(now.Add(10*time.Minute)) {
+		t.Fatalf("签名地址有效期错误: status=%d expiresAt=%s", recorder.Code, objects.signedExpiresAt)
 	}
 }
 

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -14,8 +15,11 @@ type CommandQuery struct {
 	UserID    string
 	ProgramID int64
 	State     string
-	Offset    int
-	Limit     int
+	// ExcludeCommandTypes 把快照类命令挡在运行记录之外：会话页几秒读一次，
+	// 不过滤的话用户自己发的那条执行命令会被顶到列表几十条以后。
+	ExcludeCommandTypes []string
+	Offset              int
+	Limit               int
 }
 
 func (r *DeliveryRepository) FindCommand(ctx context.Context, bizLine, userID, commandID string) (*DeliveryCommand, error) {
@@ -53,6 +57,9 @@ func (r *DeliveryRepository) ListCommands(ctx context.Context, q CommandQuery) (
 	}
 	if q.State != "" {
 		tx = tx.Where("state = ?", q.State)
+	}
+	if len(q.ExcludeCommandTypes) > 0 {
+		tx = tx.Where("command_type NOT IN ?", q.ExcludeCommandTypes)
 	}
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {
@@ -146,6 +153,34 @@ func (r *DeliveryRepository) TryLeaseCommand(
 	return claimed, err
 }
 
+// AbandonPendingCommand 把一条还没被领取的命令直接判死，用于 Worker 领取时发现
+// 它已经没有意义（例如过期的界面快照）。只动 pending 行：正在跑的命令由租约收口。
+func (r *DeliveryRepository) AbandonPendingCommand(ctx context.Context, bizLine, userID, commandID, message string) (bool, error) {
+	changed := false
+	err := r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		result := tx.Model(&DeliveryCommand{}).
+			Where("biz_line = ?", bizLine).
+			Where("user_id = ?", userID).
+			Where("command_id = ?", commandID).
+			Where("state = ?", "pending").
+			Updates(map[string]any{
+				"state": "timed_out", "finished_at": now, "version": gorm.Expr("version + 1"), "updated_time": now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		changed = true
+		return tx.Create(&DeliveryCommandEvent{
+			BizLine: bizLine, CommandID: commandID, UserID: userID, Kind: "stale_discarded", State: "timed_out", Message: message, DataJSON: "{}", CreatedAt: now,
+		}).Error
+	})
+	return changed, err
+}
+
 func (r *DeliveryRepository) UpsertCommandWorker(
 	ctx context.Context, row *DeliveryCommandWorker, workspaces []*DeliveryCommandWorkerWorkspace,
 ) error {
@@ -219,6 +254,29 @@ func (r *DeliveryRepository) ListCommandWorkerWorkspaces(ctx context.Context, us
 		Order("biz_line asc, program_id asc").
 		Find(&rows).Error
 	return rows, err
+}
+
+// FindLatestCommandWorker 回答「这个项目现在有没有执行电脑在听」。手机端在提交
+// 命令之前就要知道答案，否则只能等到超时才发现插件根本没开。心跳最新的那台为准：
+// 同一个人可能在两台电脑上都映射过同一个项目。
+func (r *DeliveryRepository) FindLatestCommandWorker(
+	ctx context.Context, bizLine, userID string, programID int64,
+) (*DeliveryCommandWorker, error) {
+	tx := r.Db.WithContext(ctx).Model(&DeliveryCommandWorker{}).
+		Where("biz_line = ?", bizLine).
+		Where("user_id = ?", userID)
+	if programID > 0 {
+		tx = tx.Where("worker_id IN (?)", r.Db.Model(&DeliveryCommandWorkerWorkspace{}).
+			Select("worker_id").
+			Where("biz_line = ?", bizLine).
+			Where("user_id = ?", userID).
+			Where("program_id = ?", programID))
+	}
+	var row DeliveryCommandWorker
+	if err := tx.Order("last_heartbeat_at desc, id desc").First(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
 }
 
 func (r *DeliveryRepository) UpdateActiveCommand(
@@ -318,6 +376,53 @@ func (r *DeliveryRepository) ListUnclaimedCommands(ctx context.Context, before t
 	return rows, err
 }
 
+// DeleteFinishedCommands 按命令类型清理已终态的命令与其事件行。matchTypes 为真时
+// 只删列出的类型，为假时删除列出的类型之外的所有命令 —— 快照命令和执行命令因此
+// 能用同一段 SQL、两套留存期。每次只取一批，避免一条 DELETE 锁住整张表。
+func (r *DeliveryRepository) DeleteFinishedCommands(
+	ctx context.Context, before time.Time, commandTypes []string, matchTypes bool, limit int,
+) (int64, error) {
+	if len(commandTypes) == 0 && matchTypes {
+		return 0, nil
+	}
+	tx := r.Db.WithContext(ctx).Model(&DeliveryCommand{}).
+		Where("state IN ?", []string{"succeeded", "failed", "cancelled", "timed_out"}).
+		Where("updated_time <= ?", before)
+	if len(commandTypes) > 0 {
+		if matchTypes {
+			tx = tx.Where("command_type IN ?", commandTypes)
+		} else {
+			tx = tx.Where("command_type NOT IN ?", commandTypes)
+		}
+	}
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	var rows []*DeliveryCommand
+	if err := tx.Order("updated_time asc, id asc").Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	ids := make([]int64, 0, len(rows))
+	commandIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.Id)
+		commandIDs = append(commandIDs, row.CommandID)
+	}
+	err := r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("command_id IN ?", commandIDs).Delete(&DeliveryCommandEvent{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&DeliveryCommand{}).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
+}
+
 func (r *DeliveryRepository) RecoverExpiredCommand(ctx context.Context, bizLine, commandID string, before time.Time, maxAttempts int) (*DeliveryCommand, bool, error) {
 	var recovered *DeliveryCommand
 	changed := false
@@ -409,4 +514,49 @@ func (r *DeliveryRepository) RecoverUnclaimedCommand(ctx context.Context, bizLin
 		return nil
 	})
 	return recovered, changed, err
+}
+
+// FindCommandWorkerUserForProgram resolves which console user's Worker currently
+// serves one project. Business intake is submitted by the server on a business
+// user's behalf; that user has no console identity and no Worker of its own, so
+// its command must be filed under the owner of the Worker already mapped to the
+// project. Ordering by heartbeat keeps the newest live Worker authoritative when
+// several consoles have mapped the same project.
+func (r *DeliveryRepository) FindCommandWorkerUserForProgram(ctx context.Context, bizLine string, programID int64, since time.Time) (string, error) {
+	worker := &DeliveryCommandWorker{}
+	workspace := &DeliveryCommandWorkerWorkspace{}
+	var row DeliveryCommandWorker
+	err := r.Db.WithContext(ctx).Model(&DeliveryCommandWorker{}).
+		Joins(fmt.Sprintf(
+			"JOIN %s AS ws ON ws.biz_line = %s.biz_line AND ws.user_id = %s.user_id AND ws.worker_id = %s.worker_id",
+			workspace.TableName(), worker.TableName(), worker.TableName(), worker.TableName(),
+		)).
+		Where(fmt.Sprintf("%s.biz_line = ?", worker.TableName()), bizLine).
+		Where("ws.program_id = ?", programID).
+		Where(fmt.Sprintf("%s.last_heartbeat_at >= ?", worker.TableName()), since).
+		Order(fmt.Sprintf("%s.last_heartbeat_at desc", worker.TableName())).
+		First(&row).Error
+	if err != nil {
+		return "", err
+	}
+	return row.UserID, nil
+}
+
+// FindLatestCommandActivity reads only the newest activity a Worker reported.
+// A long turn emits an activity every couple of seconds, so the ascending,
+// limited event listing eventually stops containing the current snapshot; a
+// caller that renders live progress needs the tail, not the head.
+func (r *DeliveryRepository) FindLatestCommandActivity(ctx context.Context, bizLine, userID, commandID string) (*DeliveryCommandEvent, error) {
+	var row DeliveryCommandEvent
+	err := r.Db.WithContext(ctx).Model(&DeliveryCommandEvent{}).
+		Where("biz_line = ?", bizLine).
+		Where("user_id = ?", userID).
+		Where("command_id = ?", commandID).
+		Where("kind = ?", "activity").
+		Order("id desc").
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
 }

@@ -21,6 +21,7 @@ import {
 	SwapOutlined,
 	UsergroupAddOutlined,
 	UserOutlined,
+	WalletOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Empty, Input, Popconfirm, Segmented, Select, Spin, Tag, Tooltip } from "antd";
 import dayjs from "dayjs";
@@ -77,6 +78,8 @@ interface DeliveryRequirementListProps {
   onTest: (requirement: DeliveryRequirementRecord) => void;
   /** 需求级大纲弹窗，可直接改并保存回工作区。 */
   onOutline: (requirement: DeliveryRequirementRecord) => void;
+  /** 这条需求到目前为止烧了多少 token，按 Codex / Claude 分开。 */
+  onUsage: (requirement: DeliveryRequirementRecord) => void;
 	/** 需求时间线包含需求本身及其下所有任务的变动。 */
   onTimeline: (requirement: DeliveryRequirementRecord) => void;
   /** 关联时间计划：决定这条需求属于哪一批发布，不改需求正文也不动分支。 */
@@ -124,6 +127,7 @@ export function DeliveryRequirementList({
   onAssign,
   onTest,
 	onOutline,
+	onUsage,
 	onTimeline,
   onTimePlan,
 	projectGitEnabled,
@@ -354,19 +358,6 @@ export function DeliveryRequirementList({
               }}
             />
           </Tooltip>
-          <Tooltip title={t("delivery.requirement.shareLink")}>
-            <Button
-              type="text"
-              size="small"
-              shape="circle"
-              icon={<ShareAltOutlined />}
-              aria-label={t("delivery.requirement.shareLink")}
-              onClick={(event) => {
-                event.stopPropagation();
-                onShare(requirement);
-              }}
-            />
-          </Tooltip>
           <Tooltip title={t("delivery.requirement.outline")}>
             <Button
               type="text"
@@ -377,6 +368,20 @@ export function DeliveryRequirementList({
               onClick={(event) => {
                 event.stopPropagation();
                 onOutline(requirement);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t("delivery.usage.button")}>
+            <Button
+              className="delivery-requirement-action--usage"
+              type="text"
+              size="small"
+              shape="circle"
+              icon={<WalletOutlined />}
+              aria-label={t("delivery.usage.button")}
+              onClick={(event) => {
+                event.stopPropagation();
+                onUsage(requirement);
               }}
             />
           </Tooltip>
@@ -459,11 +464,17 @@ export function DeliveryRequirementList({
                   icon: <HistoryOutlined />,
                   label: t("delivery.requirement.viewTimeline"),
                 },
+                {
+                  key: "share",
+                  icon: <ShareAltOutlined />,
+                  label: t("delivery.requirement.shareLink"),
+                },
               ],
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
                 if (key === "test") onTest(requirement);
                 if (key === "timeline") onTimeline(requirement);
+                if (key === "share") onShare(requirement);
               },
             }}
           >

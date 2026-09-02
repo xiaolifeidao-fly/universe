@@ -436,6 +436,74 @@ func TestBuildRequirementProgressViewKeepsAllTaskStatesAndBatchContext(t *testin
 	}
 }
 
+// 一轮执行的耗时按「绑定成运行中」到「收到终态」这段算。中途的进度更新不是边界，
+// 不能把已经结算过的一轮再累加一次 —— 终态会被后台补偿重放。
+func TestRunTimingMeasuresOneRunAndAccumulatesOnce(t *testing.T) {
+	start := time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC)
+	begin := runTimingFor(nil, "running", start)
+	if !begin.Started || begin.StartedAt == nil || !begin.StartedAt.Equal(start) || begin.FinishedAt != nil {
+		t.Fatalf("绑定成运行中应当开一轮新的计时：%#v", begin)
+	}
+
+	session := &repository.DeliveryItemExecutionSession{
+		RunStartedAt: begin.StartedAt, TotalRunDurationMs: 5_000,
+	}
+	end := start.Add(90 * time.Second)
+	finish := runTimingFor(session, "completed", end)
+	if !finish.Finished || finish.LastMs != 90_000 || finish.TotalMs != 95_000 {
+		t.Fatalf("终态应当结算本轮并累加到会话总耗时：%#v", finish)
+	}
+
+	session.RunFinishedAt = finish.FinishedAt
+	session.LastRunDurationMs = finish.LastMs
+	session.TotalRunDurationMs = finish.TotalMs
+	replay := runTimingFor(session, "completed", end.Add(time.Minute))
+	if replay.Finished || replay.LastMs != 90_000 || replay.TotalMs != 95_000 {
+		t.Fatalf("重放终态不能二次累加：%#v", replay)
+	}
+}
+
+// 存量会话没有开始时刻，补一个结束时刻就够；时钟回拨也不能写出负耗时。
+func TestRunTimingIgnoresMissingStartAndBackwardClock(t *testing.T) {
+	now := time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC)
+	legacy := runTimingFor(&repository.DeliveryItemExecutionSession{}, "blocked", now)
+	if legacy.Finished || legacy.LastMs != 0 || legacy.FinishedAt == nil {
+		t.Fatalf("缺开始时刻时只补结束时刻：%#v", legacy)
+	}
+	later := now.Add(time.Minute)
+	backward := runTimingFor(&repository.DeliveryItemExecutionSession{RunStartedAt: &later}, "completed", now)
+	if backward.LastMs != 0 || backward.TotalMs != 0 {
+		t.Fatalf("时钟回拨不能写出负耗时：%#v", backward)
+	}
+}
+
+// 需求的执行耗时是它下面每条任务的累计之和；任务视图要把最近一轮也带出去，
+// 面板上「本次 / 累计」两个数都从这里读。
+func TestRequirementProgressSumsTaskRunDurations(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 2, 9, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	rows := []*repository.DeliveryItem{
+		{
+			ItemKey: "a", Status: StatusDone, Progress: 100,
+			LastRunStartedAt: &startedAt, LastRunFinishedAt: &finishedAt,
+			LastRunDurationMs: 120_000, TotalRunDurationMs: 300_000, RunCount: 3,
+		},
+		{ItemKey: "b", Status: StatusDoing, Progress: 50, LastRunStartedAt: &startedAt, TotalRunDurationMs: 45_000, RunCount: 1},
+	}
+	view := buildRequirementProgressView(
+		&repository.DeliveryRequirement{RequirementKey: "req-1"}, rows, nil, nil, nil, nil,
+	)
+	if view.TotalRunDurationMs != 345_000 || view.RunCount != 4 {
+		t.Fatalf("需求累计耗时应当是各任务之和：%#v", view)
+	}
+	if view.Items[0].LastRunDurationMs != 120_000 || view.Items[0].TotalRunDurationMs != 300_000 {
+		t.Fatalf("任务视图缺少执行耗时：%#v", view.Items[0])
+	}
+	if view.Items[1].LastRunFinishedAt != nil || view.Items[1].LastRunStartedAt == nil {
+		t.Fatalf("还在跑的任务只有开始时刻：%#v", view.Items[1])
+	}
+}
+
 func TestNormalizeRequirementPlannedPeriod(t *testing.T) {
 	startAt := time.Date(2026, time.August, 17, 9, 0, 0, 0, time.UTC)
 	endAt := time.Date(2026, time.August, 18, 18, 0, 0, 0, time.UTC)

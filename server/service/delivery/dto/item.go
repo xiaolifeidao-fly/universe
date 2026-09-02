@@ -36,8 +36,8 @@ type ItemView struct {
 	// PlanningBatchKey 是任务来自哪一次需求拆解；非必填，手工新建和存量任务为空串。
 	PlanningBatchKey string `json:"planningBatchKey"`
 	Kind             string `json:"kind"`
-	Title          string           `json:"title"`
-	Description    string           `json:"description"`
+	Title            string `json:"title"`
+	Description      string `json:"description"`
 	// BenefitTags 用简短标签说明任务交付后带来的收益或作用。
 	BenefitTags []string `json:"benefitTags"`
 	// 大字段仅在 GET /delivery/item 的详情响应中返回，避免拖慢看板列表。
@@ -50,17 +50,24 @@ type ItemView struct {
 	TestingCasesPath        string `json:"testingCasesPath"`
 	ExecutionOutput         string `json:"executionOutput,omitempty"` // 旧客户端兼容，等同于 ActionOutput。
 	// Phase + Status 是任务唯一的当前归属和状态。
-	Phase             string     `json:"phase"`
-	RequirementStatus string     `json:"requirementStatus"`
-	DevelopmentStatus string     `json:"developmentStatus"`
-	TestingStatus     string     `json:"testingStatus"`
-	Status            string     `json:"status"`
-	Progress          int        `json:"progress"`
-	OwnerID           string     `json:"ownerId"`
-	OwnerName         string     `json:"ownerName"`
-	DueDate           *time.Time `json:"dueDate"`
-	Note              string     `json:"note"`
-	SortOrder         int        `json:"sortOrder"`
+	Phase             string `json:"phase"`
+	RequirementStatus string `json:"requirementStatus"`
+	DevelopmentStatus string `json:"developmentStatus"`
+	TestingStatus     string `json:"testingStatus"`
+	Status            string `json:"status"`
+	Progress          int    `json:"progress"`
+	// 执行耗时：最近一轮执行的起止时刻与耗时，以及这条任务历次执行的累计耗时（毫秒）。
+	// 任务还在跑时 LastRunFinishedAt 为空，前端据此从开始时刻现算已经跑了多久。
+	LastRunStartedAt   *time.Time `json:"lastRunStartedAt"`
+	LastRunFinishedAt  *time.Time `json:"lastRunFinishedAt"`
+	LastRunDurationMs  int64      `json:"lastRunDurationMs"`
+	TotalRunDurationMs int64      `json:"totalRunDurationMs"`
+	RunCount           int        `json:"runCount"`
+	OwnerID            string     `json:"ownerId"`
+	OwnerName          string     `json:"ownerName"`
+	DueDate            *time.Time `json:"dueDate"`
+	Note               string     `json:"note"`
+	SortOrder          int        `json:"sortOrder"`
 	// DependsOnItemKeys 是当前任务的直接前置任务；服务端保证整张图无环。
 	DependsOnItemKeys []string `json:"dependsOnItemKeys"`
 	// DependencySourceSides 以前置任务键为 key，记录箭头从前置任务的哪条边出发。

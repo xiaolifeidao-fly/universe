@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { usePathname, useRouter } from "next/navigation";
 import { ApiError } from "@/api/client";
 import { listSpaces, type SpaceSummary } from "@/api/spaces.api";
-import { clearSession, getSession, setSessionSpace } from "@/lib/auth";
+import { clearSession, defaultWorkspaceRoute, getSession, setSessionSpace } from "@/lib/auth";
 
 interface SpaceContextValue {
   spaces: SpaceSummary[];
@@ -66,7 +66,8 @@ export function SpaceProvider({ children }: { children: ReactNode }) {
     setBizLine(target.code);
     // 项目、需求、任务的标识都只在自己的空间里有意义，换空间后必须回到概览，
     // 否则详情页会拿着上一个空间的项目号继续请求。
-    if (pathname !== "/") router.replace("/");
+    if (pathname.startsWith("/business")) router.replace("/business");
+    else if (pathname !== "/") router.replace(defaultWorkspaceRoute());
   }, [bizLine, pathname, router, spaces]);
 
   const value = useMemo<SpaceContextValue>(() => {

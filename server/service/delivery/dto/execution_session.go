@@ -22,8 +22,13 @@ type ExecutionSessionView struct {
 	Status            string         `json:"status"`
 	Metadata          map[string]any `json:"metadata"`
 	Version           int            `json:"version"`
-	UpdatedBy         string         `json:"updatedBy"`
-	UpdatedAt         *time.Time     `json:"updatedAt"`
+	// 运行计时：最近一轮的起止时刻，以及最近一轮和这条会话历次运行的累计耗时（毫秒）。
+	RunStartedAt       *time.Time `json:"runStartedAt"`
+	RunFinishedAt      *time.Time `json:"runFinishedAt"`
+	LastRunDurationMs  int64      `json:"lastRunDurationMs"`
+	TotalRunDurationMs int64      `json:"totalRunDurationMs"`
+	UpdatedBy          string     `json:"updatedBy"`
+	UpdatedAt          *time.Time `json:"updatedAt"`
 }
 
 type ExecutionSessionQuery struct {

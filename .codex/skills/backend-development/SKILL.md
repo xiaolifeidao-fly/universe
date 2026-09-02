@@ -32,15 +32,17 @@ version: 1.0.0
 
 ## Reference Navigation
 
-**架构与边界（先读这两篇）：**
+`references/` 下每篇 7k-13k 字符，**按需下钻，不要开局先读**：读进来的正文会在本轮之后的每一次模型请求里被重发一遍。常规改动（改已有 handler、加字段、调查询、修 bug）靠本文件的「Key Best Practices」「常用文件索引」和真实代码就够；只有下面对得上号时才打开对应那一篇，且只读相关章节。
+
+**架构与边界（新增一层、跨层调用、领域包依赖出问题时读）：**
 - `references/backend-architecture.md` — 模块布局、6 层依赖 DAG、`contract` 与 `ports.go` 的分工、`internal` 单写约束、装配（wire）在哪、本地 vs 远程双实现
 - `references/backend-api-service-layout.md` — **API 层归属规则**：为什么 handler 写在 `{层}-api/pkg/` 而不是 `web-api/`，聚合期与独立期分别怎么装配，拆分时改哪几行
 
-**编码规范：**
+**编码规范（新增接口或新增子域时读；改已有接口不用）：**
 - `references/backend-api-design.md` — Handler 包结构、路由与鉴权声明、DTO 三件套、统一响应、bizLine 取值、新增接口检查清单
 - `references/backend-data-layer.md` — GORM Entity 规范、表命名 `zt_{层}_{实体}`、索引以 `biz_line` 打头、Repository 写法、三条全局表规则
 
-**流程向导：**
+**流程向导（从零新增子域或整层时读）：**
 - `references/backend-new-module-guide.md` — 新增一个接口 / 一个子域 / 一整层的分步清单
 
 ## 核心分层

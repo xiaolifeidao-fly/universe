@@ -325,6 +325,22 @@ export class DeliveryItemRecord {
 
   progress = 0;
 
+  /**
+   * 执行耗时。一条任务会被反复执行（再做一次、追问、批量重跑），
+   * 所以最近一轮和历次累计分开给：还在跑时 lastRunFinishedAt 为空，
+   * 前端从 lastRunStartedAt 现算这一轮已经跑了多久。
+   */
+  lastRunStartedAt?: string;
+
+  lastRunFinishedAt?: string;
+
+  lastRunDurationMs = 0;
+
+  totalRunDurationMs = 0;
+
+  /** 已结束的执行轮次数。 */
+  runCount = 0;
+
   ownerId = "";
 
   ownerName = "";
@@ -1150,6 +1166,33 @@ export class CodexConversationAttachment {
   url = "";
 }
 
+/** 一轮（或一条会话、一条任务、一条需求）烧掉的 token。 */
+export class CodexTokenUsage {
+  /** 送进模型的全部输入，含命中缓存的部分。 */
+  inputTokens = 0;
+
+  /** 输入里命中提示缓存的部分，计价通常只有一折。 */
+  cachedInputTokens = 0;
+
+  outputTokens = 0;
+
+  reasoningOutputTokens = 0;
+
+  totalTokens = 0;
+
+  /** 只有 Claude 会算钱，Codex 侧为 null。 */
+  costUsd: number | null = null;
+}
+
+/** 同一份用量按执行器分开：两家的计价和额度是分开的，合成一个数就没法分账。 */
+export class CodexProviderUsage {
+  codex: CodexTokenUsage = new CodexTokenUsage();
+
+  claude: CodexTokenUsage = new CodexTokenUsage();
+
+  total: CodexTokenUsage = new CodexTokenUsage();
+}
+
 export class CodexConversationTurn {
   id = "";
 
@@ -1160,6 +1203,9 @@ export class CodexConversationTurn {
   completedAt = "";
 
   items: CodexConversationItem[] = [];
+
+  /** 本轮消耗。执行器没报用量的老会话没有这个字段。 */
+  usage?: CodexTokenUsage;
 }
 
 export class CodexConversationSummary {
@@ -1212,6 +1258,9 @@ export class CodexConversation {
   sessionPhase: DeliveryPhase = "requirement";
 
   sessionProgress = 0;
+
+  /** 本条会话所有回合的合计消耗。 */
+  usage: CodexTokenUsage = new CodexTokenUsage();
 }
 
 export class CodexConversationActionResult {
@@ -1304,6 +1353,9 @@ export class CodexPlanningConversation {
   selectedKind = "";
 
   result: CodexPlanningResult = new CodexPlanningResult();
+
+  /** 本条会话所有回合的合计消耗。 */
+  usage: CodexTokenUsage = new CodexTokenUsage();
 }
 
 export class CodexPlanningActionResult {
@@ -2011,6 +2063,11 @@ export class DeliveryRequirementProgressRecord {
     blocked: 0,
     dropped: 0,
   };
+
+  /** 这条需求下全部任务的执行耗时之和（毫秒）与它们已结束的执行轮次总数。 */
+  totalRunDurationMs = 0;
+
+  runCount = 0;
 
   items: DeliveryItemRecord[] = [];
 
@@ -3449,6 +3506,68 @@ export async function uploadCodexPlanningAttachments(
   files: File[],
 ) {
   return uploadCodexConversationAttachments(programId, planningAttachmentItemKey(requirementKey), files);
+}
+
+export class CodexRequirementTaskUsage {
+  itemKey = "";
+
+  title = "";
+
+  phase: DeliveryPhase = "requirement";
+
+  status = "todo";
+
+  usage: CodexProviderUsage = new CodexProviderUsage();
+}
+
+/** 需求侧会话的分块，键跟桥接约定，面板拿它查文案。 */
+export type CodexRequirementUsageGroupKey = "planning" | "prototype" | "review" | "testing" | "fineTuning";
+
+/** 需求窗口里某一个入口（拆解 / 原型 / 评审 / 测试 / 微调）花了多少。 */
+export class CodexRequirementUsageGroup {
+  key: CodexRequirementUsageGroupKey = "planning";
+
+  /** 这一块开过几条会话；零条和「跑过但没报用量」在面板上是两回事。 */
+  threads = 0;
+
+  usage: CodexProviderUsage = new CodexProviderUsage();
+}
+
+/** 一条需求的消耗账：需求侧会话 + 每条任务，各自按执行器分开。 */
+export class CodexRequirementUsage {
+  programId = 0;
+
+  requirementKey = "";
+
+  /** 总账 = 需求会话 + 全部任务。 */
+  usage: CodexProviderUsage = new CodexProviderUsage();
+
+  /** 只算需求侧会话：拆解、微调、原型、评审、需求测试。 */
+  conversations: CodexProviderUsage = new CodexProviderUsage();
+
+  /** 上面那笔需求会话再按块拆开，加起来等于 conversations。 */
+  conversationGroups: CodexRequirementUsageGroup[] = [];
+
+  tasks: CodexRequirementTaskUsage[] = [];
+
+  updatedAt = "";
+}
+
+/**
+ * 一条需求到目前为止烧了多少 token。
+ *
+ * 桥接按需求整体算一遍，顺带把每条任务的分账也算好，所以「消耗」弹窗和任务进度
+ * 用的是同一个接口，不必为每条任务各问一次。
+ */
+export async function fetchCodexRequirementUsage(programId: number, requirementKey: string) {
+  const response = await instance.get<CodexRequirementUsage>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-usage`, {
+    params: bridgeWorkspaceParams(programId, { programId, requirementKey }),
+    timeout: 30000,
+  });
+  const usage = plainToInstance(CodexRequirementUsage, response.data);
+  usage.tasks = plainToInstance(CodexRequirementTaskUsage, response.data.tasks ?? []);
+  usage.conversationGroups = plainToInstance(CodexRequirementUsageGroup, response.data.conversationGroups ?? []);
+  return usage;
 }
 
 export async function fetchCodexPlanningConversation(

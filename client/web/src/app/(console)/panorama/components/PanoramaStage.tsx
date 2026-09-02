@@ -8,18 +8,12 @@ import type {
   DeliveryRequirementRecord,
   DeliveryStageProgress,
 } from "@/api/delivery.api";
+import { PANORAMA_HEX } from "./panoramaPalette";
 
 export type PanoramaLayout = "module" | "stage";
 
-/** 原型 assets/data.js 的 C 常量，原样搬过来 —— 三维里的颜色以它为准。 */
-const C = {
-  red: 0xf43f5e,
-  amber: 0xfbbf24,
-  green: 0x34d399,
-  cyan: 0x22d3ee,
-  gray: 0x46536e,
-  slate: 0x5d6f95,
-};
+/** 三维里的颜色以它为准，和 PanoramaWorkspace 的卡片/图例共用同一份 panoramaPalette。 */
+const C = PANORAMA_HEX;
 
 const REQUIREMENT_HEX: Record<string, number> = {
   open: C.cyan,

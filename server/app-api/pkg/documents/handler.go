@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	maxPreviewBytes = 8 * 1024 * 1024
-	signedURLTTL    = 5 * time.Minute
+	maxPreviewBytes     = 8 * 1024 * 1024
+	defaultSignedURLTTL = 5 * time.Minute
 )
 
 // Directory is the smallest delivery-domain view needed by the HTTP adapter.
@@ -39,13 +39,17 @@ type ObjectReader interface {
 }
 
 type Handler struct {
-	directory Directory
-	objects   ObjectReader
-	now       func() time.Time
+	directory    Directory
+	objects      ObjectReader
+	now          func() time.Time
+	signedURLTTL time.Duration
 }
 
-func NewHandler(directory Directory, objects ObjectReader) *Handler {
-	return &Handler{directory: directory, objects: objects, now: time.Now}
+func NewHandler(directory Directory, objects ObjectReader, signedURLTTL time.Duration) *Handler {
+	if signedURLTTL <= 0 {
+		signedURLTTL = defaultSignedURLTTL
+	}
+	return &Handler{directory: directory, objects: objects, now: time.Now, signedURLTTL: signedURLTTL}
 }
 
 func (h *Handler) Register(api *gin.RouterGroup) {
@@ -107,7 +111,7 @@ func (h *Handler) signedURL(c *gin.Context) {
 		httpx.Fail(c, "服务器未配置 OSS 云存储")
 		return
 	}
-	expiresAt := h.now().Add(signedURLTTL).UTC()
+	expiresAt := h.now().Add(h.signedURLTTL).UTC()
 	url, err := h.objects.SignedURL(file.ObjectKey, expiresAt)
 	if err != nil {
 		httpx.JSON(c, nil, err)

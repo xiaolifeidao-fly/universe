@@ -32,7 +32,18 @@ type CommandService interface {
 	ReportCommandActivity(context.Context, dto.ReportCommandActivityRequest) (dto.CommandView, error)
 	CompleteCommand(context.Context, dto.CompleteCommandRequest) (dto.CommandView, error)
 	ListCommandEvents(context.Context, dto.CommandEventQuery) ([]dto.CommandEventView, error)
+	// ResolveCommandWorkerUser answers which console user's Worker serves a project.
+	// Server-initiated commands have no console identity and file under that owner.
+	ResolveCommandWorkerUser(context.Context, contract.BizLine, int64) (string, error)
+	// LatestCommandActivity returns the newest activity a Worker reported, or an
+	// empty view when it has not reported one yet.
+	LatestCommandActivity(context.Context, contract.BizLine, string, string) (dto.CommandEventView, error)
 	ReconcileExpiredCommands(context.Context) ([]dto.CommandView, error)
+	// PurgeFinishedCommands 按类型分档清掉已终态的命令与事件行，让快照命令不至于
+	// 把命令表当日志表用。
+	PurgeFinishedCommands(context.Context) (int64, error)
+	// GetCommandWorkerStatus 回答某个项目当前有没有在线的执行电脑。
+	GetCommandWorkerStatus(context.Context, contract.BizLine, string, int64) (dto.CommandWorkerStatusView, error)
 	SaveCommandAttachments(context.Context, dto.SaveCommandAttachmentsRequest) ([]dto.CommandAttachmentView, error)
 	GetCommandAttachment(context.Context, contract.BizLine, string, int64, string) (dto.CommandAttachmentContent, error)
 }
@@ -81,6 +92,44 @@ func (s *service) SubmitCommand(ctx context.Context, req dto.SubmitCommandReques
 	return toCommandView(row), nil
 }
 
+// ResolveCommandWorkerUser is the routing rule for commands the server raises on
+// someone else's behalf. Business intake authenticates a business user who never
+// registers a Worker, so its turns are dispatched to whichever console user has a
+// live Worker mapped to the selected project.
+func (s *service) ResolveCommandWorkerUser(ctx context.Context, bizLine contract.BizLine, programID int64) (string, error) {
+	if !bizLine.Valid() {
+		return "", contract.ErrBizLineRequired
+	}
+	if programID <= 0 {
+		return "", errors.New("缺少项目标识")
+	}
+	userID, err := s.repo.FindCommandWorkerUserForProgram(ctx, bizLine.String(), programID, time.Now().Add(-commandWorkerOnlineWindow))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", errors.New("当前项目没有在线的本机插件，请先在任务面板所在电脑启动插件桥接")
+	}
+	if err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+func (s *service) LatestCommandActivity(ctx context.Context, bizLine contract.BizLine, userID, commandID string) (dto.CommandEventView, error) {
+	if !bizLine.Valid() {
+		return dto.CommandEventView{}, contract.ErrBizLineRequired
+	}
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(commandID) == "" {
+		return dto.CommandEventView{}, errors.New("缺少用户或命令标识")
+	}
+	row, err := s.repo.FindLatestCommandActivity(ctx, bizLine.String(), userID, commandID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return dto.CommandEventView{}, nil
+	}
+	if err != nil {
+		return dto.CommandEventView{}, err
+	}
+	return dto.CommandEventView{ID: row.Id, Kind: row.Kind, State: row.State, Message: row.Message, Data: rawJSONObject(row.DataJSON), CreatedAt: row.CreatedAt}, nil
+}
+
 func (s *service) ListCommands(ctx context.Context, query dto.CommandQuery) (dto.CommandPage, error) {
 	if !query.BizLine.Valid() {
 		return dto.CommandPage{}, contract.ErrBizLineRequired
@@ -93,7 +142,14 @@ func (s *service) ListCommands(ctx context.Context, query dto.CommandQuery) (dto
 			return dto.CommandPage{}, fmt.Errorf("未知的命令状态：%s", query.State)
 		}
 	}
-	rows, total, err := s.repo.ListCommands(ctx, repository.CommandQuery{BizLine: query.BizLine.String(), UserID: query.UserID, ProgramID: query.ProgramID, State: strings.TrimSpace(query.State), Offset: query.Offset(), Limit: query.Limit()})
+	excluded := readOnlyCommandTypeList()
+	if query.IncludeReadOnly {
+		excluded = nil
+	}
+	rows, total, err := s.repo.ListCommands(ctx, repository.CommandQuery{
+		BizLine: query.BizLine.String(), UserID: query.UserID, ProgramID: query.ProgramID,
+		State: strings.TrimSpace(query.State), ExcludeCommandTypes: excluded, Offset: query.Offset(), Limit: query.Limit(),
+	})
 	if err != nil {
 		return dto.CommandPage{}, err
 	}
@@ -294,7 +350,10 @@ func (s *service) ClaimCommand(ctx context.Context, req dto.ClaimCommandRequest)
 		if err != nil {
 			continue
 		}
-		capabilities := storedCommandCapabilities(worker.CapabilitiesJSON)
+		capabilities := narrowCommandCapabilities(storedCommandCapabilities(worker.CapabilitiesJSON), req.CommandTypes)
+		if len(capabilities) == 0 {
+			continue
+		}
 		for {
 			row, err := s.repo.FindNextPendingCommand(ctx, workspace.BizLine, req.UserID, workspace.ProgramID, capabilities)
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -302,6 +361,12 @@ func (s *service) ClaimCommand(ctx context.Context, req dto.ClaimCommandRequest)
 			}
 			if err != nil {
 				return nil, err
+			}
+			if staleReadOnlyCommand(row.CommandType, row.CreatedTime, time.Now()) {
+				if _, err := s.repo.AbandonPendingCommand(ctx, row.BizLine, row.UserID, row.CommandID, "界面快照已过期，未再下发执行"); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			leaseToken := generateLeaseToken()
 			expiresAt := time.Now().Add(commandLeaseDuration)
@@ -485,6 +550,58 @@ func (s *service) ReconcileExpiredCommands(ctx context.Context) ([]dto.CommandVi
 	return views, nil
 }
 
+// PurgeFinishedCommands 分两档清理：快照命令留一小时，其余命令留一个月。每轮各取
+// 一批，调用方按固定节奏反复调用即可，不需要一次把历史清完。
+// staleReadOnlyCommand 挡住已经没人要的界面快照：手机端等 90 秒就放弃，界面回来
+// 后会重新问一次。Worker 掉线几分钟再上来时，让这些旧请求上机跑只会把新请求排在
+// 后面，还会给用户回一份两分钟前的界面。
+func staleReadOnlyCommand(commandType string, createdAt, now time.Time) bool {
+	return IsReadOnlyCommand(commandType) && now.Sub(createdAt) > readOnlyCommandStaleWindow
+}
+
+// commandWorkerOnline 与派发时判定「这个项目有没有插件在听」用的是同一个窗口：
+// 界面上说在线、实际却领不走命令，比直接说离线更难排查。
+func commandWorkerOnline(lastHeartbeatAt, now time.Time) bool {
+	return !lastHeartbeatAt.IsZero() && now.Sub(lastHeartbeatAt) <= commandWorkerOnlineWindow
+}
+
+func (s *service) PurgeFinishedCommands(ctx context.Context) (int64, error) {
+	now := time.Now()
+	readOnly, err := s.repo.DeleteFinishedCommands(ctx, now.Add(-readOnlyCommandRetention), readOnlyCommandTypeList(), true, commandPurgeBatch)
+	if err != nil {
+		return 0, err
+	}
+	rest, err := s.repo.DeleteFinishedCommands(ctx, now.Add(-commandRetention), readOnlyCommandTypeList(), false, commandPurgeBatch)
+	if err != nil {
+		return readOnly, err
+	}
+	return readOnly + rest, nil
+}
+
+func (s *service) GetCommandWorkerStatus(ctx context.Context, bizLine contract.BizLine, userID string, programID int64) (dto.CommandWorkerStatusView, error) {
+	if !bizLine.Valid() {
+		return dto.CommandWorkerStatusView{}, contract.ErrBizLineRequired
+	}
+	if strings.TrimSpace(userID) == "" {
+		return dto.CommandWorkerStatusView{}, errors.New("缺少用户标识")
+	}
+	view := dto.CommandWorkerStatusView{OnlineWindowSeconds: int(commandWorkerOnlineWindow / time.Second)}
+	row, err := s.repo.FindLatestCommandWorker(ctx, bizLine.String(), userID, programID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// 从没登记过插件也是一种明确答案：界面要说「未登记执行电脑」，不是报错。
+		return view, nil
+	}
+	if err != nil {
+		return dto.CommandWorkerStatusView{}, err
+	}
+	heartbeat := row.LastHeartbeatAt
+	view.WorkerID = row.WorkerID
+	view.DisplayName = row.DisplayName
+	view.LastHeartbeatAt = &heartbeat
+	view.Online = commandWorkerOnline(heartbeat, time.Now())
+	return view, nil
+}
+
 func (s *service) notifyPendingCommand(ctx context.Context, userID, commandID string) {
 	if s.commandNotifier != nil {
 		_ = s.commandNotifier.NotifyPendingCommand(ctx, userID, commandID)
@@ -595,6 +712,29 @@ func storedCommandCapabilities(value string) []string {
 		return nil
 	}
 	return capabilities
+}
+
+// narrowCommandCapabilities 把领取通道申请的类型收敛到该 Worker 已登记的能力内，
+// 请求里出现未登记的类型时直接忽略，不会扩权。
+func narrowCommandCapabilities(capabilities, requested []string) []string {
+	if len(requested) == 0 {
+		return capabilities
+	}
+	allowed := make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		allowed[capability] = struct{}{}
+	}
+	narrowed := make([]string, 0, len(requested))
+	for _, value := range requested {
+		commandType, err := normalizeCommandType(value)
+		if err != nil {
+			continue
+		}
+		if _, ok := allowed[commandType]; ok {
+			narrowed = append(narrowed, commandType)
+		}
+	}
+	return narrowed
 }
 
 func normalizeCommandJSONObject(raw json.RawMessage, maxBytes int, label string) (string, error) {

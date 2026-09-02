@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"common/middleware/httpx"
 	"contract"
 	bizlinedto "service/bizline/dto"
 	"service/business"
+	businessdto "service/business/dto"
 	"service/delivery"
 	deliverydto "service/delivery/dto"
 	"service/identity"
@@ -48,6 +50,34 @@ func (s *recordingIdentityService) ListProgramMembers(context.Context, int64) ([
 
 type noBusinessService struct{ business.Service }
 
+type recordingBusinessService struct {
+	business.Service
+	conversationQuery businessdto.ConversationQuery
+	collectedQuery    businessdto.CollectedRequirementQuery
+	sent              businessdto.SendMessageRequest
+	referenceQuery    businessdto.DocumentReferenceQuery
+}
+
+func (s *recordingBusinessService) GetConversation(_ context.Context, query businessdto.ConversationQuery) (businessdto.ConversationView, error) {
+	s.conversationQuery = query
+	return businessdto.ConversationView{Requirement: businessdto.RequirementView{ID: query.RequirementID}}, nil
+}
+
+func (s *recordingBusinessService) ListCollectedRequirements(_ context.Context, query businessdto.CollectedRequirementQuery) (businessdto.RequirementPage, error) {
+	s.collectedQuery = query
+	return businessdto.RequirementPage{Total: 1, Data: []businessdto.RequirementView{{ID: 91}}}, nil
+}
+
+func (s *recordingBusinessService) ListDocumentReferences(_ context.Context, query businessdto.DocumentReferenceQuery) ([]businessdto.DocumentReferenceView, error) {
+	s.referenceQuery = query
+	return []businessdto.DocumentReferenceView{{DocumentID: 5, Title: "渠道看板"}}, nil
+}
+
+func (s *recordingBusinessService) SendMessage(_ context.Context, req businessdto.SendMessageRequest) (businessdto.SendMessageResult, error) {
+	s.sent = req
+	return businessdto.SendMessageResult{ThreadID: "thread-1", Active: true}, nil
+}
+
 func TestPatchUsesAuthenticatedActorAndCanonicalMemberName(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
@@ -67,6 +97,99 @@ func TestPatchUsesAuthenticatedActorAndCanonicalMemberName(t *testing.T) {
 	}
 	if deliveryService.patched.OwnerName == nil || *deliveryService.patched.OwnerName != "Mira" {
 		t.Fatalf("负责人显示名必须由项目成员目录覆盖：%#v", deliveryService.patched.OwnerName)
+	}
+}
+
+func TestBusinessConversationUsesAuthenticatedCreator(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
+		ID: "42", Username: "alice", Persona: "product_research", Personas: []string{"product_research", "business"},
+		BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}})
+	defer httpx.SetUserAuthenticator(nil)
+	businessService := &recordingBusinessService{}
+	router := gin.New()
+	NewHandler(&recordingDeliveryService{}, &recordingIdentityService{}, businessService, nil).Register(router.Group("/api"))
+
+	request := httptest.NewRequest(http.MethodGet, "/api/business/requirement?bizLine=whatsapp&requirementId=77", nil)
+	request.Header.Set("token", "valid")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || businessService.conversationQuery.RequirementID != 77 || businessService.conversationQuery.CreatorID != "42" || businessService.conversationQuery.BizLine != contract.BizLine("whatsapp") {
+		t.Fatalf("业务会话未使用登录身份：status=%d query=%#v body=%s", recorder.Code, businessService.conversationQuery, recorder.Body.String())
+	}
+}
+
+func TestBusinessMessageAndResearchRoutesKeepPersonaBoundaries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
+		ID: "42", Username: "alice", Persona: "product_research", Personas: []string{"product_research", "business"},
+		BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}})
+	defer httpx.SetUserAuthenticator(nil)
+	businessService := &recordingBusinessService{}
+	router := gin.New()
+	NewHandler(&recordingDeliveryService{}, &recordingIdentityService{}, businessService, nil).Register(router.Group("/api"))
+
+	messageRequest := httptest.NewRequest(http.MethodPost, "/api/business/requirement/messages?bizLine=whatsapp", bytes.NewBufferString(`{"requirementId":77,"content":"需要渠道看板","mode":"statement"}`))
+	messageRequest.Header.Set("token", "valid")
+	messageRequest.Header.Set("Content-Type", "application/json")
+	messageRecorder := httptest.NewRecorder()
+	router.ServeHTTP(messageRecorder, messageRequest)
+	if messageRecorder.Code != http.StatusOK || businessService.sent.CreatorID != "42" || businessService.sent.CreatorUsername != "alice" || businessService.sent.BizLine != contract.BizLine("whatsapp") {
+		t.Fatalf("业务消息未绑定登录身份：status=%d request=%#v body=%s", messageRecorder.Code, businessService.sent, messageRecorder.Body.String())
+	}
+
+	referenceRequest := httptest.NewRequest(http.MethodGet, "/api/business/requirement/references?bizLine=whatsapp&requirementId=77&keyword=%E7%9C%8B%E6%9D%BF", nil)
+	referenceRequest.Header.Set("token", "valid")
+	referenceRecorder := httptest.NewRecorder()
+	router.ServeHTTP(referenceRecorder, referenceRequest)
+	if referenceRecorder.Code != http.StatusOK || businessService.referenceQuery.RequirementID != 77 || businessService.referenceQuery.CreatorID != "42" ||
+		businessService.referenceQuery.BizLine != contract.BizLine("whatsapp") || businessService.referenceQuery.Keyword != "看板" {
+		t.Fatalf("@ 文档候选未按登录身份与关键字查询：status=%d query=%#v body=%s", referenceRecorder.Code, businessService.referenceQuery, referenceRecorder.Body.String())
+	}
+
+	researchRequest := httptest.NewRequest(http.MethodGet, "/api/business/research/requirements?bizLine=whatsapp&pageIndex=2&pageSize=30", nil)
+	researchRequest.Header.Set("token", "valid")
+	researchRecorder := httptest.NewRecorder()
+	router.ServeHTTP(researchRecorder, researchRequest)
+	if researchRecorder.Code != http.StatusOK || businessService.collectedQuery.BizLine != contract.BizLine("whatsapp") || businessService.collectedQuery.Page.PageIndex != 2 || businessService.collectedQuery.Page.PageSize != 30 {
+		t.Fatalf("诉求采集查询未正确透传：status=%d query=%#v body=%s", researchRecorder.Code, businessService.collectedQuery, researchRecorder.Body.String())
+	}
+}
+
+func TestBusinessAndResearchRoutesRejectWrongPersona(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	defer httpx.SetUserAuthenticator(nil)
+
+	request := func(principal httpx.UserPrincipal, method, target string) *httptest.ResponseRecorder {
+		httpx.SetUserAuthenticator(testAuthenticator{principal: principal})
+		router := gin.New()
+		NewHandler(&recordingDeliveryService{}, &recordingIdentityService{}, &recordingBusinessService{}, nil).Register(router.Group("/api"))
+		req := httptest.NewRequest(method, target, nil)
+		req.Header.Set("token", "valid")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	productOnly := httpx.UserPrincipal{
+		ID: "42", Username: "alice", Persona: "product_research", Personas: []string{"product_research"},
+		BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}
+	businessRecorder := request(productOnly, http.MethodGet, "/api/business/requirements?bizLine=whatsapp")
+	if !strings.Contains(businessRecorder.Body.String(), "当前登录身份不是业务方") {
+		t.Fatalf("产品产研单一身份不应访问业务工作台：body=%s", businessRecorder.Body.String())
+	}
+
+	businessOnly := httpx.UserPrincipal{
+		ID: "42", Username: "alice", Persona: "business", Personas: []string{"business"},
+		BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}
+	researchRecorder := request(businessOnly, http.MethodGet, "/api/business/research/requirements?bizLine=whatsapp")
+	if !strings.Contains(researchRecorder.Body.String(), "当前登录身份不是产品产研") {
+		t.Fatalf("业务单一身份不应访问诉求采集：body=%s", researchRecorder.Body.String())
 	}
 }
 

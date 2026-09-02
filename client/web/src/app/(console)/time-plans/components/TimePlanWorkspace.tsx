@@ -325,9 +325,9 @@ export function TimePlanWorkspace() {
           </Space>
         </div>
         {!programId ? (
-          <Empty description={t("timePlan.selectProgram")} />
+          <Empty className="manager-empty-state" description={t("timePlan.selectProgram")} />
         ) : plans.length === 0 && !loading ? (
-          <Empty description={t("timePlan.empty")} />
+          <Empty className="manager-empty-state" description={t("timePlan.empty")} />
         ) : (
           <div className="manager-table">
             <Table<DeliveryTimePlanRecord>

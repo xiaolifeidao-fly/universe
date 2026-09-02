@@ -14,6 +14,9 @@ export interface ProgramSummary {
   summary: string;
   status: ProgramStatus;
   cloudSyncEnabled: boolean;
+  gitEnabled: boolean;
+  gitRemoteName: string;
+  gitBaseBranch: string;
   updatedAt: string | null;
   canWrite: boolean;
   canAdminister: boolean;
@@ -38,10 +41,16 @@ export interface RequirementSummary {
   stageKey: string;
   moduleKey: string;
   kind: ItemKind;
+  gitEnabled: boolean | null;
+  gitBaseBranch: string;
+  gitBranch: string;
   owners: RequirementMember[];
   assistants: RequirementMember[];
   itemCount: number;
   version: number;
+  createdBy: string;
+  createdByName: string;
+  createdAt: string | null;
   plannedStartAt: string | null;
   plannedEndAt: string | null;
   updatedAt: string | null;
@@ -59,6 +68,15 @@ export interface DeliveryItem {
   phase: ItemPhase;
   status: ItemStatus;
   progress: number;
+  /**
+   * 执行耗时：最近一轮的起止时刻与耗时，外加历次累计（毫秒）。
+   * 还在跑时 lastRunFinishedAt 为空，界面从 lastRunStartedAt 现算这一轮跑了多久。
+   */
+  lastRunStartedAt: string | null;
+  lastRunFinishedAt: string | null;
+  lastRunDurationMs: number;
+  totalRunDurationMs: number;
+  runCount: number;
   ownerId: string;
   ownerName: string;
   dueDate: string | null;
@@ -174,4 +192,80 @@ export function createPlanningBatch(programId: number, requirementKey: string, t
     method: "POST",
     body: { programId, requirementKey, title, summary, source: "planner", itemCount: 0 },
   });
+}
+
+// ---------- 工作台只读视图 ----------
+
+export interface ExecutionBatchItem {
+  itemKey: string;
+  sequence: number;
+  status: string;
+  message: string;
+  updatedAt: string | null;
+}
+
+export interface ExecutionBatch {
+  batchId: string;
+  requirementKey: string;
+  requirementName: string;
+  requirementGitBranch: string;
+  mode: string;
+  executorType: string;
+  status: string;
+  itemCount: number;
+  completedCount: number;
+  blockedCount: number;
+  summary: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdByName: string;
+  items: ExecutionBatchItem[] | null;
+}
+
+export interface PlanningBatchSummary {
+  batchKey: string;
+  requirementKey: string;
+  seq: number;
+  title: string;
+  source: string;
+  summary: string;
+  itemCount: number;
+  createdByName: string;
+  createdAt: string | null;
+}
+
+/** 一条需求当前的完整任务图：任务是计划，批次说明这次运行的上下文。 */
+export interface RequirementProgress {
+  requirementKey: string;
+  requirementName: string;
+  totalCount: number;
+  countedCount: number;
+  progress: number;
+  statusCounts: Record<string, number>;
+  /** 这条需求下全部任务的执行耗时之和（毫秒）与已结束的执行轮次总数。 */
+  totalRunDurationMs: number;
+  runCount: number;
+  items: DeliveryItem[];
+  batches: ExecutionBatch[] | null;
+  planningBatches: PlanningBatchSummary[] | null;
+}
+
+export interface PlanningSessionSummary {
+  requirementKey: string;
+  executorType: string;
+  threadId: string;
+  title: string;
+  status: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export function getRequirementProgress(programId: number, requirementKey: string) {
+  return request<RequirementProgress>(`/delivery/requirement/progress${query({ programId, requirementKey })}`);
+}
+
+/** 聊天记录目录：Worker 还没回话时先用它把会话列表铺出来。 */
+export function listPlanningSessions(programId: number, requirementKey: string) {
+  return request<PlanningSessionSummary[] | null>(`/delivery/requirement/planning-sessions${query({ programId, requirementKey })}`);
 }

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2, ClipboardList, Edit3, ListTree, RefreshCw, Send, Sparkles } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, SquarePen, ListTree, RotateCw, Send, Lightbulb } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "@/api/client";
 import { getCommand, submitCommand, type CommandDetail } from "@/api/command.api";
@@ -149,7 +149,7 @@ export function RequirementDetailScreen() {
   };
 
   if (loading) return <main className="screen"><LoadingState title="正在读取需求" /></main>;
-  if (!requirement) return <main className="screen"><EmptyState icon={<ClipboardList size={21} />} title="找不到此需求" description={error || "需求可能已被删除或你没有访问权限。"} action={<Link className="button button-primary" href={`/projects/${programId}`}>返回项目</Link>} /></main>;
+  if (!requirement) return <main className="screen"><EmptyState icon={<ClipboardCheck size={21} />} title="找不到此需求" description={error || "需求可能已被删除或你没有访问权限。"} action={<Link className="button button-primary" href={`/projects/${programId}`}>返回项目</Link>} /></main>;
 
   return (
     <main className="screen">
@@ -157,13 +157,13 @@ export function RequirementDetailScreen() {
         <div><p className="eyebrow">需求详情</p><h1>{requirement.name || "未命名需求"}</h1><p>{requirement.itemCount} 条关联任务 · {dateTimeLabel(requirement.updatedAt)}</p></div>
         <Link className="icon-button" href={`/projects/${programId}`} aria-label="返回项目" title="返回项目"><ArrowLeft size={20} /></Link>
       </div>
-      <section className="detail-hero"><span className="status is-active">{requirement.status === "done" ? "已完成" : requirement.status === "dropped" ? "不做" : "进行中"}</span><p>{requirement.detail || "尚未补充需求说明。"}</p><div className="detail-meta"><span className="tag">{requirement.mode === "simple" ? "简易模式" : "专业模式"}</span><span className="tag">起始：{phaseLabel(requirement.startPhase)}</span>{requirement.owners.map((owner) => <span className="tag" key={owner.id}>{owner.name || owner.id}</span>)}</div></section>
+      <section className="detail-hero"><span className={`status ${requirement.status === "done" ? "is-success" : requirement.status === "dropped" ? "is-danger" : "is-active"}`}>{requirement.status === "done" ? "已完成" : requirement.status === "dropped" ? "不做" : "进行中"}</span><p>{requirement.detail || "尚未补充需求说明。"}</p><div className="detail-meta"><span className="tag">{requirement.mode === "simple" ? "简易模式" : "专业模式"}</span><span className="tag">起始：{phaseLabel(requirement.startPhase)}</span>{requirement.owners.map((owner) => <span className="tag" key={owner.id}>{owner.name || owner.id}</span>)}</div></section>
       <section className="section card">
         <div className="section-heading"><span>任务</span><Link className="icon-button small-icon-button" href={`/projects/${programId}`} aria-label="查看项目任务" title="查看项目任务"><ListTree size={18} /></Link></div>
         {items.length ? <div className="compact-list">{items.map((item) => <Link className="compact-row" href={`/projects/${programId}/tasks/${item.itemKey}`} key={item.itemKey}><div><strong>{item.title}</strong><p>{phaseLabel(item.phase)} · {statusLabel(item.status)} · {item.progress}%</p></div><span className="status is-active">{item.progress}%</span></Link>)}</div> : <p className="muted">拆解确认后，任务会显示在这里。</p>}
       </section>
       {canWrite ? <section className="section card planning-panel">
-        <div className="section-heading"><span>任务拆解</span><Sparkles size={19} aria-hidden="true" /></div>
+        <div className="section-heading"><span>任务拆解</span><Lightbulb size={19} aria-hidden="true" /></div>
         <p className="muted">先由已登记的 Worker 生成可评审预览，确认后才会写入任务和依赖。</p>
         {!threadId ? <div className="field"><label htmlFor="planning-message">本轮拆解重点</label><textarea id="planning-message" value={planningMessage} onChange={(event) => setPlanningMessage(event.target.value)} maxLength={32768} placeholder="可补充优先级、依赖或验收关注点。" /></div> : null}
         <div className="planning-status"><span className={`status ${planningCommand?.state === "failed" || planningCommand?.state === "timed_out" ? "is-danger" : "is-active"}`}>{actionLabel}</span>{planningCommand?.errorMessage ? <p className="form-message is-error">{planningCommand.errorMessage}</p> : null}</div>
@@ -171,10 +171,10 @@ export function RequirementDetailScreen() {
         {previewItems.length ? <div className="compact-list" aria-label="已写入任务">{previewItems.map((item) => <span className="compact-row" key={item.itemKey}><strong>{item.title}</strong><span className="status is-active">已创建</span></span>)}</div> : null}
         <div className="stack-actions" style={{ marginTop: 14 }}>
           {!threadId ? <button className="button button-primary" type="button" onClick={() => void startPlanning()} disabled={planningBusy}><Send size={17} aria-hidden="true" />{planningBusy ? "正在生成" : "生成拆解预览"}</button> : <button className="button button-primary" type="button" onClick={() => void confirmPlanning()} disabled={planningBusy || planningCommand?.state !== "succeeded"}><CheckCircle2 size={17} aria-hidden="true" />{planningBusy ? "正在写入" : "确认并写入任务"}</button>}
-          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新需求" title="刷新需求"><RefreshCw size={19} /></button>
+          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新需求" title="刷新需求"><RotateCw size={19} /></button>
         </div>
       </section> : null}
-      <div className="screen-actions"><Link className="button button-secondary" href={`/projects/${programId}/requirements/${requirement.requirementKey}/edit`}><Edit3 size={17} aria-hidden="true" />编辑需求</Link></div>
+      <div className="screen-actions"><Link className="button button-secondary" href={`/projects/${programId}/requirements/${requirement.requirementKey}/edit`}><SquarePen size={17} aria-hidden="true" />编辑需求</Link></div>
       {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
     </main>
   );

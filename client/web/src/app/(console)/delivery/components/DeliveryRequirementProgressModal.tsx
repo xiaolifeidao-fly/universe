@@ -27,6 +27,7 @@ import {
   advanceDeliveryPhase,
   deleteItem,
   fetchCodexBridgeHealth,
+  fetchCodexRequirementUsage,
   fetchItems,
   fetchModules,
   fetchProgramMembers,
@@ -38,6 +39,7 @@ import {
   startCodexExecutionBatch,
   stopAllCodexExecutions,
   stopCodexConversation,
+  type CodexProviderUsage,
   type DeliveryExecutionBatchRecord,
   type DeliveryItemRecord,
   type DeliveryModuleRecord,
@@ -58,6 +60,8 @@ import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { notifyDeliveryTasksChanged } from "@/api/deliveryTaskEvents";
 import { DeliveryDependencyLayer } from "./DeliveryDependencyLayer";
+import { DeliveryRunDurationTotal, DeliveryTaskRunDuration } from "./DeliveryRunDuration";
+import { DeliveryTaskUsageTags } from "./DeliveryRequirementUsageModal";
 import { DeliveryItemDrawer } from "./DeliveryItemDrawer";
 import { DeliveryTaskDocumentPanel } from "./DeliveryTaskDocument";
 import { DeliveryTaskSessionModal } from "./DeliveryTaskSessionModal";
@@ -292,6 +296,8 @@ export function DeliveryRequirementProgressModal({
   const [stages, setStages] = useState<DeliveryStageRecord[]>([]);
   const [modules, setModules] = useState<DeliveryModuleRecord[]>([]);
   const [ownerOptions, setOwnerOptions] = useState<Array<{ value: string; label: string }>>([]);
+  // 消耗单独拉：汇总要逐条任务问会话表，比进度慢，不能让它拖住任务列表。
+  const [usageByItem, setUsageByItem] = useState<Record<string, CodexProviderUsage>>({});
 
   const load = useCallback(async (silent = false) => {
     if (!open || !programId || !requirement) return;
@@ -305,6 +311,17 @@ export function DeliveryRequirementProgressModal({
       if (!silent) setLoading(false);
     }
   }, [open, programId, requirement]);
+
+  const loadUsage = useCallback(async () => {
+    if (!open || !programId || !requirement || previewProgress) return;
+    try {
+      const usage = await fetchCodexRequirementUsage(programId, requirement.requirementKey);
+      setUsageByItem(Object.fromEntries(usage.tasks.map((task) => [task.itemKey, task.usage])));
+    } catch {
+      // 桥接没起或读不回来时不提示：进度本身照常看，消耗那一行留空就行。
+      setUsageByItem({});
+    }
+  }, [open, previewProgress, programId, requirement]);
 
   const loadContext = useCallback(async () => {
     if (!open || !programId || !requirement || previewProgress) return;
@@ -340,6 +357,7 @@ export function DeliveryRequirementProgressModal({
       setExecutionConstraints("");
       setPendingItems([]);
       setRedoingBatchKey("");
+      setUsageByItem({});
       return;
     }
     if (previewProgress) {
@@ -349,9 +367,10 @@ export function DeliveryRequirementProgressModal({
     }
     void load();
     void loadContext();
+    void loadUsage();
     const timer = window.setInterval(() => void load(true), 10_000);
     return () => window.clearInterval(timer);
-  }, [load, loadContext, open, previewProgress]);
+  }, [load, loadContext, loadUsage, open, previewProgress]);
 
   const stepLabel = useCallback((index: number) => fill(t("delivery.progress.step"), { index }), [t]);
   /** 一行一个拆解批次：按 seq 排，批次外的任务收在末尾的「未归批次」一行里。 */
@@ -625,8 +644,12 @@ export function DeliveryRequirementProgressModal({
         >
           <b title={item.title}>{item.title || item.itemKey}</b>
           <span className="delivery-progress-node__meta">
-            <code className="manager-mono">{item.itemKey}</code>
-            <em>{t(`delivery.phase.${item.phase}`)}</em>
+            <span className="delivery-progress-node__meta-line">
+              <code className="manager-mono">{item.itemKey}</code>
+              <em>{t(`delivery.phase.${item.phase}`)}</em>
+            </span>
+            <DeliveryTaskRunDuration item={item} />
+            <DeliveryTaskUsageTags usage={usageByItem[item.itemKey]} />
           </span>
           {batch?.batch.status === "running" ? (
             <span className="delivery-progress-node__batch">
@@ -717,6 +740,11 @@ export function DeliveryRequirementProgressModal({
                     <small>{fill(t("delivery.progress.counted"), { counted: progress.countedCount, total: progress.totalCount })}</small>
                   </span>
                 </div>
+                <DeliveryRunDurationTotal
+                  items={progress.items}
+                  runCount={progress.runCount}
+                  totalRunDurationMs={progress.totalRunDurationMs}
+                />
                 <div className="delivery-progress__stats">
                   {DELIVERY_STATUSES.map((status) => (
                     <div className={`delivery-progress-stat is-${status}`} key={status}>

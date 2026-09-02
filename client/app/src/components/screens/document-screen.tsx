@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink, FileCode2, FileText, Image, LoaderCircle, PackageOpen, Paperclip, RefreshCw, ShieldAlert, X } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileCode2, FileText, Image, LoaderCircle, Inbox, Paperclip, RotateCw, ShieldAlert, X } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { documentCategories, getCloudDocumentURL, listCloudDocuments, previewCloudDocument, type CloudDocument, type DocumentCategory } from "@/api/documents.api";
 import { EmptyState } from "@/components/empty-state";
@@ -21,7 +21,7 @@ const categoryLabels: Record<DocumentCategory, string> = {
 function categoryIcon(category: DocumentCategory) {
   if (category === "prototype") return <FileCode2 size={18} />;
   if (category === "test") return <ShieldAlert size={18} />;
-  if (category === "execution") return <PackageOpen size={18} />;
+  if (category === "execution") return <Inbox size={18} />;
   if (category === "attachment") return <Paperclip size={18} />;
   return <FileText size={18} />;
 }
@@ -122,7 +122,7 @@ export function DocumentScreen() {
       <div className="screen-title-row">
         <div><p className="eyebrow">项目 #{projectId}</p><h1>云端文档</h1><p>已同步的交付资料</p></div>
         <div className="stack-actions">
-          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新云端文档" title="刷新云端文档" disabled={loading}><RefreshCw size={20} className={loading ? "spin-icon" : ""} /></button>
+          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新云端文档" title="刷新云端文档" disabled={loading}><RotateCw size={20} className={loading ? "spin-icon" : ""} /></button>
           <Link className="icon-button" href={`/projects/${projectId}`} aria-label="返回项目" title="返回项目"><ArrowLeft size={20} /></Link>
         </div>
       </div>
@@ -133,7 +133,7 @@ export function DocumentScreen() {
       </div>
 
       {loading ? <EmptyState icon={<LoaderCircle size={22} className="spin-icon" />} title="正在同步目录" description="" /> : null}
-      {!loading && error ? <EmptyState icon={<ShieldAlert size={22} />} title="暂时无法查看云端文档" description={error} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} /> : null}
+      {!loading && error ? <EmptyState tone="error" icon={<ShieldAlert size={22} />} title="暂时无法查看云端文档" description={error} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} /> : null}
       {!loading && !error && !files.length ? <EmptyState icon={<FileText size={22} />} title="暂无可查看的云端文档" description="项目未开启云端同步时，文件只保留在执行电脑。" /> : null}
       {!loading && !error && grouped.map(([kind, rows]) => (
         <section className="document-group" key={kind} aria-labelledby={`document-group-${kind}`}>

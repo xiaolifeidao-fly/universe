@@ -4,17 +4,18 @@ import {
   AppstoreOutlined,
   ArrowRightOutlined,
   BranchesOutlined,
-  CheckSquareOutlined,
   ClockCircleOutlined,
   CloudDownloadOutlined,
   DeleteOutlined,
   EllipsisOutlined,
   ExperimentOutlined,
   FileTextOutlined,
+  WalletOutlined,
   FolderOpenOutlined,
   CalendarOutlined,
   HistoryOutlined,
   MessageOutlined,
+  PlayCircleOutlined,
   PlusOutlined,
   SearchOutlined,
   ReloadOutlined,
@@ -51,6 +52,7 @@ import { DeliveryRequirementGitCheckModal } from "../../delivery/components/Deli
 import { DeliveryRequirementTimePlanModal } from "../../delivery/components/DeliveryRequirementTimePlanModal";
 import { DeliveryRequirementTimelineDrawer } from "../../delivery/components/DeliveryRequirementTimelineDrawer";
 import { DeliveryRequirementProgressModal } from "../../delivery/components/DeliveryRequirementProgressModal";
+import { DeliveryRequirementUsageModal } from "../../delivery/components/DeliveryRequirementUsageModal";
 import { DeliveryRequirementOutlineModal } from "../../delivery/components/DeliveryTaskOutline";
 import { DeliveryRequirementSessionModal } from "../../delivery/components/DeliveryRequirementSessionModal";
 import {
@@ -139,6 +141,8 @@ export function MyWorkWorkspace() {
   const [timePlanRecord, setTimePlanRecord] = useState<MyWorkRequirement | null>(null);
   const [timelineRecord, setTimelineRecord] = useState<MyWorkRequirement | null>(null);
 	const [progressRecord, setProgressRecord] = useState<MyWorkRequirement | null>(null);
+	// 消耗按需汇总：桥接要逐条任务问会话表，不跟着卡片列表一起刷。
+	const [usageRecord, setUsageRecord] = useState<MyWorkRequirement | null>(null);
   const [gitRecord, setGitRecord] = useState<MyWorkRequirement | null>(null);
   // 正在改状态的需求键：同一张卡片上的状态按钮转圈，别把整页都锁住。
   const [changingStatusKey, setChangingStatusKey] = useState("");
@@ -907,7 +911,7 @@ export function MyWorkWorkspace() {
                         className="my-work-action is-progress"
                         type="text"
                         size="small"
-                        icon={<CheckSquareOutlined />}
+                        icon={<PlayCircleOutlined />}
                         onClick={() => setProgressRecord(record)}
                       />
                     </Tooltip>
@@ -919,6 +923,16 @@ export function MyWorkWorkspace() {
                         size="small"
                         icon={<FileTextOutlined />}
                         onClick={() => void openOutline(record)}
+                      />
+                    </Tooltip>
+                    <Tooltip title={t("delivery.usage.button")}>
+                      <Button
+                        aria-label={t("delivery.usage.button")}
+                        className="my-work-action is-usage"
+                        type="text"
+                        size="small"
+                        icon={<WalletOutlined />}
+                        onClick={() => setUsageRecord(record)}
                       />
                     </Tooltip>
                     {gitState ? (
@@ -956,15 +970,6 @@ export function MyWorkWorkspace() {
                         />
                       </Tooltip>
                     ) : null}
-                    <Tooltip title={t("delivery.requirement.shareLink")}>
-                      <Button
-                        aria-label={t("delivery.requirement.shareLink")}
-                        type="text"
-                        size="small"
-                        icon={<ShareAltOutlined />}
-                        onClick={() => void handleShare(record)}
-                      />
-                    </Tooltip>
                     {record.canWrite ? (
                       <Dropdown
                         trigger={["click"]}
@@ -1036,10 +1041,16 @@ export function MyWorkWorkspace() {
                             icon: <HistoryOutlined />,
                             label: t("delivery.requirement.viewTimeline"),
                           },
+                          {
+                            key: "share",
+                            icon: <ShareAltOutlined />,
+                            label: t("delivery.requirement.shareLink"),
+                          },
                         ],
                         onClick: ({ key }) => {
                           if (key === "test") void openSession(record, true);
                           if (key === "timeline") setTimelineRecord(record);
+                          if (key === "share") void handleShare(record);
                         },
                       }}
                     >
@@ -1061,6 +1072,7 @@ export function MyWorkWorkspace() {
       ) : (
         <section className="manager-data-card my-work-empty">
           <Empty
+            className="manager-empty-state"
             description={sharedMode
               ? t("myWork.sharedRequirementMissing")
               : currentBranchOnly
@@ -1100,6 +1112,14 @@ export function MyWorkWorkspace() {
         bizLine={progressRecord?.bizLine ?? activeBusinessLine.id}
         requirement={progressRecord}
         onClose={() => setProgressRecord(null)}
+      />
+
+      <DeliveryRequirementUsageModal
+        open={Boolean(usageRecord)}
+        programId={usageRecord?.programId ?? 0}
+        requirementKey={usageRecord?.requirementKey ?? ""}
+        requirementName={usageRecord?.name ?? ""}
+        onClose={() => setUsageRecord(null)}
       />
 
       <DeliveryRequirementGitCheckModal

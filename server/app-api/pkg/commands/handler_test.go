@@ -55,6 +55,19 @@ func (s *terminalEventCommandService) ListCommandEvents(_ context.Context, query
 	return result, nil
 }
 
+type workerStatusCommandService struct {
+	delivery.CommandService
+	bizLine   contract.BizLine
+	userID    string
+	programID int64
+}
+
+func (s *workerStatusCommandService) GetCommandWorkerStatus(_ context.Context, bizLine contract.BizLine, userID string, programID int64) (dto.CommandWorkerStatusView, error) {
+	s.bizLine, s.userID, s.programID = bizLine, userID, programID
+	heartbeat := time.Now().Add(-time.Minute)
+	return dto.CommandWorkerStatusView{Online: true, WorkerID: "worker-1", DisplayName: "mac remote worker", LastHeartbeatAt: &heartbeat, OnlineWindowSeconds: 300}, nil
+}
+
 func (s *recordingCommandService) SubmitCommand(_ context.Context, req dto.SubmitCommandRequest) (dto.CommandView, error) {
 	s.submitted = req
 	return dto.CommandView{CommandID: "cmd-test", BizLine: req.BizLine.String(), ProgramID: req.ProgramID, UserID: req.UserID}, nil
@@ -152,5 +165,27 @@ func TestEventsDrainTerminalHistoryAcrossPages(t *testing.T) {
 	}
 	if len(service.afterIDs) < 2 || service.afterIDs[0] != 0 || service.afterIDs[1] != commandEventPageSize {
 		t.Fatalf("SSE 游标分页不正确：%v", service.afterIDs)
+	}
+}
+
+func TestWorkerStatusAnswersForTheAuthenticatedUserAndProject(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
+		ID: "42", DisplayName: "Nina", Persona: "product_research", BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}})
+	defer httpx.SetUserAuthenticator(nil)
+	service := &workerStatusCommandService{}
+	router := gin.New()
+	NewHandler(service, nil).Register(router.Group("/api"))
+	request := httptest.NewRequest(http.MethodGet, "/api/workers/status?programId=16", nil)
+	request.Header.Set("token", "valid")
+	request.Header.Set("X-Biz-Line", "whatsapp")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || !bytes.Contains(recorder.Body.Bytes(), []byte(`"online":true`)) {
+		t.Fatalf("执行电脑状态读取失败：%s", recorder.Body.String())
+	}
+	if service.userID != "42" || service.programID != 16 || service.bizLine != contract.BizLine("whatsapp") {
+		t.Fatalf("状态查询未使用认证身份与项目：%#v", service)
 	}
 }

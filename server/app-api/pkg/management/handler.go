@@ -4,6 +4,9 @@ package management
 
 import (
 	"errors"
+	"io"
+	"mime"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -18,6 +21,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const maxBusinessAttachmentBytes = 20 * 1024 * 1024
 
 type Handler struct {
 	delivery   delivery.Service
@@ -45,6 +50,15 @@ func (h *Handler) Register(api *gin.RouterGroup) {
 	businessAPI.GET("/programs", h.listBusinessPrograms)
 	businessAPI.GET("/requirements", h.listBusinessRequirements)
 	businessAPI.POST("/requirements", h.createBusinessRequirement)
+	businessAPI.GET("/requirement", h.getBusinessConversation)
+	businessAPI.POST("/requirement/messages", h.sendBusinessMessage)
+	businessAPI.POST("/requirement/attachments", h.uploadBusinessAttachments)
+	businessAPI.GET("/requirement/attachment", h.getBusinessAttachment)
+	businessAPI.GET("/requirement/references", h.listBusinessDocumentReferences)
+
+	businessResearchAPI := api.Group("/business/research", httpx.RequireProductResearch())
+	businessResearchAPI.GET("/requirements", h.listCollectedBusinessRequirements)
+	businessResearchAPI.GET("/requirement", h.getCollectedBusinessConversation)
 
 	read := api.Group("/delivery", httpx.RequireProductResearch())
 	read.GET("/programs", h.listPrograms)
@@ -54,6 +68,10 @@ func (h *Handler) Register(api *gin.RouterGroup) {
 	read.GET("/requirement", h.getRequirement)
 	read.GET("/items", h.listItems)
 	read.GET("/item", h.getItem)
+	// 工作台的任务进度、需求时间线和拆解会话目录都是只读视图，直接复用交付服务。
+	read.GET("/requirement/progress", h.requirementProgress)
+	read.GET("/requirement/timeline", h.requirementTimeline)
+	read.GET("/requirement/planning-sessions", h.listPlanningSessions)
 
 	write := api.Group("/delivery", httpx.RequireProductResearch())
 	write.POST("/requirement/save", h.saveRequirement)
@@ -131,6 +149,166 @@ func (h *Handler) createBusinessRequirement(c *gin.Context) {
 	httpx.JSON(c, view, err)
 }
 
+func (h *Handler) getBusinessConversation(c *gin.Context) {
+	principal, ok := businessPrincipal(c)
+	if !ok {
+		return
+	}
+	bizLine, ok := authorizeBizLine(c, strings.TrimSpace(c.Query("bizLine")), principal)
+	if !ok {
+		return
+	}
+	requirementID, _ := strconv.ParseInt(strings.TrimSpace(c.Query("requirementId")), 10, 64)
+	view, err := h.business.GetConversation(c.Request.Context(), businessdto.ConversationQuery{
+		BizLine: bizLine, RequirementID: requirementID, CreatorID: principal.ID,
+	})
+	httpx.JSON(c, view, err)
+}
+
+func (h *Handler) sendBusinessMessage(c *gin.Context) {
+	principal, ok := businessPrincipal(c)
+	if !ok {
+		return
+	}
+	var req businessdto.SendMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	bizLine, ok := authorizeBizLine(c, strings.TrimSpace(c.Query("bizLine")), principal)
+	if !ok {
+		return
+	}
+	req.BizLine = bizLine
+	req.CreatorID = principal.ID
+	req.CreatorUsername = principal.Username
+	result, err := h.business.SendMessage(c.Request.Context(), req)
+	httpx.JSON(c, result, err)
+}
+
+// listBusinessDocumentReferences powers the @ picker in the composer, the same
+// way the console does: the intake documents this project's earlier interviews
+// already produced. Candidates carry no content; the body is resolved
+// server-side when the message is actually sent.
+func (h *Handler) listBusinessDocumentReferences(c *gin.Context) {
+	principal, ok := businessPrincipal(c)
+	if !ok {
+		return
+	}
+	bizLine, ok := authorizeBizLine(c, strings.TrimSpace(c.Query("bizLine")), principal)
+	if !ok {
+		return
+	}
+	requirementID, _ := strconv.ParseInt(strings.TrimSpace(c.Query("requirementId")), 10, 64)
+	views, err := h.business.ListDocumentReferences(c.Request.Context(), businessdto.DocumentReferenceQuery{
+		BizLine: bizLine, RequirementID: requirementID, CreatorID: principal.ID,
+		Keyword: strings.TrimSpace(c.Query("keyword")),
+	})
+	httpx.JSON(c, views, err)
+}
+
+func (h *Handler) uploadBusinessAttachments(c *gin.Context) {
+	principal, ok := businessPrincipal(c)
+	if !ok {
+		return
+	}
+	bizLine, ok := authorizeBizLine(c, strings.TrimSpace(c.Query("bizLine")), principal)
+	if !ok {
+		return
+	}
+	requirementID, err := strconv.ParseInt(strings.TrimSpace(c.PostForm("requirementId")), 10, 64)
+	if err != nil || requirementID <= 0 {
+		httpx.Fail(c, "业务需求标识无效")
+		return
+	}
+	form, err := c.MultipartForm()
+	if err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	headers := form.File["files"]
+	if len(headers) == 0 {
+		httpx.Fail(c, "请选择要上传的文件")
+		return
+	}
+	files := make([]businessdto.AttachmentUpload, 0, len(headers))
+	for _, header := range headers {
+		opened, openErr := header.Open()
+		if openErr != nil {
+			httpx.Fail(c, openErr.Error())
+			return
+		}
+		data, readErr := io.ReadAll(io.LimitReader(opened, maxBusinessAttachmentBytes+1))
+		_ = opened.Close()
+		if readErr != nil {
+			httpx.Fail(c, readErr.Error())
+			return
+		}
+		if int64(len(data)) > maxBusinessAttachmentBytes {
+			httpx.Fail(c, "附件 "+header.Filename+" 超过 20 MB")
+			return
+		}
+		files = append(files, businessdto.AttachmentUpload{Name: header.Filename, ContentType: header.Header.Get("Content-Type"), Data: data})
+	}
+	views, err := h.business.UploadAttachments(c.Request.Context(), businessdto.UploadAttachmentsRequest{
+		RequirementID: requirementID, Files: files, BizLine: bizLine,
+		CreatorID: principal.ID, CreatorUsername: principal.Username,
+	})
+	httpx.JSON(c, views, err)
+}
+
+func (h *Handler) getBusinessAttachment(c *gin.Context) {
+	principal, ok := businessPrincipal(c)
+	if !ok {
+		return
+	}
+	bizLine, ok := authorizeBizLine(c, strings.TrimSpace(c.Query("bizLine")), principal)
+	if !ok {
+		return
+	}
+	requirementID, _ := strconv.ParseInt(strings.TrimSpace(c.Query("requirementId")), 10, 64)
+	content, err := h.business.GetAttachment(c.Request.Context(), businessdto.AttachmentQuery{
+		RequirementID: requirementID, AttachmentID: strings.TrimSpace(c.Query("attachmentId")),
+		BizLine: bizLine, CreatorID: principal.ID,
+	})
+	if err != nil {
+		httpx.JSON(c, nil, err)
+		return
+	}
+	contentType := strings.TrimSpace(content.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": content.Name}))
+	c.Data(http.StatusOK, contentType, content.Data)
+}
+
+func (h *Handler) listCollectedBusinessRequirements(c *gin.Context) {
+	bizLine, ok := h.authorizeRequestBizLine(c)
+	if !ok {
+		return
+	}
+	pageIndex, _ := strconv.Atoi(c.Query("pageIndex"))
+	pageSize, _ := strconv.Atoi(c.Query("pageSize"))
+	page, err := h.business.ListCollectedRequirements(c.Request.Context(), businessdto.CollectedRequirementQuery{
+		Page: businessdto.Page{PageIndex: pageIndex, PageSize: pageSize}, BizLine: bizLine,
+	})
+	httpx.JSON(c, page, err)
+}
+
+func (h *Handler) getCollectedBusinessConversation(c *gin.Context) {
+	bizLine, ok := h.authorizeRequestBizLine(c)
+	if !ok {
+		return
+	}
+	requirementID, _ := strconv.ParseInt(strings.TrimSpace(c.Query("requirementId")), 10, 64)
+	view, err := h.business.GetCollectedConversation(c.Request.Context(), businessdto.CollectedConversationQuery{
+		BizLine: bizLine, RequirementID: requirementID,
+	})
+	httpx.JSON(c, view, err)
+}
+
 func (h *Handler) listPrograms(c *gin.Context) {
 	bizLine, ok := h.authorizeRequestBizLine(c)
 	if !ok {
@@ -203,6 +381,52 @@ func (h *Handler) getRequirement(c *gin.Context) {
 	}
 	view, err := h.delivery.GetRequirement(c.Request.Context(), bizLine, programID, c.Query("requirementKey"))
 	httpx.JSON(c, view, err)
+}
+
+func (h *Handler) requirementProgress(c *gin.Context) {
+	var query deliverydto.RequirementProgressQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeProgramID(c, query.ProgramID)
+	if !ok {
+		return
+	}
+	query.BizLine = bizLine
+	view, err := h.delivery.GetRequirementProgress(c.Request.Context(), query)
+	httpx.JSON(c, view, err)
+}
+
+func (h *Handler) requirementTimeline(c *gin.Context) {
+	var query deliverydto.RequirementTimelineQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeProgramID(c, query.ProgramID)
+	if !ok {
+		return
+	}
+	query.BizLine = bizLine
+	page, err := h.delivery.ListRequirementTimeline(c.Request.Context(), query)
+	httpx.JSON(c, page, err)
+}
+
+// listPlanningSessions 让工作台在 Worker 回话之前就能把聊天列表铺出来。
+func (h *Handler) listPlanningSessions(c *gin.Context) {
+	var query deliverydto.PlanningSessionQuery
+	if err := c.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeProgramID(c, query.ProgramID)
+	if !ok {
+		return
+	}
+	query.BizLine = bizLine
+	views, err := h.delivery.ListPlanningSessions(c.Request.Context(), query)
+	httpx.JSON(c, views, err)
 }
 
 func (h *Handler) saveRequirement(c *gin.Context) {

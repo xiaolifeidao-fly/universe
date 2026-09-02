@@ -63,8 +63,14 @@ func buildRequirementProgressView(
 	statusCounts := map[string]int{
 		StatusTodo: 0, StatusDoing: 0, StatusDone: 0, StatusBlocked: 0, StatusDropped: 0,
 	}
+	// 需求的执行耗时就是它下面每条任务的累计耗时之和：任务是唯一真正被执行的东西，
+	// 需求侧会话（拆解、评审）不在这里计入。
+	totalRunDurationMs := int64(0)
+	runCount := 0
 	for _, item := range items {
 		statusCounts[item.Status]++
+		totalRunDurationMs += item.TotalRunDurationMs
+		runCount += item.RunCount
 	}
 	itemsByBatch := make(map[string][]*repository.DeliveryExecutionBatchItem, len(batches))
 	for _, item := range batchItems {
@@ -81,9 +87,11 @@ func buildRequirementProgressView(
 	return dto.RequirementProgressView{
 		RequirementKey: requirement.RequirementKey, RequirementName: requirement.Name,
 		TotalCount: len(items), CountedCount: countCounted(items), Progress: averageProgress(items),
-		StatusCounts:    statusCounts,
-		Items:           toItemViews(items, dependencyKeysBySuccessor(dependencies), dependencySourceSidesBySuccessor(dependencies), dependencyTargetSidesBySuccessor(dependencies)),
-		Batches:         batchViews,
-		PlanningBatches: planningBatchViews,
+		StatusCounts:       statusCounts,
+		TotalRunDurationMs: totalRunDurationMs,
+		RunCount:           runCount,
+		Items:              toItemViews(items, dependencyKeysBySuccessor(dependencies), dependencySourceSidesBySuccessor(dependencies), dependencyTargetSidesBySuccessor(dependencies)),
+		Batches:            batchViews,
+		PlanningBatches:    planningBatchViews,
 	}
 }

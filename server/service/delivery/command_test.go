@@ -3,6 +3,7 @@ package delivery
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"contract"
 )
@@ -72,5 +73,65 @@ func TestWithCommandProgressKeepsSSEActivitySelfContained(t *testing.T) {
 	data := withCommandProgress(`{"step":"build"}`, &progress)
 	if data != `{"progress":47,"step":"build"}` && data != `{"step":"build","progress":47}` {
 		t.Fatalf("活动事件未携带进度：%s", data)
+	}
+}
+
+func TestNarrowCommandCapabilitiesKeepsClaimLanesInsideRegisteredAbilities(t *testing.T) {
+	capabilities := []string{"task.execute", "task.session", "git.status"}
+
+	if got := narrowCommandCapabilities(capabilities, nil); len(got) != 3 {
+		t.Fatalf("未申请类型时应保留全部能力，实际 %v", got)
+	}
+	got := narrowCommandCapabilities(capabilities, []string{"task.session", "GIT.STATUS", "task.delete-everything", "非法类型"})
+	if len(got) != 2 || got[0] != "task.session" || got[1] != "git.status" {
+		t.Fatalf("只读通道不应扩权，实际 %v", got)
+	}
+	if got := narrowCommandCapabilities(capabilities, []string{"task.planning"}); len(got) != 0 {
+		t.Fatalf("未登记的类型不应被领取，实际 %v", got)
+	}
+}
+
+
+func TestReadOnlyCommandTypesStayOutOfTheActivityLog(t *testing.T) {
+	if !IsReadOnlyCommand(" GIT.STATUS ") || !IsReadOnlyCommand("task.planning-session") {
+		t.Fatal("快照命令未被识别为只读")
+	}
+	if IsReadOnlyCommand("task.planning") || IsReadOnlyCommand("git.push") {
+		t.Fatal("执行类命令不能被当成快照")
+	}
+	excluded := readOnlyCommandTypeList()
+	if len(excluded) != len(readOnlyCommandTypes) {
+		t.Fatalf("排除清单与词表不一致：%d != %d", len(excluded), len(readOnlyCommandTypes))
+	}
+	for i := 1; i < len(excluded); i++ {
+		if excluded[i-1] >= excluded[i] {
+			t.Fatalf("排除清单未按稳定顺序输出：%#v", excluded)
+		}
+	}
+}
+
+func TestCommandWorkerOnlineUsesTheSameWindowAsDispatch(t *testing.T) {
+	now := time.Now()
+	if !commandWorkerOnline(now.Add(-commandWorkerOnlineWindow+time.Second), now) {
+		t.Fatal("窗口内的心跳应判定为在线")
+	}
+	if commandWorkerOnline(now.Add(-commandWorkerOnlineWindow-time.Second), now) {
+		t.Fatal("超出窗口的心跳应判定为离线")
+	}
+	if commandWorkerOnline(time.Time{}, now) {
+		t.Fatal("从未心跳过的 Worker 不能算在线")
+	}
+}
+
+func TestStaleReadOnlyCommandsAreNotWorthDispatching(t *testing.T) {
+	now := time.Now()
+	if !staleReadOnlyCommand("git.status", now.Add(-readOnlyCommandStaleWindow-time.Second), now) {
+		t.Fatal("过期的界面快照不应再下发")
+	}
+	if staleReadOnlyCommand("git.status", now.Add(-time.Second), now) {
+		t.Fatal("刚提交的快照命令必须照常下发")
+	}
+	if staleReadOnlyCommand("task.execute", now.Add(-time.Hour), now) {
+		t.Fatal("执行类命令等再久也要跑：用户按过的动作不能被静默丢掉")
 	}
 }

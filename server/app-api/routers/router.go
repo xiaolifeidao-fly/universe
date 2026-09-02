@@ -1,6 +1,8 @@
 package routers
 
 import (
+	"time"
+
 	"app-api/pkg/commands"
 	"app-api/pkg/documents"
 	"app-api/pkg/management"
@@ -20,6 +22,7 @@ func New(
 	identityService identity.Service,
 	businessService business.Service,
 	objects *objectstore.AliyunOSS,
+	signedURLTTL time.Duration,
 	pushService *push.Service,
 	waiter commands.CommandNotificationWaiter,
 	spaces management.SpaceDirectory,
@@ -34,7 +37,7 @@ func New(
 	api := router.Group("/api")
 	management.NewHandler(deliveryService, identityService, businessService, spaces).Register(api)
 	commands.NewHandler(deliveryService, waiter, pushService).Register(api)
-	documents.NewHandler(deliveryService, objects).Register(api)
+	documents.NewHandler(deliveryService, objects, signedURLTTL).Register(api)
 	push.NewHandler(pushService).Register(api)
 	return router
 }

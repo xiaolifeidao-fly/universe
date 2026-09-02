@@ -25,6 +25,9 @@ type CommandQuery struct {
 	UserID    string           `form:"-"`
 	ProgramID int64            `form:"programId"`
 	State     string           `form:"state"`
+	// IncludeReadOnly 默认关：运行记录列的是「用户发起过什么」，而会话页每几秒
+	// 读一次的快照命令属于界面自己的动作。排查通道时再显式打开。
+	IncludeReadOnly bool `form:"includeReadOnly"`
 }
 
 type CommandView struct {
@@ -79,6 +82,16 @@ type CommandWorkerView struct {
 	LastHeartbeatAt time.Time `json:"lastHeartbeatAt"`
 }
 
+// CommandWorkerStatusView 告诉客户端「有没有执行电脑在听这个项目」。手机端据此
+// 在提交前就把离线说清楚，而不是让用户等一次超时。
+type CommandWorkerStatusView struct {
+	Online              bool       `json:"online"`
+	WorkerID            string     `json:"workerId"`
+	DisplayName         string     `json:"displayName"`
+	LastHeartbeatAt     *time.Time `json:"lastHeartbeatAt"`
+	OnlineWindowSeconds int        `json:"onlineWindowSeconds"`
+}
+
 type WorkerHeartbeatRequest struct {
 	BizLine  contract.BizLine `json:"-"`
 	UserID   string           `json:"-"`
@@ -88,6 +101,9 @@ type WorkerHeartbeatRequest struct {
 type ClaimCommandRequest struct {
 	UserID   string `json:"-"`
 	WorkerID string `json:"workerId"`
+	// CommandTypes 让一台 Worker 开出多条领取通道：只读通道单独领取快照类命令，
+	// 长任务占着执行通道时，工作台仍然能读到会话和 Git 状态。为空表示不限类型。
+	CommandTypes []string `json:"commandTypes"`
 }
 
 type ClaimedCommand struct {

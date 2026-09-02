@@ -8,7 +8,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "任务宇宙",
-  description: "任务宇宙设备运营与资源管理平台",
+  description: "任务宇宙 · 需求受理与交付协同平台",
 };
 
 export default function RootLayout({

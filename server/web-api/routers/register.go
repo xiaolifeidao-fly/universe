@@ -13,10 +13,10 @@ import (
 	deliveryapi "delivery-api/pkg/delivery"
 	"service/bizline"
 	"service/business"
+	"service/businessassistant"
 	"service/delivery"
 	"service/identity"
 	"web-api/pkg/local"
-	"web-api/pkg/remote"
 
 	"gorm.io/gorm"
 )
@@ -33,30 +33,28 @@ func registerHandlers(database *gorm.DB) []commonrouters.Handler {
 // 随各层落地逐个加回来，形状照 delivery 这一段抄。
 func buildHandlers(_ context.Context, database *gorm.DB) []commonrouters.Handler {
 	var cloudStorage delivery.CloudObjectStorage
-	if endpoint := httpx.Property("oss.endpoint"); endpoint != "" {
-		storage, err := objectstore.NewAliyunOSS(objectstore.OSSConfig{
-			Endpoint:        endpoint,
-			Bucket:          httpx.Property("oss.bucket"),
-			AccessKeyID:     httpx.Property("oss.access_key_id"),
-			AccessKeySecret: httpx.Property("oss.access_key_secret"),
-			Prefix:          httpx.Property("oss.prefix"),
-			PathStyle:       httpx.Property("oss.path_style") == "true",
-		})
-		if err != nil {
-			log.Printf("delivery cloud sync OSS is unavailable: %v", err)
-		} else {
-			cloudStorage = storage
-		}
+	ossConfig, err := objectstore.LoadAliyunOSSDeployment(httpx.Property)
+	if err != nil {
+		log.Printf("delivery cloud sync OSS is unavailable: %v", err)
+	} else if storage, err := ossConfig.NewClient(); err != nil {
+		log.Printf("delivery cloud sync OSS is unavailable: %v", err)
+	} else if storage != nil {
+		cloudStorage = storage
 	}
 	deliveryService := delivery.New(database, cloudStorage)
 	bizLineService := bizline.New(database, deliveryService)
 	businessTimeoutSeconds, _ := strconv.Atoi(httpx.Property("business.kodes.timeout_seconds"))
-	businessAssistant := remote.NewBusinessAssistant(
-		httpx.Property("business.kodes.remote_url"),
-		httpx.Property("business.kodes.model"),
-		httpx.Property("business.kodes.reasoning_effort"),
-		time.Duration(businessTimeoutSeconds)*time.Second,
-	)
+	// The command transport needs no inbound route to a Kodes host: the plugin's
+	// Worker claims interview turns from this server. The HTTP transport stays
+	// available for a deployment that still exposes a dedicated interview host.
+	businessAssistant := businessassistant.New(businessassistant.Config{
+		Transport:       httpx.Property("business.kodes.transport"),
+		RemoteURL:       httpx.Property("business.kodes.remote_url"),
+		WorkerUserID:    httpx.Property("business.kodes.worker_user_id"),
+		Model:           httpx.Property("business.kodes.model"),
+		ReasoningEffort: httpx.Property("business.kodes.reasoning_effort"),
+		Timeout:         time.Duration(businessTimeoutSeconds) * time.Second,
+	}, deliveryService)
 	businessService := business.New(database, local.BusinessProgramReader{Service: deliveryService}, businessAssistant)
 	tokenTTL, _ := strconv.Atoi(httpx.Property("auth.token_ttl_seconds"))
 	identityService := identity.New(database, deliveryService, httpx.Property("auth.token_secret"), time.Duration(tokenTTL)*time.Second)
