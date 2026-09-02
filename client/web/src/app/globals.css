@@ -8456,6 +8456,51 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 	border-left: 1px solid var(--manager-border);
 }
 
+/* 需求梳理与任务执行的本机状态：和 Git 那一行同一套底纹，两组状态各占一段。 */
+.my-work-card__runtime {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 14px;
+	margin-top: 11px;
+	padding: 6px 9px;
+	border: 1px solid color-mix(in srgb, var(--manager-border) 70%, transparent);
+	border-radius: var(--manager-r-sm);
+	background: color-mix(in srgb, var(--manager-bg-soft) 70%, var(--manager-surface));
+	color: var(--manager-text-soft);
+	font-size: var(--manager-fs-micro);
+}
+
+.my-work-card__runtime-item {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 6px;
+}
+
+.my-work-card__runtime-item > .anticon { color: var(--manager-text-faint); font-size: 12px; }
+
+.my-work-card__runtime-time {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: 5px;
+}
+
+.my-work-card__runtime-time em {
+	flex: 0 0 auto;
+	color: var(--manager-text-faint);
+	font-style: normal;
+	white-space: nowrap;
+}
+
+.my-work-card__runtime-time code {
+	overflow: hidden;
+	color: var(--manager-text);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .my-work-card__git-current em {
 	flex: 0 0 auto;
 	color: var(--manager-text-faint);

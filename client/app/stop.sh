@@ -2,7 +2,7 @@
 set -euo pipefail
 
 APP_NAME="delivery-app"
-PORT="${PORT:-7894}"
+PORT="${PORT:-7895}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${SCRIPT_DIR}/run/${APP_NAME}.pid"

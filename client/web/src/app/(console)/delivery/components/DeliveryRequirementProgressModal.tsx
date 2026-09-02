@@ -58,6 +58,7 @@ import {
 } from "@/ai-preferences/AIPreferencesProvider";
 import type { BusinessLineId } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { applyRequirementExecutionSnapshot } from "@/requirement-runtime/requirementRuntimeCache";
 import { notifyDeliveryTasksChanged } from "@/api/deliveryTaskEvents";
 import { DeliveryDependencyLayer } from "./DeliveryDependencyLayer";
 import { DeliveryRunDurationTotal, DeliveryTaskRunDuration } from "./DeliveryRunDuration";
@@ -409,6 +410,13 @@ export function DeliveryRequirementProgressModal({
     () => (progress?.batches ?? []).filter((batch) => batch.status === "running"),
     [progress?.batches],
   );
+  // 任务执行状态只落在本机缓存，工作台的卡片读它；判定口径统一放在缓存模块里，两边共用一份。
+  useEffect(() => {
+    const executionRequirementKey = requirement?.requirementKey;
+    if (!open || !executionRequirementKey || !progress || previewProgress) return;
+    applyRequirementExecutionSnapshot(programId, executionRequirementKey, progress);
+  }, [open, previewProgress, programId, progress, requirement?.requirementKey]);
+
   const batchByItem = useMemo(() => {
     const contexts = new Map<string, ItemBatchContext>();
     for (const batch of progress?.batches ?? []) {

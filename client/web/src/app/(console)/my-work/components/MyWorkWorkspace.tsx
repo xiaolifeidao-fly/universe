@@ -32,7 +32,9 @@ import {
   deleteItem,
   deleteRequirement,
   fetchCodexGitWorkspaceStatus,
+  fetchCodexPlanningConversation,
   fetchPrograms,
+  fetchRequirementProgress,
   isCodexGitWorkspaceUninitialized,
   REQUIREMENT_STATUSES,
   updateRequirementStatus,
@@ -44,6 +46,13 @@ import {
 import { useBusinessLine } from "@/business-lines/BusinessLineProvider";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { getProjectWorkspace } from "@/project-workspaces/projectWorkspacePreferences";
+import {
+  applyRequirementExecutionSnapshot,
+  getRequirementRuntimeMap,
+  markRequirementGroomed,
+  requirementRuntimeKey,
+  useRequirementRuntimeMap,
+} from "@/requirement-runtime/requirementRuntimeCache";
 import { getAuthUser } from "@/utils/auth";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import { requirementMentionPlainText } from "../../delivery/components/DeliveryRequirementDetailInput";
@@ -85,6 +94,9 @@ function memberNames(record: MyWorkRequirement) {
 
 /** 卡片退场动画时长，必须与 globals.css 里的 my-work-card-exit 保持一致。 */
 const CARD_EXIT_MS = 320;
+
+/** 一次校准最多核这么多条：还在进行中的需求本来就是个位数，别让它变成整页的进度请求。 */
+const RUNTIME_CALIBRATE_LIMIT = 8;
 
 type MyWorkType = "created" | "owner" | "assistant";
 type MyWorkProgram = Awaited<ReturnType<typeof fetchMyWorkPrograms>>[number];
@@ -165,6 +177,8 @@ export function MyWorkWorkspace() {
   const [createRequirementLoading, setCreateRequirementLoading] = useState(false);
   const [createRequirementEntering, setCreateRequirementEntering] = useState(false);
   const userId = String(getAuthUser()?.id ?? "");
+  // 需求梳理与任务执行的状态只存在这台浏览器：需求聊天窗和进度窗写，这里只读不请求。
+  const runtimeMap = useRequirementRuntimeMap();
 
   const requirementNames = useMemo(
     () => new Map(records.map((record) => [record.requirementKey, record.name])),
@@ -277,6 +291,61 @@ export function MyWorkWorkspace() {
       });
     return () => { active = false; };
   }, [gitProgramIds, reloadKey]);
+
+  /**
+   * 每次列表加载完校准一次本机缓存里还停在「进行中」的那几条：梳理和执行都可能是在别的窗口、
+   * 甚至别的机器上收的尾，不校准的话卡片会一直停在进行中。只在进来和刷新时做一次，不定时轮询。
+   * 依赖只放 records：跟着缓存变会在每次写回后立刻再校准一轮，转成死循环。
+   */
+  useEffect(() => {
+    if (!records.length) return undefined;
+    let cancelled = false;
+    const calibrate = async () => {
+      const runtime = getRequirementRuntimeMap();
+      const pending = records
+        .map((record) => ({ record, state: runtime[requirementRuntimeKey(record.programId, record.requirementKey)] }))
+        .filter(({ state }) => state?.executionStatus === "running" || state?.groomingStatus === "grooming")
+        .slice(0, RUNTIME_CALIBRATE_LIMIT);
+      for (const { record, state } of pending) {
+        if (cancelled) return;
+        if (state?.executionStatus === "running") {
+          try {
+            const progress = await fetchRequirementProgress(record.programId, record.requirementKey);
+            if (cancelled) return;
+            applyRequirementExecutionSnapshot(record.programId, record.requirementKey, progress);
+          } catch {
+            // 校准不动就保留原样：这一行只是不让状态停在过期的进行中上，不值得打断页面。
+          }
+        }
+        if (cancelled) return;
+        // 梳理有没有收尾只有本机桥接知道；没选工作目录或桥接没起时这条就先留着。
+        if (state?.groomingStatus === "grooming" && getProjectWorkspace(record.programId)) {
+          try {
+            const conversation = await fetchCodexPlanningConversation(
+              record.programId,
+              "",
+              record.requirementKey,
+              preferences.globalTool,
+            );
+            if (cancelled) return;
+            if (!conversation.active) {
+              // 回合是什么时候结束的以会话自己记的为准，读不出来才退回当下时间。
+              const completedAt = conversation.turns
+                .map((turn) => turn.completedAt || "")
+                .filter((value) => value && !Number.isNaN(new Date(value).getTime()))
+                .sort()
+                .pop() || "";
+              markRequirementGroomed(record.programId, record.requirementKey, completedAt);
+            }
+          } catch {
+            // 同上：读不到会话就等下次进来再校准。
+          }
+        }
+      }
+    };
+    void calibrate();
+    return () => { cancelled = true; };
+  }, [preferences.globalTool, records]);
 
   /** 本机还没选工作目录的项目：与 Git 无关，任何项目的卡片都要提示。 */
   const workspaceUnsetProgramIds = useMemo(
@@ -782,6 +851,8 @@ export function MyWorkWorkspace() {
             // 工作区正停在这条需求的分支上且还有未提交改动时不许删：改动会失去对应的需求上下文。
             const deleteBlocked = Boolean(gitState?.current && gitState?.dirty);
             const cardKey = `${record.bizLine}:${record.programId}:${record.requirementKey}`;
+            // 本机缓存里这条需求干到哪儿了：没记过就整行不出现，不占卡片高度。
+            const runtime = runtimeMap[requirementRuntimeKey(record.programId, record.requirementKey)];
             return (
               <article
                 className={`my-work-card${currentBranchOnly && currentBranchKeys.has(record.requirementKey) ? " is-current-branch" : ""}${sharedMode ? " is-shared" : ""}${removingKeys.has(record.requirementKey) ? " is-removing" : ""}`}
@@ -872,6 +943,41 @@ export function MyWorkWorkspace() {
                       >
                         {t("delivery.requirement.gitPullLatest")}
                       </Button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {runtime && (runtime.groomingStatus || runtime.executionStatus) ? (
+                  <div className="my-work-card__runtime" title={t("myWork.runtime.localHint")}>
+                    {runtime.groomingStatus ? (
+                      <span className="my-work-card__runtime-item">
+                        <MessageOutlined />
+                        <span className={`my-work-chip ${runtime.groomingStatus === "grooming" ? "is-open" : "is-success"}`}>
+                          <i />
+                          {t(`myWork.runtime.grooming.${runtime.groomingStatus}`)}
+                        </span>
+                        {runtime.groomingStatus === "groomed" && runtime.groomingFinishedAt ? (
+                          <span className="my-work-card__runtime-time">
+                            <em>{t("myWork.runtime.groomedAt")}</em>
+                            <code className="manager-mono">{formatTime(runtime.groomingFinishedAt, locale)}</code>
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : null}
+                    {runtime.executionStatus ? (
+                      <span className="my-work-card__runtime-item">
+                        <PlayCircleOutlined />
+                        <span className={`my-work-chip ${runtime.executionStatus === "running" ? "is-open" : "is-success"}`}>
+                          <i />
+                          {t(`myWork.runtime.execution.${runtime.executionStatus}`)}
+                        </span>
+                        {runtime.executionStatus === "done" && runtime.executionFinishedAt ? (
+                          <span className="my-work-card__runtime-time">
+                            <em>{t("myWork.runtime.executedAt")}</em>
+                            <code className="manager-mono">{formatTime(runtime.executionFinishedAt, locale)}</code>
+                          </span>
+                        ) : null}
+                      </span>
                     ) : null}
                   </div>
                 ) : null}

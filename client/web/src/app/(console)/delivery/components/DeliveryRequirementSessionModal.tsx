@@ -17,6 +17,7 @@ import {
   FullscreenExitOutlined,
   FullscreenOutlined,
   LoadingOutlined,
+  MergeOutlined,
   MessageOutlined,
   PaperClipOutlined,
   PauseCircleOutlined,
@@ -36,8 +37,10 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSPr
 import { DeliveryDocumentSetModal, DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { DeliveryGitChangesModal } from "./DeliveryGitChangesModal";
 import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
+import { DeliveryRequirementMergeModal } from "./DeliveryRequirementMergeModal";
 import { buildStandaloneHtmlDocument, DeliveryHtmlFrame, resolveFrameHref } from "./DeliveryHtmlFrame";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { getRequirementRuntime, markRequirementGroomed, markRequirementGrooming } from "@/requirement-runtime/requirementRuntimeCache";
 import { useImeCompositionGuard } from "@/utils/ime";
 import {
   CLAUDE_EFFORTS,
@@ -324,6 +327,9 @@ export function DeliveryRequirementSessionModal({
 	// 切换 / 推送作用在哪个工程：空串是项目根工作目录，否则是子项目的绝对路径。
 	const [gitCheckWorkspace, setGitCheckWorkspace] = useState("");
 	const [gitPushWorkspace, setGitPushWorkspace] = useState("");
+	// 把需求分支合并到目标分支（默认基线分支）；合某个子项目时记下是哪个工程，为空表示整份工作目录。
+	const [gitMergeOpen, setGitMergeOpen] = useState(false);
+	const [gitMergeProject, setGitMergeProject] = useState<CodexGitProjectStatus | null>(null);
 	// 新建窗口即使在落库后收到父组件回传，也仍属于同一轮新建流程；Git 项目要据此持续拦截首轮对话。
 	const newRequirementFlowRef = useRef(false);
 	const modalOpenRef = useRef(false);
@@ -845,6 +851,20 @@ export function DeliveryRequirementSessionModal({
 		if (active) return;
 		void refreshGitStatus();
 	}, [active, refreshGitStatus]);
+
+	// 梳理状态只落在本机缓存：拆解回合跑着记「梳理中」，回合结束记完成时间，工作台据此展示。
+	// 收尾按缓存里的状态判断而不是本次挂载的记忆：回合在窗口关着的时候跑完，下次打开也能补上。
+	useEffect(() => {
+		const groomingRequirementKey = saved?.requirementKey;
+		// 会话还没读回来时 active 一定是 false，这时候判定「已结束」会误伤正在跑的回合。
+		if (!open || !groomingRequirementKey || !conversation) return;
+		if (active) {
+			markRequirementGrooming(programId, groomingRequirementKey);
+			return;
+		}
+		if (getRequirementRuntime(programId, groomingRequirementKey).groomingStatus !== "grooming") return;
+		markRequirementGroomed(programId, groomingRequirementKey);
+	}, [active, conversation, open, programId, saved?.requirementKey]);
 
   // 需求名称留空时，桥接在开聊那一刻就先用首条消息的前十个字占位，再并行起一轮命名，
   // AI 的标题回来后把占位名换掉。名字在拆解跑着的过程中会变两次，所以运行期间一直取，
@@ -1845,6 +1865,31 @@ export function DeliveryRequirementSessionModal({
                       </button>
                     </Tooltip>
                   ) : null}
+                  {/* 合并：把这条需求分支合进目标分支（默认基线分支），冲突交给 AI 解决后推送。 */}
+                  {gitPushReady ? (
+                    <Tooltip
+                      placement="left"
+                      title={codexBridgeReady
+                        ? t("delivery.requirement.gitMerge.hint")
+                          .replace("{source}", saved?.gitBranch ?? "")
+                          .replace("{target}", saved?.gitBaseBranch || projectGitBaseBranch || t("delivery.requirement.gitMerge.targetPlaceholder"))
+                        : t("delivery.requirement.gitPanelUnavailable")}
+                    >
+                      <button
+                        className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady ? " is-disabled" : ""}`}
+                        type="button"
+                        aria-disabled={!codexBridgeReady}
+                        onClick={() => {
+                          if (!codexBridgeReady) return;
+                          setGitMergeProject(null);
+                          setGitMergeOpen(true);
+                        }}
+                      >
+                        <MergeOutlined />
+                        <span>{t("delivery.requirement.gitMerge.action")}</span>
+                      </button>
+                    </Tooltip>
+                  ) : null}
                   {/* 参与这条需求的子工程：默认收起，展开后是一整块和根目录同样的 Git 信息。 */}
                   {gitSubprojects.length ? (
                     <>
@@ -2022,6 +2067,31 @@ export function DeliveryRequirementSessionModal({
                                     >
                                       {gitPushing ? <LoadingOutlined spin /> : <CloudUploadOutlined />}
                                       <span>{t("delivery.requirement.gitPanelPush")}</span>
+                                    </button>
+                                  </Tooltip>
+                                ) : null}
+                                {/* 子工程也能单独合：这一轮只动它自己，根目录和别的工程都不碰。 */}
+                                {gitPushReady && project.hasBranch ? (
+                                  <Tooltip
+                                    placement="left"
+                                    title={codexBridgeReady
+                                      ? t("delivery.requirement.gitMerge.hint")
+                                        .replace("{source}", saved?.gitBranch ?? "")
+                                        .replace("{target}", saved?.gitBaseBranch || projectGitBaseBranch || t("delivery.requirement.gitMerge.targetPlaceholder"))
+                                      : t("delivery.requirement.gitPanelUnavailable")}
+                                  >
+                                    <button
+                                      className={`delivery-requirement-git-panel__row is-action${!codexBridgeReady ? " is-disabled" : ""}`}
+                                      type="button"
+                                      aria-disabled={!codexBridgeReady}
+                                      onClick={() => {
+                                        if (!codexBridgeReady) return;
+                                        setGitMergeProject(project);
+                                        setGitMergeOpen(true);
+                                      }}
+                                    >
+                                      <MergeOutlined />
+                                      <span>{t("delivery.requirement.gitMerge.action")}</span>
                                     </button>
                                   </Tooltip>
                                 ) : null}
@@ -3263,6 +3333,29 @@ export function DeliveryRequirementSessionModal({
         projectName={gitChangesProject?.name ?? ""}
         onClose={() => setGitChangesOpen(false)}
       />
+
+      {/* 「合并到分支」点开后的预览与执行：目标分支默认取需求的基线分支。 */}
+      {projectGitEnabled && saved?.gitBranch ? (
+        <DeliveryRequirementMergeModal
+          open={gitMergeOpen}
+          programId={programId}
+          sourceBranch={saved.gitBranch}
+          defaultTarget={saved.gitBaseBranch || projectGitBaseBranch}
+          // 合单个子工程时把范围钉死在那一条目录上；合主项目则不传，弹窗里按工程勾选。
+          {...(gitMergeProject
+            ? {
+              scopePath: gitMergeProject.path,
+              scopeWorkspace: gitMergeProject.workspace,
+              projectName: gitMergeProject.name,
+            }
+            : {})}
+          // 关闭时不清 gitMergeProject：弹窗有关闭动画，这时候切回主项目会让标题闪一下。
+          onClose={() => setGitMergeOpen(false)}
+          onMerged={() => {
+            void refreshGitProjects();
+          }}
+        />
+      ) : null}
 
       {/* 推送前让用户确认提交说明：这一步会把工作区改动整体提交到需求分支。 */}
       <Modal
