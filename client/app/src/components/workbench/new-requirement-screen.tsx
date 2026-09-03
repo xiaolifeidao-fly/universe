@@ -15,6 +15,7 @@ import { createGitBranchAndWait, fetchGitBranches, fetchGitProjects } from "@/ap
 import { EmptyState } from "@/components/empty-state";
 import { GitCommitSheet } from "@/components/workbench/git-commit-sheet";
 import { WorkerOfflineNotice, useWorkerStatus } from "@/components/workbench/worker-status";
+import type { GitProjectSnapshot } from "@/features/workbench/types";
 
 /**
  * 新需求的分支名按时间戳起，和 PC 端同一套规则：需求这会儿还没有编号，
@@ -51,7 +52,9 @@ export function NewRequirementScreen() {
   const [branches, setBranches] = useState<string[]>([]);
   const [baseBranch, setBaseBranch] = useState("");
   const [branch, setBranch] = useState("");
-  // 工作目录下的独立子工程：默认给还没有这条分支的那些一起建，和 PC 端一致。
+  // 工作目录下的独立子工程：列出来让用户自己勾，默认全勾，和 PC 端一致。
+  const [projects, setProjects] = useState<GitProjectSnapshot[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [targets, setTargets] = useState<string[]>([]);
   const { status: workerStatus } = useWorkerStatus(programId);
 
@@ -101,20 +104,29 @@ export function NewRequirementScreen() {
 
   useEffect(() => { void loadBranches(); }, [loadBranches]);
 
-  // 子工程只用来决定「这条分支还要在哪几个工程里建」，界面上不展开，读不到就只建根目录。
-  useEffect(() => {
+  // 子工程一并摆出来：勾上的会用同一个分支名各建一条，读不到就退化成只建根目录。
+  const loadProjects = useCallback(async () => {
     if (!programId || !gitEnabled) return;
-    let active = true;
-    void fetchGitProjects(programId)
-      .then((catalog) => {
-        if (!active) return;
-        setTargets(catalog.projects
-          .filter((project) => project.path && project.isGitRepository && !project.error && !project.hasBranch)
-          .map((project) => project.path));
-      })
-      .catch(() => undefined);
-    return () => { active = false; };
+    setProjectsLoading(true);
+    try {
+      const catalog = await fetchGitProjects(programId);
+      const children = catalog.projects.filter((project) => project.path);
+      setProjects(children);
+      // 默认全勾：不是仓库、读不动或已经有这条分支的工程建不出来，勾了也是白跑一轮。
+      setTargets(children.filter(branchable).map((project) => project.path));
+    } catch {
+      setProjects([]);
+      setTargets([]);
+    } finally {
+      setProjectsLoading(false);
+    }
   }, [gitEnabled, programId]);
+
+  useEffect(() => { void loadProjects(); }, [loadProjects]);
+
+  const toggleTarget = (path: string) => {
+    setTargets((current) => (current.includes(path) ? current.filter((item) => item !== path) : [...current, path]));
+  };
 
   const enterChat = (requirementKey: string) => {
     // replace 而不是 push：新建这一屏已经完成使命，返回该回工作台而不是再走一遍。
@@ -203,12 +215,12 @@ export function NewRequirementScreen() {
           <button
             className="icon-button"
             type="button"
-            onClick={() => void loadBranches()}
+            onClick={() => { void loadBranches(); void loadProjects(); }}
             aria-label="刷新分支"
             title="刷新分支"
-            disabled={!gitEnabled || branchesLoading || creating}
+            disabled={!gitEnabled || branchesLoading || projectsLoading || creating}
           >
-            <RotateCw size={21} className={branchesLoading ? "spin-icon" : ""} />
+            <RotateCw size={21} className={branchesLoading || projectsLoading ? "spin-icon" : ""} />
           </button>
         </div>
       </header>
@@ -268,9 +280,40 @@ export function NewRequirementScreen() {
                     disabled={creating}
                   />
                   <p className="field-help">
-                    {targets.length ? `同时在 ${targets.length} 个子工程建同名分支。` : "只在根工作目录建这一条分支。"}
+                    {projectsLoading && !projects.length
+                      ? "正在读取工作目录下的子工程。"
+                      : targets.length
+                        ? `根工作目录之外，同时在 ${targets.length} 个子工程建同名分支。`
+                        : "只在根工作目录建这一条分支。"}
                   </p>
                 </div>
+                {projects.length ? (
+                  <div className="field">
+                    <label id="new-requirement-targets">一起建分支的子工程</label>
+                    <p className="field-help">默认全选，不想跟着建的取消勾选即可。</p>
+                    <div className="option-list" role="group" aria-labelledby="new-requirement-targets">
+                      {projects.map((project) => {
+                        const selected = targets.includes(project.path);
+                        const disabled = creating || !branchable(project);
+                        return (
+                          <label className={`option-row${selected ? " is-selected" : ""}`} key={project.path}>
+                            <span>
+                              <strong>{project.name || project.path}</strong>
+                              <small>{projectNote(project)}</small>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={() => toggleTarget(project.path)}
+                              disabled={disabled}
+                              aria-label={`一起建分支 ${project.name || project.path}`}
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : (
               <p className="field-help">该项目没有启用 Git，需求不关联分支。</p>
@@ -310,6 +353,7 @@ export function NewRequirementScreen() {
           setError("");
           setNotice(summary);
           void loadBranches();
+          void loadProjects();
         }}
       />
 
@@ -340,4 +384,17 @@ function newRequirementInput(programId: number) {
     owners: [],
     assistants: [],
   };
+}
+
+/** 能不能跟着建这条分支：不是仓库、读不动、或者已经有同名分支的工程都建不出来。 */
+function branchable(project: GitProjectSnapshot) {
+  return Boolean(project.isGitRepository) && !project.error && !project.hasBranch;
+}
+
+/** 子工程那行的副标题：先说清为什么建不了，再说它此刻停在哪条分支上。 */
+function projectNote(project: GitProjectSnapshot) {
+  if (project.error) return `读不到：${project.error}`;
+  if (!project.isGitRepository) return "不是 Git 仓库，建不了分支";
+  if (project.hasBranch) return "已经有这条分支";
+  return project.currentBranch || "游离 HEAD";
 }
