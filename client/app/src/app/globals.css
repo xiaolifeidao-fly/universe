@@ -102,6 +102,13 @@
   --app-warning-soft: rgba(168, 109, 12, 0.13);
   --app-on-brand: #ffffff;
 
+  /* 图表系列：目前只有「哪个执行器」这一条分类轴，两支色。挑法和校验结果记在
+     globals.css 里「需求消耗面板」那一段，换色前先去看一眼。只给色块用，
+     承载文字一律走墨色令牌。 */
+  --app-series-codex: #0f9b90;
+  --app-series-claude: #c2560f;
+  --app-series-track: rgba(12, 74, 84, 0.1);
+
   /* 品牌渐变：只用在主按钮、进度条这类实心图形上。两端都够暗，白字仍然可读。 */
   --app-brand-gradient: linear-gradient(180deg, #0d8a80, #0a7168);
   --app-progress-gradient: linear-gradient(90deg, var(--manager-primary), var(--manager-primary-vivid));
@@ -714,7 +721,8 @@ a {
   transform: scale(0.94);
 }
 
-.nav-link span {
+/* 只截断文字标签：图标容器要放得下溢出的未读角标，不能一起 overflow:hidden。 */
+.nav-link__label {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2715,37 +2723,407 @@ a {
   color: var(--app-muted);
 }
 
+/* ---------- 需求消耗面板 ----------
+
+   整块面板只有两条系列：Codex 和 Claude。所有横条都按这两条叠出来，颜色从头到尾
+   只表示「哪个执行器」，别的维度一律换别的表达（长度、位置、墨色），否则同一支颜色
+   在一屏里表示两件事，图例就作废了。
+
+   两支系列色是按 OKLCH 挑过再校验的，别随手改：
+     Codex  #0f9b90  品牌青往鲜一档取。品牌色 #0a7d74 的色度只有 0.091，低于 0.10
+                     的下限，当成色块会读成灰，所以图上不用它 —— 但它照样承载文字。
+     Claude #c2560f  就是 --manager-orange。
+   白底、沉底卡（#eef2f3）、画布（#f1f7f8）上都过 3:1；红绿色盲模拟下两者 ΔE 14.2、
+   常人视觉 25.0，都在门槛之上。要换色先跑一遍色板校验再动手。 */
+
 .usage-sheet {
   display: grid;
-  gap: 20px;
+  gap: 18px;
 }
 
-.usage-rows {
-  display: grid;
-  gap: 8px;
+/* 网格子项默认 min-width: auto，会被里面撑不下的内容顶宽（明细表就是），
+   于是整块面板横着溢出到面板外面。钉死 0，让溢出留在自己的滚动容器里。 */
+.usage-sheet > * {
+  min-width: 0;
 }
 
-/* 「入 2610k 缓存 2543k 出 40k $2.94」加上左边的名字，375 宽下并排放不下。
-   允许整行折行：放得下就左名右数，放不下时数字整段落到第二行，而不是被挤压。 */
-.usage-row {
+/* 回读时把旧的那份压暗留在原地，不闪一版骨架屏：数字跳一下比等一下更难受。 */
+.usage-sheet.is-refreshing {
+  opacity: 0.6;
+  transition: opacity var(--app-t);
+}
+
+/* ---- 顶上的总账：一个大数 + 一根分账条 ---- */
+
+.usage-hero {
+  padding: 15px 16px 14px;
+  background: linear-gradient(158deg, var(--app-surface-subtle), var(--app-canvas-soft));
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius);
+}
+
+.usage-hero__head {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 5px 14px;
-  padding: 10px 12px;
-  background: var(--app-surface-sunken);
-  border-radius: var(--app-radius-sm);
+  gap: 12px;
+}
+
+.usage-hero__label {
+  margin: 0;
+  color: var(--app-ink-soft);
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.usage-hero__cost {
+  margin: 0;
+  font-size: var(--app-fs-base);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 大数用比例数字：tabular 给每个数字都留 0 的宽度，"1.28M" 在 40px 上会散开。 */
+.usage-hero__figure {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 15px;
+}
+
+.usage-hero__figure strong {
+  font-size: 40px;
+  font-weight: 680;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-variant-numeric: proportional-nums;
+}
+
+.usage-hero__figure span {
+  color: var(--app-muted);
   font-size: var(--app-fs-md);
 }
 
-.usage-row__name {
+/* 图例带上具体数和占比：颜色只负责认人，读数不该逼人去点开什么。 */
+.usage-legend {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 11px 0 0;
+  padding: 0;
+  list-style: none;
 }
 
+.usage-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--app-fs-sm);
+}
+
+.usage-legend li > span {
+  color: var(--app-ink-soft);
+}
+
+.usage-legend strong {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-legend em {
+  color: var(--app-muted);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.usage-dot.is-codex {
+  background: var(--app-series-codex);
+}
+
+.usage-dot.is-claude {
+  background: var(--app-series-claude);
+}
+
+/* ---- 横条本体 ---- */
+
+/* 段与段之间空 2px 露出底色来分隔，不描边 —— 描边等于往图上加不表示数据的墨。
+   每段自己收成胶囊：8px 高的条上圆角和方角肉眼分不出，但 0.3% 的那一段有了 3px
+   的下限就不会消失，不然会被读成「那家没跑过」。 */
+.usage-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+}
+
+.usage-bar__seg,
+.usage-bar__rest {
+  flex: 0 1 0;
+  min-width: 3px;
+  border-radius: 999px;
+  transition: flex-grow 0.45s var(--app-ease-out);
+}
+
+.usage-bar__seg.is-codex {
+  background: var(--app-series-codex);
+}
+
+.usage-bar__seg.is-claude {
+  background: var(--app-series-claude);
+}
+
+.usage-bar__rest {
+  background: var(--app-series-track);
+}
+
+/* ---- 三张指标卡 ---- */
+
+.usage-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usage-metric {
+  min-width: 0;
+  padding: 12px 12px 11px;
+  background: var(--app-surface-sunken);
+  border-radius: var(--app-radius-sm);
+}
+
+.usage-metric__icon {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--app-brand);
+}
+
+/* 「4h 12m」在 320 宽下按 20px 排会折成两行，把这张卡顶得比旁边两张高一截。
+   跟着视口收一档字号，三张卡就还是齐的。 */
+.usage-metric strong {
+  display: block;
+  font-size: clamp(16px, 5.4vw, 20px);
+  font-weight: 650;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.usage-metric__label {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- 缓存命中 ----
+   单独占一条：命中的那部分输入通常只按一折计价，是这张账单上唯一能主动压下来的数，
+   混进指标卡会被当成又一个只读的统计量。填色和底槽取同一支色阶的深浅两档，
+   整根条都在说同一件事，状态才读得出来。 */
+
+.usage-cache {
+  padding: 13px 14px 12px;
+  background: var(--app-surface-sunken);
+  border-radius: var(--app-radius-sm);
+}
+
+.usage-cache__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-cache__head > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--app-ink-soft);
+  font-size: var(--app-fs-md);
+}
+
+.usage-cache__head strong {
+  font-size: var(--app-fs-lg);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-cache__track {
+  display: block;
+  height: 8px;
+  margin: 10px 0 8px;
+  overflow: hidden;
+  background: var(--app-brand-soft);
+  border-radius: 999px;
+}
+
+.usage-cache__track i {
+  display: block;
+  width: var(--cache-share, 0%);
+  height: 100%;
+  background: var(--app-brand);
+  border-radius: inherit;
+  transition: width 0.45s var(--app-ease-out);
+}
+
+.usage-cache__note {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+}
+
+/* ---- 按量排序的条形行 ---- */
+
+.usage-bars {
+  display: grid;
+  gap: 8px;
+}
+
+/* 能点开的行和不能点的行长得一模一样，只在右边多一枚箭头当提示 —— 换个底色或加个
+   边框，会让这几行看起来跟上面的合计不是同一类东西。 */
+.usage-bar-row {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  padding: 11px 13px 12px;
+  background: var(--app-surface-sunken);
+  border-radius: var(--app-radius-sm);
+  text-align: left;
+}
+
+.usage-bar-row__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.usage-bar-row__name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--app-fs-md);
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.usage-bar-row__value {
+  flex: 0 0 auto;
+  font-size: var(--app-fs-md);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-bar-row__value.is-empty {
+  color: var(--app-muted);
+  font-weight: 400;
+}
+
+.usage-bar-row__go {
+  flex: 0 0 auto;
+  align-self: center;
+  color: var(--app-muted);
+}
+
+.usage-bar-row__meta {
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+}
+
+/* ---- 展开 / 收起 ---- */
+
+.usage-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 10px;
+  padding: 0 14px;
+  background: transparent;
+  border: 1px solid var(--app-line-strong);
+  border-radius: var(--app-radius-sm);
+  color: var(--app-ink-soft);
+  font-size: var(--app-fs-md);
+  font-weight: 550;
+}
+
+/* 明细是给「图上看不清」兜底的，不是又一个主动作：去掉边框，让它比上面那颗轻一档。 */
+.usage-more.is-table {
+  margin-top: 0;
+  border-color: transparent;
+  color: var(--app-muted);
+}
+
+/* ---- 明细表：图上读不出的位数在这里读，也是不靠颜色认系列时的那条退路 ---- */
+
+.usage-table__scroll {
+  margin-top: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--app-fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-table th,
+.usage-table td {
+  padding: 8px 7px;
+  border-bottom: 1px solid var(--app-line);
+  text-align: right;
+}
+
+.usage-table th:first-child,
+.usage-table td:first-child {
+  padding-left: 0;
+  text-align: left;
+}
+
+.usage-table th:last-child,
+.usage-table td:last-child {
+  padding-right: 0;
+}
+
+.usage-table thead th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.usage-table thead th .usage-dot {
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+.usage-table tbody th {
+  color: var(--app-muted);
+  font-weight: 500;
+}
+
+/* 合计那一行加粗收尾，不再画横线：它是这张表的落点，不是又一条明细。 */
+.usage-table tr.is-total th,
+.usage-table tr.is-total td {
+  font-weight: 650;
+}
+
+.usage-table tbody tr:last-child th,
+.usage-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* 任务行、会话行末尾那一小串数字。消耗面板之外还有几处在用，别跟着面板一起删。 */
 .usage-row__nums {
   display: flex;
   flex-wrap: wrap;
@@ -2762,49 +3140,6 @@ a {
 .usage-row__nums i {
   color: var(--app-muted);
   opacity: 0.75;
-}
-
-.usage-task-list {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.usage-task-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 5px 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--app-line);
-  font-size: var(--app-fs-md);
-}
-
-.usage-task-list li:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
-.usage-task-list strong {
-  min-width: 0;
-  font-weight: 500;
-  overflow-wrap: anywhere;
-}
-
-/* 需求会话那几行能点开看正文。按钮要长得跟旁边的行一模一样，只在右边多一枚箭头
-   当提示——换个底色或加个边框，会让这几行看起来跟上面的合计不是同一类东西。 */
-button.usage-row {
-  width: 100%;
-  text-align: left;
-}
-
-.usage-row__go {
-  flex-shrink: 0;
-  margin-left: auto;
-  color: var(--app-muted);
 }
 
 /* 面板从消耗翻到某一块会话正文之后的那一层：返回和重读各占一头，正文照常往下铺。 */
@@ -4886,7 +5221,8 @@ button.usage-row {
 .nav-link__badge {
   position: absolute;
   top: -6px;
-  left: 12px;
+  /* 贴右边定位：数字变宽时往图标里长，不会顶到隔壁的 tab 上去 */
+  right: -8px;
   min-width: 19px;
   height: 19px;
   display: grid;

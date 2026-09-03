@@ -88,7 +88,7 @@ export function MobileShell({ children }: { children: ReactNode }) {
                     </span>
                   ) : null}
                 </span>
-                <span>{item.label}</span>
+                <span className="nav-link__label">{item.label}</span>
               </Link>
             );
           })}
