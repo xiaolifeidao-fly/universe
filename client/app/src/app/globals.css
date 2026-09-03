@@ -1,56 +1,64 @@
 /* ===== 交付台 · 移动端设计令牌 =====
-   与 PC 控制台（client/web）共用同一套 --manager-* 令牌：品牌色是靛蓝，
-   绿色只表示「完成 / 成功」，两套语义互不借用。移动端在此之上再叠一层
-   --app-* 别名，负责触控尺寸、安全区和材质，颜色一律回落到 manager 令牌，
-   改主题时只需要动这一段。
+   主题：薄荷青（清新浅色）。品牌色是青绿 #0a7d74（色相 175°），成功色是草绿
+   #38871f（色相 106°），两者拉开 70° 色相差 —— 沿用原来「品牌与成功互不借用」
+   的约束，只是把品牌从靛蓝换成青绿之后，必须靠色相距离而不是冷暖来区分，
+   否则小色块上会糊成一片。
+
+   青色分两档，别混用：
+     --manager-primary        承载文字和白字按钮，白底 5.00:1，过 AA
+     --manager-primary-vivid  只给进度条、环形图、渐变、装饰用，对比度不达标，
+                              永远不要拿它写字
    ============================================================ */
 
 :root {
   color-scheme: light;
 
-  /* surfaces */
-  --manager-bg: #eef1f6;
-  --manager-bg-soft: #f2f5f9;
+  /* surfaces —— 画布带一点青，和纯白卡片拉出 1.08 的明度差 */
+  --manager-bg: #f1f7f8;
+  --manager-bg-soft: #f7fbfc;
   --manager-surface: #ffffff;
   --manager-surface-raised: #ffffff;
-  --manager-panel: #f2f5f9;
-  --manager-panel-muted: rgba(16, 24, 40, 0.07);
+  --manager-panel: #eaf3f5;
+  --manager-panel-muted: rgba(12, 74, 84, 0.07);
 
   /* lines */
-  --manager-border: rgba(16, 24, 40, 0.09);
-  --manager-border-strong: rgba(16, 24, 40, 0.14);
+  --manager-border: rgba(12, 74, 84, 0.09);
+  --manager-border-strong: rgba(12, 74, 84, 0.18);
 
-  /* ink */
-  --manager-text: #101828;
-  --manager-text-soft: #3d4757;
-  --manager-text-faint: #667085;
+  /* ink —— 墨青而不是纯黑，浅色底下少一分生硬 */
+  --manager-text: #16303b;
+  --manager-text-soft: #3c5a67;
+  --manager-text-faint: #5a7a86;
 
   /* brand — interaction only */
-  --manager-primary: #4f46e5;
-  --manager-primary-hover: #4338ca;
-  --manager-primary-light: rgba(79, 70, 229, 0.1);
-  --manager-primary-muted: rgba(79, 70, 229, 0.16);
+  --manager-primary: #0a7d74;
+  --manager-primary-hover: #086b64;
+  --manager-primary-light: rgba(10, 125, 116, 0.1);
+  --manager-primary-muted: rgba(10, 125, 116, 0.16);
+  /* 图形专用：进度、环形、渐变、图表。不承载文字。 */
+  --manager-primary-vivid: #12b3a6;
+  --manager-primary-glow: #3ad6c4;
 
   /* categorical accents */
-  --manager-green: #12a150;
-  --manager-cyan: #0e8ba8;
-  --manager-blue: #2563eb;
+  --manager-green: #38871f;
+  --manager-cyan: #0e7c92;
+  --manager-blue: #2e72d2;
   --manager-violet: #7c3aed;
-  --manager-amber: #c07600;
-  --manager-orange: #e0631b;
-  --manager-red: #dc2626;
+  --manager-amber: #a86d0c;
+  --manager-orange: #c2560f;
+  --manager-red: #c93b52;
 
   /* status semantics — never reused as brand */
-  --manager-success: #12a150;
-  --manager-warning: #c07600;
-  --manager-danger: #dc2626;
+  --manager-success: #38871f;
+  --manager-warning: #a86d0c;
+  --manager-danger: #c93b52;
 
-  /* elevation */
-  --manager-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --manager-shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 4px 12px -4px rgba(16, 24, 40, 0.1);
-  --manager-shadow-md: 0 2px 4px rgba(16, 24, 40, 0.05), 0 12px 24px -8px rgba(16, 24, 40, 0.14);
-  --manager-shadow-lg: 0 24px 60px -20px rgba(16, 24, 40, 0.28);
-  --manager-ring: 0 0 0 3px rgba(79, 70, 229, 0.22);
+  /* elevation —— 阴影染青，灰黑阴影压在薄荷底上会发脏 */
+  --manager-shadow-sm: 0 1px 2px rgba(12, 74, 84, 0.05), 0 3px 8px -4px rgba(12, 74, 84, 0.12);
+  --manager-shadow: 0 1px 2px rgba(12, 74, 84, 0.04), 0 6px 16px -6px rgba(12, 74, 84, 0.17);
+  --manager-shadow-md: 0 2px 4px rgba(12, 74, 84, 0.05), 0 12px 24px -8px rgba(12, 74, 84, 0.14);
+  --manager-shadow-lg: 0 24px 60px -20px rgba(12, 74, 84, 0.3);
+  --manager-ring: 0 0 0 3px rgba(10, 125, 116, 0.22);
 
   /* radii */
   --manager-r-sm: 8px;
@@ -81,35 +89,62 @@
   --app-brand-dark: var(--manager-primary-hover);
   --app-brand-soft: var(--manager-primary-light);
   --app-brand-muted: var(--manager-primary-muted);
+  --app-brand-vivid: var(--manager-primary-vivid);
+  --app-brand-glow: var(--manager-primary-glow);
   --app-cobalt: var(--manager-blue);
-  --app-cobalt-soft: rgba(37, 99, 235, 0.1);
+  --app-cobalt-soft: rgba(46, 114, 210, 0.1);
   --app-success: var(--manager-success);
-  --app-success-soft: rgba(18, 161, 80, 0.12);
+  --app-success-soft: rgba(56, 135, 31, 0.13);
   --app-coral: var(--manager-danger);
-  --app-coral-strong: #b91c1c;
-  --app-coral-soft: rgba(220, 38, 38, 0.1);
+  --app-coral-strong: #a92c41;
+  --app-coral-soft: rgba(201, 59, 82, 0.1);
   --app-warning: var(--manager-warning);
-  --app-warning-soft: rgba(192, 118, 0, 0.12);
+  --app-warning-soft: rgba(168, 109, 12, 0.13);
+  --app-on-brand: #ffffff;
+
+  /* 品牌渐变：只用在主按钮、进度条这类实心图形上。两端都够暗，白字仍然可读。 */
+  --app-brand-gradient: linear-gradient(180deg, #0d8a80, #0a7168);
+  --app-progress-gradient: linear-gradient(90deg, var(--manager-primary), var(--manager-primary-vivid));
 
   /* 材质：只有吸顶栏、底部导航和面板才用半透明，正文卡片一律不透明，
-     叠太多 backdrop-filter 会让滚动掉帧，也会把靛蓝洗成灰紫。 */
-  --app-bar-material: rgba(255, 255, 255, 0.82);
+     叠太多 backdrop-filter 会让滚动掉帧，也会把青绿洗成灰。 */
+  --app-bar-material: rgba(255, 255, 255, 0.84);
   --app-blur: saturate(180%) blur(20px);
-  --app-scrim: rgba(16, 24, 40, 0.42);
+  --app-scrim: rgba(12, 46, 54, 0.42);
+
+  /* 字号阶梯：PC 那套 11 / 12 / 13 是鼠标距离下的密度，搬到手机上一律偏小。
+     这里按 iOS 的 caption / footnote / subheadline / callout / body 重排，正文
+     落在 17，次要信息 15，只有角标和时间戳才允许掉到 13 以下。 */
+  --app-fs-2xs: 12px;   /* 角标、序号，不承载可读正文 */
+  --app-fs-xs: 13px;    /* 时间戳、极短状态词 */
+  --app-fs-sm: 14px;    /* 标签、元信息 */
+  --app-fs-md: 15px;    /* 次要正文、卡片副标题 */
+  --app-fs-base: 16px;  /* 列表主标题 */
+  --app-fs-body: 17px;  /* 正文、按钮、输入框 */
+  --app-fs-lg: 19px;    /* 小节标题 */
+  --app-fs-xl: 20px;
+  --app-fs-2xl: 22px;
+  --app-fs-3xl: 25px;   /* 卡片大标题、指标数字 */
+  --app-fs-4xl: 30px;   /* 页面标题 */
+  --app-fs-5xl: 33px;   /* 首屏 hero 标题 */
+  --app-fs-6xl: 36px;   /* 单个大数字 */
 
   /* 触控几何 */
   /* 圆角比 PC 大一档：同样的令牌关系（sm < base < lg < xl），但手指点的目标
-     在 8px 圆角下会显得发硬，取 iOS 常用的 10 / 14 / 18 / 22。 */
-  --app-radius-sm: 10px;
-  --app-radius: 14px;
-  --app-radius-lg: 18px;
-  --app-radius-xl: 22px;
-  --app-tap: 44px;
-  --app-gutter: 16px;
+     在小圆角下会显得发硬；字号整体抬高后跟着放大到 12 / 16 / 20 / 26。
+     触控目标从 44 提到 48：正文 17px 之后 44 的按钮会显得被字撑满。 */
+  --app-radius-sm: 12px;
+  --app-radius: 18px;
+  --app-radius-lg: 20px;
+  --app-radius-xl: 26px;
+  --app-tap: 48px;
+  --app-gutter: 18px;
 
   --app-shadow: var(--manager-shadow-md);
   --app-shadow-soft: var(--manager-shadow);
   --app-shadow-hair: var(--manager-shadow-sm);
+  /* 浮层（安装提示、底部面板、离线横幅）比卡片再高一层，用最大的那档 */
+  --app-shadow-lg: var(--manager-shadow-lg);
 
   /* 动效：默认曲线跟 PC 一致，弹出层用带回弹的曲线，更接近原生 */
   --app-ease: var(--manager-ease);
@@ -124,7 +159,22 @@
 
 html {
   min-height: 100%;
-  background: var(--app-canvas);
+  /* 背景柔光：薄荷在左上、淡粉在右上、天蓝在右下，三团都压在 22% 以下，
+     只做氛围，不能让任何一团在白卡片旁边显出边界。
+
+     刻意不用 background-attachment: fixed，也不用 position:fixed 的负 z-index 伪
+     元素：前者在 iOS Safari 上会被降级并拖累滚动重绘，后者实测会被提升成独立
+     合成层，把根滚动层的绘制限制在首屏 —— 首屏之外的卡片直接不画了。
+     这里改成 100vh 高、不重复的背景层：光晕铺满第一屏（hero 和概览区所在的
+     位置，也正是设计稿里光晕最重的地方），往下自然过渡回纯画布色。 */
+  background:
+    radial-gradient(56% 40% at 10% -2%, rgba(94, 224, 196, 0.24), transparent 70%),
+    radial-gradient(46% 34% at 96% 4%, rgba(255, 201, 207, 0.18), transparent 72%),
+    radial-gradient(62% 50% at 92% 92%, rgba(155, 196, 248, 0.22), transparent 70%),
+    var(--app-canvas);
+  background-repeat: no-repeat;
+  background-size: 100% 100vh, 100% 100vh, 100% 100vh, auto;
+  background-attachment: scroll;
   /* iOS 上让整页不能橡皮筋，滚动交给内部容器，避免下拉时露出白底 */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -134,9 +184,9 @@ body {
   min-height: 100%;
   margin: 0;
   color: var(--app-ink);
-  background: var(--app-canvas);
+  background: transparent;
   font-family: var(--manager-sans);
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   line-height: 1.45;
   letter-spacing: 0;
   overscroll-behavior-y: none;
@@ -231,7 +281,7 @@ a {
   align-content: center;      /* 行高按内容算，别把几行内容摊满整屏 */
   grid-auto-rows: max-content;
   gap: 4px;
-  padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+  padding: max(26px, env(safe-area-inset-top)) 22px max(26px, env(safe-area-inset-bottom));
 }
 
 .loading-stack,
@@ -241,8 +291,8 @@ a {
 }
 
 .loading-dot {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   margin: 0 auto 14px;
   border: 3px solid var(--app-line);
   border-top-color: var(--app-brand);
@@ -255,7 +305,7 @@ a {
   min-height: 100dvh;
   margin: 0 auto;
   background: transparent;
-  padding: 0 var(--app-gutter) calc(84px + env(safe-area-inset-bottom));
+  padding: 0 var(--app-gutter) calc(78px + env(safe-area-inset-bottom));
 }
 
 /* 导航栏贴着屏幕顶边，安全区由自身内边距吃掉；滚动时内容从半透明材质下穿过，
@@ -264,13 +314,13 @@ a {
   position: sticky;
   top: 0;
   z-index: 18;
-  min-height: 52px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   margin: 0 calc(var(--app-gutter) * -1) 20px;
-  padding: max(8px, env(safe-area-inset-top)) var(--app-gutter) 8px;
+  padding: max(10px, env(safe-area-inset-top)) var(--app-gutter) 10px;
   border-bottom: 1px solid transparent;
   transition: border-color var(--app-t), box-shadow var(--app-t);
 }
@@ -289,7 +339,7 @@ a {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .brand-mark,
@@ -297,16 +347,16 @@ a {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  color: #fff;
-  background: var(--app-brand);
+  color: var(--app-on-brand);
+  background: var(--app-brand-gradient);
   border-radius: var(--app-radius-sm);
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--app-radius-sm);
-  box-shadow: 0 4px 12px -4px rgba(79, 70, 229, 0.55);
+  box-shadow: 0 4px 12px -4px rgba(10, 125, 116, 0.55);
 }
 
 .brand-mark svg {
@@ -315,30 +365,43 @@ a {
 
 .brand-title {
   display: block;
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   font-weight: 700;
 }
 
 .brand-subtitle,
 .muted {
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .connection-state {
   min-width: 0;
+  max-width: 46%;
+  overflow: hidden;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 10px;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 12px;
   color: var(--app-muted);
   background: var(--app-surface-sunken);
   border: 1px solid transparent;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* 机器名是主机随便起的，挤不下就省略；「在线／离线」这两个字任何时候都不许被省。 */
+.connection-state__name {
+  min-width: 2em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connection-state__word {
+  flex: 0 0 auto;
 }
 
 .connection-state__dot {
@@ -347,17 +410,13 @@ a {
   flex: 0 0 auto;
   background: var(--app-success);
   border-radius: 50%;
-  box-shadow: 0 0 0 3px rgba(18, 161, 80, 0.16);
-}
-
-.connection-state > svg {
-  display: none;
+  box-shadow: 0 0 0 3px rgba(56, 135, 31, 0.18);
 }
 
 .connection-state.is-offline {
   color: var(--app-coral-strong);
   background: var(--app-coral-soft);
-  border-color: rgba(220, 38, 38, 0.2);
+  border-color: rgba(201, 59, 82, 0.2);
 }
 
 .connection-state.is-offline .connection-state__dot {
@@ -373,7 +432,7 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
   margin-bottom: 20px;
 }
 
@@ -381,7 +440,7 @@ a {
 .offline-page h1,
 .login-title {
   margin: 0;
-  font-size: 27px;
+  font-size: var(--app-fs-4xl);
   line-height: 1.18;
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -396,21 +455,30 @@ a {
 
 /* 眉标一律靛蓝：写在 .screen-title-row 里的那些原本被 p 的 muted 覆盖掉，
    同一种元素在两个页面上一个灰一个蓝，看着就像两套设计。 */
+/* 详情页的标题是用户自己写的需求名/任务名，动辄十几个字，右边还挂着两颗图标
+   按钮。30px 会折到三四行，把首屏全占掉；这类标题降一档，静态页（工作台、项目、
+   设置）保持大标题不动。 */
+.screen-title-row.is-detail h1 {
+  font-size: var(--app-fs-3xl);
+  line-height: 1.25;
+}
+
 .eyebrow,
 .screen-title-row p.eyebrow {
   margin: 0 0 4px;
   color: var(--app-brand);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   font-weight: 600;
 }
 
 .card {
   min-width: 0;
-  padding: 16px;
+  padding: 18px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow-soft);
+  transition: box-shadow var(--app-t), border-color var(--app-t);
 }
 
 .card + .card,
@@ -422,28 +490,28 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   margin: 0 0 10px;
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   font-weight: 650;
 }
 
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .metric {
   min-width: 0;
-  padding: 13px;
+  padding: 15px;
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
 }
 
 .metric strong {
   display: block;
-  font-size: 22px;
+  font-size: var(--app-fs-3xl);
   line-height: 1.15;
 }
 
@@ -452,7 +520,7 @@ a {
   overflow: hidden;
   margin-top: 5px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -461,7 +529,7 @@ a {
 .project-list,
 .detail-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .activity-row,
@@ -469,12 +537,12 @@ a {
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: 14px;
 }
 
 .activity-icon {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
@@ -486,20 +554,20 @@ a {
 .activity-row strong,
 .project-card h2 {
   overflow-wrap: anywhere;
-  font-size: 15px;
+  font-size: var(--app-fs-body);
 }
 
 .activity-row p,
 .project-card p {
   margin: 3px 0 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .project-card {
   position: relative;
   width: 100%;
-  padding: 16px;
+  padding: 18px;
   color: inherit;
   text-align: left;
   background: var(--app-surface);
@@ -549,7 +617,7 @@ a {
 .detail-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 9px;
   margin-top: 12px;
 }
 
@@ -557,14 +625,22 @@ a {
 .status {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 28px;
   max-width: 100%;
-  padding: 2px 9px;
+  padding: 2px 11px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 600;
   letter-spacing: 0.01em;
   overflow-wrap: anywhere;
+}
+
+/* 状态词是有限的几个（进行中 / 已完成 / 100%），不该被旁边的长标题挤到折行 ——
+   「100%」断成「100」+「%」两行看着就像坏了。标签是任意文本，仍然允许换行。 */
+.status {
+  flex: none;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .tag {
@@ -577,7 +653,9 @@ a {
   background: var(--app-brand-soft);
 }
 
-/* 完成态才用绿色。品牌靛蓝只表示「正在推进」。 */
+/* 完成态才用草绿 #38871f（色相 106°）。品牌青绿在 175°、警告琥珀在 37°，
+   三者两两相差 60° 以上，20px 的小字号下也分得开 —— 靛蓝换青绿之后，
+   区分品牌和成功不能再靠冷暖，只能靠色相距离。 */
 .status.is-success {
   color: var(--app-success);
   background: var(--app-success-soft);
@@ -593,6 +671,7 @@ a {
   background: var(--app-coral-soft);
 }
 
+/* 底部导航贴着屏幕下边缘铺满整条，安全区由自身内边距吃掉，不再做成留缝的悬浮胶囊 */
 .bottom-nav {
   position: fixed;
   z-index: 20;
@@ -601,35 +680,32 @@ a {
   left: 0;
   display: flex;
   justify-content: center;
-  padding: 8px 14px max(9px, env(safe-area-inset-bottom));
-  pointer-events: none;
+  padding: 0;
+  background: var(--app-bar-material);
+  border-top: 1px solid var(--app-line);
+  box-shadow: var(--app-shadow);
+  -webkit-backdrop-filter: var(--app-blur);
+  backdrop-filter: var(--app-blur);
 }
 
 .bottom-nav__inner {
-  width: min(100%, 728px);
+  width: min(100%, 760px);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 6px;
-  background: var(--app-bar-material);
-  border: 1px solid var(--app-line);
-  border-radius: var(--app-radius-lg);
-  box-shadow: var(--app-shadow-md, var(--app-shadow));
-  pointer-events: auto;
-  -webkit-backdrop-filter: var(--app-blur);
-  backdrop-filter: var(--app-blur);
+  padding: 6px var(--app-gutter) max(6px, env(safe-area-inset-bottom));
 }
 
 .nav-link {
   position: relative;
   min-width: 0;
-  min-height: 50px;
+  min-height: 58px;
   display: grid;
   place-items: center;
   gap: 3px;
-  padding: 6px 4px;
+  padding: 9px 4px;
   color: var(--app-muted);
   border-radius: var(--app-radius-sm);
-  font-size: 11px;
+  font-size: var(--app-fs-xs);
   font-weight: 600;
   transition: color var(--app-t), background-color var(--app-t);
 }
@@ -656,44 +732,44 @@ a {
 }
 
 /* 按钮语义与 PC 端的 antd 对齐：
-   primary = 实心靛蓝，secondary = 白底描边（antd default），quiet = 文字按钮，
-   danger = 实心红。高度按触控标准取 44，比 PC 的 32 大一档但配色完全同源。 */
+   primary = 品牌青渐变，secondary = 白底描边（antd default），quiet = 文字按钮，
+   danger = 实心红。高度取触控令牌 48，比 PC 的 32 大一档但配色完全同源。 */
 .button,
 .icon-button {
   min-height: var(--app-tap);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 10px;
   border-radius: var(--app-radius-sm);
-  font-size: 15px;
+  font-size: var(--app-fs-body);
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
 }
 
 .small-icon-button {
-  width: 36px;
-  min-height: 36px;
+  width: 40px;
+  min-height: 40px;
   border-radius: var(--app-radius-sm);
 }
 
 .button {
-  padding: 0 16px;
+  padding: 0 18px;
 }
 
 .button-primary {
-  color: #fff;
-  background: var(--app-brand);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 6px 16px -8px rgba(79, 70, 229, 0.6);
+  color: var(--app-on-brand);
+  background: var(--app-brand-gradient);
+  box-shadow: 0 1px 2px rgba(12, 74, 84, 0.1), 0 8px 20px -10px rgba(10, 125, 116, 0.7);
 }
 
 .button-primary:hover:not(:disabled) {
-  background: var(--app-brand-dark);
+  background: linear-gradient(180deg, #0a7168, #086158);
 }
 
 .button-primary:active:not(:disabled) {
-  background: var(--app-brand-dark);
+  background: linear-gradient(180deg, #086158, #075049);
   box-shadow: none;
 }
 
@@ -737,6 +813,16 @@ a {
   background: var(--app-surface-subtle);
 }
 
+.icon-button.is-primary {
+  color: var(--app-brand);
+  background: var(--app-brand-soft);
+  border-color: var(--app-brand-muted);
+}
+
+.icon-button.is-primary:active:not(:disabled) {
+  background: var(--app-brand-muted);
+}
+
 .icon-button.is-glass {
   color: var(--app-ink);
   background: var(--app-bar-material);
@@ -748,6 +834,15 @@ a {
 .stack-actions {
   display: flex;
   flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* 标题右边的动作永远横着排：让它去挤标题的宽度，而不是自己折成一竖列。
+   图标按钮竖着叠起来在手机上看着像出了 bug。 */
+.screen-title-row > .stack-actions,
+.workbench-hero__header > .stack-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   gap: 10px;
 }
 
@@ -760,7 +855,7 @@ a {
 .compact-list,
 .selection-list {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .compact-row {
@@ -768,8 +863,8 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 11px 0;
+  gap: 14px;
+  padding: 13px 0;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -781,7 +876,7 @@ a {
 .compact-row-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -802,13 +897,13 @@ a {
 .compact-row strong {
   display: block;
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .compact-row p {
   margin: 3px 0 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   overflow-wrap: anywhere;
 }
 
@@ -817,13 +912,13 @@ a {
 }
 
 .empty-state {
-  padding: 32px 20px;
+  padding: 34px 22px;
   text-align: center;
 }
 
 .empty-state__icon {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   display: grid;
   place-items: center;
   margin: 0 auto 12px;
@@ -839,21 +934,21 @@ a {
 
 .empty-state h2 {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--app-fs-lg);
 }
 
 .empty-state p {
   margin: 8px 0 0;
   color: var(--app-muted);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .detail-hero {
-  padding: 18px;
+  padding: 20px;
   color: #fff;
   background: linear-gradient(140deg, var(--app-brand) 0%, var(--app-brand-dark) 100%);
   border-radius: var(--app-radius);
-  box-shadow: 0 12px 28px -16px rgba(67, 56, 202, 0.9);
+  box-shadow: 0 12px 28px -16px rgba(8, 107, 100, 0.9);
 }
 
 /* hero 里一律用白色半透明底，别把绿/红塞进靛蓝块里 */
@@ -865,13 +960,15 @@ a {
 .detail-hero h1 {
   margin: 10px 0 0;
   overflow-wrap: anywhere;
-  font-size: 24px;
+  font-size: var(--app-fs-3xl);
   line-height: 1.22;
 }
 
 .detail-hero p {
   margin: 8px 0 0;
-  color: var(--app-line);
+  /* 原来写的是 --app-line（近乎透明的深色描边色），压在靛蓝底上几乎看不见。
+     hero 里的副文案一律用白色降透明度。 */
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .detail-hero .tag {
@@ -883,8 +980,8 @@ a {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
-  padding: 11px 0;
+  gap: 18px;
+  padding: 13px 0;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -894,7 +991,7 @@ a {
 
 .detail-row span {
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .detail-row strong {
@@ -905,17 +1002,17 @@ a {
 
 .form-grid {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
 .field {
   display: grid;
-  gap: 7px;
+  gap: 9px;
 }
 
 .field label {
   color: var(--app-ink-soft);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
   font-weight: 600;
 }
 
@@ -923,14 +1020,14 @@ a {
 .field textarea,
 .field select {
   width: 100%;
-  min-height: 46px;
-  padding: 11px 12px;
+  min-height: 50px;
+  padding: 13px 14px;
   color: var(--app-ink);
   background: var(--app-surface);
   border: 1px solid var(--app-line-strong);
   border-radius: var(--app-radius-sm);
   outline: none;
-  font-size: 16px; /* 低于 16px 时 iOS 聚焦会放大整页 */
+  font-size: var(--app-fs-body); /* 低于 16px 时 iOS 聚焦会放大整页 */
   transition: border-color var(--app-t), box-shadow var(--app-t);
   -webkit-appearance: none;
   appearance: none;
@@ -942,14 +1039,14 @@ a {
 }
 
 .field textarea {
-  min-height: 104px;
+  min-height: 112px;
   resize: vertical;
 }
 
 .inline-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 14px;
 }
 
 .inline-fields:has(.field:nth-child(3)) {
@@ -960,15 +1057,15 @@ a {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 11px;
   color: var(--app-ink);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
   font-weight: 650;
 }
 
 .checkbox-row input {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   margin: 0;
   accent-color: var(--app-brand);
 }
@@ -977,12 +1074,12 @@ a {
   display: flex;
   justify-content: space-between;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .planning-panel {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .planning-panel .section-heading,
@@ -996,7 +1093,7 @@ a {
 
 .planning-status {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .planning-preview {
@@ -1005,14 +1102,14 @@ a {
 
 .planning-preview h3 {
   margin: 0 0 7px;
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .planning-preview pre {
   max-height: 320px;
   margin: 0;
   overflow: auto;
-  padding: 11px;
+  padding: 13px;
   color: var(--app-ink);
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
@@ -1023,7 +1120,7 @@ a {
 
 .dependency-editor {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding-top: 4px;
 }
 
@@ -1033,8 +1130,8 @@ a {
 
 .dependency-row {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 10px;
+  padding: 12px;
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
 }
@@ -1042,13 +1139,13 @@ a {
 .dependency-sides {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .dependency-sides select {
   min-width: 0;
-  min-height: 40px;
-  padding: 7px 8px;
+  min-height: 44px;
+  padding: 9px 10px;
   color: var(--app-ink);
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -1067,7 +1164,7 @@ a {
 .form-message {
   margin: 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .form-message.is-error {
@@ -1078,10 +1175,33 @@ a {
   color: var(--app-brand);
 }
 
+/* 提示句里的行内按钮：话说到「提交」就能就地点开，不用先猜入口在哪一屏。
+   行内元素不能加高度，靠左右内边距把手指够得着的范围撑出来。 */
+.inline-button {
+  padding: 4px 6px;
+  margin: -4px 0;
+  color: var(--app-brand);
+  background: none;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.inline-button:active:not(:disabled) {
+  opacity: 0.6;
+}
+
+.inline-button:disabled {
+  color: var(--app-muted);
+  text-decoration: none;
+}
+
 .button-danger {
   color: #fff;
   background: var(--app-coral);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.08), 0 6px 16px -8px rgba(220, 38, 38, 0.55);
+  box-shadow: 0 1px 2px rgba(12, 74, 84, 0.08), 0 6px 16px -8px rgba(201, 59, 82, 0.55);
 }
 
 .button-danger:hover:not(:disabled),
@@ -1093,7 +1213,7 @@ a {
 .workspace-stack,
 .activity-section {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .execution-workspace {
@@ -1109,11 +1229,11 @@ a {
 }
 
 .workspace-tabs button {
-  min-height: 42px;
+  min-height: 46px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 9px;
   color: var(--app-muted);
   background: transparent;
   border-radius: var(--app-radius-sm);
@@ -1123,11 +1243,11 @@ a {
 .workspace-tabs button.is-active {
   color: var(--app-brand);
   background: var(--app-surface);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.12);
+  box-shadow: 0 1px 2px rgba(12, 74, 84, 0.12);
 }
 
 .workspace-project-card {
-  padding: 14px 16px;
+  padding: 16px 18px;
 }
 
 .workspace-project-heading,
@@ -1137,7 +1257,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
 }
 
 .workspace-project-heading {
@@ -1160,7 +1280,7 @@ a {
 .check-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .attachment-row {
@@ -1184,7 +1304,7 @@ a {
 .attachment-list,
 .event-timeline {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 12px 0;
   padding: 0;
   list-style: none;
@@ -1195,28 +1315,28 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 10px 12px;
   color: var(--app-muted);
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   overflow-wrap: anywhere;
 }
 
 .attachment-list button {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
   color: var(--app-muted);
   background: transparent;
-  font-size: 20px;
+  font-size: var(--app-fs-2xl);
 }
 
 .task-picker {
   max-height: 280px;
   display: grid;
-  gap: 7px;
+  gap: 9px;
   margin: 12px 0;
   overflow: auto;
 }
@@ -1225,8 +1345,8 @@ a {
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px;
+  gap: 12px;
+  padding: 12px;
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
 }
@@ -1253,25 +1373,25 @@ a {
 .task-picker__row small {
   margin-top: 3px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .command-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .command-grid__button {
-  min-height: 74px;
+  min-height: 78px;
   display: grid;
   place-items: center;
-  gap: 6px;
-  padding: 8px 4px;
+  gap: 8px;
+  padding: 10px 4px;
   color: var(--app-cobalt);
   background: var(--app-cobalt-soft);
   border-radius: var(--app-radius-sm);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 700;
 }
 
@@ -1281,18 +1401,18 @@ a {
 }
 
 .check-row {
-  min-height: 30px;
+  min-height: 34px;
   color: var(--app-muted);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .workspace-readonly {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
   margin: 0;
   color: var(--app-warning);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .command-row {
@@ -1303,7 +1423,7 @@ a {
 
 .command-row.is-focused {
   border-color: var(--app-brand);
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.18);
+  box-shadow: 0 0 0 2px rgba(10, 125, 116, 0.18);
 }
 
 .command-row__body {
@@ -1315,7 +1435,7 @@ a {
   display: block;
   margin-top: 3px;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   overflow-wrap: anywhere;
 }
 
@@ -1352,7 +1472,7 @@ a {
 .event-timeline li {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
 }
 
 .event-timeline__dot {
@@ -1375,29 +1495,29 @@ a {
 .event-timeline small {
   margin-top: 2px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .command-result-heading {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
   margin-top: 18px;
   color: var(--app-brand);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
   font-weight: 700;
 }
 
 .command-result {
   max-height: 280px;
   margin: 9px 0 0;
-  padding: 12px;
+  padding: 14px;
   overflow: auto;
   color: var(--app-ink);
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
   font-family: var(--app-mono);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1415,12 +1535,12 @@ a {
 .login-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 30px;
 }
 
 .login-card {
-  padding: 20px;
+  padding: 22px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
@@ -1429,7 +1549,7 @@ a {
 
 .login-form {
   display: grid;
-  gap: 15px;
+  gap: 17px;
   margin-top: 24px;
 }
 
@@ -1442,18 +1562,18 @@ a {
   left: 16px;
   width: min(calc(100% - 32px), 480px);
   margin: 0 auto;
-  padding: 14px;
+  padding: 18px;
   color: var(--app-ink);
   background: #fff;
   border: 1px solid var(--app-line);
-  border-radius: var(--app-radius-sm);
-  box-shadow: var(--app-shadow);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-lg);
 }
 
 .install-prompt__title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-weight: 700;
 }
 
@@ -1461,19 +1581,19 @@ a {
 .connection-banner p {
   margin: 7px 0 12px;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .install-prompt__actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 10px;
 }
 
 .connection-banner {
   color: var(--app-coral-strong);
-  background: rgba(220, 38, 38, 0.06);
-  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(201, 59, 82, 0.06);
+  border-color: rgba(201, 59, 82, 0.24);
 }
 
 .connection-banner p {
@@ -1482,8 +1602,8 @@ a {
 }
 
 .offline-mark {
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   margin: 0 auto 18px;
   color: var(--app-brand);
   background: var(--app-brand-soft);
@@ -1497,7 +1617,7 @@ a {
 
 .document-filter {
   display: flex;
-  gap: 7px;
+  gap: 9px;
   overflow-x: auto;
   margin: 0 -2px 20px;
   padding: 2px;
@@ -1510,13 +1630,13 @@ a {
 
 .document-filter button {
   flex: 0 0 auto;
-  min-height: 38px;
-  padding: 0 12px;
+  min-height: 42px;
+  padding: 0 14px;
   color: var(--app-muted);
   background: var(--app-surface-subtle);
   border: 1px solid transparent;
   border-radius: var(--app-radius-sm);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   font-weight: 650;
 }
 
@@ -1524,6 +1644,27 @@ a {
   color: var(--app-brand);
   background: var(--app-brand-soft);
   border-color: var(--app-brand-muted);
+}
+
+/* 阶段分栏上的份数：空栏不显示数字，有几份就摆几份，不用点进去才知道 */
+.document-filter__count {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--app-surface);
+  font-size: var(--app-fs-xs);
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.document-filter button.is-active .document-filter__count {
+  color: var(--app-brand);
+  background: var(--app-surface);
+}
+
+/* 项目级文档列表里标出这份文档属于哪条需求或任务的哪个阶段 */
+.document-row__owner {
+  color: var(--app-brand);
 }
 
 .document-group {
@@ -1534,9 +1675,9 @@ a {
 .document-preview h2 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin: 0 0 9px;
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   line-height: 1.3;
 }
 
@@ -1548,11 +1689,11 @@ a {
 
 .document-group h2 small {
   min-width: 22px;
-  padding: 1px 6px;
+  padding: 1px 8px;
   color: var(--app-muted);
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 650;
   text-align: center;
 }
@@ -1564,8 +1705,8 @@ a {
 .document-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 70px;
+  gap: 12px;
+  min-height: 76px;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -1573,8 +1714,8 @@ a {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   color: var(--app-cobalt);
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
@@ -1585,7 +1726,7 @@ a {
   min-width: 0;
   flex: 1;
   gap: 2px;
-  padding: 10px 0;
+  padding: 12px 0;
   color: var(--app-ink);
   background: transparent;
   text-align: left;
@@ -1600,13 +1741,13 @@ a {
 }
 
 .document-row__body strong {
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .document-row__body span,
 .document-row__body small {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .document-row__open {
@@ -1615,7 +1756,7 @@ a {
 
 .document-preview {
   margin-top: 24px;
-  padding: 15px;
+  padding: 17px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
@@ -1626,7 +1767,7 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   margin-bottom: 12px;
 }
 
@@ -1642,7 +1783,7 @@ a {
   max-height: min(58dvh, 540px);
   margin: 0;
   overflow: auto;
-  padding: 12px;
+  padding: 14px;
   color: var(--app-ink);
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
@@ -1658,6 +1799,19 @@ a {
   object-fit: contain;
   background: var(--app-surface-subtle);
   border-radius: var(--app-radius-sm);
+}
+
+.document-preview__media {
+  display: block;
+  width: 100%;
+  max-height: min(62dvh, 580px);
+  background: #000;
+  border-radius: var(--app-radius-sm);
+}
+
+.document-preview__audio {
+  width: 100%;
+  margin: 6px 0;
 }
 
 .document-preview__frame {
@@ -1684,8 +1838,8 @@ a {
 .notification-switch span {
   position: relative;
   display: block;
-  width: 46px;
-  height: 28px;
+  width: 51px;
+  height: 31px;
   background: var(--app-line);
   border-radius: 999px;
   transition: background 160ms ease;
@@ -1693,13 +1847,13 @@ a {
 
 .notification-switch span::after {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  width: 20px;
-  height: 20px;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
   background: var(--app-surface);
   border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.2);
+  box-shadow: 0 1px 3px rgba(12, 74, 84, 0.2);
   content: "";
   transition: transform 160ms ease;
 }
@@ -1709,11 +1863,11 @@ a {
 }
 
 .notification-switch input:checked + span::after {
-  transform: translateX(18px);
+  transform: translateX(20px);
 }
 
 .notification-switch input:focus-visible + span {
-  outline: 3px solid rgba(79, 70, 229, 0.24);
+  outline: 3px solid rgba(10, 125, 116, 0.24);
   outline-offset: 2px;
 }
 
@@ -1738,10 +1892,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  min-height: 32px;
+  min-height: 36px;
   margin-top: 2px;
   color: var(--app-brand);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   font-weight: 650;
 }
 
@@ -1757,8 +1911,8 @@ a {
 
 @media (min-width: 680px) {
   .mobile-shell {
-    padding-right: 24px;
-    padding-left: 24px;
+    padding-right: 26px;
+    padding-left: 26px;
   }
 
   .project-list {
@@ -1768,22 +1922,22 @@ a {
 
 @media (max-width: 360px) {
   .mobile-shell {
-    padding-right: 12px;
-    padding-left: 12px;
+    padding-right: 14px;
+    padding-left: 14px;
   }
 
   .screen-title-row h1,
   .offline-page h1,
   .login-title {
-    font-size: 23px;
+    font-size: var(--app-fs-3xl);
   }
 
   .metric-grid {
-    gap: 7px;
+    gap: 9px;
   }
 
   .metric {
-    padding: 10px;
+    padding: 12px;
   }
 }
 
@@ -1806,7 +1960,7 @@ a {
   background: none;
   border: 0;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   line-height: 1.3;
   cursor: pointer;
 }
@@ -1824,7 +1978,7 @@ a {
 
 .space-list {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1834,10 +1988,10 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 14px;
   width: 100%;
-  min-height: 54px;
-  padding: 10px 12px;
+  min-height: 58px;
+  padding: 12px 14px;
   color: inherit;
   text-align: left;
   background: var(--app-surface);
@@ -1867,7 +2021,7 @@ a {
 }
 
 .space-option__text .muted {
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .loading-stack .stack-actions {
@@ -1898,13 +2052,13 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
   margin-bottom: 18px;
 }
 
 .workbench-hero__header h1 {
   margin: 4px 0 0;
-  font-size: 30px;
+  font-size: var(--app-fs-5xl);
   line-height: 1.16;
   font-weight: 700;
 }
@@ -1912,43 +2066,50 @@ a {
 .workbench-hero__header p:not(.workbench-date) {
   margin: 7px 0 0;
   color: var(--app-muted);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .workbench-date {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   color: var(--app-brand);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   font-weight: 700;
 }
 
+/* 概览区对齐设计稿：不再是「一张白卡里左进度右三指标」，而是三张独立指标卡
+   在上、完成率卡在下。三指标并排时光靠数字颜色分不开，每张卡顶部给一条 18px
+   的短色标，颜色取这张卡自己的语义色。DOM 顺序是进度在前，用 order 调换视觉顺序。 */
 .workbench-overview {
   display: grid;
-  grid-template-columns: minmax(104px, 0.8fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin-top: 10px;
-  padding: 14px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.overview-progress {
+  order: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 15px 17px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow-soft);
 }
 
-.overview-progress {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding-right: 12px;
-  border-right: 1px solid var(--app-line-strong);
-}
-
 .overview-progress__value {
   color: var(--app-ink);
-  font-size: 34px;
+  font-size: var(--app-fs-6xl);
   line-height: 1;
   font-weight: 700;
 }
@@ -1956,31 +2117,51 @@ a {
 .overview-progress__value small {
   margin-left: 2px;
   color: var(--app-brand);
-  font-size: 15px;
+  font-size: var(--app-fs-body);
   font-weight: 650;
 }
 
+/* 标签挪到数字上方：先说这是什么，再给数字，和设计稿的读序一致。 */
 .overview-progress__label {
-  margin-top: 7px;
+  order: -1;
+  margin-bottom: 9px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .overview-metrics {
+  order: 1;
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
+  gap: 10px;
 }
 
 .overview-metrics > div {
+  position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr);
   align-content: center;
-  column-gap: 3px;
-  padding: 4px 6px;
+  column-gap: 4px;
+  padding: 25px 12px 13px;
   color: var(--app-brand);
+  background: var(--app-surface);
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius-sm);
+  box-shadow: var(--app-shadow-hair);
+}
+
+/* 顶部色标取 currentColor，跟着 is-done / has-alert 自动换色，不用再写三份 */
+.overview-metrics > div::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: 12px;
+  width: 18px;
+  height: 3px;
+  background: currentColor;
+  border-radius: 999px;
 }
 
 .overview-metrics svg {
@@ -1990,21 +2171,22 @@ a {
 
 .overview-metrics strong {
   grid-column: 2;
-  font-size: 18px;
+  font-size: var(--app-fs-2xl);
   line-height: 1.1;
+  font-weight: 650;
 }
 
 .overview-metrics span {
   grid-column: 1 / -1;
-  margin-top: 5px;
+  margin-top: 6px;
   overflow: hidden;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--app-fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 完成走绿、受阻走红、执行中留品牌靛蓝，和 PC 的状态语义同一套 */
+/* 完成走草绿、受阻走玫瑰、执行中留品牌青，和 PC 的状态语义同一套 */
 .overview-metrics .is-done {
   color: var(--app-success);
 }
@@ -2028,39 +2210,42 @@ a {
   border-radius: var(--app-radius);
 }
 
+/* 三个身份标签横排，一格只有 100 出头的宽度：图标 + 「我是提出者」横着放一定
+   会截成「我是提...」。改成上排图标配份数、下排整行放标签，标签独占整格宽度就
+   不用再省略，份数也从脚注升成这一格里最醒目的数。 */
 .workbench-role-tabs button {
   min-width: 0;
-  min-height: 64px;
+  min-height: 70px;
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr);
-  grid-template-rows: 1fr auto;
-  align-items: center;
-  gap: 2px 5px;
-  padding: 9px 7px;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 6px;
   color: var(--app-muted);
   background: transparent;
   border-radius: var(--app-radius-sm);
-  text-align: left;
+  text-align: center;
 }
 
-.workbench-role-tabs button > svg {
-  grid-row: 1;
+.workbench-role-tabs__top {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1;
 }
 
-.workbench-role-tabs button > span {
-  min-width: 0;
+.workbench-role-tabs__top strong {
+  font-size: var(--app-fs-lg);
+  font-weight: 700;
+}
+
+.workbench-role-tabs__label {
+  max-width: 100%;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.workbench-role-tabs button > strong {
-  grid-column: 1 / -1;
-  padding-left: 23px;
-  font-size: 11px;
-  font-weight: 700;
 }
 
 .workbench-role-tabs button.is-active {
@@ -2074,33 +2259,33 @@ a {
 .business-home__hero {
   position: relative;
   margin-bottom: 20px;
-  padding: 20px;
+  padding: 22px;
   color: #fff;
-  background: #18362c;
+  background: linear-gradient(150deg, #0d5f5a 0%, #0a3f45 100%);
   border-radius: var(--app-radius-lg);
   box-shadow: var(--app-shadow);
 }
 
 .business-home__mark {
-  width: 42px;
-  height: 42px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
   margin-bottom: 18px;
-  color: #b8f1d2;
-  background: rgba(255, 255, 255, 0.1);
+  color: #a7ece2;
+  background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--app-radius-sm);
 }
 
-.business-home__hero .eyebrow { color: #9fe5bd; }
-.business-home__hero h1 { margin: 4px 0 7px; font-size: 30px; }
-.business-home__hero > p:not(.eyebrow) { max-width: 32em; margin: 0; color: rgba(255, 255, 255, 0.72); font-size: 14px; line-height: 1.6; }
+.business-home__hero .eyebrow { color: #8fe3d6; }
+.business-home__hero h1 { margin: 4px 0 7px; font-size: var(--app-fs-5xl); }
+.business-home__hero > p:not(.eyebrow) { max-width: 32em; margin: 0; color: rgba(255, 255, 255, 0.72); font-size: var(--app-fs-base); line-height: 1.6; }
 
 .business-personas {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 9px;
   margin-top: 18px;
 }
 
@@ -2108,24 +2293,24 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 28px;
-  padding: 3px 9px;
+  min-height: 32px;
+  padding: 3px 11px;
   color: rgba(255, 255, 255, 0.86);
   background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--app-fs-xs);
   font-weight: 650;
 }
 
-.business-entry-list { display: grid; gap: 10px; }
+.business-entry-list { display: grid; gap: 12px; }
 
 .business-entry {
   min-width: 0;
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 20px;
+  grid-template-columns: 50px minmax(0, 1fr) 21px;
   align-items: center;
-  gap: 12px;
-  padding: 16px 14px;
+  gap: 14px;
+  padding: 18px 16px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
@@ -2134,8 +2319,8 @@ a {
 
 .business-entry__icon,
 .business-requirement-row__mark {
-  width: 46px;
-  height: 46px;
+  width: 50px;
+  height: 50px;
   display: grid;
   place-items: center;
   color: var(--app-brand);
@@ -2149,14 +2334,14 @@ a {
 }
 
 .business-entry__copy { min-width: 0; display: grid; gap: 4px; }
-.business-entry__copy strong { font-size: 16px; }
-.business-entry__copy small { color: var(--app-muted); font-size: 12px; line-height: 1.5; }
+.business-entry__copy strong { font-size: var(--app-fs-body); }
+.business-entry__copy small { color: var(--app-muted); font-size: var(--app-fs-sm); line-height: 1.5; }
 .business-entry > svg { color: var(--app-muted); }
 
 .business-workbench__summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
   margin-bottom: 18px;
 }
 
@@ -2164,8 +2349,8 @@ a {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 13px;
+  gap: 12px;
+  padding: 15px;
   color: var(--app-success);
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -2173,34 +2358,34 @@ a {
 }
 
 .business-workbench__summary span { min-width: 0; display: grid; }
-.business-workbench__summary strong { color: var(--app-ink); font-size: 20px; }
-.business-workbench__summary small { color: var(--app-muted); font-size: 11px; }
-.business-requirement-list, .business-intake-list { display: grid; gap: 9px; }
+.business-workbench__summary strong { color: var(--app-ink); font-size: var(--app-fs-2xl); }
+.business-workbench__summary small { color: var(--app-muted); font-size: var(--app-fs-xs); }
+.business-requirement-list, .business-intake-list { display: grid; gap: 11px; }
 
 .business-requirement-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) 18px;
+  grid-template-columns: 46px minmax(0, 1fr) 20px;
   align-items: center;
-  gap: 11px;
-  padding: 14px;
+  gap: 13px;
+  padding: 16px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
   box-shadow: var(--app-shadow-soft);
 }
 
-.business-requirement-row__mark { width: 42px; height: 42px; color: var(--app-success); background: var(--app-success-soft); }
+.business-requirement-row__mark { width: 46px; height: 46px; color: var(--app-success); background: var(--app-success-soft); }
 .business-requirement-row__body { min-width: 0; display: grid; gap: 4px; }
-.business-requirement-row__meta { min-width: 0; display: flex; justify-content: space-between; gap: 8px; color: var(--app-muted); }
+.business-requirement-row__meta { min-width: 0; display: flex; justify-content: space-between; gap: 10px; color: var(--app-muted); }
 .business-requirement-row__meta small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.business-requirement-row__meta time { flex: 0 0 auto; font-size: 10px; }
-.business-requirement-row__body > strong { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
-.business-requirement-row__body > p { margin: 0; overflow: hidden; color: var(--app-muted); font-size: 12px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.business-requirement-row__meta time { flex: 0 0 auto; font-size: var(--app-fs-2xs); }
+.business-requirement-row__body > strong { overflow: hidden; font-size: var(--app-fs-body); text-overflow: ellipsis; white-space: nowrap; }
+.business-requirement-row__body > p { margin: 0; overflow: hidden; color: var(--app-muted); font-size: var(--app-fs-sm); line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .business-requirement-row > svg { color: var(--app-muted); }
 .business-create-button { width: 100%; margin-top: 14px; }
 
-.business-message-list { display: flex; flex-direction: column; gap: 10px; }
+.business-message-list { display: flex; flex-direction: column; gap: 12px; }
 .business-message-list .message--user { margin-left: auto; }
 .business-message-list .message--agent { align-self: flex-start; max-width: 94%; }
 
@@ -2209,19 +2394,19 @@ a {
   display: grid;
   gap: 4px;
   margin-bottom: 4px;
-  padding: 12px 13px;
+  padding: 14px 15px;
   color: var(--app-success);
   background: var(--app-success-soft);
-  border: 1px solid rgba(18, 161, 80, 0.2);
+  border: 1px solid rgba(56, 135, 31, 0.22);
   border-radius: var(--app-radius);
   text-align: left;
 }
 
-.business-document-banner > span { display: flex; align-items: center; gap: 7px; }
-.business-document-banner small { padding-left: 25px; color: var(--app-ink-soft); }
-.business-message-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.business-document-banner > span { display: flex; align-items: center; gap: 9px; }
+.business-document-banner small { padding-left: 27px; color: var(--app-ink-soft); }
+.business-message-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
 .business-attachment { position: relative; min-width: 0; display: inline-flex; align-items: center; }
-.business-message-attachments button { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 5px 8px; color: inherit; background: rgba(16, 24, 40, 0.07); border-radius: 999px; font-size: 11px; overflow-wrap: anywhere; }
+.business-message-attachments button { display: inline-flex; align-items: center; gap: 5px; min-width: 0; padding: 5px 10px; color: inherit; background: rgba(12, 74, 84, 0.07); border-radius: 999px; font-size: var(--app-fs-xs); overflow-wrap: anywhere; }
 .business-attachment img { max-width: 132px; max-height: 132px; object-fit: cover; border-radius: 10px; }
 .business-attachment__remove {
   position: absolute;
@@ -2233,9 +2418,9 @@ a {
   place-items: center;
   padding: 0;
   color: #fff;
-  background: rgba(16, 24, 40, 0.72);
+  background: rgba(12, 74, 84, 0.72);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   line-height: 1;
 }
 
@@ -2243,41 +2428,42 @@ a {
 .business-pending-attachments { margin-bottom: 8px; }
 .business-pending-attachments .business-message-attachments { margin-top: 0; }
 
-.business-reference-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; padding: 0; list-style: none; }
-.business-reference-chips li { min-width: 0; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 5px 8px; color: var(--app-brand); background: var(--app-brand-soft); border-radius: 999px; font-size: 11px; }
+.business-reference-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; padding: 0; list-style: none; }
+.business-reference-chips li { min-width: 0; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 5px 10px; color: var(--app-brand); background: var(--app-brand-soft); border-radius: 999px; font-size: var(--app-fs-xs); }
 .business-reference-chips span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.business-reference-chips button { flex: 0 0 auto; padding: 0 2px; color: inherit; font-size: 13px; line-height: 1; }
+.business-reference-chips button { flex: 0 0 auto; padding: 0 2px; color: inherit; font-size: var(--app-fs-md); line-height: 1; }
 
-.business-collected-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
-.business-collected-attachments li { min-width: 0; display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; color: var(--app-muted); background: rgba(16, 24, 40, 0.06); border-radius: 999px; font-size: 11px; overflow-wrap: anywhere; }
+.business-collected-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.business-collected-attachments li { min-width: 0; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; color: var(--app-muted); background: rgba(12, 74, 84, 0.06); border-radius: 999px; font-size: var(--app-fs-xs); overflow-wrap: anywhere; }
 
 .business-confirm-row {
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 8px;
 }
 
-.business-confirm-row .button { min-height: 34px; padding: 0 8px; color: var(--app-success); font-size: 12px; }
-.business-confirm-row small { min-width: 0; overflow: hidden; color: var(--app-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.business-confirm-row .button { min-height: 38px; padding: 0 10px; color: var(--app-success); font-size: var(--app-fs-sm); }
+.business-confirm-row small { min-width: 0; overflow: hidden; color: var(--app-muted); font-size: var(--app-fs-2xs); text-overflow: ellipsis; white-space: nowrap; }
 
-.business-document-viewer h2 { margin: 18px 0 10px; font-size: 18px; }
-.business-document-toolbar { display: grid; grid-template-columns: 82px minmax(0, 1fr) 82px; align-items: center; gap: 8px; }
-.business-document-toolbar .button { min-height: 38px; padding: 0 8px; font-size: 12px; }
-.business-document-toolbar span { overflow: hidden; color: var(--app-muted); font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.business-document-viewer h2 { margin: 18px 0 10px; font-size: var(--app-fs-xl); }
+/* 翻版本只有「上一版 / 下一版」两个方向，字号抬高后两侧各留 82px 会把中间那行
+   版本说明挤没，改成左右两颗图标按钮，中间整行都留给版本文案。 */
+.business-document-toolbar { display: grid; grid-template-columns: var(--app-tap) minmax(0, 1fr) var(--app-tap); align-items: center; gap: 12px; }
+.business-document-toolbar span { overflow: hidden; color: var(--app-muted); font-size: var(--app-fs-sm); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 
 .business-intake__notice {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
   margin: -4px 0 14px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   color: var(--app-ink-soft);
   background: var(--app-warning-soft);
   border-radius: var(--app-radius-sm);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   line-height: 1.45;
 }
 
@@ -2288,8 +2474,8 @@ a {
   width: 100%;
   min-width: 0;
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: 10px;
+  padding: 16px;
   color: var(--app-ink);
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -2298,33 +2484,33 @@ a {
   text-align: left;
 }
 
-.business-intake-row__top, .business-intake-row__footer { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.business-intake-row__top time { flex: 0 0 auto; color: var(--app-muted); font-size: 10px; }
-.business-intake-row > strong { font-size: 15px; }
-.business-intake-row > p { margin: 0; color: var(--app-muted); font-size: 12px; line-height: 1.55; }
-.business-intake-row__footer { padding-top: 3px; color: var(--app-muted); font-size: 11px; }
+.business-intake-row__top, .business-intake-row__footer { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.business-intake-row__top time { flex: 0 0 auto; color: var(--app-muted); font-size: var(--app-fs-2xs); }
+.business-intake-row > strong { font-size: var(--app-fs-body); }
+.business-intake-row > p { margin: 0; color: var(--app-muted); font-size: var(--app-fs-sm); line-height: 1.55; }
+.business-intake-row__footer { padding-top: 3px; color: var(--app-muted); font-size: var(--app-fs-xs); }
 .business-intake-row__footer span { min-width: 0; display: inline-flex; align-items: center; gap: 5px; }
 .business-intake-row__footer span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .business-intake-row__footer span:last-child { flex: 0 0 auto; color: var(--app-brand); font-weight: 650; }
 
-.business-detail-loading { min-height: 220px; display: grid; place-items: center; align-content: center; gap: 10px; color: var(--app-muted); font-size: 13px; }
-.business-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
-.business-detail-grid > div { min-width: 0; padding: 10px; background: var(--app-surface-subtle); border-radius: var(--app-radius-sm); }
-.business-detail-grid dt { color: var(--app-muted); font-size: 10px; }
-.business-detail-grid dd { margin: 3px 0 0; overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.business-detail-loading { min-height: 220px; display: grid; place-items: center; align-content: center; gap: 12px; color: var(--app-muted); font-size: var(--app-fs-md); }
+.business-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.business-detail-grid > div { min-width: 0; padding: 12px; background: var(--app-surface-subtle); border-radius: var(--app-radius-sm); }
+.business-detail-grid dt { color: var(--app-muted); font-size: var(--app-fs-2xs); }
+.business-detail-grid dd { margin: 3px 0 0; overflow: hidden; font-size: var(--app-fs-sm); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .business-detail-section { margin-top: 20px; }
-.business-collected-document { padding: 13px; background: var(--app-surface-subtle); border-radius: var(--app-radius); }
-.business-collected-document h3 { margin: 10px 0 8px; font-size: 15px; }
-.business-collected-messages { display: grid; gap: 8px; }
-.business-collected-messages article { padding: 11px 12px; background: var(--app-surface-subtle); border-radius: var(--app-radius-sm); }
+.business-collected-document { padding: 15px; background: var(--app-surface-subtle); border-radius: var(--app-radius); }
+.business-collected-document h3 { margin: 10px 0 8px; font-size: var(--app-fs-body); }
+.business-collected-messages { display: grid; gap: 10px; }
+.business-collected-messages article { padding: 13px 14px; background: var(--app-surface-subtle); border-radius: var(--app-radius-sm); }
 .business-collected-messages article.is-user { border-left: 3px solid var(--app-brand); }
-.business-collected-messages article > small { display: block; margin-bottom: 5px; color: var(--app-muted); font-size: 10px; font-weight: 700; }
+.business-collected-messages article > small { display: block; margin-bottom: 5px; color: var(--app-muted); font-size: var(--app-fs-2xs); font-weight: 700; }
 
 .workbench-section-heading {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 16px;
+  gap: 18px;
   margin-bottom: 14px;
 }
 
@@ -2334,30 +2520,36 @@ a {
 
 .workbench-section-heading h2 {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--app-fs-3xl);
   line-height: 1.2;
 }
 
-.workbench-section-heading > span {
+.workbench-section-heading__aside {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.workbench-section-heading__count {
   color: var(--app-ink);
-  font-size: 20px;
+  font-size: var(--app-fs-2xl);
   font-weight: 700;
 }
 
-.workbench-section-heading > span small {
+.workbench-section-heading__count small {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 650;
 }
 
 .program-picker {
   width: 100%;
-  min-height: 58px;
+  min-height: 62px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   margin-bottom: 0;
-  padding: 0 14px;
+  padding: 0 16px;
   color: var(--app-ink);
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -2369,8 +2561,8 @@ a {
 .program-picker__mark {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   color: var(--app-brand);
   background: var(--app-brand-soft);
   border-radius: var(--app-radius-sm);
@@ -2385,12 +2577,12 @@ a {
 
 .program-picker__body small {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .program-picker__body strong {
   overflow: hidden;
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2398,21 +2590,21 @@ a {
 .workbench-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   margin-bottom: 14px;
 }
 
 .workbench-search {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-height: 44px;
-  padding: 0 12px;
+  gap: 11px;
+  min-height: 48px;
+  padding: 0 14px;
   color: var(--app-muted);
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius-sm);
-  box-shadow: 0 5px 18px rgba(16, 24, 40, 0.05);
+  box-shadow: 0 5px 18px rgba(12, 74, 84, 0.05);
 }
 
 .workbench-search input {
@@ -2436,11 +2628,11 @@ a {
 
 .segmented button {
   flex: 1;
-  min-height: 34px;
+  min-height: 38px;
   color: var(--app-ink-soft);
   background: transparent;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: var(--app-fs-base);
   font-weight: 600;
 }
 
@@ -2458,11 +2650,11 @@ a {
 .requirement-board {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .requirement-card {
-  padding: 15px 14px 13px;
+  padding: 17px 16px 15px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius);
@@ -2474,7 +2666,7 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   padding: 0;
   color: inherit;
   background: transparent;
@@ -2486,11 +2678,11 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .requirement-card__title strong {
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   line-height: 1.35;
   font-weight: 650;
 }
@@ -2507,10 +2699,10 @@ a {
 
 .requirement-card__meter,
 .task-row__meter {
-  height: 5px;
+  height: 6px;
   margin: 12px 0 8px;
   overflow: hidden;
-  background: var(--app-surface-sunken);
+  background: var(--app-surface-subtle);
   border-radius: 999px;
 }
 
@@ -2519,42 +2711,46 @@ a {
   display: flex;
   justify-content: flex-end;
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   color: var(--app-muted);
 }
 
 .usage-sheet {
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .usage-rows {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
+/* 「入 2610k 缓存 2543k 出 40k $2.94」加上左边的名字，375 宽下并排放不下。
+   允许整行折行：放得下就左名右数，放不下时数字整段落到第二行，而不是被挤压。 */
 .usage-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
+  gap: 5px 14px;
+  padding: 10px 12px;
   background: var(--app-surface-sunken);
   border-radius: var(--app-radius-sm);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .usage-row__name {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-weight: 600;
 }
 
 .usage-row__nums {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 3px 10px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2570,7 +2766,7 @@ a {
 
 .usage-task-list {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2578,12 +2774,13 @@ a {
 
 .usage-task-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 8px;
+  gap: 5px 14px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--app-line);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .usage-task-list li:last-child {
@@ -2597,27 +2794,53 @@ a {
   overflow-wrap: anywhere;
 }
 
+/* 需求会话那几行能点开看正文。按钮要长得跟旁边的行一模一样，只在右边多一枚箭头
+   当提示——换个底色或加个边框，会让这几行看起来跟上面的合计不是同一类东西。 */
+button.usage-row {
+  width: 100%;
+  text-align: left;
+}
+
+.usage-row__go {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--app-muted);
+}
+
+/* 面板从消耗翻到某一块会话正文之后的那一层：返回和重读各占一头，正文照常往下铺。 */
+.usage-session {
+  display: grid;
+  gap: 12px;
+}
+
+.usage-session__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .requirement-card__meter span,
 .task-row__meter span {
   display: block;
   height: 100%;
-  background: var(--app-brand);
+  background: var(--app-progress-gradient);
   border-radius: inherit;
-  transition: width 0.45s var(--app-ease-out), background-color var(--app-t);
+  transition: width 0.45s var(--app-ease-out), background var(--app-t);
 }
 
 .requirement-card__meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  gap: 10px 12px;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .requirement-card__meta > strong {
   color: var(--app-brand);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .requirement-card__meta .is-running {
@@ -2631,42 +2854,58 @@ a {
 .requirement-card__detail {
   margin: 10px 0 0;
   color: var(--app-muted);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .progress-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
   margin-top: 12px;
 }
 
-/* 四个入口固定一行：手机上宁可标签短一点，也不要换行成 3 + 1。 */
+/* 五个入口固定一行：正文字号抬高之后，图标 + 两个字横着排一定挤不下，也不该
+   为了排版把「运行任务」砍成「运行」。改成图标在上、短标签在下的动作条，五格
+   等宽，和原生分享面板一个形态，窄屏也不用再来一套断点。 */
 .requirement-card__actions {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 7px;
-  margin-top: 14px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 16px;
 }
 
+/* 五格分完一行只剩 50 出头的净宽，「运行任务」四个字正好卡在临界点上：
+   内边距收到 2、字距收一点，四个字才不会被省略成「运行...」。 */
 .requirement-card__actions .chip-button {
+  flex-direction: column;
   justify-content: center;
-  padding: 0 6px;
-  gap: 4px;
-  font-size: 13px;
+  min-height: 66px;
+  padding: 10px 2px;
+  gap: 6px;
+  border-radius: var(--app-radius);
+  font-size: var(--app-fs-2xs);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.requirement-card__actions .chip-button > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chip-button {
-  min-height: 38px;
+  min-height: 42px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 12px;
+  gap: 8px;
+  padding: 0 14px;
   color: var(--app-ink-soft);
   background: var(--app-surface);
   border: 1px solid var(--app-line-strong);
   border-radius: var(--app-radius-sm);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
   font-weight: 600;
 }
 
@@ -2747,8 +2986,8 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px 12px;
+  gap: 14px;
+  padding: 12px 18px 14px;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -2759,44 +2998,70 @@ a {
 }
 
 .sheet__title strong {
-  font-size: 17px;
+  font-size: var(--app-fs-lg);
   font-weight: 650;
 }
 
 .sheet__title small {
   overflow: hidden;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .sheet__actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 
 .sheet__body {
   flex: 1;
   overflow-y: auto;
-  padding: 14px 16px calc(20px + env(safe-area-inset-bottom));
+  padding: 16px 18px calc(22px + env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+}
+
+/* 底下钉着动作区时，安全区那份内边距归它，正文只留正常的收尾留白。 */
+.sheet__body:not(:last-child) {
+  padding-bottom: 16px;
+}
+
+/* 面板底部的固定区：填写和确认不该被上面的长列表滚走。
+   它自己也可能被长报错撑高，所以给个上限并允许内部滚动，不去挤正文。 */
+.sheet__footer {
+  flex: 0 0 auto;
+  max-height: 60%;
+  overflow-y: auto;
+  padding: 14px 18px calc(16px + env(safe-area-inset-bottom));
+  background: var(--app-surface);
+  border-top: 1px solid var(--app-line);
+  overscroll-behavior: contain;
+}
+
+.sheet__footer > * + * {
+  margin-top: 12px;
+}
+
+/* 钉在底部的这块寸土寸金：多行输入按两行起，要写长了用户自己拉。 */
+.sheet__footer .field textarea {
+  min-height: 64px;
 }
 
 .option-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .option-row {
-  min-height: 52px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
+  gap: 14px;
+  padding: 10px 16px;
   color: var(--app-ink);
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -2817,7 +3082,16 @@ a {
 
 .option-row small {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
+}
+
+/* 选项行也用来做多选（比如一起提交哪几个子工程）：整行都是 label，点哪儿都算勾。 */
+.option-row input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--app-brand);
 }
 
 /* ---------- 对话 ---------- */
@@ -2832,8 +3106,8 @@ a {
 .chat-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: max(10px, env(safe-area-inset-top)) 12px 10px;
+  gap: 12px;
+  padding: max(12px, env(safe-area-inset-top)) 14px 12px;
   background: var(--app-surface);
   border-bottom: 1px solid var(--app-line);
 }
@@ -2847,20 +3121,20 @@ a {
 
 .chat-header__title small {
   color: var(--app-brand);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 700;
 }
 
 .chat-header__title strong {
   overflow: hidden;
-  font-size: 16px;
+  font-size: var(--app-fs-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .chat-header__actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 
 .icon-button.is-active {
@@ -2914,12 +3188,12 @@ a {
 }
 
 .chat-drawer__header {
-  min-height: 84px;
+  min-height: 88px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: max(14px, env(safe-area-inset-top)) 14px 12px 18px;
+  gap: 14px;
+  padding: max(16px, env(safe-area-inset-top)) 16px 14px 20px;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -2931,19 +3205,19 @@ a {
 
 .chat-drawer__header span {
   color: var(--app-brand);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   font-weight: 700;
 }
 
 .chat-drawer__header strong {
-  font-size: 18px;
+  font-size: var(--app-fs-xl);
 }
 
 .chat-drawer__header small {
   overflow: hidden;
   margin-top: 2px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2952,18 +3226,18 @@ a {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 14px 12px max(18px, env(safe-area-inset-bottom));
+  padding: 16px 14px max(20px, env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
 
 .chat-drawer__new {
   width: 100%;
-  min-height: 62px;
+  min-height: 66px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 12px 14px;
   color: var(--app-brand);
   background: var(--app-brand-soft);
   border: 1px solid var(--app-brand-muted);
@@ -2978,19 +3252,19 @@ a {
 }
 
 .chat-drawer__new strong {
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .chat-drawer__new small {
   margin-top: 1px;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .chat-drawer__list {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 9px;
   margin: 14px 0 0;
   padding: 0;
   list-style: none;
@@ -2998,12 +3272,12 @@ a {
 
 .chat-drawer__row {
   width: 100%;
-  min-height: 52px;
+  min-height: 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 11px;
+  gap: 12px;
+  padding: 10px 13px;
   color: var(--app-ink);
   background: var(--app-surface-subtle);
   border: 1px solid transparent;
@@ -3020,7 +3294,7 @@ a {
 .chat-drawer__label {
   min-width: 0;
   overflow: hidden;
-  font-size: 14px;
+  font-size: var(--app-fs-base);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3029,37 +3303,37 @@ a {
 .chat-drawer__row small {
   flex: 0 0 auto;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--app-fs-xs);
 }
 
 .chat-drawer__empty {
   margin: 18px 6px 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .chat-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 14px 8px;
+  padding: 18px 16px 10px;
   -webkit-overflow-scrolling: touch;
 }
 
 .conversation-turns {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
 }
 
 .turn-block {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .message {
   max-width: 100%;
-  padding: 11px 13px;
+  padding: 13px 15px;
   border-radius: var(--app-radius);
   overflow-wrap: anywhere;
 }
@@ -3070,7 +3344,7 @@ a {
   color: #fff;
   background: var(--app-brand);
   border-bottom-right-radius: 6px;
-  box-shadow: 0 6px 16px -10px rgba(79, 70, 229, 0.9);
+  box-shadow: 0 6px 16px -10px rgba(10, 125, 116, 0.9);
 }
 
 .message--user p {
@@ -3091,10 +3365,10 @@ a {
 .tool-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   overflow-wrap: anywhere;
 }
 
@@ -3105,16 +3379,16 @@ a {
 }
 
 .fold-item.is-danger {
-  border-color: rgba(220, 38, 38, 0.24);
+  border-color: rgba(201, 59, 82, 0.24);
 }
 
 .fold-item > button {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
+  gap: 10px;
+  padding: 0 12px;
   color: var(--app-muted);
   background: transparent;
   text-align: left;
@@ -3130,14 +3404,14 @@ a {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .fold-item__note {
   color: var(--app-coral);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .fold-item__chevron {
@@ -3151,22 +3425,59 @@ a {
 
 .fold-item__body {
   margin: 0;
-  padding: 0 12px 12px;
+  padding: 0 14px 14px;
   overflow-x: auto;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   white-space: pre-wrap;
 }
 
 .fold-item__body.is-mono {
   font-family: var(--app-mono);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
+}
+
+/* 一串连着跑的命令／工具调用／思考合成一行，默认收起，展开才铺开逐条。 */
+.activity-group {
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface);
+}
+
+.activity-group.is-danger {
+  border-color: rgba(201, 59, 82, 0.24);
+}
+
+.activity-group > button {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  color: var(--app-muted);
+  background: transparent;
+  text-align: left;
+}
+
+.activity-group__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+
+/* 组内条目不再重复画外框，避免一层套一层。 */
+.activity-group__list .fold-item {
+  border-color: transparent;
+  background: var(--app-surface-sunken);
+  box-shadow: none;
 }
 
 .attachment-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin-top: 8px;
 }
 
@@ -3174,10 +3485,10 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  padding: 3px 10px;
   background: rgba(255, 255, 255, 0.22);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .message--agent .attachment-chip {
@@ -3185,19 +3496,126 @@ a {
   color: var(--app-muted);
 }
 
-.usage-line {
+/* 「本轮消耗 入 2610k 缓存 2543k 出 40k $2.94」在 375 宽下横着一定放不下，
+   之前是每个数各自折行，读起来像散落的碎片。改成两行：标签和金额占第一行、
+   金额右对齐，三个 token 数缩进对齐到标签下面。 */
+/* 上下文余量：吸在标题栏下面的一条窄条，点开才展开三个具体的数。
+   它回答的是「这条对话还能聊多久」，和正文里那行累计消耗不是一个数。 */
+.context-meter {
+  padding: 0 14px;
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--app-line);
+}
+
+.context-meter__bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  background: none;
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+  text-align: left;
+}
+
+.context-meter__bar b {
+  color: var(--app-ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-meter.is-warn .context-meter__bar b { color: var(--app-warning); }
+.context-meter.is-danger .context-meter__bar b { color: var(--app-coral); }
+
+/* 横条自己画进度：--context-share 由组件按已用比例给。 */
+.context-meter__track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--app-surface-sunken);
+  overflow: hidden;
+}
+
+.context-meter__track::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--context-share, 0%);
+  border-radius: 999px;
+  background: var(--app-brand);
+}
+
+.context-meter.is-warn .context-meter__track::after { background: var(--app-warning); }
+.context-meter.is-danger .context-meter__track::after { background: var(--app-coral); }
+
+.context-meter__caret {
+  flex: none;
+  transition: transform var(--manager-t);
+}
+
+.context-meter__caret.is-open { transform: rotate(180deg); }
+
+.context-meter__detail {
+  padding: 0 0 10px;
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+}
+
+.context-meter__detail dl {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 6px;
+}
+
+.context-meter__detail dt { font-size: var(--app-fs-xs); }
+
+.context-meter__detail dd {
+  margin: 2px 0 0;
+  color: var(--app-ink);
+  font-size: var(--app-fs-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-meter__detail p { margin: 0; font-size: var(--app-fs-xs); }
+
+.usage-line {
+  display: grid;
+  gap: 3px;
   margin: 0;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
+}
+
+.usage-line__head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-line__head > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-line__head i {
+  color: var(--app-ink-soft);
+  font-weight: 650;
 }
 
 .usage-line__nums {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 3px 10px;
+  padding-left: 23px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -3219,14 +3637,14 @@ a {
 
 .change-summary > button {
   width: 100%;
-  min-height: 42px;
+  min-height: 46px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 10px;
+  gap: 10px;
+  padding: 0 12px;
   color: var(--app-ink);
   background: transparent;
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   font-weight: 650;
   text-align: left;
 }
@@ -3240,8 +3658,8 @@ a {
 .change-summary__counts {
   margin-left: auto;
   display: inline-flex;
-  gap: 6px;
-  font-size: 12px;
+  gap: 8px;
+  font-size: var(--app-fs-sm);
   font-style: normal;
 }
 
@@ -3259,17 +3677,17 @@ a {
 
 .change-summary__list {
   margin: 0;
-  padding: 0 10px 10px;
+  padding: 0 12px 12px;
   list-style: none;
 }
 
 .change-summary__list li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   padding: 5px 0;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .change-summary__path {
@@ -3284,14 +3702,14 @@ a {
 .chat-running {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin: 14px 0 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .chat-composer {
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
   background: var(--app-surface);
   border-top: 1px solid var(--app-line);
 }
@@ -3299,7 +3717,7 @@ a {
 .chat-composer__files {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   margin: 0 0 8px;
   padding: 0;
   list-style: none;
@@ -3308,11 +3726,11 @@ a {
 .chat-composer__files li {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: 8px;
+  padding: 4px 10px;
   background: var(--app-surface-subtle);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .chat-composer__files button {
@@ -3320,32 +3738,74 @@ a {
   background: transparent;
 }
 
-/* 执行电脑状态：工作台上是一枚小徽标，会话里离线时才展开成一行提醒。 */
-.worker-status {
-  gap: 5px;
-  margin-top: 10px;
-}
-
+/* 执行电脑状态：顶栏常驻一枚徽标，会话里离线时才展开成一行提醒。 */
 .worker-offline-notice {
   margin: 0 0 8px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-radius: 12px;
   color: var(--app-coral-strong);
   background: var(--app-coral-soft);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   line-height: 1.5;
+}
+
+/* 会话通道切换：一条需求下的拆解 / 分析 / 原型 / 评审 / 测试 / 微调。
+   通道数量会长，横向可滚，不硬挤成等宽。 */
+.chat-channels {
+  display: flex;
+  gap: 6px;
+  padding: 6px 14px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chat-channels::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-channels button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--app-muted);
+  background: var(--app-surface-subtle);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chat-channels button.is-active {
+  color: var(--app-brand);
+  background: var(--app-brand-soft);
+}
+
+/* 交付物开关：勾上这一轮才落文档或报告，不勾就只是聊。 */
+.chat-composer__flag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--app-muted);
+  font-size: 12px;
+}
+
+.chat-composer__flag input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--app-brand);
 }
 
 .chat-composer__hint {
   margin: 0 0 8px;
   color: var(--app-brand);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .chat-composer__row {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  gap: 10px;
 }
 
 .chat-composer__row label input[type="file"] {
@@ -3364,9 +3824,9 @@ a {
 .chat-composer__row textarea {
   flex: 1;
   min-width: 0;
-  min-height: 44px;
+  min-height: 48px;
   max-height: 148px;
-  padding: 11px 12px;
+  padding: 13px 14px;
   color: var(--app-ink);
   background: var(--app-surface-subtle);
   border: 1px solid var(--app-line);
@@ -3374,14 +3834,54 @@ a {
   resize: none;
 }
 
+/* 输入框独占一行、动作按钮排在下面：需求会话的入口比任务会话多两个，挤在一行放不下。 */
+.chat-composer__row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.chat-composer__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.chat-composer__tools .chat-send {
+  margin-left: auto;
+}
+
+/* 语音输入：录音时整枚按钮换成 coral 实心，配一个很轻的呼吸动画表示还在听。 */
+.voice-button {
+  flex: 0 0 auto;
+}
+
+.voice-button.is-listening {
+  color: #fff;
+  background: var(--app-coral);
+  border-color: var(--app-coral);
+  animation: voice-listening 1.3s ease-in-out infinite;
+}
+
+@keyframes voice-listening {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-button.is-listening {
+    animation: none;
+  }
+}
+
 .chat-send {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
-  color: #fff;
-  background: var(--app-brand);
+  color: var(--app-on-brand);
+  background: var(--app-brand-gradient);
   border-radius: var(--app-radius);
 }
 
@@ -3398,7 +3898,7 @@ a {
 .rich-text {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 .rich-text__paragraph,
@@ -3409,7 +3909,7 @@ a {
 }
 
 .rich-text__quote {
-  padding-left: 10px;
+  padding-left: 12px;
   border-left: 3px solid var(--app-line);
   color: var(--app-muted);
 }
@@ -3419,14 +3919,14 @@ a {
   font-weight: 650;
 }
 
-.rich-text__heading.level-1 { font-size: 18px; }
-.rich-text__heading.level-2 { font-size: 17px; }
+.rich-text__heading.level-1 { font-size: var(--app-fs-xl); }
+.rich-text__heading.level-2 { font-size: var(--app-fs-lg); }
 .rich-text__heading.level-3,
-.rich-text__heading.level-4 { font-size: 16px; }
+.rich-text__heading.level-4 { font-size: var(--app-fs-body); }
 
 .rich-text__list {
   margin: 0;
-  padding-left: 20px;
+  padding-left: 22px;
 }
 
 .rich-text__list li {
@@ -3439,21 +3939,21 @@ a {
 .rich-text__code {
   position: relative;
   margin: 0;
-  padding: 12px;
+  padding: 14px;
   overflow-x: auto;
   color: var(--app-ink);
-  background: linear-gradient(180deg, #f8fafc, var(--app-surface-subtle));
+  background: linear-gradient(180deg, var(--app-canvas-soft), var(--app-surface-subtle));
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius-sm);
-  box-shadow: inset 0 1px 3px rgba(16, 24, 40, 0.04);
+  box-shadow: inset 0 1px 3px rgba(12, 74, 84, 0.04);
   font-family: var(--app-mono);
-  font-size: 12.5px;
+  font-size: var(--app-fs-sm);
   line-height: 1.55;
 }
 
 /* 有语言标注时给顶部让出一行，别让标注压在第一行代码上。 */
 .rich-text__code:has(.rich-text__code-lang) {
-  padding-top: 26px;
+  padding-top: 28px;
 }
 
 .rich-text__code-lang {
@@ -3461,7 +3961,7 @@ a {
   top: 6px;
   right: 10px;
   color: var(--app-muted);
-  font-size: 11px;
+  font-size: var(--app-fs-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -3471,7 +3971,7 @@ a {
   background: var(--app-surface-subtle);
   border-radius: 6px;
   font-family: var(--app-mono);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .message--user .rich-text__inline-code {
@@ -3483,15 +3983,226 @@ a {
   text-decoration: underline;
 }
 
+.message--user .rich-text__link {
+  color: #fff;
+}
+
+.rich-text__blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rich-text__heading.level-5,
+.rich-text__heading.level-6 {
+  color: var(--app-ink-soft);
+  font-size: var(--app-fs-body);
+}
+
+.rich-text__divider {
+  height: 1px;
+  margin: 4px 0;
+  border: 0;
+  background: var(--app-line);
+}
+
+.rich-text em {
+  font-style: italic;
+}
+
+.rich-text del {
+  color: var(--app-muted);
+  text-decoration: line-through;
+}
+
+/* 勾选框列表：勾是文档里写死的状态，只读展示，点不动也不该看着能点。 */
+.rich-text__list.is-task {
+  padding-left: 2px;
+  list-style: none;
+}
+
+.rich-text__list li.is-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.rich-text__item {
+  min-width: 0;
+  flex: 1;
+  display: block;
+}
+
+.rich-text__list li.is-task > input {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 3px;
+  accent-color: var(--app-brand);
+  pointer-events: none;
+}
+
+.rich-text__list .rich-text__blocks {
+  margin-top: 4px;
+}
+
+/* 表格在手机上一定放不下，让它自己横向滚，别把整条消息撑宽。 */
+.rich-text__table {
+  overflow-x: auto;
+  background: var(--app-surface);
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius-sm);
+}
+
+.rich-text__table table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: var(--app-fs-md);
+}
+
+.rich-text__table th,
+.rich-text__table td {
+  max-width: 64vw;
+  padding: 9px 12px;
+  text-align: left;
+  border-right: 1px solid var(--app-line);
+  border-bottom: 1px solid var(--app-line);
+  overflow-wrap: anywhere;
+}
+
+.rich-text__table th:last-child,
+.rich-text__table td:last-child {
+  border-right: 0;
+}
+
+.rich-text__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.rich-text__table thead th {
+  color: var(--app-ink);
+  background: var(--app-surface-subtle);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.rich-text__image {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius-sm);
+}
+
+/* 相对路径的图片在手机上取不到本体，留一行说明比摆一个碎图标强。 */
+.rich-text__image-note {
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+}
+
+.rich-text__code-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ---------- 效果 / 源码 ----------
+   Markdown 和 HTML 默认给效果，切源码是核对原文用的，做成一段小分段控件。 */
+
+.preview-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  background: var(--app-surface-subtle);
+  border-radius: var(--app-radius-sm);
+}
+
+.preview-switch button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 14px;
+  color: var(--app-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font-size: var(--app-fs-md);
+  font-weight: 600;
+}
+
+.preview-switch button.is-active {
+  color: var(--app-brand);
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow-hair);
+}
+
+/* ---------- HTML 原型预览 ----------
+   原型多半是照着桌面宽度画的，直接塞进手机屏只能看到左半边；
+   这里按 1280 渲染再整体缩到屏幕宽，先看清全貌，要细看再切手机宽度或全屏。 */
+
+.html-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.html-preview__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.html-preview__bar .chip-button {
+  min-height: 36px;
+  font-size: var(--app-fs-md);
+}
+
+.html-preview__stage {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius-sm);
+}
+
+.html-preview__frame {
+  display: block;
+  border: 0;
+  transform-origin: top left;
+}
+
+.html-preview.is-full {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  gap: 0;
+  background: var(--app-canvas);
+}
+
+.html-preview.is-full .html-preview__bar {
+  padding: max(10px, env(safe-area-inset-top)) var(--app-gutter) 10px;
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--app-line);
+}
+
+.html-preview.is-full .html-preview__stage {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+}
+
 /* ---------- Git 与文档面板 ---------- */
 
 .git-loading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   margin: 10px 0;
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 .git-change-list,
@@ -3505,7 +4216,7 @@ a {
 .document-simple-list li {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   border-bottom: 1px solid var(--app-line);
 }
 
@@ -3513,11 +4224,11 @@ a {
 .document-simple-list li > button:first-child {
   flex: 1;
   min-width: 0;
-  min-height: 52px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0;
+  gap: 12px;
+  padding: 10px 0;
   color: var(--app-ink);
   background: transparent;
   text-align: left;
@@ -3525,11 +4236,11 @@ a {
 
 .git-change-list__kind {
   flex: 0 0 auto;
-  padding: 2px 8px;
+  padding: 2px 10px;
   color: var(--app-ink-soft);
   background: var(--app-surface-sunken);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--app-fs-xs);
   font-weight: 600;
 }
 
@@ -3553,7 +4264,7 @@ a {
 .git-detail__path {
   min-width: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--app-fs-md);
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: rtl;
@@ -3568,14 +4279,14 @@ a {
 .git-project-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-top: 12px;
 }
 
 .git-project {
   display: flex;
   flex-direction: column;
-  padding: 10px 12px;
+  padding: 12px 14px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius-sm);
@@ -3583,16 +4294,22 @@ a {
 
 .git-project small {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .git-actions .stack-actions {
   margin: 12px 0 14px;
 }
 
+/* 新增需求：建分支的表单摆在会话正文里，字段之间留出和输入框一样的呼吸。 */
+.new-requirement-form .field + .field,
+.new-requirement-form .button {
+  margin-top: 14px;
+}
+
 .git-actions {
   margin-top: 18px;
-  padding-top: 16px;
+  padding-top: 18px;
   border-top: 1px solid var(--app-line);
 }
 
@@ -3604,7 +4321,7 @@ a {
 
 .document-simple-list strong {
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--app-fs-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3612,7 +4329,7 @@ a {
 .document-simple-list small {
   overflow: hidden;
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3620,8 +4337,8 @@ a {
 .document-simple-list__icon {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   color: var(--app-brand);
   background: var(--app-brand-soft);
   border-radius: var(--app-radius-sm);
@@ -3629,6 +4346,12 @@ a {
 
 .document-preview-pane .rich-text {
   margin-top: 10px;
+}
+
+/* 预览面板里的「效果 / 源码」和正文之间要留一口气，别贴着路径那一行。 */
+.document-preview-pane .preview-switch,
+.document-preview .preview-switch {
+  margin: 10px 0 4px;
 }
 
 /* ---------- 文件差异 ---------- */
@@ -3639,19 +4362,19 @@ a {
   border: 1px solid var(--app-line);
   border-radius: var(--app-radius-sm);
   font-family: var(--app-mono);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
   line-height: 1.6;
 }
 
 .diff-line {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   min-width: max-content;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 
 .diff-line.is-add {
-  background: rgba(18, 161, 80, 0.1);
+  background: rgba(56, 135, 31, 0.12);
 }
 
 .diff-line.is-add .diff-line__sign {
@@ -3663,7 +4386,7 @@ a {
 }
 
 .diff-line.is-remove {
-  background: rgba(220, 38, 38, 0.08);
+  background: rgba(201, 59, 82, 0.08);
 }
 
 .diff-line__no {
@@ -3686,34 +4409,34 @@ a {
 /* 进度页也在沉浸式路由下，外壳不再给内边距，这里自己撑开安全区。 */
 .progress-screen {
   min-height: 100dvh;
-  padding: max(16px, env(safe-area-inset-top)) 16px calc(28px + env(safe-area-inset-bottom));
+  padding: max(18px, env(safe-area-inset-top)) 18px calc(30px + env(safe-area-inset-bottom));
 }
 
 .progress-hero {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 20px;
 }
 
 .progress-ring {
   flex: 0 0 auto;
-  width: 84px;
-  height: 84px;
+  width: 92px;
+  height: 92px;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: conic-gradient(var(--app-brand) var(--ring-value, 0deg), var(--app-surface-sunken) 0);
+  background: conic-gradient(from -90deg, var(--app-brand) 0deg, var(--app-brand-vivid) var(--ring-value, 0deg), var(--app-surface-subtle) 0);
   transition: background 0.4s var(--app-ease);
 }
 
 .progress-ring span {
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
+  width: 70px;
+  height: 70px;
   background: var(--app-surface);
   border-radius: 50%;
-  font-size: 17px;
+  font-size: var(--app-fs-lg);
   font-weight: 650;
 }
 
@@ -3722,7 +4445,7 @@ a {
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: 10px 14px;
 }
 
 .progress-hero__meta div {
@@ -3731,21 +4454,71 @@ a {
 }
 
 .progress-hero__meta strong {
-  font-size: 18px;
+  font-size: var(--app-fs-xl);
   font-weight: 650;
 }
 
 .progress-hero__meta span {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .progress-group {
   margin-top: 20px;
 }
 
+/* 按批次铺任务时的组头：标题 + 本批完成度 + 整批动作，自己就是一张卡，
+   和下面的任务行拉开层次，一眼能看出「这一批干到哪了」。 */
+.progress-group__head {
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: var(--app-surface-subtle);
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius-sm);
+}
+
+.progress-group__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.progress-group__title strong {
+  font-size: var(--app-fs-body);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.progress-group__title small {
+  color: var(--app-muted);
+  font-size: var(--app-fs-sm);
+}
+
+.progress-group__meter {
+  height: 5px;
+  margin: 10px 0;
+  overflow: hidden;
+  background: var(--app-surface-sunken);
+  border-radius: 999px;
+}
+
+.progress-group__meter span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--app-success), #4aa32a);
+  border-radius: inherit;
+  transition: width 0.45s var(--app-ease-out);
+}
+
+.progress-group__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .task-row {
-  padding: 10px 12px;
+  padding: 12px 14px;
   margin-bottom: 8px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -3760,7 +4533,7 @@ a {
 .task-row__head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 /* 任务状态用 PC 的那套语义色：绿=完成、红=受阻、靛蓝=在跑、灰=待办。
@@ -3785,7 +4558,7 @@ a {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 6px 0;
+  padding: 8px 0;
   color: inherit;
   background: transparent;
   text-align: left;
@@ -3793,7 +4566,7 @@ a {
 
 .task-row__body strong {
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--app-fs-body);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3802,20 +4575,20 @@ a {
 .task-row__body small,
 .batch-row small {
   color: var(--app-muted);
-  font-size: 12px;
+  font-size: var(--app-fs-sm);
 }
 
 .task-row__detail p {
   margin: 0 0 8px;
   color: var(--app-muted);
-  font-size: 14px;
+  font-size: var(--app-fs-base);
 }
 
 .batch-row {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   margin-bottom: 8px;
   background: var(--app-surface);
   border: 1px solid var(--app-line);
@@ -3826,7 +4599,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .progress-selection-bar {
@@ -3839,8 +4612,8 @@ a {
   margin: 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  gap: 12px;
+  padding: 14px 18px calc(14px + env(safe-area-inset-bottom));
   background: var(--app-surface);
   border-top: 1px solid var(--app-line);
   box-shadow: var(--app-shadow);
@@ -3848,7 +4621,7 @@ a {
 
 .progress-selection-bar span {
   color: var(--app-muted);
-  font-size: 13px;
+  font-size: var(--app-fs-md);
 }
 
 /* ---------- 材质与层次 ----------
@@ -3862,6 +4635,7 @@ a {
 .option-row,
 .message--agent,
 .fold-item,
+.activity-group,
 .change-summary,
 .git-project,
 .diff-view,
@@ -3885,7 +4659,7 @@ a {
   .requirement-card:hover,
   .project-card:hover {
     border-color: var(--app-line-strong);
-    box-shadow: 0 14px 34px rgba(16, 24, 40, 0.1);
+    box-shadow: 0 14px 34px rgba(12, 74, 84, 0.1);
   }
 
   .chip-button:hover,
@@ -3895,27 +4669,238 @@ a {
   }
 }
 
-@media (max-width: 380px) {
-  .workbench-overview {
-    grid-template-columns: 92px minmax(0, 1fr);
-    padding: 12px;
+/* 320 宽的老机器：页边距收一档，需求卡片那条五格动作条的标签也降到 11px，
+   否则「运行任务」还是会被省略。375 及以上不走这一段。 */
+@media (max-width: 360px) {
+  :root {
+    --app-gutter: 14px;
   }
 
-  .overview-progress__value {
-    font-size: 30px;
-  }
-
-  .overview-metrics > div {
-    padding-right: 2px;
-    padding-left: 2px;
+  .requirement-card__actions {
+    gap: 5px;
   }
 
   .requirement-card__actions .chip-button {
-    flex-direction: column;
-    gap: 2px;
-    min-height: 48px;
+    padding: 10px 1px;
     font-size: 11px;
   }
+}
+
+/* 概览区改成单列三卡之后，这里不再需要重排网格，只要把三张卡的内边距和
+   大数字收一档，「执行中 / 已完成 / 受阻」六个字才不会在 320 宽下被省略。 */
+@media (max-width: 380px) {
+  .overview-progress__value {
+    font-size: var(--app-fs-5xl);
+  }
+
+  .overview-metrics {
+    gap: 7px;
+  }
+
+  .overview-metrics > div {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .overview-metrics > div::before {
+    left: 9px;
+  }
+}
+
+/* ---------- 消息中心 ----------
+   PC 那边是顶栏铃铛弹出一个带三个 Tab 的表格；手机没有悬停也放不下表格，
+   改成独立一屏 + 分段切换 + 卡片列表：一行一条消息，图标带语义色，
+   未读在右侧点一个点，整行都是触控目标。 */
+
+.message-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 4px;
+  background: var(--app-surface-sunken);
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius);
+}
+
+/* 和身份分段同一套排法：上排图标配条数、下排整行放标签。
+   「批次完成 / 需求完成」四个字横着跟图标挤在一格里一定会被省略号截掉。 */
+.message-tabs button {
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  padding: 9px 6px;
+  color: var(--app-muted);
+  background: transparent;
+  border-radius: var(--app-radius-sm);
+  font-weight: 600;
+}
+
+.message-tabs button.is-active {
+  color: var(--app-brand);
+  background: var(--app-surface);
+  box-shadow: var(--manager-shadow-sm);
+}
+
+.message-tabs__top {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.message-tabs__top strong {
+  font-size: var(--app-fs-lg);
+  font-weight: 650;
+  line-height: 1;
+}
+
+.message-tabs__label {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--app-fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 15px 16px;
+  color: inherit;
+  text-align: left;
+  background: var(--app-surface);
+  border: 1px solid var(--app-line);
+  border-radius: var(--app-radius);
+  box-shadow: var(--app-shadow-hair);
+}
+
+/* 未读只加一条左侧色边，不改整卡底色：列表里一半未读时满屏色块反而看不出重点。 */
+.message-row.is-unread {
+  border-left: 3px solid var(--app-brand-vivid);
+  padding-left: 14px;
+}
+
+.message-row__icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: var(--app-radius-sm);
+}
+
+.message-row__icon.is-brand {
+  color: var(--app-brand);
+  background: var(--app-brand-soft);
+}
+
+.message-row__icon.is-success {
+  color: var(--app-success);
+  background: var(--app-success-soft);
+}
+
+.message-row__icon.is-danger {
+  color: var(--app-coral);
+  background: var(--app-coral-soft);
+}
+
+.message-row__icon.is-muted {
+  color: var(--app-muted);
+  background: var(--app-surface-subtle);
+}
+
+.message-row__body {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.message-row__body strong {
+  overflow-wrap: anywhere;
+  font-size: var(--app-fs-base);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.message-row__summary {
+  color: var(--app-ink-soft);
+  font-size: var(--app-fs-sm);
+  overflow-wrap: anywhere;
+}
+
+/* 项目、分支、时间是三段等价的次要信息，用间隔点分开而不是各占一行。 */
+.message-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--app-muted);
+  font-size: var(--app-fs-xs);
+}
+
+.message-row__meta > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.message-row__meta > span + span::before {
+  content: "·";
+  margin-right: 10px;
+  color: var(--app-line-strong);
+}
+
+.message-row__dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  margin-top: 6px;
+  background: var(--app-brand-vivid);
+  border-radius: 50%;
+}
+
+.message-row .status {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+/* 底部导航的未读角标：贴在图标右上角，两位数以内不撑破一格的宽度。 */
+.nav-link__icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.nav-link__badge {
+  position: absolute;
+  top: -6px;
+  left: 12px;
+  min-width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+  color: var(--app-on-brand);
+  background: var(--app-coral);
+  border: 1.5px solid var(--app-surface);
+  border-radius: 999px;
+  /* 字号踩住令牌里给角标定的下限 12px，再小就认不出是几了 */
+  font-size: var(--app-fs-2xs);
+  font-weight: 650;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 触感与滚动 ----------

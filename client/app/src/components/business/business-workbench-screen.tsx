@@ -67,7 +67,7 @@ export function BusinessWorkbenchScreen() {
   };
 
   if (!allowed) {
-    return <main className="screen"><EmptyState icon={<MessageSquareText size={22} />} title="当前账号没有业务方身份" description="业务工作台只向拥有业务身份的账号开放。" /></main>;
+    return <main className="screen"><EmptyState icon={<MessageSquareText size={24} />} title="当前账号没有业务方身份" description="业务工作台只向拥有业务身份的账号开放。" /></main>;
   }
 
   return (
@@ -75,32 +75,32 @@ export function BusinessWorkbenchScreen() {
       <div className="screen-title-row">
         <div><p className="eyebrow">{spaceName}</p><h1>业务工作台</h1><p>用自己的语言描述诉求，AI 会持续访谈并整理文档。</p></div>
         <div className="stack-actions">
-          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新业务诉求" title="刷新" disabled={loading}><RotateCw size={19} className={loading ? "spin-icon" : ""} /></button>
-          <button className="icon-button is-primary" type="button" onClick={() => setCreateOpen(true)} aria-label="新的业务诉求" title="新的业务诉求"><Plus size={20} /></button>
+          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新业务诉求" title="刷新" disabled={loading}><RotateCw size={21} className={loading ? "spin-icon" : ""} /></button>
+          <button className="icon-button is-primary" type="button" onClick={() => setCreateOpen(true)} aria-label="新的业务诉求" title="新的业务诉求"><Plus size={22} /></button>
         </div>
       </div>
 
       <section className="business-workbench__summary">
-        <div><MessageSquareText size={19} /><span><strong>{requirements.length}</strong><small>我的业务诉求</small></span></div>
-        <div><FileText size={19} /><span><strong>{requirements.filter((item) => item.detail).length}</strong><small>已有整理</small></span></div>
+        <div><MessageSquareText size={21} /><span><strong>{requirements.length}</strong><small>我的业务诉求</small></span></div>
+        <div><FileText size={21} /><span><strong>{requirements.filter((item) => item.detail).length}</strong><small>已有整理</small></span></div>
       </section>
 
       {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
       {loading && !requirements.length ? <LoadingState title="正在读取业务诉求" /> : null}
       {!loading && !error && !requirements.length ? (
-        <EmptyState icon={<MessageSquarePlus size={22} />} title="还没有业务诉求" description="选择一个项目，开始和业务访谈 AI 交流。" action={<button className="button button-primary" type="button" onClick={() => setCreateOpen(true)}><Plus size={17} />新的业务诉求</button>} />
+        <EmptyState icon={<MessageSquarePlus size={24} />} title="还没有业务诉求" description="选择一个项目，开始和业务访谈 AI 交流。" action={<button className="button button-primary" type="button" onClick={() => setCreateOpen(true)}><Plus size={19} />新的业务诉求</button>} />
       ) : null}
 
       <section className="business-requirement-list" aria-label="我的业务诉求">
         {requirements.map((requirement) => (
           <Link className="business-requirement-row" href={`/business/workbench/${requirement.id}`} key={requirement.id}>
-            <span className="business-requirement-row__mark"><MessageSquareText size={18} /></span>
+            <span className="business-requirement-row__mark"><MessageSquareText size={20} /></span>
             <span className="business-requirement-row__body">
               <span className="business-requirement-row__meta"><small>{requirement.programName || requirement.programCode || `项目 #${requirement.programId}`}</small><time>{formatDate(requirement.updatedAt || requirement.createdAt)}</time></span>
               <strong>{requirement.title || "未命名业务诉求"}</strong>
               <p>{requirement.detail || "尚未发送第一条业务想法"}</p>
             </span>
-            <ArrowRight size={18} aria-hidden="true" />
+            <ArrowRight size={20} aria-hidden="true" />
           </Link>
         ))}
       </section>

@@ -35,9 +35,9 @@ export function ProjectDetailScreen() {
       <main className="screen">
         <div className="screen-title-row">
           <div><p className="eyebrow">项目</p><h1>找不到此项目</h1></div>
-          <Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={20} /></Link>
+          <Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={22} /></Link>
         </div>
-        <EmptyState icon={<FolderOpen size={21} />} title="项目数据尚不可用" description={error || "请返回列表或在连接恢复后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} />
+        <EmptyState icon={<FolderOpen size={23} />} title="项目数据尚不可用" description={error || "请返回列表或在连接恢复后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} />
       </main>
     );
   }
@@ -49,7 +49,7 @@ export function ProjectDetailScreen() {
           <p className="eyebrow">项目详情</p>
           <h1>{project.name}</h1>
         </div>
-        <div className="stack-actions"><button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新项目" title="刷新项目"><RotateCw size={19} /></button><Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={20} /></Link></div>
+        <div className="stack-actions"><button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新项目" title="刷新项目"><RotateCw size={21} /></button><Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={22} /></Link></div>
       </div>
       <section className="detail-hero">
         <ProjectStatus status={project.status} />
@@ -64,14 +64,14 @@ export function ProjectDetailScreen() {
           <div className="detail-row"><span>任务</span><strong>{items.length}</strong></div>
           <div className="detail-row"><span>可管理</span><strong>{project.canWrite ? "是" : "否"}</strong></div>
         </div>
-        {project.cloudSyncEnabled ? <Link className="button button-secondary" href={`/projects/${programId}/documents`} style={{ marginTop: 14 }}><Cloud size={17} aria-hidden="true" />云端文档</Link> : null}
+        {project.cloudSyncEnabled ? <Link className="button button-secondary" href={`/projects/${programId}/documents`} style={{ marginTop: 14 }}><Cloud size={19} aria-hidden="true" />云端文档</Link> : null}
       </section>
       <section className="card section">
-        <div className="section-heading"><span>需求</span>{project.canWrite ? <Link className="icon-button small-icon-button" href={`/projects/${programId}/requirements/new`} aria-label="新建需求" title="新建需求"><Plus size={18} /></Link> : null}</div>
+        <div className="section-heading"><span>需求</span>{project.canWrite ? <Link className="icon-button small-icon-button" href={`/projects/${programId}/requirements/new`} aria-label="新建需求" title="新建需求"><Plus size={20} /></Link> : null}</div>
         {requirements.length ? <div className="compact-list">{requirements.map((requirement) => <RequirementRow key={requirement.requirementKey} programId={programId} requirement={requirement} />)}</div> : <p className="muted">还没有需求。{project.canWrite ? "可通过右上角添加。" : ""}</p>}
       </section>
       <section className="card section">
-        <div className="section-heading"><span>任务与依赖</span><ListTree size={19} aria-hidden="true" /></div>
+        <div className="section-heading"><span>任务与依赖</span><ListTree size={21} aria-hidden="true" /></div>
         {items.length ? <div className="compact-list">{items.map((item) => <Link className="compact-row" href={`/projects/${programId}/tasks/${item.itemKey}`} key={item.itemKey}><div><strong>{item.title}</strong><p>{item.dependsOnItemKeys.length ? `前置：${item.dependsOnItemKeys.join("、")}` : "无前置依赖"}</p></div><span className={`status ${item.status === "blocked" ? "is-danger" : item.status === "done" ? "is-success" : "is-active"}`}>{item.progress}%</span></Link>)}</div> : <p className="muted">需求拆解后会显示任务和依赖。</p>}
       </section>
     </main>
@@ -90,7 +90,7 @@ function RequirementRow({ programId, requirement }: { programId: number; require
           <strong>{requirement.name || "未命名需求"}</strong>
           <p>{requirement.itemCount} 条任务 · {statusText}</p>
         </div>
-        <ClipboardCheck size={18} aria-hidden="true" />
+        <ClipboardCheck size={20} aria-hidden="true" />
       </Link>
       <button
         className="icon-button small-icon-button"
@@ -99,7 +99,7 @@ function RequirementRow({ programId, requirement }: { programId: number; require
         aria-label={`查看 ${requirement.name || requirement.requirementKey} 的消耗`}
         title="消耗"
       >
-        <Coins size={18} />
+        <Coins size={20} />
       </button>
       <UsageSheet
         open={usageOpen}

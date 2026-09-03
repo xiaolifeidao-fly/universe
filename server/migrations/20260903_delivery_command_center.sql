@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_command` (
   UNIQUE KEY `uk_dlv_command_idempotency` (`biz_line`, `user_id`, `idempotency_key`),
   KEY `idx_dlv_command_queue` (`biz_line`, `user_id`, `state`, `program_id`, `created_time`),
   KEY `idx_dlv_command_user` (`biz_line`, `user_id`, `program_id`, `state`),
-  KEY `idx_dlv_command_lease` (`biz_line`, `lease_expires_at`)
+  KEY `idx_dlv_command_lease` (`state`, `lease_expires_at`),
+  KEY `idx_dlv_command_sweep` (`state`, `updated_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_delivery_command_event` (

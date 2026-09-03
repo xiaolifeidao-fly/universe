@@ -506,10 +506,12 @@ func (s *service) PatchItem(ctx context.Context, req dto.PatchItemRequest) (dto.
 			RequirementKey: current.RequirementKey,
 			Kind:           "field",
 			Field:          field,
-			FromValue:      from,
-			ToValue:        to,
-			ActorID:        req.ActorID,
-			ActorName:      req.ActorName,
+			// 描述、备注这类长文本只在流水上留「已更新」，与需求时间线保持一致，
+			// 也避免超出 from_value / to_value 的列长。
+			FromValue: requirementTimelineValue(from),
+			ToValue:   requirementTimelineValue(to),
+			ActorID:   req.ActorID,
+			ActorName: req.ActorName,
 		})
 	}
 

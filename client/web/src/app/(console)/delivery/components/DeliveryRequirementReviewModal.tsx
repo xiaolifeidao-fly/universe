@@ -45,6 +45,7 @@ import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { DeliveryConversationMentionInput, type DeliveryConversationMentionCatalog, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionContextMeter } from "./DeliverySessionContext";
 
 interface DeliveryRequirementReviewModalProps {
   requirement: DeliveryRequirementRecord | null;
@@ -349,6 +350,8 @@ export function DeliveryRequirementReviewModal({
           <Tag>{t("delivery.review.scopeCount").replace("{count}", String(scopeFileCount))}</Tag>
         </div>
         <div className="delivery-session-toolbar__actions">
+          {/* 上下文余量放在动作前面：决定「要不要另起一条会话」，属于发消息前要看的那一眼。 */}
+          <SessionContextMeter context={conversation?.context} tool={provider} model={modelForConfig(reviewConfig)} />
           {/* 讨论完点这个才写报告：平时的回合只在聊天里给意见，不落文件。 */}
           <Popconfirm
             title={t("delivery.review.generate")}

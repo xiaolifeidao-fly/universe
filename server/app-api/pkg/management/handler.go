@@ -72,12 +72,24 @@ func (h *Handler) Register(api *gin.RouterGroup) {
 	read.GET("/requirement/progress", h.requirementProgress)
 	read.GET("/requirement/timeline", h.requirementTimeline)
 	read.GET("/requirement/planning-sessions", h.listPlanningSessions)
+	// 消息中心的两类提醒：执行批次完成认启动者，需求完成认收件人（负责人/协助者）。
+	// 「受阻 / 不做」的待关注任务不走这里 —— 它没有已读语义，前端用 items 的状态筛出来。
+	read.GET("/execution-batch/notifications", h.listExecutionBatchNotifications)
+	read.GET("/requirement/completion-notifications", h.listRequirementCompletionNotifications)
 
 	write := api.Group("/delivery", httpx.RequireProductResearch())
 	write.POST("/requirement/save", h.saveRequirement)
+	// 手机端新建需求要先在执行电脑上建分支再落库：分支建成后回记关联，
+	// 名称先用需求编号占位，等拆解会话按聊天内容起好标题再换掉。
+	write.POST("/requirement/name/update", h.updateRequirementName)
+	write.POST("/requirement/git-branch/bind", h.bindRequirementGitBranch)
 	write.POST("/requirement/planning-batch/create", h.createPlanningBatch)
 	write.POST("/item/create", h.createItem)
 	write.POST("/item/patch", h.patchItem)
+	// 确认已读只动调用者自己那条提醒，不改项目数据，所以按只读权限校验项目归属，
+	// 不要求对项目有写权限 —— 只读成员同样收得到提醒，也该能把它标掉。
+	write.POST("/execution-batch/notification/read", h.markExecutionBatchNotificationRead)
+	write.POST("/requirement/completion-notification/read", h.markRequirementCompletionNotificationRead)
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -448,6 +460,43 @@ func (h *Handler) saveRequirement(c *gin.Context) {
 	httpx.JSON(c, view, err)
 }
 
+// updateRequirementName 只写名称：新建需求允许不填标题，手机端先写需求编号占位，
+// 拆解会话按聊天内容生成标题后再替换。服务端只在名称仍是预期旧值时落库，
+// 不会盖掉用户自己改过的名字。
+func (h *Handler) updateRequirementName(c *gin.Context) {
+	var req deliverydto.UpdateRequirementNameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeWritableProgram(c, req.ProgramID)
+	if !ok {
+		return
+	}
+	req.BizLine = bizLine
+	req.ActorID = httpx.CallerID(c)
+	view, err := h.delivery.UpdateRequirementName(c.Request.Context(), req)
+	httpx.JSON(c, view, err)
+}
+
+// bindRequirementGitBranch 记录分支关联结果：分支由执行电脑上的 Worker 建好，
+// 服务端只在确认之后写关联，不参与本机的 Git 操作。
+func (h *Handler) bindRequirementGitBranch(c *gin.Context) {
+	var req deliverydto.BindRequirementGitBranchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeWritableProgram(c, req.ProgramID)
+	if !ok {
+		return
+	}
+	req.BizLine = bizLine
+	req.ActorID = httpx.CallerID(c)
+	view, err := h.delivery.BindRequirementGitBranch(c.Request.Context(), req)
+	httpx.JSON(c, view, err)
+}
+
 func (h *Handler) createPlanningBatch(c *gin.Context) {
 	var req deliverydto.CreatePlanningBatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -461,6 +510,62 @@ func (h *Handler) createPlanningBatch(c *gin.Context) {
 	req.BizLine = bizLine
 	req.ActorID = httpx.CallerID(c)
 	view, err := h.delivery.CreatePlanningBatch(c.Request.Context(), req)
+	httpx.JSON(c, view, err)
+}
+
+// 收件人身份一律取凭证里的 CallerID，不接受请求体里的用户标识 ——
+// 否则任何人都能替别人把提醒标成已读。
+func (h *Handler) listExecutionBatchNotifications(c *gin.Context) {
+	programID, bizLine, ok := h.authorizeProgram(c)
+	if !ok {
+		return
+	}
+	views, err := h.delivery.ListExecutionBatchNotifications(c.Request.Context(), deliverydto.ExecutionBatchNotificationQuery{
+		BizLine: bizLine, ProgramID: programID, ActorID: httpx.CallerID(c),
+	})
+	httpx.JSON(c, views, err)
+}
+
+func (h *Handler) markExecutionBatchNotificationRead(c *gin.Context) {
+	var req deliverydto.MarkExecutionBatchNotificationReadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeProgramID(c, req.ProgramID)
+	if !ok {
+		return
+	}
+	req.BizLine = bizLine
+	req.ActorID = httpx.CallerID(c)
+	view, err := h.delivery.MarkExecutionBatchNotificationRead(c.Request.Context(), req)
+	httpx.JSON(c, view, err)
+}
+
+func (h *Handler) listRequirementCompletionNotifications(c *gin.Context) {
+	programID, bizLine, ok := h.authorizeProgram(c)
+	if !ok {
+		return
+	}
+	views, err := h.delivery.ListRequirementCompletionNotifications(c.Request.Context(), deliverydto.RequirementCompletionNotificationQuery{
+		BizLine: bizLine, ProgramID: programID, ActorID: httpx.CallerID(c),
+	})
+	httpx.JSON(c, views, err)
+}
+
+func (h *Handler) markRequirementCompletionNotificationRead(c *gin.Context) {
+	var req deliverydto.MarkRequirementCompletionNotificationReadRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, err.Error())
+		return
+	}
+	_, bizLine, ok := h.authorizeProgramID(c, req.ProgramID)
+	if !ok {
+		return
+	}
+	req.BizLine = bizLine
+	req.ActorID = httpx.CallerID(c)
+	view, err := h.delivery.MarkRequirementCompletionNotificationRead(c.Request.Context(), req)
 	httpx.JSON(c, view, err)
 }
 

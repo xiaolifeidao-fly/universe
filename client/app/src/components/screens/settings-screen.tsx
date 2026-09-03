@@ -129,7 +129,7 @@ export function SettingsScreen() {
     <main className="screen">
       <div className="screen-title-row"><div><p className="eyebrow">账户与设备</p><h1>设置</h1><p>管理当前移动工作台会话。</p></div></div>
       <section className="card">
-        <h2 className="section-heading"><span>{session?.user.displayName || "当前用户"}</span><ShieldCheck size={19} aria-hidden="true" /></h2>
+        <h2 className="section-heading"><span>{session?.user.displayName || "当前用户"}</span><ShieldCheck size={21} aria-hidden="true" /></h2>
         <div className="detail-list">
           <div className="detail-row"><span>账号</span><strong>{session?.user.username || "-"}</strong></div>
           <div className="detail-row"><span>当前空间</span><strong>{spaceName || "-"}</strong></div>
@@ -139,15 +139,15 @@ export function SettingsScreen() {
         </div>
       </section>
       <section className="card section">
-        <h2 className="section-heading"><span>通知</span><Bell size={19} aria-hidden="true" /></h2>
+        <h2 className="section-heading"><span>通知</span><Bell size={21} aria-hidden="true" /></h2>
         <div className="detail-row"><span>后台通知</span><label className="notification-switch"><input type="checkbox" checked={notices} onChange={(event) => void toggleNotices(event.target.checked)} disabled={noticeState !== "ready" || updatingNotices} aria-label="后台通知" /><span aria-hidden="true" /></label></div>
         <p className={`field-help${noticeState === "error" || noticeState === "denied" ? " is-error" : ""}`}>{noticeState === "loading" ? "正在读取通知状态。" : noticeMessage}</p>
       </section>
       <section className="card section">
-        <h2 className="section-heading"><span>此设备</span><Smartphone size={19} aria-hidden="true" /></h2>
+        <h2 className="section-heading"><span>此设备</span><Smartphone size={21} aria-hidden="true" /></h2>
         <p className="muted" style={{ margin: 0 }}>可添加到主屏幕。离线时会保留应用壳，不会直接连接本机执行器。</p>
       </section>
-      <button className="button button-secondary full-width" style={{ marginTop: 14 }} type="button" onClick={signOut}><LogOut size={18} aria-hidden="true" />退出登录</button>
+      <button className="button button-secondary full-width" style={{ marginTop: 14 }} type="button" onClick={signOut}><LogOut size={20} aria-hidden="true" />退出登录</button>
     </main>
   );
 }

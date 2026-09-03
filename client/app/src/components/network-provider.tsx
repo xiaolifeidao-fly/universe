@@ -32,7 +32,7 @@ export function ConnectionBanner() {
   return (
     <aside className="connection-banner" role="status">
       <p>
-        <WifiOff size={15} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 6 }} />
+        <WifiOff size={17} aria-hidden="true" style={{ verticalAlign: "-2px", marginRight: 6 }} />
         当前离线。已打开的页面仍可使用，联网后会恢复最新数据。
       </p>
     </aside>

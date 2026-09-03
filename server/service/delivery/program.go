@@ -35,6 +35,47 @@ var cloudSyncScopeOrder = []string{
 	"chat", "requirement", "design", "test", "prototype", "execution", "attachment",
 }
 
+// 云端文档的归属类型。program 表示本机桥接没能把这份文件认到具体的需求或任务上。
+var cloudDocumentOwnerKinds = map[string]struct{}{"requirement": {}, "task": {}, "program": {}}
+
+// 归属对象内部的阶段。需求和任务各有一组，服务端只校验取值合法，
+// 阶段与归属类型是否配套由面板按各自的分栏展示决定。
+var cloudDocumentStages = map[string]struct{}{
+	"outline": {}, "prototype": {}, "review": {}, "testing": {}, "fine-tuning": {}, "chat": {},
+	"document": {}, "design": {}, "execution": {}, "attachment": {},
+}
+
+// normalizeCloudDocumentOwner 收敛桥接报上来的归属与阶段。
+// 认不出归属的文件一律落到 program 且不带键，绝不让一个来历不明的键成为面板上的分组。
+func normalizeCloudDocumentOwner(ownerKind, ownerKey, stage string) (string, string, string, error) {
+	kind := strings.TrimSpace(ownerKind)
+	key := strings.TrimSpace(ownerKey)
+	value := strings.TrimSpace(stage)
+	if kind == "" {
+		kind = "program"
+	}
+	if _, ok := cloudDocumentOwnerKinds[kind]; !ok {
+		return "", "", "", errors.New("云端文档归属类型无效")
+	}
+	if kind == "program" {
+		key = ""
+	}
+	if key == "" && kind != "program" {
+		return "", "", "", errors.New("云端文档缺少归属标识")
+	}
+	if len(key) > 64 || (key != "" && !cloudDocumentOwnerKeyRE.MatchString(key)) {
+		return "", "", "", errors.New("云端文档归属标识无效")
+	}
+	if value != "" {
+		if _, ok := cloudDocumentStages[value]; !ok {
+			return "", "", "", errors.New("云端文档阶段无效")
+		}
+	}
+	return kind, key, value, nil
+}
+
+var cloudDocumentOwnerKeyRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
 // ---------- 项目 ----------
 
 func (s *service) ListPrograms(ctx context.Context, bizLine contract.BizLine) ([]dto.ProgramView, error) {
@@ -228,6 +269,10 @@ func (s *service) UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSy
 	if len(contentType) > 128 {
 		return dto.CloudSyncFileView{}, errors.New("云端同步文件类型无效")
 	}
+	ownerKind, ownerKey, stage, err := normalizeCloudDocumentOwner(req.OwnerKind, req.OwnerKey, req.Stage)
+	if err != nil {
+		return dto.CloudSyncFileView{}, err
+	}
 	program, err := s.repo.FindProgram(ctx, req.BizLine.String(), req.ProgramID)
 	if err != nil {
 		return dto.CloudSyncFileView{}, translate(err)
@@ -251,6 +296,7 @@ func (s *service) UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSy
 	row, err := s.repo.UpsertCloudSyncFile(ctx, &repository.DeliveryCloudSyncFile{
 		BizLine: req.BizLine.String(), ProgramID: req.ProgramID, Category: req.Category,
 		RelativePath: relativePath, ContentType: contentType, ObjectKey: objectKey, Size: int64(len(req.Content)),
+		OwnerKind: ownerKind, OwnerKey: ownerKey, Stage: stage,
 		SHA256: checksum, UpdatedBy: actorOf(req.ActorID, req.ActorName), UpdatedTime: now,
 	})
 	if err != nil {
@@ -285,7 +331,26 @@ func (s *service) ListCloudSyncFiles(ctx context.Context, query dto.CloudSyncFil
 	if category != "" && !cloudSyncScopeEnabled(program.CloudSyncScopes, category) {
 		return nil, errors.New("当前项目未启用该类云端同步")
 	}
-	rows, err := s.repo.ListCloudSyncFiles(ctx, query.BizLine.String(), query.ProgramID, category)
+	// 归属过滤是浏览条件而不是写入条件：没传就是整个项目，传了就只看这条需求或任务。
+	ownerKind := strings.TrimSpace(query.OwnerKind)
+	ownerKey := strings.TrimSpace(query.OwnerKey)
+	stage := strings.TrimSpace(query.Stage)
+	if ownerKind != "" {
+		if _, ok := cloudDocumentOwnerKinds[ownerKind]; !ok {
+			return nil, errors.New("云端文档归属类型无效")
+		}
+	}
+	if ownerKey != "" && !cloudDocumentOwnerKeyRE.MatchString(ownerKey) {
+		return nil, errors.New("云端文档归属标识无效")
+	}
+	if stage != "" {
+		if _, ok := cloudDocumentStages[stage]; !ok {
+			return nil, errors.New("云端文档阶段无效")
+		}
+	}
+	rows, err := s.repo.ListCloudSyncFiles(ctx, query.BizLine.String(), query.ProgramID, repository.CloudSyncFileFilter{
+		Category: category, OwnerKind: ownerKind, OwnerKey: ownerKey, Stage: stage,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -452,6 +517,7 @@ func toCloudSyncFileView(row *repository.DeliveryCloudSyncFile) dto.CloudSyncFil
 	updated := row.UpdatedTime
 	return dto.CloudSyncFileView{
 		ProgramID: row.ProgramID, Category: row.Category, RelativePath: row.RelativePath,
-		ContentType: row.ContentType, Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated, ObjectKey: row.ObjectKey,
+		ContentType: row.ContentType, OwnerKind: row.OwnerKind, OwnerKey: row.OwnerKey, Stage: row.Stage,
+		Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated, ObjectKey: row.ObjectKey,
 	}
 }

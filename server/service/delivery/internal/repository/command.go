@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -186,51 +185,70 @@ func (r *DeliveryRepository) UpsertCommandWorker(
 ) error {
 	now := time.Now()
 	return r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing DeliveryCommandWorker
-		err := tx.Model(&DeliveryCommandWorker{}).
-			Where("biz_line = ?", row.BizLine).
-			Where("user_id = ?", row.UserID).
-			Where("worker_id = ?", row.WorkerID).
-			First(&existing).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			row.CreatedTime = now
-			row.UpdatedTime = now
-			row.LastHeartbeatAt = now
-			if err := tx.Create(row).Error; err != nil {
-				return err
-			}
-		} else if err != nil {
-			return err
-		} else if err := tx.Model(&existing).Updates(map[string]any{
-			"display_name": row.DisplayName, "capabilities_json": row.CapabilitiesJSON,
-			"last_heartbeat_at": now, "updated_time": now,
-		}).Error; err != nil {
+		row.CreatedTime = now
+		row.UpdatedTime = now
+		row.LastHeartbeatAt = now
+		// 一台 Worker 的执行通道和只读通道会同时注册：先查后插一定会撞
+		// uk_dlv_command_worker，判重交给唯一键，不在应用层猜有没有。
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "biz_line"}, {Name: "user_id"}, {Name: "worker_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"display_name", "capabilities_json", "last_heartbeat_at", "updated_time"}),
+		}).Create(row).Error; err != nil {
 			return err
 		}
-		if err := tx.Where("biz_line = ?", row.BizLine).
-			Where("user_id = ?", row.UserID).
-			Where("worker_id = ?", row.WorkerID).
-			Delete(&DeliveryCommandWorkerWorkspace{}).Error; err != nil {
-			return err
-		}
+		programIDs := make([]int64, 0, len(workspaces))
 		for _, workspace := range workspaces {
 			workspace.CreatedTime = now
 			workspace.UpdatedTime = now
+			programIDs = append(programIDs, workspace.ProgramID)
 		}
-		if len(workspaces) > 0 {
-			return tx.Create(&workspaces).Error
+		// 只删这次没再报上来的映射。整段删光再插会让并发的两条通道互相删掉对方
+		// 刚插进去的行，然后一起撞唯一键。
+		stale := tx.Where("biz_line = ?", row.BizLine).
+			Where("user_id = ?", row.UserID).
+			Where("worker_id = ?", row.WorkerID)
+		if len(programIDs) > 0 {
+			stale = stale.Where("program_id NOT IN (?)", programIDs)
 		}
-		return nil
+		if err := stale.Delete(&DeliveryCommandWorkerWorkspace{}).Error; err != nil {
+			return err
+		}
+		if len(workspaces) == 0 {
+			return nil
+		}
+		return tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "biz_line"}, {Name: "user_id"}, {Name: "worker_id"}, {Name: "program_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"updated_time"}),
+		}).Create(&workspaces).Error
 	})
 }
 
-func (r *DeliveryRepository) TouchCommandWorker(ctx context.Context, bizLine, userID, workerID string) (int64, error) {
+// TouchCommandWorker 回答的是「这台 Worker 还在不在」，不是「改了几行」。
+// last_heartbeat_at 是秒级 timestamp，同一秒里两条通道各打一次心跳时，第二次
+// 更新出来的值和库里一模一样，MySQL 的 RowsAffected 就是 0——那是「没变化」，
+// 不是「记录不存在」，所以 0 的时候要再确认一次存在性。
+func (r *DeliveryRepository) TouchCommandWorker(ctx context.Context, bizLine, userID, workerID string) (bool, error) {
+	now := time.Now()
 	result := r.Db.WithContext(ctx).Model(&DeliveryCommandWorker{}).
 		Where("biz_line = ?", bizLine).
 		Where("user_id = ?", userID).
 		Where("worker_id = ?", workerID).
-		Updates(map[string]any{"last_heartbeat_at": time.Now(), "updated_time": time.Now()})
-	return result.RowsAffected, result.Error
+		Updates(map[string]any{"last_heartbeat_at": now, "updated_time": now})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected > 0 {
+		return true, nil
+	}
+	var count int64
+	if err := r.Db.WithContext(ctx).Model(&DeliveryCommandWorker{}).
+		Where("biz_line = ?", bizLine).
+		Where("user_id = ?", userID).
+		Where("worker_id = ?", workerID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *DeliveryRepository) FindCommandWorker(ctx context.Context, bizLine, userID, workerID string) (*DeliveryCommandWorker, error) {
@@ -406,14 +424,19 @@ func (r *DeliveryRepository) DeleteFinishedCommands(
 		return 0, nil
 	}
 	ids := make([]int64, 0, len(rows))
-	commandIDs := make([]string, 0, len(rows))
+	// 事件表最大，删除必须走 idx_dlv_command_event_stream，而那条索引以 biz_line 打头：
+	// 只按 command_id 删会退化成全表扫描，所以这里按业务线分组。
+	commandIDsByBizLine := make(map[string][]string, 2)
 	for _, row := range rows {
 		ids = append(ids, row.Id)
-		commandIDs = append(commandIDs, row.CommandID)
+		commandIDsByBizLine[row.BizLine] = append(commandIDsByBizLine[row.BizLine], row.CommandID)
 	}
 	err := r.Db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("command_id IN ?", commandIDs).Delete(&DeliveryCommandEvent{}).Error; err != nil {
-			return err
+		for bizLine, commandIDs := range commandIDsByBizLine {
+			if err := tx.Where("biz_line = ?", bizLine).Where("command_id IN ?", commandIDs).
+				Delete(&DeliveryCommandEvent{}).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Where("id IN ?", ids).Delete(&DeliveryCommand{}).Error
 	})

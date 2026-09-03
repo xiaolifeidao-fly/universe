@@ -52,6 +52,7 @@ import { DeliveryConversationMentionInput, type DeliveryConversationMentionCatal
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
 import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
 import { DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
+import { SessionContextMeter } from "./DeliverySessionContext";
 import {
   MAX_ATTACHMENTS,
   MAX_ATTACHMENT_BYTES,
@@ -426,6 +427,8 @@ export function DeliveryRequirementTestingModal({
               <Tag color={testingCasesStatus === "ready" ? "success" : testingCasesStatus === "blocked" ? "warning" : testingCasesStatus === "doing" ? "processing" : "default"}>{t(`delivery.testingCases.status.${testingCasesStatus}`)}</Tag>
             </div>
             <div className="delivery-session-toolbar__actions">
+              {/* 上下文余量放在动作前面：决定「要不要另起一条会话」，属于发消息前要看的那一眼。 */}
+              <SessionContextMeter context={conversation?.context} tool={provider} model={modelForConfig(testingConfig)} />
               {testingCases.trim() && !active ? <Button onClick={executeExistingCases} disabled={!codexBridgeReady || sending}>{t("delivery.requirement.executeTesting")}</Button> : null}
               {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.session.stop")}</Button> : null}
               <Button icon={<ReloadOutlined />} loading={loading} disabled={!requirementKey} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />

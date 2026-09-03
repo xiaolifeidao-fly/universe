@@ -91,7 +91,6 @@ func TestNarrowCommandCapabilitiesKeepsClaimLanesInsideRegisteredAbilities(t *te
 	}
 }
 
-
 func TestReadOnlyCommandTypesStayOutOfTheActivityLog(t *testing.T) {
 	if !IsReadOnlyCommand(" GIT.STATUS ") || !IsReadOnlyCommand("task.planning-session") {
 		t.Fatal("快照命令未被识别为只读")
@@ -133,5 +132,25 @@ func TestStaleReadOnlyCommandsAreNotWorthDispatching(t *testing.T) {
 	}
 	if staleReadOnlyCommand("task.execute", now.Add(-time.Hour), now) {
 		t.Fatal("执行类命令等再久也要跑：用户按过的动作不能被静默丢掉")
+	}
+}
+
+func TestOfflineWorkerMessageSaysWhichMachineAndHowStale(t *testing.T) {
+	// 「离线」本身没用：用户要判断的是哪台电脑、断了多久 —— 刚断就等一下，
+	// 早就没开就得去把插件启动起来。
+	if got := commandWorkerName("mac remote worker"); got != "执行电脑「mac remote worker」" {
+		t.Fatalf("执行电脑名称拼接不正确：%s", got)
+	}
+	if got := commandWorkerName("  "); got != "执行电脑" {
+		t.Fatalf("没有显示名时应回落为通称：%s", got)
+	}
+	if got := lastHeartbeatLabel(time.Now().Add(-30 * time.Second)); got != "刚刚" {
+		t.Fatalf("刚断的心跳描述不正确：%s", got)
+	}
+	if got := lastHeartbeatLabel(time.Now().Add(-90 * time.Minute)); got != "1 小时前" {
+		t.Fatalf("小时级心跳描述不正确：%s", got)
+	}
+	if got := lastHeartbeatLabel(time.Time{}); got != "未知" {
+		t.Fatalf("从未心跳过时应说未知：%s", got)
 	}
 }

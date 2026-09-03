@@ -70,6 +70,9 @@ func (s *service) SubmitCommand(ctx context.Context, req dto.SubmitCommandReques
 	if _, err := s.repo.FindProgram(ctx, req.BizLine.String(), req.ProgramID); err != nil {
 		return dto.CommandView{}, translate(err)
 	}
+	if err := s.requireOnlineCommandWorker(ctx, req.BizLine, req.UserID, req.ProgramID); err != nil {
+		return dto.CommandView{}, err
+	}
 	if existing, err := s.repo.FindCommandByIdempotency(ctx, req.BizLine.String(), req.UserID, idempotencyKey); err == nil {
 		return toCommandView(existing), nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -90,6 +93,52 @@ func (s *service) SubmitCommand(ctx context.Context, req dto.SubmitCommandReques
 	}
 	s.notifyPendingCommand(ctx, row.UserID, row.CommandID)
 	return toCommandView(row), nil
+}
+
+// requireOnlineCommandWorker 在提交之前就把「执行电脑不在线」挡回去。
+//
+// 让命令排在队列里等插件上线，看着像「已提交」，实际是把几分钟后才发生的写操作藏
+// 起来：用户以为这一轮没成功，它却在后面自己跑了。读取类命令同样挡 —— 与其让界面
+// 转够九十秒再说超时，不如当场说清插件没开。
+func (s *service) requireOnlineCommandWorker(ctx context.Context, bizLine contract.BizLine, userID string, programID int64) error {
+	row, err := s.repo.FindLatestCommandWorker(ctx, bizLine.String(), userID, programID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.New("这个项目还没有登记执行电脑，请先在项目所在的电脑上启动插件桥接")
+	}
+	if err != nil {
+		return err
+	}
+	if !commandWorkerOnline(row.LastHeartbeatAt, time.Now()) {
+		return fmt.Errorf("%s当前离线（最后心跳 %s），请先在那台电脑上启动插件桥接后重试",
+			commandWorkerName(row.DisplayName), lastHeartbeatLabel(row.LastHeartbeatAt))
+	}
+	return nil
+}
+
+func commandWorkerName(displayName string) string {
+	name := strings.TrimSpace(displayName)
+	if name == "" {
+		return "执行电脑"
+	}
+	return "执行电脑「" + name + "」"
+}
+
+// lastHeartbeatLabel 只给量级：用户要判断的是「刚断还是早就没开」，不是精确到秒。
+func lastHeartbeatLabel(lastHeartbeatAt time.Time) string {
+	if lastHeartbeatAt.IsZero() {
+		return "未知"
+	}
+	minutes := int(time.Since(lastHeartbeatAt).Minutes())
+	if minutes < 1 {
+		return "刚刚"
+	}
+	if minutes < 60 {
+		return fmt.Sprintf("%d 分钟前", minutes)
+	}
+	if minutes < 24*60 {
+		return fmt.Sprintf("%d 小时前", minutes/60)
+	}
+	return lastHeartbeatAt.Format(dateLayout)
 }
 
 // ResolveCommandWorkerUser is the routing rule for commands the server raises on
@@ -320,11 +369,11 @@ func (s *service) HeartbeatCommandWorker(ctx context.Context, req dto.WorkerHear
 	if strings.TrimSpace(req.UserID) == "" {
 		return errors.New("缺少用户标识")
 	}
-	affected, err := s.repo.TouchCommandWorker(ctx, req.BizLine.String(), req.UserID, workerID)
+	exists, err := s.repo.TouchCommandWorker(ctx, req.BizLine.String(), req.UserID, workerID)
 	if err != nil {
 		return err
 	}
-	if affected == 0 {
+	if !exists {
 		return contract.ErrNotFound
 	}
 	return nil

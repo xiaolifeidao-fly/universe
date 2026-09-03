@@ -148,6 +148,8 @@ func (r *DeliveryRepository) UpsertCloudSyncFile(ctx context.Context, row *Deliv
 		if err := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).Where("id = ?", existing.Id).Updates(map[string]any{
 			"relative_path": row.RelativePath,
 			"content_type":  row.ContentType, "object_key": row.ObjectKey, "size": row.Size, "sha256": row.SHA256,
+			// 归属会随任务改模块、需求文档改路径而变，重传时一并刷新，避免面板一直按旧归属分组。
+			"owner_kind": row.OwnerKind, "owner_key": row.OwnerKey, "stage": row.Stage,
 			"updated_by": row.UpdatedBy, "updated_time": row.UpdatedTime,
 		}).Error; err != nil {
 			return nil, err
@@ -166,11 +168,30 @@ func (r *DeliveryRepository) UpsertCloudSyncFile(ctx context.Context, row *Deliv
 	return row, nil
 }
 
-func (r *DeliveryRepository) ListCloudSyncFiles(ctx context.Context, bizLine string, programID int64, category string) ([]*DeliveryCloudSyncFile, error) {
+// CloudSyncFileFilter 是文档目录的浏览条件；空字段表示这一维不过滤。
+type CloudSyncFileFilter struct {
+	Category  string
+	OwnerKind string
+	OwnerKey  string
+	Stage     string
+}
+
+func (r *DeliveryRepository) ListCloudSyncFiles(
+	ctx context.Context, bizLine string, programID int64, filter CloudSyncFileFilter,
+) ([]*DeliveryCloudSyncFile, error) {
 	tx := r.Db.WithContext(ctx).Model(&DeliveryCloudSyncFile{}).
 		Where("biz_line = ? AND program_id = ?", bizLine, programID)
-	if category != "" {
-		tx = tx.Where("category = ?", category)
+	if filter.Category != "" {
+		tx = tx.Where("category = ?", filter.Category)
+	}
+	if filter.OwnerKind != "" {
+		tx = tx.Where("owner_kind = ?", filter.OwnerKind)
+	}
+	if filter.OwnerKey != "" {
+		tx = tx.Where("owner_key = ?", filter.OwnerKey)
+	}
+	if filter.Stage != "" {
+		tx = tx.Where("stage = ?", filter.Stage)
 	}
 	var rows []*DeliveryCloudSyncFile
 	err := tx.Order("category asc, relative_path asc").Find(&rows).Error

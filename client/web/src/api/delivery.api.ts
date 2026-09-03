@@ -808,7 +808,9 @@ export class CodexGitSubmoduleResult {
   submoduleError = "";
 }
 
-export const CLOUD_SYNC_SCOPES = ["chat", "requirement", "design"] as const;
+export const CLOUD_SYNC_SCOPES = [
+	"chat", "requirement", "design", "test", "prototype", "execution", "attachment",
+] as const;
 
 export type CloudSyncScope = (typeof CLOUD_SYNC_SCOPES)[number];
 
@@ -920,6 +922,7 @@ export class CodexRequirementDocument {
 /** 文档栏目：需求大纲、任务文档、设计文档、测试用例都各自对应工作区里的一个目录。 */
 export type DeliveryDocumentScope =
   | "requirement-outline"
+  | "requirement-analysis"
   | "requirement-testing"
   | "requirement-review"
   | "task-document"
@@ -1055,6 +1058,9 @@ export class CodexRequirementPrototypeConversation {
   active = false;
 
   activeTurnId = "";
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 export class CodexRequirementPrototypeConversationActionResult {
@@ -1193,6 +1199,29 @@ export class CodexProviderUsage {
   total: CodexTokenUsage = new CodexTokenUsage();
 }
 
+/**
+ * 这条会话当前占了多少上下文窗口。
+ *
+ * 和 `CodexTokenUsage` 不是一回事：用量是整条会话累加的账，只增不减；上下文是**此刻**
+ * 模型手里那份提示词有多长，压缩之后会掉回去。对话窗口顶上显示的是后者。
+ */
+export class CodexSessionContext {
+  /** 最近一次模型请求占住的上下文（输入含缓存命中那段 + 这次的输出）。 */
+  usedTokens = 0;
+
+  /** 这个模型的上下文窗口，也就是「总共多少」；执行器没报时为 0，面板按选中的模型自己补。 */
+  windowTokens = 0;
+
+  remainingTokens = 0;
+
+  usedPercent = 0;
+
+  /** 这条读数是哪个执行器留下的，以及当时用的模型。 */
+  provider = "";
+
+  model = "";
+}
+
 export class CodexConversationTurn {
   id = "";
 
@@ -1261,6 +1290,9 @@ export class CodexConversation {
 
   /** 本条会话所有回合的合计消耗。 */
   usage: CodexTokenUsage = new CodexTokenUsage();
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 export class CodexConversationActionResult {
@@ -1283,6 +1315,7 @@ export class CodexConversationActionResult {
 /** 需求聊天里可引用的当前需求文件栏目；原型文件由独立的原型接口提供。 */
 export type DeliveryConversationFileScope =
   | "requirement-outline"
+  | "requirement-analysis"
   | "requirement-testing"
   | "requirement-review"
   | "requirement-prototype";
@@ -1356,6 +1389,9 @@ export class CodexPlanningConversation {
 
   /** 本条会话所有回合的合计消耗。 */
   usage: CodexTokenUsage = new CodexTokenUsage();
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 export class CodexPlanningActionResult {
@@ -1400,9 +1436,55 @@ export class CodexRequirementTestingConversation {
   testingCases = "";
 
   testingCasesPath = "";
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 export class CodexRequirementTestingActionResult {
+  accepted = false;
+
+  programId = 0;
+
+  requirementKey = "";
+
+  threadId = "";
+
+  turnId = "";
+
+  active = false;
+}
+
+/** 需求分析会话；排在需求拆解之前，产出 doc/analysis/<需求键>/ 下的分析文档。 */
+export class CodexRequirementAnalysisConversation {
+  programId = 0;
+
+  requirementKey = "";
+
+  threadId = "";
+
+  executorType: AITool = "codex";
+
+  turns: CodexConversationTurn[] = [];
+
+  conversations: CodexPlanningSessionSummary[] = [];
+
+  active = false;
+
+  activeTurnId = "";
+
+  /** 分析文档目录与主文档路径；目录还没建时 documents 为空。 */
+  documentDirectory = "";
+
+  documentPath = "";
+
+  documents: DeliveryDocumentFile[] = [];
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
+}
+
+export class CodexRequirementAnalysisActionResult {
   accepted = false;
 
   programId = 0;
@@ -1438,6 +1520,9 @@ export class CodexRequirementReviewConversation {
   reviewReport = "";
 
   reviewReportPath = "";
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 export class CodexRequirementReviewActionResult {
@@ -1471,6 +1556,9 @@ export class CodexRequirementFineTuningConversation {
   active = false;
 
   activeTurnId = "";
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 /** 单个任务的自由微调会话；不领取任务、不改变任务阶段。 */
@@ -1490,6 +1578,9 @@ export class CodexTaskFineTuningConversation {
   active = false;
 
   activeTurnId = "";
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 /** 任务级预先测试用例会话；与任务执行会话隔离，永远不领取或推进任务。 */
@@ -1516,6 +1607,9 @@ export class CodexTaskTestingCasesConversation {
   testingCases = "";
 
   testingCasesPath = "";
+
+  /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
+  context: CodexSessionContext = new CodexSessionContext();
 }
 
 export interface BoardQuery {
@@ -3296,6 +3390,77 @@ export async function stopCodexRequirementTestingConversation(
   return plainToInstance(CodexRequirementTestingActionResult, response.data);
 }
 
+export interface SendCodexRequirementAnalysisMessageOptions {
+  threadId?: string;
+  newConversation?: boolean;
+  provider?: AITool;
+  model?: string;
+  reasoningEffort?: AIReasoningEffort;
+  fastMode?: boolean;
+  /** 本轮 @ 的需求、任务和需求文档；和拆解聊天走同一套。 */
+  chatReferences?: DeliveryConversationReference[];
+  /** true 表示这一轮是「确认生成需求分析文档」，会把结论写进工作区的分析目录。 */
+  generateDocument?: boolean;
+  /** true 表示这一轮顺带产出 HTML 原型。 */
+  generatePrototype?: boolean;
+}
+
+function hydrateRequirementAnalysisConversation(data: CodexRequirementAnalysisConversation) {
+  const conversation = plainToInstance(CodexRequirementAnalysisConversation, data);
+  conversation.turns = plainToInstance(CodexConversationTurn, data.turns ?? []).map((turn) => {
+    turn.items = plainToInstance(CodexConversationItem, turn.items ?? []).map((item) => {
+      item.attachments = plainToInstance(CodexConversationAttachment, item.attachments ?? []);
+      item.changes = plainToInstance(CodexConversationChange, item.changes ?? []);
+      return item;
+    });
+    return turn;
+  });
+  conversation.conversations = plainToInstance(CodexPlanningSessionSummary, data.conversations ?? []);
+  conversation.documents = plainToInstance(DeliveryDocumentFile, data.documents ?? []);
+  return conversation;
+}
+
+export async function fetchCodexRequirementAnalysisConversation(
+  programId: number,
+  requirementKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.get<CodexRequirementAnalysisConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-analysis`, {
+    params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
+    timeout: 20000,
+  });
+  return hydrateRequirementAnalysisConversation(response.data);
+}
+
+export async function sendCodexRequirementAnalysisMessage(
+  programId: number,
+  requirementKey: string,
+  message: string,
+  options: SendCodexRequirementAnalysisMessageOptions = {},
+) {
+  const response = await instance.post<CodexRequirementAnalysisActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-analysis`,
+    bridgeWorkspaceParams(programId, { programId, requirementKey, message, ...options }),
+    { timeout: 30000 },
+  );
+  return plainToInstance(CodexRequirementAnalysisActionResult, response.data);
+}
+
+export async function stopCodexRequirementAnalysisConversation(
+  programId: number,
+  requirementKey: string,
+  threadId = "",
+  provider: AITool = "codex",
+) {
+  const response = await instance.post<CodexRequirementAnalysisActionResult>(
+    `${CODEX_BRIDGE_URL}/v1/codex/requirement-analysis/stop`,
+    bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
+    { timeout: 20000 },
+  );
+  return plainToInstance(CodexRequirementAnalysisActionResult, response.data);
+}
+
 /** 用户在面板上勾选的 review 范围：一个 Git 工程一条，files 为空表示整个工程都看。 */
 export interface CodexReviewScopeProject {
   path: string;
@@ -3521,7 +3686,7 @@ export class CodexRequirementTaskUsage {
 }
 
 /** 需求侧会话的分块，键跟桥接约定，面板拿它查文案。 */
-export type CodexRequirementUsageGroupKey = "planning" | "prototype" | "review" | "testing" | "fineTuning";
+export type CodexRequirementUsageGroupKey = "analysis" | "planning" | "prototype" | "review" | "testing" | "fineTuning";
 
 /** 需求窗口里某一个入口（拆解 / 原型 / 评审 / 测试 / 微调）花了多少。 */
 export class CodexRequirementUsageGroup {

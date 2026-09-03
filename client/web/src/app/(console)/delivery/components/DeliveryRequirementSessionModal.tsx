@@ -68,6 +68,7 @@ import {
 	fetchCodexGitProjects,
 	fetchCodexGitWorkspaceStatus,
 	pushCodexGitBranch,
+  fetchCodexRequirementAnalysisConversation,
   fetchCodexRequirementPrototype,
   fetchCodexRequirementPrototypeConversation,
   fetchCodexRequirementFineTuningConversation,
@@ -112,9 +113,11 @@ import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, SessionTurnUsage, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionContextMeter } from "./DeliverySessionContext";
 import { DeliveryRequirementReviewModal } from "./DeliveryRequirementReviewModal";
 import { DeliveryRequirementTestingModal } from "./DeliveryRequirementTestingModal";
 import { DeliveryFineTuningSession } from "./DeliveryFineTuningSession";
+import { DeliveryRequirementAnalysisSession } from "./DeliveryRequirementAnalysisSession";
 import { DeliverySessionHistoryTabs, type DeliveryHistoryTab } from "./DeliverySessionHistoryTabs";
 import {
   MAX_ATTACHMENTS,
@@ -345,8 +348,12 @@ export function DeliveryRequirementSessionModal({
   const [historyTab, setHistoryTab] = useState<DeliveryHistoryTab>("planning");
   const [testingConversations, setTestingConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [reviewConversations, setReviewConversations] = useState<CodexPlanningSessionSummary[]>([]);
+  const [analysisConversations, setAnalysisConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [fineTuningConversations, setFineTuningConversations] = useState<CodexPlanningSessionSummary[]>([]);
   const [reviewWorkspaceOpen, setReviewWorkspaceOpen] = useState(false);
+  const [analysisWorkspaceOpen, setAnalysisWorkspaceOpen] = useState(false);
+  const [analysisThreadId, setAnalysisThreadId] = useState("");
+  const [startNewAnalysisConversation, setStartNewAnalysisConversation] = useState(false);
   const [fineTuningWorkspaceOpen, setFineTuningWorkspaceOpen] = useState(false);
   const [reviewThreadId, setReviewThreadId] = useState("");
   const [startNewReviewConversation, setStartNewReviewConversation] = useState(false);
@@ -483,6 +490,19 @@ export function DeliveryRequirementSessionModal({
       message.error((error as Error).message);
     }
   }, [codexBridgeReady, programId, requirementKey, testingProvider]);
+
+  const loadAnalysisHistory = useCallback(async () => {
+    if (!programId || !requirementKey || !codexBridgeReady) {
+      setAnalysisConversations([]);
+      return;
+    }
+    try {
+      const next = await fetchCodexRequirementAnalysisConversation(programId, requirementKey, "", planningPreference.tool);
+      setAnalysisConversations(next.conversations);
+    } catch (error) {
+      message.error((error as Error).message);
+    }
+  }, [codexBridgeReady, planningPreference.tool, programId, requirementKey]);
 
   const loadReviewHistory = useCallback(async () => {
     if (!programId || !requirementKey || !codexBridgeReady) {
@@ -738,7 +758,8 @@ export function DeliveryRequirementSessionModal({
     void loadTestingHistory();
     void loadReviewHistory();
     void loadFineTuningHistory();
-  }, [loadFineTuningHistory, loadReviewHistory, loadTestingHistory, open, requirementKey]);
+    void loadAnalysisHistory();
+  }, [loadAnalysisHistory, loadFineTuningHistory, loadReviewHistory, loadTestingHistory, open, requirementKey]);
 
   const loadPrototype = useCallback(async () => {
     if (!open || !requirementKey || !codexBridgeReady) {
@@ -1056,7 +1077,7 @@ export function DeliveryRequirementSessionModal({
     };
   }, [open, programId]);
 
-  // “文件”候选只来自当前需求受控的三个目录；任一栏目暂未生成都不影响其他候选展示。
+  // “文件”候选只来自当前需求受控的那几个目录；任一栏目暂未生成都不影响其他候选展示。
   useEffect(() => {
     const requirementKey = saved?.requirementKey ?? "";
     if (!open || !programId || !requirementKey || !codexBridgeReady) {
@@ -1066,10 +1087,11 @@ export function DeliveryRequirementSessionModal({
     let cancelled = false;
     void Promise.allSettled([
       fetchDeliveryDocumentSet(programId, "requirement-outline", requirementKey),
+      fetchDeliveryDocumentSet(programId, "requirement-analysis", requirementKey),
       fetchDeliveryDocumentSet(programId, "requirement-testing", requirementKey),
       fetchDeliveryDocumentSet(programId, "requirement-review", requirementKey),
       fetchCodexRequirementPrototype(programId, requirementKey),
-    ]).then(([outlineResult, testingResult, reviewResult, prototypeResult]) => {
+    ]).then(([outlineResult, analysisResult, testingResult, reviewResult, prototypeResult]) => {
       if (cancelled) return;
       const next: DeliveryConversationMentionFile[] = [];
       if (outlineResult.status === "fulfilled") {
@@ -1077,6 +1099,14 @@ export function DeliveryRequirementSessionModal({
           path: file.path,
           name: file.name,
           scope: "requirement-outline" as const,
+        })));
+      }
+      // 需求分析文档写在 doc/analysis/<需求键>/ 下，拆解聊天要能直接 @ 它接着往下拆。
+      if (analysisResult.status === "fulfilled") {
+        next.push(...analysisResult.value.files.map((file) => ({
+          path: file.path,
+          name: file.name,
+          scope: "requirement-analysis" as const,
         })));
       }
       if (testingResult.status === "fulfilled") {
@@ -1613,8 +1643,28 @@ export function DeliveryRequirementSessionModal({
       setStartNewFineTuningConversation(false);
       void loadFineTuningHistory();
     }
+    if (analysisWorkspaceOpen) {
+      setAnalysisWorkspaceOpen(false);
+      setStartNewAnalysisConversation(false);
+      void loadAnalysisHistory();
+      // 分析回合多半刚写过文档，回到拆解时 @ 候选要跟着刷新。
+      setMentionFilesToken((token) => token + 1);
+    }
     if (threadId) selectConversation(threadId);
     else startNewConversation();
+  };
+
+  const openAnalysisConversation = (threadId = "", startNew = false) => {
+    setHistoryTab("analysis");
+    setTestingWorkspaceOpen(false);
+    setStartNewTestingConversation(false);
+    setReviewWorkspaceOpen(false);
+    setStartNewReviewConversation(false);
+    setFineTuningWorkspaceOpen(false);
+    setStartNewFineTuningConversation(false);
+    setAnalysisThreadId(threadId);
+    setStartNewAnalysisConversation(startNew);
+    setAnalysisWorkspaceOpen(true);
   };
 
   const openReviewConversation = (threadId = "", startNew = false) => {
@@ -1623,6 +1673,8 @@ export function DeliveryRequirementSessionModal({
     setStartNewTestingConversation(false);
     setFineTuningWorkspaceOpen(false);
     setStartNewFineTuningConversation(false);
+    setAnalysisWorkspaceOpen(false);
+    setStartNewAnalysisConversation(false);
     setReviewThreadId(threadId);
     setStartNewReviewConversation(startNew);
     setReviewWorkspaceOpen(true);
@@ -1634,6 +1686,8 @@ export function DeliveryRequirementSessionModal({
     setStartNewReviewConversation(false);
     setFineTuningWorkspaceOpen(false);
     setStartNewFineTuningConversation(false);
+    setAnalysisWorkspaceOpen(false);
+    setStartNewAnalysisConversation(false);
     setTestingThreadId(threadId);
     setStartNewTestingConversation(startNewConversation);
     setTestingWorkspaceOpen(true);
@@ -1645,6 +1699,8 @@ export function DeliveryRequirementSessionModal({
     setStartNewReviewConversation(false);
     setTestingWorkspaceOpen(false);
     setStartNewTestingConversation(false);
+    setAnalysisWorkspaceOpen(false);
+    setStartNewAnalysisConversation(false);
     setFineTuningThreadId(threadId);
     setStartNewFineTuningConversation(startNewConversation);
     setFineTuningWorkspaceOpen(true);
@@ -2143,38 +2199,80 @@ export function DeliveryRequirementSessionModal({
 		ref={planningShellRef}
 		style={{ "--delivery-planning-context-width": `${contextPanelWidth}px` } as CSSProperties}
 		>
-        {/* 左：会话列表按用途分成拆解 / 代码 review / 测试三栏，追问和重开在各自那一栏里切。 */}
+        {/* 左：会话列表按用途分成需求分析 / 拆解 / 代码 review / 测试 / 微调五栏，追问和重开在各自那一栏里切。
+            「新建」只有拆解那一栏要等本轮跑完；其余分栏各自独立，不该被拆解的运行状态锁住。 */}
         <DeliverySessionHistoryTabs
           activeTab={historyTab}
           onTabChange={setHistoryTab}
           planningConversations={conversation?.conversations ?? []}
+          analysisConversations={analysisConversations}
           reviewConversations={reviewConversations}
           testingConversations={testingConversations}
           fineTuningConversations={fineTuningConversations}
-          selectedKind={testingWorkspaceOpen ? "testing" : reviewWorkspaceOpen ? "review" : fineTuningWorkspaceOpen ? "fineTuning" : "planning"}
-          selectedThreadId={testingWorkspaceOpen
-            ? (startNewTestingConversation ? "" : testingThreadId)
-            : reviewWorkspaceOpen
-              ? (startNewReviewConversation ? "" : reviewThreadId)
-              : fineTuningWorkspaceOpen
-                ? (startNewFineTuningConversation ? "" : fineTuningThreadId)
-              : newConversation ? "" : switchingThreadId || conversation?.threadId || ""}
-          draft={testingWorkspaceOpen
-            ? startNewTestingConversation ? { kind: "testing" as const, title: `${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`, subtitle: `${t("delivery.testingCases.status")} · ${t("delivery.requirement.testingDraft")}` } : null
-            : reviewWorkspaceOpen
-              ? startNewReviewConversation ? { kind: "review" as const, title: `${t("delivery.review.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.review.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
-              : fineTuningWorkspaceOpen
-                ? startNewFineTuningConversation ? { kind: "fineTuning" as const, title: `${t("delivery.fineTuning.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.fineTuning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
-              : newConversation ? { kind: "planning" as const, title: t("delivery.session.newConversation"), subtitle: `${t("delivery.planning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null}
-          onSelect={(kind, threadId) => (kind === "planning" ? openPlanningConversation(threadId) : kind === "review" ? openReviewConversation(threadId) : kind === "testing" ? openTestingConversation(threadId) : openFineTuningConversation(threadId))}
-          onNew={(tab) => (tab === "planning" ? openPlanningConversation("") : tab === "review" ? openReviewConversation("", true) : tab === "testing" ? openTestingConversation("", true) : openFineTuningConversation("", true))}
-          newDisabled={testingWorkspaceOpen || reviewWorkspaceOpen || fineTuningWorkspaceOpen ? !requirementKey : active || !requirementKey}
-          newDisabledTip={!testingWorkspaceOpen && !reviewWorkspaceOpen && !fineTuningWorkspaceOpen && active ? t("delivery.session.newDisabled") : ""}
+          selectedKind={analysisWorkspaceOpen ? "analysis" : testingWorkspaceOpen ? "testing" : reviewWorkspaceOpen ? "review" : fineTuningWorkspaceOpen ? "fineTuning" : "planning"}
+          selectedThreadId={analysisWorkspaceOpen
+            ? (startNewAnalysisConversation ? "" : analysisThreadId)
+            : testingWorkspaceOpen
+              ? (startNewTestingConversation ? "" : testingThreadId)
+              : reviewWorkspaceOpen
+                ? (startNewReviewConversation ? "" : reviewThreadId)
+                : fineTuningWorkspaceOpen
+                  ? (startNewFineTuningConversation ? "" : fineTuningThreadId)
+                : newConversation ? "" : switchingThreadId || conversation?.threadId || ""}
+          draft={analysisWorkspaceOpen
+            ? startNewAnalysisConversation ? { kind: "analysis" as const, title: `${t("delivery.analysis.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.analysis.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
+            : testingWorkspaceOpen
+              ? startNewTestingConversation ? { kind: "testing" as const, title: `${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`, subtitle: `${t("delivery.testingCases.status")} · ${t("delivery.requirement.testingDraft")}` } : null
+              : reviewWorkspaceOpen
+                ? startNewReviewConversation ? { kind: "review" as const, title: `${t("delivery.review.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.review.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
+                : fineTuningWorkspaceOpen
+                  ? startNewFineTuningConversation ? { kind: "fineTuning" as const, title: `${t("delivery.fineTuning.title")} · ${saved?.name || requirementKey}`, subtitle: `${t("delivery.fineTuning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null
+                : newConversation ? { kind: "planning" as const, title: t("delivery.session.newConversation"), subtitle: `${t("delivery.planning.title")} · ${t("delivery.session.newDraft").replace("{tool}", toolName)}` } : null}
+          onSelect={(kind, threadId) => (kind === "analysis"
+            ? openAnalysisConversation(threadId)
+            : kind === "planning"
+              ? openPlanningConversation(threadId)
+              : kind === "review" ? openReviewConversation(threadId) : kind === "testing" ? openTestingConversation(threadId) : openFineTuningConversation(threadId))}
+          onNew={(tab) => (tab === "analysis"
+            ? openAnalysisConversation("", true)
+            : tab === "planning"
+              ? openPlanningConversation("")
+              : tab === "review" ? openReviewConversation("", true) : tab === "testing" ? openTestingConversation("", true) : openFineTuningConversation("", true))}
+          newDisabled={historyTab === "planning" ? active || !requirementKey : !requirementKey}
+          newDisabledTip={historyTab === "planning" && active ? t("delivery.session.newDisabled") : ""}
           testingTitleFallback={`${saved?.name || requirementKey} · ${t("delivery.testingCases.status")}`}
         />
 
-        {/* 中：拆解会话，或者测试工作区的会话区——两者共用同一套左右两栏。 */}
-        {reviewWorkspaceOpen && saved ? (
+        {/* 中：拆解会话，或者需求分析 / review / 测试 / 微调的会话区——它们共用同一套左右两栏。 */}
+        {analysisWorkspaceOpen && saved ? (
+        <DeliveryRequirementAnalysisSession
+          requirement={saved}
+          programId={programId}
+          programName={programName}
+          codexBridgeReady={codexBridgeReady}
+          startNewConversationOnOpen={startNewAnalysisConversation}
+          initialThreadId={analysisThreadId}
+          gitPanel={gitPanel}
+          mentionRequirements={chatRequirements}
+          mentionItems={chatItems}
+          mentionFiles={mentionFiles}
+          onSearchMentionCandidates={searchMentionCandidates}
+          contextCollapsed={contextCollapsed}
+          onToggleContext={() => {
+            setContextCollapsed(!contextCollapsed);
+            setGitPanelCollapsed(false);
+          }}
+          onConversationStateChange={({ threadId, isNew }) => {
+            setAnalysisThreadId(threadId);
+            setStartNewAnalysisConversation(isNew);
+          }}
+          onChanged={async () => {
+            await loadAnalysisHistory();
+            // 分析文档是拆解会话 @ 得到的候选之一，写完要立刻能被引用。
+            setMentionFilesToken((token) => token + 1);
+          }}
+        />
+        ) : reviewWorkspaceOpen && saved ? (
         <DeliveryRequirementReviewModal
           requirement={saved}
           programId={programId}
@@ -2299,6 +2397,10 @@ export function DeliveryRequirementSessionModal({
               ) : (
                 <span className="delivery-planning-session-toolbar__state" />
               )}
+              {/* 上下文余量跟在会话状态后面：它回答「这条对话还能聊多久」，是状态不是操作。 */}
+              {requirementKey && !newConversation ? (
+                <SessionContextMeter context={conversation?.context} tool={planningProvider} model={modelForConfig(planningConfig)} />
+              ) : null}
               {/* 展开/收起跟弹窗的关闭按钮排在同一行，右上角只留这两个。 */}
               <Tooltip title={t(contextCollapsed ? "delivery.planning.expandContext" : "delivery.planning.collapseContext")}>
                 <Button
@@ -3083,17 +3185,25 @@ export function DeliveryRequirementSessionModal({
                 <b>{t("delivery.prototype.editTitle")}</b>
                 <small style={{ display: "block", color: "var(--manager-text-secondary)", marginTop: 4 }}>{t("delivery.prototype.editHint")}</small>
               </div>
-              <Tooltip title={t("delivery.session.refresh")}>
-                <Button
-                  type="text"
-                  shape="circle"
-                  icon={<ReloadOutlined />}
-                  disabled={!prototypeEditConversation?.threadId}
-                  loading={prototypeEditLoading}
-                  onClick={() => void loadPrototypeEditConversation(prototypeEditConversation?.threadId ?? "")}
-                  aria-label={t("delivery.session.refresh")}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* 原型编辑也是一条独立会话，同样要能看见「还能聊多久」。 */}
+                <SessionContextMeter
+                  context={prototypeEditConversation?.context}
+                  tool={prototypeEditConversation?.executorType || planningProvider}
+                  model={modelForConfig(planningConfig)}
                 />
-              </Tooltip>
+                <Tooltip title={t("delivery.session.refresh")}>
+                  <Button
+                    type="text"
+                    shape="circle"
+                    icon={<ReloadOutlined />}
+                    disabled={!prototypeEditConversation?.threadId}
+                    loading={prototypeEditLoading}
+                    onClick={() => void loadPrototypeEditConversation(prototypeEditConversation?.threadId ?? "")}
+                    aria-label={t("delivery.session.refresh")}
+                  />
+                </Tooltip>
+              </div>
             </header>
             <div ref={prototypeEditTranscriptRef} onScroll={onPrototypeEditTranscriptScroll} className="delivery-session-transcript" style={{ flex: 1, minHeight: 360, maxHeight: "calc(100vh - 350px)" }}>
               {prototypeEditItemCount ? prototypeEditTurns.map((turn) => (

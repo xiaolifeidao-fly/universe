@@ -79,6 +79,7 @@ import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionDocumentText, SessionMessageContent, SessionProcessGroup, SessionTurnUsage, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionContextMeter } from "./DeliverySessionContext";
 import { DeliveryTaskTestingCasesModal } from "./DeliveryTaskTestingCasesModal";
 import { DeliveryConversationMentionInput } from "./DeliveryConversationMentionInput";
 import { DeliveryFineTuningSession } from "./DeliveryFineTuningSession";
@@ -722,6 +723,10 @@ export function DeliveryTaskSessionModal({
                 ? t("delivery.session.newConversation")
                 : conversation?.threadId ? <><i /> {t("delivery.session.connected").replace("{tool}", toolName)}</> : t("delivery.session.notStarted")}</span>
               <div className="delivery-session-toolbar__actions">
+                {/* 上下文余量放在动作前面：决定「要不要另起一条会话」，属于发消息前要看的那一眼。 */}
+                {!newConversation ? (
+                  <SessionContextMeter context={conversation?.context} tool={activeProvider} model={modelForConfig(activeConfig)} />
+                ) : null}
                 {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.session.stop")}</Button> : null}
                 <Button onClick={() => openTestingConversation("", true)} disabled={!codexBridgeReady || taskHasActiveConversation}>{t("delivery.testingCases.generate")}</Button>
                 <Button onClick={() => onOpenEditor(activeItem)}>{t("delivery.session.editTask")}</Button>

@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, CheckCircle2, ClipboardCheck, SquarePen, ListTree, RotateCw, Send, Lightbulb } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ClipboardCheck, FileText, SquarePen, ListTree, RotateCw, Send, Lightbulb } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "@/api/client";
-import { getCommand, submitCommand, type CommandDetail } from "@/api/command.api";
+import { submitCommand, type CommandDetail } from "@/api/command.api";
+import { watchCommand } from "@/api/workbench.api";
 import { getProgram, getRequirement, listItems, type DeliveryItem, type RequirementSummary } from "@/api/management.api";
 import { EmptyState } from "@/components/empty-state";
 import { LoadingState } from "@/components/loading-state";
+import { DocumentSheet } from "@/components/workbench/document-sheet";
 import { dateTimeLabel } from "@/lib/date";
 
 type PlanningMessage = { type?: string; text?: string; phase?: string };
@@ -52,6 +54,7 @@ export function RequirementDetailScreen() {
   const [planningCommandId, setPlanningCommandId] = useState("");
   const [planningCommand, setPlanningCommand] = useState<CommandDetail | null>(null);
   const [planningBusy, setPlanningBusy] = useState(false);
+  const [documentsOpen, setDocumentsOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(programId) || programId <= 0) {
@@ -79,24 +82,30 @@ export function RequirementDetailScreen() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // 拆解要跑几分钟：接服务端的活动流等它跑完，而不是每两秒半问一次「好了没」。
+  // 界面离开不撤命令 —— 拆解是用户按下去的动作，退出这一屏只是不看了。
   useEffect(() => {
     if (!planningCommandId) return;
-    let cancelled = false;
-    const refresh = async () => {
-      try {
-        const command = await getCommand(planningCommandId);
-        if (cancelled) return;
-        setPlanningCommand(command);
-        const terminal = ["succeeded", "failed", "cancelled", "timed_out"].includes(command.state);
-        setPlanningBusy(!terminal);
-        if (terminal && command.state === "succeeded" && valueAsPlanningResult(command).threadId) void load();
-      } catch (reason) {
-        if (!cancelled) setError(reason instanceof ApiError ? reason.message : "无法恢复拆解状态。");
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 2500);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    let active = true;
+    const controller = new AbortController();
+    setPlanningBusy(true);
+    void watchCommand(planningCommandId, {
+      signal: controller.signal,
+      onProgress: (progress) => {
+        if (!active) return;
+        setPlanningCommand((current) => (current ? { ...current, state: progress.state, progress: progress.progress } : current));
+      },
+    }).then((finished) => {
+      if (!active) return;
+      setPlanningCommand(finished);
+      setPlanningBusy(false);
+      if (finished.state === "succeeded" && valueAsPlanningResult(finished).threadId) void load();
+    }).catch((reason) => {
+      if (!active) return;
+      setPlanningBusy(false);
+      setError(reason instanceof ApiError ? reason.message : "无法恢复拆解状态。");
+    });
+    return () => { active = false; controller.abort(); };
   }, [load, planningCommandId]);
 
   const planning = valueAsPlanningResult(planningCommand);
@@ -104,11 +113,12 @@ export function RequirementDetailScreen() {
   const previewItems = planning.planning?.result?.items ?? [];
   const previewText = planningPreviewText(planning);
   const actionLabel = useMemo(() => {
-    if (!planningCommand) return "尚未发起";
+    // 重开这一屏时命令详情要等第一拍才回来，但「正在跑」这件事本地就知道。
+    if (!planningCommand) return planningBusy ? "正在等待远程 Worker" : "尚未发起";
     if (planningCommand.state === "succeeded" && threadId) return "拆解预览已就绪";
     if (planningCommand.state === "failed" || planningCommand.state === "timed_out") return "拆解未完成";
     return "正在等待远程 Worker";
-  }, [planningCommand, threadId]);
+  }, [planningBusy, planningCommand, threadId]);
 
   const startPlanning = async () => {
     if (!requirement) return;
@@ -149,32 +159,43 @@ export function RequirementDetailScreen() {
   };
 
   if (loading) return <main className="screen"><LoadingState title="正在读取需求" /></main>;
-  if (!requirement) return <main className="screen"><EmptyState icon={<ClipboardCheck size={21} />} title="找不到此需求" description={error || "需求可能已被删除或你没有访问权限。"} action={<Link className="button button-primary" href={`/projects/${programId}`}>返回项目</Link>} /></main>;
+  if (!requirement) return <main className="screen"><EmptyState icon={<ClipboardCheck size={23} />} title="找不到此需求" description={error || "需求可能已被删除或你没有访问权限。"} action={<Link className="button button-primary" href={`/projects/${programId}`}>返回项目</Link>} /></main>;
 
   return (
     <main className="screen">
-      <div className="screen-title-row">
+      <div className="screen-title-row is-detail">
         <div><p className="eyebrow">需求详情</p><h1>{requirement.name || "未命名需求"}</h1><p>{requirement.itemCount} 条关联任务 · {dateTimeLabel(requirement.updatedAt)}</p></div>
-        <Link className="icon-button" href={`/projects/${programId}`} aria-label="返回项目" title="返回项目"><ArrowLeft size={20} /></Link>
+        <div className="stack-actions">
+          <button className="icon-button" type="button" onClick={() => setDocumentsOpen(true)} aria-label="需求文档" title="需求文档"><FileText size={22} /></button>
+          <Link className="icon-button" href={`/projects/${programId}`} aria-label="返回项目" title="返回项目"><ArrowLeft size={22} /></Link>
+        </div>
       </div>
+      <DocumentSheet
+        open={documentsOpen}
+        programId={programId}
+        ownerKind="requirement"
+        ownerKey={requirement.requirementKey}
+        ownerName={requirement.name}
+        onClose={() => setDocumentsOpen(false)}
+      />
       <section className="detail-hero"><span className={`status ${requirement.status === "done" ? "is-success" : requirement.status === "dropped" ? "is-danger" : "is-active"}`}>{requirement.status === "done" ? "已完成" : requirement.status === "dropped" ? "不做" : "进行中"}</span><p>{requirement.detail || "尚未补充需求说明。"}</p><div className="detail-meta"><span className="tag">{requirement.mode === "simple" ? "简易模式" : "专业模式"}</span><span className="tag">起始：{phaseLabel(requirement.startPhase)}</span>{requirement.owners.map((owner) => <span className="tag" key={owner.id}>{owner.name || owner.id}</span>)}</div></section>
       <section className="section card">
-        <div className="section-heading"><span>任务</span><Link className="icon-button small-icon-button" href={`/projects/${programId}`} aria-label="查看项目任务" title="查看项目任务"><ListTree size={18} /></Link></div>
+        <div className="section-heading"><span>任务</span><Link className="icon-button small-icon-button" href={`/projects/${programId}`} aria-label="查看项目任务" title="查看项目任务"><ListTree size={20} /></Link></div>
         {items.length ? <div className="compact-list">{items.map((item) => <Link className="compact-row" href={`/projects/${programId}/tasks/${item.itemKey}`} key={item.itemKey}><div><strong>{item.title}</strong><p>{phaseLabel(item.phase)} · {statusLabel(item.status)} · {item.progress}%</p></div><span className="status is-active">{item.progress}%</span></Link>)}</div> : <p className="muted">拆解确认后，任务会显示在这里。</p>}
       </section>
       {canWrite ? <section className="section card planning-panel">
-        <div className="section-heading"><span>任务拆解</span><Lightbulb size={19} aria-hidden="true" /></div>
+        <div className="section-heading"><span>任务拆解</span><Lightbulb size={21} aria-hidden="true" /></div>
         <p className="muted">先由已登记的 Worker 生成可评审预览，确认后才会写入任务和依赖。</p>
         {!threadId ? <div className="field"><label htmlFor="planning-message">本轮拆解重点</label><textarea id="planning-message" value={planningMessage} onChange={(event) => setPlanningMessage(event.target.value)} maxLength={32768} placeholder="可补充优先级、依赖或验收关注点。" /></div> : null}
         <div className="planning-status"><span className={`status ${planningCommand?.state === "failed" || planningCommand?.state === "timed_out" ? "is-danger" : "is-active"}`}>{actionLabel}</span>{planningCommand?.errorMessage ? <p className="form-message is-error">{planningCommand.errorMessage}</p> : null}</div>
         {previewText ? <section className="planning-preview" aria-label="拆解预览"><h3>本轮预览</h3><pre>{previewText}</pre></section> : null}
         {previewItems.length ? <div className="compact-list" aria-label="已写入任务">{previewItems.map((item) => <span className="compact-row" key={item.itemKey}><strong>{item.title}</strong><span className="status is-active">已创建</span></span>)}</div> : null}
         <div className="stack-actions" style={{ marginTop: 14 }}>
-          {!threadId ? <button className="button button-primary" type="button" onClick={() => void startPlanning()} disabled={planningBusy}><Send size={17} aria-hidden="true" />{planningBusy ? "正在生成" : "生成拆解预览"}</button> : <button className="button button-primary" type="button" onClick={() => void confirmPlanning()} disabled={planningBusy || planningCommand?.state !== "succeeded"}><CheckCircle2 size={17} aria-hidden="true" />{planningBusy ? "正在写入" : "确认并写入任务"}</button>}
-          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新需求" title="刷新需求"><RotateCw size={19} /></button>
+          {!threadId ? <button className="button button-primary" type="button" onClick={() => void startPlanning()} disabled={planningBusy}><Send size={19} aria-hidden="true" />{planningBusy ? "正在生成" : "生成拆解预览"}</button> : <button className="button button-primary" type="button" onClick={() => void confirmPlanning()} disabled={planningBusy || planningCommand?.state !== "succeeded"}><CheckCircle2 size={19} aria-hidden="true" />{planningBusy ? "正在写入" : "确认并写入任务"}</button>}
+          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新需求" title="刷新需求"><RotateCw size={21} /></button>
         </div>
       </section> : null}
-      <div className="screen-actions"><Link className="button button-secondary" href={`/projects/${programId}/requirements/${requirement.requirementKey}/edit`}><SquarePen size={17} aria-hidden="true" />编辑需求</Link></div>
+      <div className="screen-actions"><Link className="button button-secondary" href={`/projects/${programId}/requirements/${requirement.requirementKey}/edit`}><SquarePen size={19} aria-hidden="true" />编辑需求</Link></div>
       {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
     </main>
   );

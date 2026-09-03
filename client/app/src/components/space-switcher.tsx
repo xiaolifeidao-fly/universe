@@ -23,7 +23,7 @@ export function SpaceSwitcher() {
         title={single ? "当前空间" : "切换空间"}
       >
         <span className="space-trigger__name">{spaceName || "选择空间"}</span>
-        <ChevronDown size={13} aria-hidden="true" />
+        <ChevronDown size={15} aria-hidden="true" />
       </button>
 
       {/* 和 Git、文档共用同一种底部面板：同样的圆角、把手、升起动画和滚动锁。 */}
@@ -43,7 +43,7 @@ export function SpaceSwitcher() {
                     <strong>{space.name}</strong>
                     <span className="muted">{space.code}·{space.canManage ? "空间管理员" : space.canWrite ? "可写入" : "只读"}</span>
                   </span>
-                  {active ? <Check size={17} aria-hidden="true" /> : null}
+                  {active ? <Check size={19} aria-hidden="true" /> : null}
                 </button>
               </li>
             );

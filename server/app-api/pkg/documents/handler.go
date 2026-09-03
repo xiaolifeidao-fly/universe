@@ -66,6 +66,10 @@ func (h *Handler) list(c *gin.Context) {
 	}
 	files, err := h.directory.ListCloudSyncFiles(c.Request.Context(), dto.CloudSyncFileQuery{
 		BizLine: bizLine, ProgramID: programID, Category: strings.TrimSpace(c.Query("category")),
+		// 手机上点开一条需求或一条任务的文档时，只取它自己的那一份目录，不用把整个项目拉回来再筛。
+		OwnerKind: strings.TrimSpace(c.Query("ownerKind")),
+		OwnerKey:  strings.TrimSpace(c.Query("ownerKey")),
+		Stage:     strings.TrimSpace(c.Query("stage")),
 	})
 	httpx.JSON(c, files, err)
 }

@@ -47,6 +47,7 @@ const commandLabels: Record<string, string> = {
   "task.session": "读取任务会话",
   "task.planning-session": "读取拆解会话",
   "requirement.usage": "读取用量",
+  "requirement.session": "读取需求会话",
   "git.status": "读取 Git 状态",
   "git.branches": "读取分支",
   "git.changes": "读取改动",
@@ -202,14 +203,14 @@ export function CommandScreen() {
     <main className="screen">
       <div className="screen-title-row">
         <div><p className="eyebrow">工作台</p><h1>运行记录</h1><p>工作台发出的每条远程操作都在这里跟进。</p></div>
-        <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新活动" title="刷新活动" disabled={loading}><RotateCw size={20} className={loading ? "spin-icon" : ""} /></button>
+        <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新活动" title="刷新活动" disabled={loading}><RotateCw size={22} className={loading ? "spin-icon" : ""} /></button>
       </div>
 
       <section className="activity-section" aria-labelledby="command-activity-title">
         <div className="section-heading"><span id="command-activity-title">最近操作</span><span className="muted">{commands.length}</span></div>
-        {loading ? <EmptyState icon={<CircleDashed size={21} />} title="正在恢复命令状态" description="" /> : null}
-        {!loading && error ? <EmptyState tone="error" icon={<AlertTriangle size={21} />} title="暂时无法读取活动" description={error} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} /> : null}
-        {!loading && !error && !commands.length ? <EmptyState icon={<Zap size={21} />} title="还没有远程操作" description="在工作台发起对话、执行或 Git 操作后，这里会列出进度。" /> : null}
+        {loading ? <EmptyState icon={<CircleDashed size={23} />} title="正在恢复命令状态" description="" /> : null}
+        {!loading && error ? <EmptyState tone="error" icon={<AlertTriangle size={23} />} title="暂时无法读取活动" description={error} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} /> : null}
+        {!loading && !error && !commands.length ? <EmptyState icon={<Zap size={23} />} title="还没有远程操作" description="在工作台发起对话、执行或 Git 操作后，这里会列出进度。" /> : null}
         {!loading && !error && commands.length ? <section className="activity-list" aria-label="远程命令列表">{commands.map((command) => <CommandRow command={command} key={command.commandId} focused={command.commandId === focusCommandID} onFocus={() => setFocusCommandID(command.commandId)} />)}</section> : null}
       </section>
 
@@ -217,19 +218,19 @@ export function CommandScreen() {
         <div className="command-detail__header"><div><span className="eyebrow">{commandTarget(focusCommand.input) || "执行进度"}</span><strong>{commandLabel(focusCommand.commandType)}</strong></div><span className={`status ${stateClass(focusCommand.state)}`}>{stateLabels[focusCommand.state]}</span></div>
         <div className="command-progress" aria-label={`执行进度 ${focusCommand.progress}%`}><span style={{ width: `${Math.max(0, Math.min(100, focusCommand.progress))}%` }} /></div>
         <div className="detail-list command-detail__meta"><div className="detail-row"><span>项目</span><strong>#{focusCommand.programId}</strong></div><div className="detail-row"><span>命令类型</span><strong>{focusCommand.commandType}</strong></div><div className="detail-row"><span>进度</span><strong>{focusCommand.progress}%</strong></div><div className="detail-row"><span>更新时间</span><strong>{formatDate(focusCommand.updatedAt)}</strong></div></div>
-        {taskURLOf(focusCommand) ? <Link className="inline-link" href={taskURLOf(focusCommand)}><span>查看任务</span><ArrowRight size={14} aria-hidden="true" /></Link> : null}
+        {taskURLOf(focusCommand) ? <Link className="inline-link" href={taskURLOf(focusCommand)}><span>查看任务</span><ArrowRight size={16} aria-hidden="true" /></Link> : null}
         {focusCommand.errorMessage ? <p className="form-message is-error">{focusCommand.errorMessage}</p> : null}
         {streamError ? <p className="form-message is-error">{streamError}</p> : null}
-        {!isTerminalCommand(focusCommand.state) ? <button className="button button-danger" type="button" disabled={cancelling} onClick={() => void requestCancel()}><CirclePause size={17} aria-hidden="true" />{cancelling ? "正在请求停止" : "请求停止"}</button> : null}
+        {!isTerminalCommand(focusCommand.state) ? <button className="button button-danger" type="button" disabled={cancelling} onClick={() => void requestCancel()}><CirclePause size={19} aria-hidden="true" />{cancelling ? "正在请求停止" : "请求停止"}</button> : null}
         {events.length ? <ol className="event-timeline">{events.map((event) => <li key={event.id}><span className={`event-timeline__dot ${stateClass(event.state)}`} /><div><strong>{event.message || event.kind}</strong><small>{stateLabels[event.state]} · {formatDate(event.createdAt)}</small></div></li>)}</ol> : null}
-        {isTerminalCommand(focusCommand.state) ? <><div className="command-result-heading"><CheckCircle2 size={17} aria-hidden="true" />结果</div><pre className="command-result">{formatResult(focusCommand.result)}</pre></> : null}
+        {isTerminalCommand(focusCommand.state) ? <><div className="command-result-heading"><CheckCircle2 size={19} aria-hidden="true" />结果</div><pre className="command-result">{formatResult(focusCommand.result)}</pre></> : null}
       </section> : null}
     </main>
   );
 }
 
 function CommandRow({ command, focused, onFocus }: { command: CommandSummary; focused: boolean; onFocus: () => void }) {
-  return <button className={`card activity-row command-row${focused ? " is-focused" : ""}`} type="button" onClick={onFocus}><span className="activity-icon" aria-hidden="true"><Activity size={17} /></span><span className="command-row__body"><span className="command-row__title"><strong>{commandLabel(command.commandType)}</strong><span className={`status ${stateClass(command.state)}`}>{stateLabels[command.state]}</span></span><span>{[commandTarget(command.input), `${command.progress}%`, formatDate(command.updatedAt)].filter(Boolean).join(" · ")}</span>{command.errorMessage ? <span className="form-message is-error">{command.errorMessage}</span> : null}</span></button>;
+  return <button className={`card activity-row command-row${focused ? " is-focused" : ""}`} type="button" onClick={onFocus}><span className="activity-icon" aria-hidden="true"><Activity size={19} /></span><span className="command-row__body"><span className="command-row__title"><strong>{commandLabel(command.commandType)}</strong><span className={`status ${stateClass(command.state)}`}>{stateLabels[command.state]}</span></span><span>{[commandTarget(command.input), `${command.progress}%`, formatDate(command.updatedAt)].filter(Boolean).join(" · ")}</span>{command.errorMessage ? <span className="form-message is-error">{command.errorMessage}</span> : null}</span></button>;
 }
 
 function formatDate(value: string) {

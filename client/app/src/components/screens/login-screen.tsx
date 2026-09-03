@@ -43,7 +43,7 @@ export function LoginScreen() {
     <main className="login-screen">
       <div className="login-panel">
         <div className="login-brand">
-          <span className="brand-mark" aria-hidden="true"><Command size={20} strokeWidth={2.3} /></span>
+          <span className="brand-mark" aria-hidden="true"><Command size={22} strokeWidth={2.3} /></span>
           <strong>交付台</strong>
         </div>
         <section className="login-card">
@@ -65,7 +65,7 @@ export function LoginScreen() {
             </label>
             {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
             <button className="button button-primary full-width" type="submit" disabled={submitting}>
-              <LogIn size={18} aria-hidden="true" />
+              <LogIn size={20} aria-hidden="true" />
               {submitting ? "正在登录" : "登录"}
             </button>
           </form>

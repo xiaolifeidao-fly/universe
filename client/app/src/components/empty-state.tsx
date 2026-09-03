@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** tone 决定图标底色：默认走品牌靛蓝，error 走危险红，和 PC 的状态语义一致。 */
+/** tone 决定图标底色：默认走品牌青，error 走危险玫瑰，和 PC 的状态语义一致。 */
 export function EmptyState({
   icon,
   title,

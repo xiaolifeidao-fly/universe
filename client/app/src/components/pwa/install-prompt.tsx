@@ -2,6 +2,7 @@
 
 import { Download, Share } from "lucide-react";
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 
 type DeferredInstallPrompt = Event & {
   prompt: () => Promise<void>;
@@ -20,7 +21,13 @@ function iosSafari() {
   return appleTouchDevice && /safari/i.test(navigator.userAgent) && !/crios|fxios|edgios|opios/i.test(navigator.userAgent);
 }
 
+/** 登录页和离线页没有底部导航，这块浮层会正好压在登录按钮上；这两屏一律不弹。 */
+function suppressed(pathname: string) {
+  return pathname.startsWith("/login") || pathname.startsWith("/offline");
+}
+
 export function InstallPrompt() {
+  const pathname = usePathname();
   const [deferred, setDeferred] = useState<DeferredInstallPrompt | null>(null);
   const [showIosHelp, setShowIosHelp] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -37,7 +44,7 @@ export function InstallPrompt() {
     return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
   }, []);
 
-  if (!visible) return null;
+  if (!visible || suppressed(pathname)) return null;
 
   const dismiss = () => {
     window.localStorage.setItem(DISMISS_KEY, "1");
@@ -58,7 +65,7 @@ export function InstallPrompt() {
   return (
     <aside className="install-prompt" aria-live="polite">
       <div className="install-prompt__title">
-        {showIosHelp ? <Share size={18} aria-hidden="true" /> : <Download size={18} aria-hidden="true" />}
+        {showIosHelp ? <Share size={20} aria-hidden="true" /> : <Download size={20} aria-hidden="true" />}
         {showIosHelp ? "添加到主屏幕" : "安装交付台"}
       </div>
       <p>{showIosHelp ? "在 Safari 点按分享，再选择“添加到主屏幕”。" : "添加到主屏幕后，可从桌面快速打开并保留离线应用壳。"}</p>

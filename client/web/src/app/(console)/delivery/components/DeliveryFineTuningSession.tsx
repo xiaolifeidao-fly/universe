@@ -45,6 +45,7 @@ import { useDraftMemory } from "../hooks/useDraftMemory";
 import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionChangeSummary, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionContextMeter } from "./DeliverySessionContext";
 
 type FineTuningScope = "requirement" | "task";
 type FineTuningConversation = CodexRequirementFineTuningConversation | CodexTaskFineTuningConversation;
@@ -295,6 +296,8 @@ export function DeliveryFineTuningSession({
           ? t("delivery.session.newConversation")
           : conversation?.threadId ? <><i /> {t("delivery.session.connected").replace("{tool}", toolName)}</> : t("delivery.session.notStarted")}</span>
         <div className="delivery-session-toolbar__actions">
+          {/* 上下文余量放在动作前面：决定「要不要另起一条会话」，属于发消息前要看的那一眼。 */}
+          <SessionContextMeter context={conversation?.context} tool={provider} model={modelForConfig(fineTuningConfig)} />
           {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.session.stop")}</Button> : null}
           <Tooltip title={t("delivery.session.refresh")}>
             <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()} aria-label={t("delivery.session.refresh")} />

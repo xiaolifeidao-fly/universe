@@ -72,18 +72,51 @@ export function listCommands(programId?: number, includeReadOnly = false) {
   return request<CommandPage>(`/commands?${query.toString()}`);
 }
 
+/**
+ * 执行电脑在不在线的短时缓存。
+ *
+ * 提交命令前都要问一次，而工作台上一次操作往往连着发好几条命令（读状态、读改动、
+ * 发一轮），每条都真去问一遍纯属自找延迟。心跳一分钟一次、在线窗口五分钟，缓存
+ * 十几秒既不会让判断过时，也不会把这条附属请求变成新的噪音。
+ */
+const WORKER_STATUS_TTL_MS = 15_000;
+const workerStatusCache = new Map<number, { at: number; status: WorkerStatus }>();
+
 /** 执行电脑是否还在听这个项目：提交命令前先问一次，别让用户等超时才发现插件没开。 */
-export function getWorkerStatus(programId: number) {
-  const query = new URLSearchParams();
-  if (programId) query.set("programId", String(programId));
-  return request<WorkerStatus>(`/workers/status?${query.toString()}`);
+export async function getWorkerStatus(programId: number) {
+  const status = await request<WorkerStatus>(`/workers/status?${new URLSearchParams(programId ? { programId: String(programId) } : {}).toString()}`);
+  workerStatusCache.set(programId, { at: Date.now(), status });
+  return status;
+}
+
+async function cachedWorkerStatus(programId: number) {
+  const cached = workerStatusCache.get(programId);
+  if (cached && Date.now() - cached.at < WORKER_STATUS_TTL_MS) return cached.status;
+  return getWorkerStatus(programId);
+}
+
+/** 离线时的说法要指名道姓：是这台电脑没开，还是这个项目压根没登记过。 */
+function offlineMessage(status: WorkerStatus) {
+  if (!status.workerId) return "这个项目还没有登记执行电脑，请先在项目所在的电脑上启动插件桥接。";
+  const name = status.displayName ? `执行电脑「${status.displayName}」` : "执行电脑";
+  return `${name}当前离线，请先在那台电脑上启动插件桥接后重试。`;
 }
 
 export function getCommand(commandId: string) {
   return request<CommandDetail>(`/commands/${encodeURIComponent(commandId)}`);
 }
 
-export function submitCommand(input: SubmitCommandInput) {
+/**
+ * 提交一条远程命令。
+ *
+ * 执行电脑不在线时当场拒绝，不往队列里放：排着等插件上线的命令看着像「已提交」，
+ * 实际是把几分钟后才发生的写操作藏起来。服务端同样会挡一道 —— 这里挡是为了不让
+ * 用户等一个来回才看到同一句话。
+ */
+export async function submitCommand(input: SubmitCommandInput) {
+  // 状态读不到就按在线处理：这条附属请求不该把整个工作台卡住，服务端还会再挡一道。
+  const status = await cachedWorkerStatus(input.programId).catch(() => null);
+  if (status && !status.online) throw new ApiError(offlineMessage(status));
   return request<CommandDetail>("/commands", { method: "POST", body: input });
 }
 
@@ -95,6 +128,10 @@ export function cancelCommand(commandId: string, message = "") {
 }
 
 export async function uploadCommandAttachments(programId: number, itemKey: string, files: File[]) {
+  // 附件是为了紧接着发出去的那一轮：执行电脑不在线时先说清楚，别让人在手机网络上
+  // 白传几十兆再看到同一句拒绝。
+  const status = await cachedWorkerStatus(programId).catch(() => null);
+  if (status && !status.online) throw new ApiError(offlineMessage(status));
   const form = new FormData();
   form.set("programId", String(programId));
   form.set("itemKey", itemKey);

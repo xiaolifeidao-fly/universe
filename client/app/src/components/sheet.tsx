@@ -14,6 +14,7 @@ export function Sheet({
   subtitle,
   onClose,
   actions,
+  footer,
   children,
 }: {
   open: boolean;
@@ -21,6 +22,8 @@ export function Sheet({
   subtitle?: string;
   onClose: () => void;
   actions?: ReactNode;
+  /** 钉在面板底部、不跟着正文滚动的一块：表单和确认按钮放这里，长列表滚不走它。 */
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   // 面板必须挂到 body 上再渲染：顶栏带 backdrop-filter，会成为 fixed 的包含块，
@@ -56,10 +59,11 @@ export function Sheet({
           </div>
           <div className="sheet__actions">
             {actions}
-            <button className="icon-button" type="button" onClick={onClose} aria-label="关闭" title="关闭"><X size={19} /></button>
+            <button className="icon-button" type="button" onClick={onClose} aria-label="关闭" title="关闭"><X size={21} /></button>
           </div>
         </header>
         <div className="sheet__body">{children}</div>
+        {footer ? <div className="sheet__footer">{footer}</div> : null}
       </section>
     </div>,
     document.body,

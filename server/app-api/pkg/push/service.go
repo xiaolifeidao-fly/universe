@@ -210,8 +210,9 @@ func notifiableCommand(commandType string) bool {
 	if delivery.IsReadOnlyCommand(commandType) || strings.HasPrefix(commandType, "business.") {
 		return false
 	}
-	switch commandType {
-	case "task.stop", "task.stop-all", "task.planning-stop":
+	// 停止是「我不等了」，不是「有结果了」：所有 -stop 命令都不响，新增一条通道时
+	// 也不必回来补名单。
+	if strings.HasSuffix(commandType, "-stop") || commandType == "task.stop" || commandType == "task.stop-all" {
 		return false
 	}
 	return true

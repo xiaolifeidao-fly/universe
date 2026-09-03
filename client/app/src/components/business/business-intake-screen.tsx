@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ClipboardList, FileText, LoaderCircle, Paperclip, RotateCw, Search, UserRound } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, ClipboardList, FileText, LoaderCircle, Paperclip, RotateCw, Search, UserRound } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
@@ -63,22 +63,22 @@ export function BusinessIntakeScreen() {
   };
 
   if (!allowed) {
-    return <main className="screen"><EmptyState icon={<ClipboardList size={22} />} title="当前账号没有产品产研身份" description="诉求采集只向产品产研身份开放。" /></main>;
+    return <main className="screen"><EmptyState icon={<ClipboardList size={24} />} title="当前账号没有产品产研身份" description="诉求采集只向产品产研身份开放。" /></main>;
   }
 
   return (
     <main className="screen business-intake">
       <div className="screen-title-row">
         <div><p className="eyebrow">{spaceName}</p><h1>诉求采集</h1><p>业务方原始观点、访谈记录和 AI 整理文档。</p></div>
-        <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新诉求采集" title="刷新" disabled={loading}><RotateCw size={19} className={loading ? "spin-icon" : ""} /></button>
+        <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新诉求采集" title="刷新" disabled={loading}><RotateCw size={21} className={loading ? "spin-icon" : ""} /></button>
       </div>
 
-      <p className="business-intake__notice"><AlertTriangle size={16} />这里只收集业务诉求，不会自动进入交付需求或任务看板。</p>
-      <label className="workbench-search business-intake__search"><Search size={17} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索诉求、项目或提出人" aria-label="搜索业务诉求" /></label>
+      <p className="business-intake__notice"><AlertTriangle size={18} />这里只收集业务诉求，不会自动进入交付需求或任务看板。</p>
+      <label className="workbench-search business-intake__search"><Search size={19} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索诉求、项目或提出人" aria-label="搜索业务诉求" /></label>
 
       {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
       {loading ? <LoadingState title="正在读取业务诉求" /> : null}
-      {!loading && !error && !rows.length ? <EmptyState icon={<ClipboardList size={22} />} title="没有匹配的业务诉求" description="业务方完成提交后会显示在这里。" /> : null}
+      {!loading && !error && !rows.length ? <EmptyState icon={<ClipboardList size={24} />} title="没有匹配的业务诉求" description="业务方完成提交后会显示在这里。" /> : null}
 
       <section className="business-intake-list" aria-label="业务诉求采集列表">
         {rows.map((requirement) => (
@@ -86,13 +86,13 @@ export function BusinessIntakeScreen() {
             <span className="business-intake-row__top"><span className="tag">{requirement.programName || requirement.programCode || `项目 #${requirement.programId}`}</span><time>{formatDate(requirement.updatedAt || requirement.createdAt)}</time></span>
             <strong>{requirement.title || "未命名业务诉求"}</strong>
             <p>{requirement.detail || "业务方尚未发送第一条想法"}</p>
-            <span className="business-intake-row__footer"><span><UserRound size={14} />{requirement.createdByName || requirement.createdBy}</span><span>查看详情</span></span>
+            <span className="business-intake-row__footer"><span><UserRound size={16} />{requirement.createdByName || requirement.createdBy}</span><span>查看详情</span></span>
           </button>
         ))}
       </section>
 
       <Sheet open={Boolean(selected) || detailLoading} title="业务诉求详情" subtitle={selected?.requirement.title || "正在读取"} onClose={() => { if (!detailLoading) setSelected(null); }}>
-        {detailLoading ? <div className="business-detail-loading"><LoaderCircle size={22} className="spin-icon" /><span>正在读取访谈记录</span></div> : null}
+        {detailLoading ? <div className="business-detail-loading"><LoaderCircle size={24} className="spin-icon" /><span>正在读取访谈记录</span></div> : null}
         {selected && !detailLoading ? <BusinessIntakeDetail conversation={selected} /> : null}
       </Sheet>
     </main>
@@ -111,7 +111,7 @@ function BusinessIntakeDetail({ conversation }: { conversation: BusinessConversa
         <div><dt>当前状态</dt><dd>{conversation.active ? "交流中" : latest ? "已整理" : "已提交"}</dd></div>
       </dl>
       <section className="business-detail-section">
-        <div className="section-heading"><span>AI 整理文档</span><FileText size={18} /></div>
+        <div className="section-heading"><span>AI 整理文档</span><FileText size={20} /></div>
         {documents.length ? <CollectedDocuments documents={documents} /> : <p className="muted">暂时没有 AI 整理文档。</p>}
       </section>
       <section className="business-detail-section">
@@ -124,7 +124,7 @@ function BusinessIntakeDetail({ conversation }: { conversation: BusinessConversa
               {/* 采集是只读视角：附件本体只对提出人本人开放，这里只列清单不给下载。 */}
               {message.attachments?.length ? (
                 <ul className="business-collected-attachments">
-                  {message.attachments.map((attachment) => <li key={attachment.id}><Paperclip size={12} aria-hidden="true" />{attachment.name}</li>)}
+                  {message.attachments.map((attachment) => <li key={attachment.id}><Paperclip size={14} aria-hidden="true" />{attachment.name}</li>)}
                 </ul>
               ) : null}
             </article>
@@ -146,9 +146,9 @@ function CollectedDocuments({ documents }: { documents: BusinessDocument[] }) {
     <div className="business-collected-document">
       {documents.length > 1 ? (
         <div className="business-document-toolbar">
-          <button className="button button-secondary" type="button" disabled={index <= 0} onClick={() => setIndex(index - 1)}>上一版</button>
+          <button className="icon-button" type="button" disabled={index <= 0} onClick={() => setIndex(index - 1)} aria-label="上一版" title="上一版"><ChevronLeft size={21} aria-hidden="true" /></button>
           <span>共 {documents.length} 版</span>
-          <button className="button button-secondary" type="button" disabled={index >= documents.length - 1} onClick={() => setIndex(index + 1)}>下一版</button>
+          <button className="icon-button" type="button" disabled={index >= documents.length - 1} onClick={() => setIndex(index + 1)} aria-label="下一版" title="下一版"><ChevronRight size={21} aria-hidden="true" /></button>
         </div>
       ) : null}
       <span className="status is-success">第 {active.version} 版{active.confirmed ? " · 已确认" : ""}</span>

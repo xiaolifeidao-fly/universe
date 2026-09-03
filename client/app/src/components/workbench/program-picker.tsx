@@ -23,12 +23,12 @@ export function ProgramPicker({
   return (
     <>
       <button className="program-picker" type="button" onClick={() => setOpen(true)} disabled={loading || !programs.length}>
-        <span className="program-picker__mark" aria-hidden="true"><Folder size={18} /></span>
+        <span className="program-picker__mark" aria-hidden="true"><Folder size={20} /></span>
         <span className="program-picker__body">
           <small>当前项目</small>
           <strong>{loading ? "正在读取项目" : current?.name || "选择项目"}</strong>
         </span>
-        <ChevronDown size={18} aria-hidden="true" />
+        <ChevronDown size={20} aria-hidden="true" />
       </button>
 
       <Sheet open={open} title="选择项目" subtitle={`${programs.length} 个可进入的项目`} onClose={() => setOpen(false)}>
@@ -47,7 +47,7 @@ export function ProgramPicker({
                 <strong>{program.name}</strong>
                 <small>{program.programCode}{program.canWrite ? "" : " · 只读"}</small>
               </span>
-              {program.programId === programId ? <Check size={18} aria-hidden="true" /> : null}
+              {program.programId === programId ? <Check size={20} aria-hidden="true" /> : null}
             </button>
           ))}
         </div>

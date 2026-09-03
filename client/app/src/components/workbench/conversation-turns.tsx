@@ -21,6 +21,9 @@ import { RichText } from "@/components/workbench/rich-text";
  *
  * 思考、命令、工具调用这些过程条目默认收起，只留一行标题；真正要读的是用户消息
  * 和最终回复，它们始终展开。这样在手机上一屏能看到的是结论，而不是过程日志。
+ *
+ * 连着跑的命令和工具调用再合成一组，只占一行「N 个命令」，展开才铺开逐条看。
+ * 一轮里几十条命令平铺出来会把结论顶出屏幕，手机上尤其如此。
  */
 export function ConversationTurns({ turns }: { turns: ConversationTurn[] }) {
   return (
@@ -38,7 +41,7 @@ export function ConversationItemStream({ items }: { items: ConversationItem[] })
   if (!items.length) return null;
   return (
     <section className="turn-block" aria-label="正在进行的过程" aria-live="polite">
-      {items.map((item, index) => <ItemBlock item={item} key={item.id || `activity-${index}`} />)}
+      {renderItems(items, "activity")}
     </section>
   );
 }
@@ -47,10 +50,87 @@ function TurnBlock({ turn }: { turn: ConversationTurn }) {
   const changes = collectChanges(turn.items);
   return (
     <section className="turn-block" aria-label="一轮对话">
-      {turn.items.map((item, index) => <ItemBlock item={item} key={item.id || `${turn.id}-${index}`} />)}
+      {renderItems(turn.items, turn.id)}
       {changes.length ? <ChangeSummary changes={changes} /> : null}
       {turn.usage ? <UsageLine usage={turn.usage} /> : null}
     </section>
+  );
+}
+
+/**
+ * 连续跑的执行过程条目：合成一组收起来，不一条条铺在正文里。
+ * 文件改动本身不渲染（回合末尾统一汇总），但也归进来，免得它把一串命令切断。
+ */
+const ACTIVITY_TYPES = new Set([
+  "commandExecution",
+  "mcpToolCall",
+  "dynamicToolCall",
+  "reasoning",
+  "fileChange",
+  "fileEdit",
+]);
+
+/** 组标题只报数：几个命令、几次工具调用、几段思考，没有的那类不出现。 */
+function activityLabel(items: ConversationItem[]) {
+  const commands = items.filter((item) => item.type === "commandExecution").length;
+  const tools = items.filter((item) => item.type === "mcpToolCall" || item.type === "dynamicToolCall").length;
+  const thoughts = items.filter((item) => item.type === "reasoning").length;
+  return [
+    commands ? `${commands} 个命令` : "",
+    tools ? `${tools} 次工具调用` : "",
+    thoughts ? `${thoughts} 段思考` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+/**
+ * 把相邻的命令、工具调用、思考并成一组渲染，其余条目原样输出。
+ * 攒够两条才套壳，免得为单独一个命令多出一层「1 个命令」。
+ */
+function renderItems(items: ConversationItem[], keyPrefix: string) {
+  const nodes: React.ReactNode[] = [];
+  let batch: ConversationItem[] = [];
+  const flush = (index: number) => {
+    if (!batch.length) return;
+    const group = batch;
+    batch = [];
+    if (group.length > 1 && activityLabel(group)) {
+      nodes.push(<ActivityGroup items={group} key={group[0].id || `${keyPrefix}-group-${index}`} />);
+      return;
+    }
+    group.forEach((item, offset) => {
+      nodes.push(<ItemBlock item={item} key={item.id || `${keyPrefix}-${index}-${offset}`} />);
+    });
+  };
+  items.forEach((item, index) => {
+    if (ACTIVITY_TYPES.has(item.type)) {
+      batch.push(item);
+      return;
+    }
+    flush(index);
+    nodes.push(<ItemBlock item={item} key={item.id || `${keyPrefix}-${index}`} />);
+  });
+  flush(items.length);
+  return nodes;
+}
+
+function ActivityGroup({ items }: { items: ConversationItem[] }) {
+  const [open, setOpen] = useState(false);
+  const failed = items.filter((item) => item.type === "commandExecution"
+    && typeof item.exitCode === "number" && item.exitCode !== 0).length;
+  return (
+    <div className={`activity-group${failed ? " is-danger" : ""}`}>
+      <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
+        <span className="fold-item__icon" aria-hidden="true"><SquareTerminal size={17} /></span>
+        <span className="fold-item__label">{activityLabel(items)}</span>
+        {failed ? <span className="fold-item__note">{failed} 个失败</span> : null}
+        <ChevronRight size={17} className={`fold-item__chevron${open ? " is-open" : ""}`} aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="activity-group__list">
+          {items.map((item, index) => <ItemBlock item={item} key={item.id || `activity-item-${index}`} />)}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -72,13 +152,13 @@ function ItemBlock({ item }: { item: ConversationItem }) {
     );
   }
   if (item.type === "reasoning") {
-    return <FoldableItem icon={<Brain size={15} />} label="思考过程" body={item.text} />;
+    return <FoldableItem icon={<Brain size={17} />} label="思考过程" body={item.text} />;
   }
   if (item.type === "commandExecution") {
     const failed = typeof item.exitCode === "number" && item.exitCode !== 0;
     return (
       <FoldableItem
-        icon={<SquareTerminal size={15} />}
+        icon={<SquareTerminal size={17} />}
         label={firstLine(item.text) || "执行命令"}
         body={item.text}
         mono
@@ -95,7 +175,7 @@ function ItemBlock({ item }: { item: ConversationItem }) {
         : `调用 ${item.text || "工具"}`;
     return (
       <p className="tool-line">
-        <span aria-hidden="true">{item.action === "search" ? <Search size={14} /> : <Wrench size={14} />}</span>
+        <span aria-hidden="true">{item.action === "search" ? <Search size={16} /> : <Wrench size={16} />}</span>
         {label}
       </p>
     );
@@ -129,7 +209,7 @@ function FoldableItem({
         <span className="fold-item__icon" aria-hidden="true">{icon}</span>
         <span className="fold-item__label">{label}</span>
         {note ? <span className="fold-item__note">{note}</span> : null}
-        <ChevronRight size={15} className={`fold-item__chevron${open ? " is-open" : ""}`} aria-hidden="true" />
+        <ChevronRight size={17} className={`fold-item__chevron${open ? " is-open" : ""}`} aria-hidden="true" />
       </button>
       {open ? <pre className={mono ? "fold-item__body is-mono" : "fold-item__body"}>{body}</pre> : null}
     </div>
@@ -142,7 +222,7 @@ function Attachments({ item }: { item: ConversationItem }) {
     <div className="attachment-chips">
       {item.attachments.map((attachment) => (
         <span className="attachment-chip" key={attachment.id || attachment.relativePath}>
-          <Paperclip size={13} aria-hidden="true" />
+          <Paperclip size={15} aria-hidden="true" />
           {attachment.name || attachment.relativePath}
         </span>
       ))}
@@ -158,10 +238,10 @@ function ChangeSummary({ changes }: { changes: ConversationChange[] }) {
   return (
     <div className="change-summary">
       <button type="button" onClick={() => setOpen((current) => !current)} aria-expanded={open}>
-        <span className="change-summary__icon" aria-hidden="true"><FileDiff size={15} /></span>
+        <span className="change-summary__icon" aria-hidden="true"><FileDiff size={17} /></span>
         <span>本次改动 {changes.length} 个文件</span>
         <span className="change-summary__counts"><em>+{added}</em><i>-{removed}</i></span>
-        <ChevronRight size={15} className={`fold-item__chevron${open ? " is-open" : ""}`} aria-hidden="true" />
+        <ChevronRight size={17} className={`fold-item__chevron${open ? " is-open" : ""}`} aria-hidden="true" />
       </button>
       {open ? (
         <ul className="change-summary__list">
@@ -183,18 +263,21 @@ function ChangeSummary({ changes }: { changes: ConversationChange[] }) {
  *
  * 只给三个数：进去多少、其中多少是缓存命中（便宜一个数量级）、出来多少。
  * 缓存命中不单独占一行，跟在输入后面，一眼能看出这轮是真读了新东西还是在吃缓存。
+ * 手机一行放不下「标签 + 三个数 + 金额」，金额跟标签走第一行，三个数落第二行。
  */
 export function UsageLine({ usage, label = "本轮消耗" }: { usage: TokenUsage; label?: string }) {
   if (!usage.totalTokens) return null;
   return (
     <p className="usage-line">
-      <span aria-hidden="true"><Coins size={13} /></span>
-      <span>{label}</span>
+      <span className="usage-line__head">
+        <Coins size={15} aria-hidden="true" />
+        <span>{label}</span>
+        {typeof usage.costUsd === "number" ? <i>${usage.costUsd.toFixed(2)}</i> : null}
+      </span>
       <span className="usage-line__nums">
         <em>入 {formatTokens(usage.inputTokens)}</em>
         {usage.cachedInputTokens ? <i>缓存 {formatTokens(usage.cachedInputTokens)}</i> : null}
         <em>出 {formatTokens(usage.outputTokens)}</em>
-        {typeof usage.costUsd === "number" ? <i>${usage.costUsd.toFixed(2)}</i> : null}
       </span>
     </p>
   );
@@ -207,9 +290,9 @@ function formatTokens(value: number) {
 }
 
 function changeIcon(kind: string) {
-  if (kind === "add") return <FilePlus2 size={14} />;
-  if (kind === "delete") return <FileX2 size={14} />;
-  return <FileDiff size={14} />;
+  if (kind === "add") return <FilePlus2 size={16} />;
+  if (kind === "delete") return <FileX2 size={16} />;
+  return <FileDiff size={16} />;
 }
 
 function collectChanges(items: ConversationItem[]) {

@@ -80,8 +80,13 @@ type UpsertCloudSyncFileRequest struct {
 	RelativePath string           `json:"relativePath"`
 	ContentType  string           `json:"contentType"`
 	Content      []byte           `json:"-"`
-	ActorID      string           `json:"-"`
-	ActorName    string           `json:"actorName"`
+	// 归属与阶段由本机桥接按工作目录约定识别：需求文档跟着需求走，任务文档跟着任务走。
+	// 桥接识别不出来时留空，服务端不去猜，这份文件只作为项目级未归类文件列出。
+	OwnerKind string `json:"ownerKind"`
+	OwnerKey  string `json:"ownerKey"`
+	Stage     string `json:"stage"`
+	ActorID   string `json:"-"`
+	ActorName string `json:"actorName"`
 }
 
 type CloudSyncFileView struct {
@@ -89,6 +94,9 @@ type CloudSyncFileView struct {
 	Category     string     `json:"category"`
 	RelativePath string     `json:"relativePath"`
 	ContentType  string     `json:"contentType"`
+	OwnerKind    string     `json:"ownerKind"`
+	OwnerKey     string     `json:"ownerKey"`
+	Stage        string     `json:"stage"`
 	Size         int64      `json:"size"`
 	SHA256       string     `json:"sha256"`
 	UpdatedAt    *time.Time `json:"updatedAt"`
@@ -101,6 +109,10 @@ type CloudSyncFileQuery struct {
 	BizLine   contract.BizLine `json:"-"`
 	ProgramID int64            `json:"programId" form:"programId"`
 	Category  string           `json:"category" form:"category"`
+	// 按归属过滤：面板打开一条需求或一条任务的文档时只要它自己的那几份。
+	OwnerKind string `json:"ownerKind" form:"ownerKind"`
+	OwnerKey  string `json:"ownerKey" form:"ownerKey"`
+	Stage     string `json:"stage" form:"stage"`
 }
 
 // MigrateProgramRequest 把一个项目及其交付数据完整迁移到目标业务线。

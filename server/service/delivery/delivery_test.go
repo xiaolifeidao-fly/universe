@@ -139,6 +139,34 @@ func TestNormalizeCloudSyncRelativePathRejectsWorkspaceEscape(t *testing.T) {
 	}
 }
 
+func TestNormalizeCloudDocumentOwnerFallsBackToProgramWithoutInventingAKey(t *testing.T) {
+	kind, key, stage, err := normalizeCloudDocumentOwner("", "", "")
+	if err != nil || kind != "program" || key != "" || stage != "" {
+		t.Fatalf("旧版桥接不报归属时应落到项目级未归类：%q %q %q %v", kind, key, stage, err)
+	}
+	// 归属类型是 program 就不该带键：桥接没认出归属时给的键一定是猜的，不能进面板的分组。
+	if kind, key, _, err := normalizeCloudDocumentOwner("program", "req-1", "outline"); err != nil || kind != "program" || key != "" {
+		t.Fatalf("未归类文件不应保留归属标识：%q %q %v", kind, key, err)
+	}
+	if _, _, _, err := normalizeCloudDocumentOwner("requirement", "", "outline"); err == nil {
+		t.Fatal("声明了归属类型却没有归属标识必须拒绝")
+	}
+	for _, raw := range []string{"../req-1", "req 1", "req/1"} {
+		if _, _, _, err := normalizeCloudDocumentOwner("requirement", raw, "outline"); err == nil {
+			t.Fatalf("非法归属标识必须拒绝：%s", raw)
+		}
+	}
+	if _, _, _, err := normalizeCloudDocumentOwner("module", "m-1", ""); err == nil {
+		t.Fatal("未声明的归属类型必须拒绝")
+	}
+	if _, _, _, err := normalizeCloudDocumentOwner("task", "task-1", "planning"); err == nil {
+		t.Fatal("未声明的阶段必须拒绝")
+	}
+	if kind, key, stage, err := normalizeCloudDocumentOwner("task", "task-1", "design"); err != nil || kind != "task" || key != "task-1" || stage != "design" {
+		t.Fatalf("合法归属不应被改写：%q %q %q %v", kind, key, stage, err)
+	}
+}
+
 func TestCloudSyncObjectKeyIsStableAndDoesNotExposeWorkspacePath(t *testing.T) {
 	key := cloudSyncObjectKey("whatsapp", 7, "requirement", "doc/core/客户需求/文档.md")
 	if key != cloudSyncObjectKey("whatsapp", 7, "requirement", "doc/core/客户需求/文档.md") {

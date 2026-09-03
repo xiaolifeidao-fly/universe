@@ -31,6 +31,33 @@ func (a testAuthenticator) AuthenticateToken(context.Context, string) (httpx.Use
 type recordingDeliveryService struct {
 	delivery.Service
 	patched deliverydto.PatchItemRequest
+	renamed deliverydto.UpdateRequirementNameRequest
+	bound   deliverydto.BindRequirementGitBranchRequest
+
+	batchNotificationQuery      deliverydto.ExecutionBatchNotificationQuery
+	batchNotificationRead       deliverydto.MarkExecutionBatchNotificationReadRequest
+	completionNotificationQuery deliverydto.RequirementCompletionNotificationQuery
+	completionNotificationRead  deliverydto.MarkRequirementCompletionNotificationReadRequest
+}
+
+func (s *recordingDeliveryService) ListExecutionBatchNotifications(_ context.Context, query deliverydto.ExecutionBatchNotificationQuery) ([]deliverydto.ExecutionBatchView, error) {
+	s.batchNotificationQuery = query
+	return []deliverydto.ExecutionBatchView{{BatchID: "batch-1", ProgramID: query.ProgramID}}, nil
+}
+
+func (s *recordingDeliveryService) MarkExecutionBatchNotificationRead(_ context.Context, req deliverydto.MarkExecutionBatchNotificationReadRequest) (deliverydto.ExecutionBatchView, error) {
+	s.batchNotificationRead = req
+	return deliverydto.ExecutionBatchView{BatchID: req.BatchID, ProgramID: req.ProgramID}, nil
+}
+
+func (s *recordingDeliveryService) ListRequirementCompletionNotifications(_ context.Context, query deliverydto.RequirementCompletionNotificationQuery) ([]deliverydto.RequirementCompletionNotificationView, error) {
+	s.completionNotificationQuery = query
+	return []deliverydto.RequirementCompletionNotificationView{{RequirementKey: "req-1", ProgramID: query.ProgramID}}, nil
+}
+
+func (s *recordingDeliveryService) MarkRequirementCompletionNotificationRead(_ context.Context, req deliverydto.MarkRequirementCompletionNotificationReadRequest) (deliverydto.RequirementCompletionNotificationView, error) {
+	s.completionNotificationRead = req
+	return deliverydto.RequirementCompletionNotificationView{RequirementKey: req.RequirementKey, ProgramID: req.ProgramID}, nil
 }
 
 func (s *recordingDeliveryService) ResolveProgramBizLine(context.Context, int64) (contract.BizLine, error) {
@@ -40,6 +67,16 @@ func (s *recordingDeliveryService) ResolveProgramBizLine(context.Context, int64)
 func (s *recordingDeliveryService) PatchItem(_ context.Context, req deliverydto.PatchItemRequest) (deliverydto.ItemView, error) {
 	s.patched = req
 	return deliverydto.ItemView{ItemKey: req.ItemKey, ProgramID: req.ProgramID}, nil
+}
+
+func (s *recordingDeliveryService) UpdateRequirementName(_ context.Context, req deliverydto.UpdateRequirementNameRequest) (deliverydto.RequirementView, error) {
+	s.renamed = req
+	return deliverydto.RequirementView{RequirementKey: req.RequirementKey, ProgramID: req.ProgramID, Name: req.Name}, nil
+}
+
+func (s *recordingDeliveryService) BindRequirementGitBranch(_ context.Context, req deliverydto.BindRequirementGitBranchRequest) (deliverydto.RequirementView, error) {
+	s.bound = req
+	return deliverydto.RequirementView{RequirementKey: req.RequirementKey, ProgramID: req.ProgramID, GitBranch: req.GitBranch}, nil
 }
 
 type recordingIdentityService struct{ identity.Service }
@@ -262,5 +299,97 @@ func TestListSpacesFallsBackToPrincipalScopes(t *testing.T) {
 	}
 	if len(payload.Data) != 2 || payload.Data[0].Code != "tiktok" || payload.Data[1].Code != "whatsapp" {
 		t.Fatalf("退化列表应按编码去重排序：%#v", payload.Data)
+	}
+}
+
+// 手机端新建需求会依次调这两条：分支建成后回记关联，名称先写需求编号占位。
+// 两条都只认 token 里的身份和项目所属业务线，请求体里带什么都不作数。
+func TestRequirementNameAndGitBranchRoutesUseAuthenticatedContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
+		ID: "42", Persona: "product_research", Personas: []string{"product_research"}, BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}})
+	defer httpx.SetUserAuthenticator(nil)
+	deliveryService := &recordingDeliveryService{}
+	router := gin.New()
+	NewHandler(deliveryService, &recordingIdentityService{}, &noBusinessService{}, nil).Register(router.Group("/api"))
+
+	post := func(path, body string) int {
+		request := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+		request.Header.Set("token", "valid")
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+
+	if code := post("/api/delivery/requirement/name/update", `{"programId":16,"requirementKey":"req-1","name":"req-1","replaceName":""}`); code != http.StatusOK {
+		t.Fatalf("需求改名未注册或被拒：status=%d", code)
+	}
+	if deliveryService.renamed.ActorID != "42" || deliveryService.renamed.BizLine != contract.BizLine("whatsapp") {
+		t.Fatalf("需求改名未使用认证上下文：%#v", deliveryService.renamed)
+	}
+
+	if code := post("/api/delivery/requirement/git-branch/bind", `{"programId":16,"requirementKey":"req-1","gitBaseBranch":"main","gitBranch":"feature/issue_req-1"}`); code != http.StatusOK {
+		t.Fatalf("分支关联未注册或被拒：status=%d", code)
+	}
+	if deliveryService.bound.ActorID != "42" || deliveryService.bound.BizLine != contract.BizLine("whatsapp") || deliveryService.bound.GitBranch != "feature/issue_req-1" {
+		t.Fatalf("分支关联未使用认证上下文：%#v", deliveryService.bound)
+	}
+}
+
+// 消息中心的收件人必须由凭证认定：请求体里带别人的身份也不能影响结果，
+// 否则任何人都能替别人把提醒标成已读。
+func TestNotificationRoutesDeriveRecipientFromCredential(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	httpx.SetUserAuthenticator(testAuthenticator{principal: httpx.UserPrincipal{
+		ID: "42", Persona: "product_research", Personas: []string{"product_research"}, BizLines: []string{"whatsapp"}, WritableBizLines: []string{"whatsapp"},
+	}})
+	defer httpx.SetUserAuthenticator(nil)
+	deliveryService := &recordingDeliveryService{}
+	router := gin.New()
+	NewHandler(deliveryService, &recordingIdentityService{}, &noBusinessService{}, nil).Register(router.Group("/api"))
+
+	call := func(method, path, body string) int {
+		var request *http.Request
+		if body == "" {
+			request = httptest.NewRequest(method, path, nil)
+		} else {
+			request = httptest.NewRequest(method, path, bytes.NewBufferString(body))
+			request.Header.Set("Content-Type", "application/json")
+		}
+		request.Header.Set("token", "valid")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder.Code
+	}
+
+	if code := call(http.MethodGet, "/api/delivery/execution-batch/notifications?programId=16", ""); code != http.StatusOK {
+		t.Fatalf("批次提醒列表未注册或被拒：status=%d", code)
+	}
+	if deliveryService.batchNotificationQuery.ActorID != "42" || deliveryService.batchNotificationQuery.ProgramID != 16 {
+		t.Fatalf("批次提醒列表未使用认证上下文：%#v", deliveryService.batchNotificationQuery)
+	}
+
+	if code := call(http.MethodGet, "/api/delivery/requirement/completion-notifications?programId=16", ""); code != http.StatusOK {
+		t.Fatalf("需求完成提醒列表未注册或被拒：status=%d", code)
+	}
+	if deliveryService.completionNotificationQuery.ActorID != "42" {
+		t.Fatalf("需求完成提醒列表未使用认证上下文：%#v", deliveryService.completionNotificationQuery)
+	}
+
+	// 请求体里塞一个别人的 actorId，服务端仍应认凭证里的 42。
+	if code := call(http.MethodPost, "/api/delivery/execution-batch/notification/read", `{"programId":16,"batchId":"batch-1","actorId":"99"}`); code != http.StatusOK {
+		t.Fatalf("批次提醒已读未注册或被拒：status=%d", code)
+	}
+	if deliveryService.batchNotificationRead.ActorID != "42" || deliveryService.batchNotificationRead.BizLine != contract.BizLine("whatsapp") {
+		t.Fatalf("批次提醒已读被请求体里的身份影响：%#v", deliveryService.batchNotificationRead)
+	}
+
+	if code := call(http.MethodPost, "/api/delivery/requirement/completion-notification/read", `{"programId":16,"requirementKey":"req-1","actorId":"99"}`); code != http.StatusOK {
+		t.Fatalf("需求完成提醒已读未注册或被拒：status=%d", code)
+	}
+	if deliveryService.completionNotificationRead.ActorID != "42" || deliveryService.completionNotificationRead.RequirementKey != "req-1" {
+		t.Fatalf("需求完成提醒已读被请求体里的身份影响：%#v", deliveryService.completionNotificationRead)
 	}
 }

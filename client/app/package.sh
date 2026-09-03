@@ -32,7 +32,7 @@ cat > "$DIST_DIR/start.sh" <<'EOF'
 set -eu
 
 APP_NAME="delivery-app"
-PORT="${PORT:-7895}"
+PORT="${PORT:-7896}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="$SCRIPT_DIR/$APP_NAME.pid"
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"

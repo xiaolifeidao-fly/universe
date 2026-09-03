@@ -10,7 +10,7 @@ import "time"
 // a worker, but a worker can only execute a command after this record is leased.
 type DeliveryCommand struct {
 	Id        int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine   string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_command_id,priority:1;uniqueIndex:uk_dlv_command_idempotency,priority:1;index:idx_dlv_command_queue,priority:1;index:idx_dlv_command_user,priority:1;index:idx_dlv_command_lease,priority:1" description:"业务线"`
+	BizLine   string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_command_id,priority:1;uniqueIndex:uk_dlv_command_idempotency,priority:1;index:idx_dlv_command_queue,priority:1;index:idx_dlv_command_user,priority:1" description:"业务线"`
 	CommandID string `gorm:"column:command_id;type:varchar(64);uniqueIndex:uk_dlv_command_id,priority:2" description:"服务端生成的命令业务键"`
 	ProgramID int64  `gorm:"column:program_id;index:idx_dlv_command_queue,priority:4;index:idx_dlv_command_user,priority:3" description:"目标项目数值主键"`
 	UserID    string `gorm:"column:user_id;type:varchar(64);uniqueIndex:uk_dlv_command_idempotency,priority:2;index:idx_dlv_command_queue,priority:2;index:idx_dlv_command_user,priority:2" description:"提交人和领取队列所属用户"`
@@ -21,7 +21,9 @@ type DeliveryCommand struct {
 	ResultJSON     string `gorm:"column:result_json;type:mediumtext" description:"Worker 回传结果 JSON 对象"`
 	ErrorMessage   string `gorm:"column:error_message;type:varchar(1024)" description:"失败或阻塞的简明错误"`
 
-	State           string     `gorm:"column:state;type:varchar(16);index:idx_dlv_command_queue,priority:3;index:idx_dlv_command_user,priority:4" description:"pending/leased/running/succeeded/failed/cancelled/timed_out"`
+	// 租约回收与留存期清理都是跨业务线、跨用户的巡检，以 biz_line 打头的索引一条也用不上，
+	// 所以这两条索引以 state 打头：状态先收敛到几行之内，再按时间做范围扫描。
+	State           string     `gorm:"column:state;type:varchar(16);index:idx_dlv_command_queue,priority:3;index:idx_dlv_command_user,priority:4;index:idx_dlv_command_lease,priority:1;index:idx_dlv_command_sweep,priority:1" description:"pending/leased/running/succeeded/failed/cancelled/timed_out"`
 	Progress        int        `gorm:"column:progress;default:0" description:"Worker 回传的执行进度，范围 0-100"`
 	CancelRequested bool       `gorm:"column:cancel_requested;default:false" description:"用户已请求尽力取消，Worker 下次轮询或续租时可见"`
 	LeaseToken      string     `gorm:"column:lease_token;type:varchar(64)" description:"本次领取租约令牌，仅领取 Worker 可回传"`
@@ -33,7 +35,7 @@ type DeliveryCommand struct {
 	FinishedAt      *time.Time `gorm:"column:finished_at;type:timestamp;null" description:"终态回传时刻"`
 	Version         int        `gorm:"column:version;default:1" description:"并发更新版本"`
 	CreatedTime     time.Time  `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
-	UpdatedTime     time.Time  `gorm:"column:updated_time;autoUpdateTime" description:"更新时间"`
+	UpdatedTime     time.Time  `gorm:"column:updated_time;autoUpdateTime;index:idx_dlv_command_sweep,priority:2" description:"更新时间"`
 }
 
 func (r *DeliveryCommand) TableName() string { return "zt_delivery_command" }
@@ -146,20 +148,27 @@ func (d *DeliveryProgram) Init()             {}
 // 相对路径而不是本机绝对路径，保证不同成员机器之间不会泄露目录结构。
 type DeliveryCloudSyncFile struct {
 	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_cloud_file,priority:1;index:idx_dlv_cloud_file_updated,priority:1" description:"业务线"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_cloud_file,priority:1;index:idx_dlv_cloud_file_updated,priority:1;index:idx_dlv_cloud_file_owner,priority:1" description:"业务线"`
 
-	ProgramID    int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2" description:"所属项目"`
+	ProgramID    int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2;index:idx_dlv_cloud_file_owner,priority:2" description:"所属项目"`
 	Category     string `gorm:"column:category;type:varchar(16);uniqueIndex:uk_dlv_cloud_file,priority:3;index:idx_dlv_cloud_file_updated,priority:3" description:"同步类别：chat/requirement/design/test/prototype/execution/attachment"`
 	RelativePath string `gorm:"column:relative_path;type:varchar(1024)" description:"项目工作目录内的相对路径"`
 	// 相对路径本身放进联合唯一键会让索引超过 InnoDB 的 3072 字节上限，
 	// 所以唯一性落在定长的路径哈希上，路径列保持完整长度只做展示与回读。
-	RelativePathHash string    `gorm:"column:relative_path_hash;type:char(64);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"relative_path 的 SHA-256，仅用于唯一键"`
-	ContentType      string    `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
-	ObjectKey        string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
-	Size             int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
-	SHA256           string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
-	UpdatedBy        string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
-	UpdatedTime      time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
+	RelativePathHash string `gorm:"column:relative_path_hash;type:char(64);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"relative_path 的 SHA-256，仅用于唯一键"`
+	ContentType      string `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
+
+	// 归属与阶段来自本机桥接对工作目录约定的识别：文档跟着它所属的需求或任务走，
+	// 面板按阶段分栏展示。识别不出来时归属留空，只作为项目级未归类文件列出。
+	OwnerKind string `gorm:"column:owner_kind;type:varchar(16);index:idx_dlv_cloud_file_owner,priority:3" description:"归属类型：requirement/task/program"`
+	OwnerKey  string `gorm:"column:owner_key;type:varchar(64);index:idx_dlv_cloud_file_owner,priority:4" description:"归属的需求键或任务键"`
+	Stage     string `gorm:"column:stage;type:varchar(24)" description:"归属对象内部的阶段：需求 outline/prototype/review/testing/fine-tuning/chat；任务 document/design/testing/fine-tuning/prototype/execution/attachment/chat"`
+
+	ObjectKey   string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
+	Size        int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
+	SHA256      string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
+	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
+	UpdatedTime time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
 }
 
 func (d *DeliveryCloudSyncFile) TableName() string { return "zt_delivery_cloud_sync_file" }

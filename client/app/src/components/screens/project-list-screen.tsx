@@ -33,11 +33,11 @@ export function ProjectListScreen() {
           <h1>项目</h1>
           <p>查看项目、需求、任务与依赖。</p>
         </div>
-        <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新项目" title="刷新项目" disabled={loading}><RotateCw size={20} className={loading ? "spin-icon" : ""} /></button>
+        <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新项目" title="刷新项目" disabled={loading}><RotateCw size={22} className={loading ? "spin-icon" : ""} /></button>
       </div>
       {loading ? <LoadingState title="正在读取项目" /> : null}
-      {!loading && error ? <EmptyState tone="error" icon={<AlertTriangle size={21} />} title="暂时无法读取项目" description={error} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} /> : null}
-      {!loading && !error && !programs.length ? <EmptyState icon={<Folder size={21} />} title="还没有可显示的项目" description="项目创建后会按你的访问权限显示在这里。" /> : null}
+      {!loading && error ? <EmptyState tone="error" icon={<AlertTriangle size={23} />} title="暂时无法读取项目" description={error} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新连接</button>} /> : null}
+      {!loading && !error && !programs.length ? <EmptyState icon={<Folder size={23} />} title="还没有可显示的项目" description="项目创建后会按你的访问权限显示在这里。" /> : null}
       {!loading && !error && programs.length ? <section className="project-list" aria-label="项目列表">
           {programs.map((project) => (
             <Link href={`/projects/${project.programId}`} className="project-card" key={project.programId}>
@@ -52,7 +52,7 @@ export function ProjectListScreen() {
                   <span className="tag">{project.cloudSyncEnabled ? "云端同步" : "本地文档"}</span>
                 </div>
               </div>
-              <ArrowRight size={19} aria-hidden="true" />
+              <ArrowRight size={21} aria-hidden="true" />
             </Link>
           ))}
         </section> : null}

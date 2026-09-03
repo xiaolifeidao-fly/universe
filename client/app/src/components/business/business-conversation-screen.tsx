@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { AtSign, ArrowLeft, FileCheck2, FileText, LoaderCircle, Paperclip, RotateCw, Search, SendHorizontal, X } from "lucide-react";
+import { AtSign, ArrowLeft, ChevronLeft, ChevronRight, FileCheck2, FileText, LoaderCircle, Paperclip, RotateCw, Search, SendHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
@@ -19,6 +19,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Sheet } from "@/components/sheet";
 import { useSpace } from "@/components/space-provider";
 import { ConversationItemStream } from "@/components/workbench/conversation-turns";
+import { VoiceInputButton } from "@/components/workbench/voice-input-button";
 import { RichText } from "@/components/workbench/rich-text";
 import type { ConversationItem } from "@/features/workbench/types";
 import { hasPersona } from "@/lib/auth";
@@ -50,6 +51,7 @@ export function BusinessConversationScreen() {
   const [documentsOpen, setDocumentsOpen] = useState(false);
   const [documentIndex, setDocumentIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   // 服务端每次 GET 都会同步转查一次远端 Bridge，快慢不定，响应可能乱序到达。
   // 只让最后发出的那次请求写状态，避免旧快照把新的流式内容顶掉。
   const loadSequenceRef = useRef(0);
@@ -99,6 +101,14 @@ export function BusinessConversationScreen() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
   }, [conversation?.messages.length, conversation?.streamingReply, sending]);
+
+  // 输入框跟着内容长高。语音听写是程序化写入，不会触发 onInput，所以统一放在这里做。
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "auto";
+    composer.style.height = `${Math.min(composer.scrollHeight, 148)}px`;
+  }, [message]);
 
   // 轮询每秒都会换一份快照，版本指针只在真的多出一版时才跟到最新，
   // 否则正在翻旧版本的人会被不断弹回最后一版。
@@ -197,7 +207,7 @@ export function BusinessConversationScreen() {
   }, [bizLine, requirementId, validRequirement]);
 
   if (!allowed) {
-    return <div className="chat-screen"><EmptyState icon={<FileText size={22} />} title="当前账号没有业务方身份" description="无法进入业务诉求会话。" /></div>;
+    return <div className="chat-screen"><EmptyState icon={<FileText size={24} />} title="当前账号没有业务方身份" description="无法进入业务诉求会话。" /></div>;
   }
 
   const documents = conversation?.documents ?? [];
@@ -207,27 +217,27 @@ export function BusinessConversationScreen() {
   return (
     <div className="chat-screen business-chat">
       <header className="chat-header">
-        <button className="icon-button" type="button" onClick={() => router.push("/business/workbench")} aria-label="返回业务工作台" title="返回"><ArrowLeft size={20} /></button>
+        <button className="icon-button" type="button" onClick={() => router.push("/business/workbench")} aria-label="返回业务工作台" title="返回"><ArrowLeft size={22} /></button>
         <div className="chat-header__title"><small>业务工作台</small><strong>{conversation?.requirement.title || "新的业务诉求"}</strong></div>
         <div className="chat-header__actions">
-          <button className="icon-button" type="button" onClick={() => setDocumentsOpen(true)} aria-label="查看整理文档" title="整理文档"><FileText size={19} /></button>
-          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新会话" title="刷新" disabled={loading}><RotateCw size={19} className={loading ? "spin-icon" : ""} /></button>
+          <button className="icon-button" type="button" onClick={() => setDocumentsOpen(true)} aria-label="查看整理文档" title="整理文档"><FileText size={21} /></button>
+          <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新会话" title="刷新" disabled={loading}><RotateCw size={21} className={loading ? "spin-icon" : ""} /></button>
         </div>
       </header>
 
       <div className="chat-body">
-        {loading && !conversation ? <EmptyState icon={<LoaderCircle size={22} className="spin-icon" />} title="正在读取业务会话" description="正在恢复访谈记录和整理文档。" /> : null}
-        {!loading && !conversation ? <EmptyState tone="error" icon={<X size={22} />} title="无法读取业务会话" description={error || "请稍后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新读取</button>} /> : null}
+        {loading && !conversation ? <EmptyState icon={<LoaderCircle size={24} className="spin-icon" />} title="正在读取业务会话" description="正在恢复访谈记录和整理文档。" /> : null}
+        {!loading && !conversation ? <EmptyState tone="error" icon={<X size={24} />} title="无法读取业务会话" description={error || "请稍后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新读取</button>} /> : null}
         {conversation ? (
           <div className="business-message-list">
             {documents.length ? (
               <button className="business-document-banner" type="button" onClick={() => setDocumentsOpen(true)}>
-                <span><FileCheck2 size={18} /><strong>AI 最新整理 · 第 {documents[documents.length - 1].version} 版</strong></span>
+                <span><FileCheck2 size={20} /><strong>AI 最新整理 · 第 {documents[documents.length - 1].version} 版</strong></span>
                 <small>{documents[documents.length - 1].confirmed ? "已确认业务诉求文档" : "点击查看本轮整理内容"}</small>
               </button>
             ) : null}
             {conversation.remoteError ? <p className="form-message is-error" role="alert">{conversation.remoteError}</p> : null}
-            {!conversation.messages.length ? <EmptyState icon={<SendHorizontal size={21} />} title="从第一条业务想法开始" description={`已关联项目“${conversation.program.name || conversation.program.programCode}”，直接说清你遇到的问题和期望。`} /> : null}
+            {!conversation.messages.length ? <EmptyState icon={<SendHorizontal size={23} />} title="从第一条业务想法开始" description={`已关联项目“${conversation.program.name || conversation.program.programCode}”，直接说清你遇到的问题和期望。`} /> : null}
             {conversation.messages.map((item) => (
               <article className={`message ${item.role === "user" ? "message--user" : "message--agent is-final"}`} key={item.id}>
                 <RichText text={item.content} />
@@ -238,7 +248,7 @@ export function BusinessConversationScreen() {
               <ConversationItemStream items={conversationItemsOf(conversation)} />
             ) : null}
             {conversation.streamingReply ? <article className="message message--agent"><RichText text={conversation.streamingReply} /></article> : null}
-            {conversation.active ? <p className="chat-running" role="status"><LoaderCircle size={15} className="spin-icon" />业务访谈 AI 正在整理这一轮</p> : null}
+            {conversation.active ? <p className="chat-running" role="status"><LoaderCircle size={17} className="spin-icon" />业务访谈 AI 正在整理这一轮</p> : null}
           </div>
         ) : null}
         {error && conversation ? <p className="form-message is-error" role="alert">{error}</p> : null}
@@ -250,7 +260,7 @@ export function BusinessConversationScreen() {
           <ul className="business-reference-chips" aria-label="本轮引用的文档">
             {referenced.map((item) => (
               <li key={item.documentId}>
-                <AtSign size={12} aria-hidden="true" />
+                <AtSign size={14} aria-hidden="true" />
                 <span>{item.title || item.requirementTitle}</span>
                 <button type="button" onClick={() => setReferenced((current) => current.filter((entry) => entry.documentId !== item.documentId))} aria-label={`移除引用 ${item.title}`}>×</button>
               </li>
@@ -269,25 +279,29 @@ export function BusinessConversationScreen() {
           </div>
         ) : null}
         <div className="business-confirm-row">
-          <button className="button button-quiet" type="button" onClick={() => void confirmDocument()} disabled={composerLocked || !conversation?.messages.length}><FileCheck2 size={16} />确认文档</button>
+          <button className="button button-quiet" type="button" onClick={() => void confirmDocument()} disabled={composerLocked || !conversation?.messages.length}><FileCheck2 size={18} />确认文档</button>
           <small>聊清楚后让 AI 停止追问并形成正式文档</small>
         </div>
-        <div className="chat-composer__row">
-          <label className="icon-button" title="添加附件">
-            {uploading ? <LoaderCircle size={19} className="spin-icon" /> : <Paperclip size={19} />}
-            <input type="file" multiple accept="image/*,.pdf,.txt,.md,.csv,.doc,.docx,.xls,.xlsx" disabled={composerLocked || uploading} onChange={(event) => { void uploadFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-            <span className="visually-hidden">添加附件</span>
-          </label>
-          <button className="icon-button" type="button" onClick={() => setReferencesOpen(true)} disabled={composerLocked} aria-label="引用历史文档" title="引用历史文档"><AtSign size={19} /></button>
-          <textarea value={message} onChange={(event) => setMessage(event.target.value)} rows={1} placeholder="继续描述你的业务想法" aria-label="业务想法" enterKeyHint="send" disabled={composerLocked} />
-          <button className="chat-send" type="submit" disabled={composerLocked || !message.trim()} aria-label="发送">{sending ? <LoaderCircle size={19} className="spin-icon" /> : <SendHorizontal size={19} />}</button>
+        {/* 附件、引用、语音三个入口挤在一行会把输入框压到不足一半宽，这里让输入框独占一行。 */}
+        <div className="chat-composer__row chat-composer__row--stacked">
+          <textarea ref={composerRef} value={message} onChange={(event) => setMessage(event.target.value)} rows={1} placeholder="继续描述你的业务想法" aria-label="业务想法" enterKeyHint="send" disabled={composerLocked} />
+          <div className="chat-composer__tools">
+            <label className="icon-button" title="添加附件">
+              {uploading ? <LoaderCircle size={21} className="spin-icon" /> : <Paperclip size={21} />}
+              <input type="file" multiple accept="image/*,.pdf,.txt,.md,.csv,.doc,.docx,.xls,.xlsx" disabled={composerLocked || uploading} onChange={(event) => { void uploadFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+              <span className="visually-hidden">添加附件</span>
+            </label>
+            <button className="icon-button" type="button" onClick={() => setReferencesOpen(true)} disabled={composerLocked} aria-label="引用历史文档" title="引用历史文档"><AtSign size={21} /></button>
+            <VoiceInputButton value={message} onChange={setMessage} onNotice={setError} disabled={composerLocked} />
+            <button className="chat-send" type="submit" disabled={composerLocked || !message.trim()} aria-label="发送">{sending ? <LoaderCircle size={21} className="spin-icon" /> : <SendHorizontal size={21} />}</button>
+          </div>
         </div>
       </form>
 
       <Sheet open={documentsOpen} title="AI 整理文档" subtitle={documents.length ? `共 ${documents.length} 个版本` : "尚未生成"} onClose={() => setDocumentsOpen(false)}>
         {documents.length && activeDocument ? (
           <BusinessDocumentViewer document={activeDocument} documents={documents} index={documentIndex} onSelect={setDocumentIndex} />
-        ) : <EmptyState icon={<FileText size={21} />} title="暂时没有整理文档" description="完成一轮业务访谈后，AI 会在这里沉淀整理结果。" />}
+        ) : <EmptyState icon={<FileText size={23} />} title="暂时没有整理文档" description="完成一轮业务访谈后，AI 会在这里沉淀整理结果。" />}
       </Sheet>
 
       <ReferencePickerSheet
@@ -388,7 +402,7 @@ function AttachmentList({
             /* eslint-disable-next-line @next/next/no-img-element */
             <img src={previews[attachment.id]} alt={attachment.name} onClick={() => void download(attachment)} />
           ) : (
-            <button type="button" onClick={() => void download(attachment)}><Paperclip size={13} />{attachment.name}</button>
+            <button type="button" onClick={() => void download(attachment)}><Paperclip size={15} />{attachment.name}</button>
           )}
           {onRemove ? <button className="business-attachment__remove" type="button" onClick={() => onRemove(attachment)} aria-label={`移除附件 ${attachment.name}`}>×</button> : null}
         </span>
@@ -456,10 +470,10 @@ function ReferencePickerSheet({
 
   return (
     <Sheet open={open} title="引用历史文档" subtitle={`已选 ${selected.length}/${MAX_REFERENCES} 份`} onClose={onClose}>
-      <label className="workbench-search"><Search size={17} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题搜索本项目的整理文档" aria-label="搜索可引用的文档" /></label>
+      <label className="workbench-search"><Search size={19} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题搜索本项目的整理文档" aria-label="搜索可引用的文档" /></label>
       {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
       {loading && !candidates.length ? <p className="muted">正在读取可引用的文档…</p> : null}
-      {!loading && !candidates.length && !error ? <EmptyState icon={<FileText size={21} />} title="没有可引用的文档" description="同一个项目的其它访谈产出整理文档后，可以在这里引用。" /> : null}
+      {!loading && !candidates.length && !error ? <EmptyState icon={<FileText size={23} />} title="没有可引用的文档" description="同一个项目的其它访谈产出整理文档后，可以在这里引用。" /> : null}
       <div className="option-list">
         {candidates.map((item) => (
           <button className={`option-row${selectedIds.has(item.documentId) ? " is-selected" : ""}`} type="button" key={item.documentId} onClick={() => toggle(item)}>
@@ -479,9 +493,9 @@ function BusinessDocumentViewer({ document, documents, index, onSelect }: { docu
   return (
     <div className="business-document-viewer">
       <div className="business-document-toolbar">
-        <button className="button button-secondary" type="button" disabled={index <= 0} onClick={() => onSelect(index - 1)}>上一版</button>
+        <button className="icon-button" type="button" disabled={index <= 0} onClick={() => onSelect(index - 1)} aria-label="上一版" title="上一版"><ChevronLeft size={21} aria-hidden="true" /></button>
         <span>第 {document.version} 版{document.confirmed ? " · 已确认" : ""}</span>
-        <button className="button button-secondary" type="button" disabled={index >= documents.length - 1} onClick={() => onSelect(index + 1)}>下一版</button>
+        <button className="icon-button" type="button" disabled={index >= documents.length - 1} onClick={() => onSelect(index + 1)} aria-label="下一版" title="下一版"><ChevronRight size={21} aria-hidden="true" /></button>
       </div>
       <h2>{document.title || "业务诉求整理"}</h2>
       <RichText text={document.content} />

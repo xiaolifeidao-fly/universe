@@ -15,6 +15,8 @@ export interface ProgramSummary {
   status: ProgramStatus;
   cloudSyncEnabled: boolean;
   gitEnabled: boolean;
+  /** 项目登记的仓库地址；执行电脑上的目录还不是仓库时，按它关联远端。 */
+  gitRepositoryUrl: string;
   gitRemoteName: string;
   gitBaseBranch: string;
   updatedAt: string | null;
@@ -114,6 +116,13 @@ export interface SaveRequirementInput {
   plannedStartAt?: string | null;
   plannedEndAt?: string | null;
   version?: number;
+  /**
+   * Git 项目的新需求先在执行电脑上建分支，建成后连同分支一起落库。
+   * 三个字段都不传表示「这次请求没提 Git 这件事」，服务端保持需求原有的关联。
+   */
+  gitEnabled?: boolean;
+  gitBaseBranch?: string;
+  gitBranch?: string;
 }
 
 export interface PatchItemInput {
@@ -173,6 +182,25 @@ export function getRequirement(programId: number, requirementKey: string) {
 
 export function saveRequirement(input: SaveRequirementInput) {
   return request<RequirementSummary>("/delivery/requirement/save", { method: "POST", body: input });
+}
+
+/**
+ * 只写需求名称。replaceName 是这次允许被覆盖的旧名称：留空表示只在名称还空着时写入，
+ * 传占位名表示只换掉那个占位名 —— 用户自己填过的名字两种情况都不覆盖。
+ */
+export function updateRequirementName(programId: number, requirementKey: string, name: string, replaceName: string) {
+  return request<RequirementSummary>("/delivery/requirement/name/update", {
+    method: "POST",
+    body: { programId, requirementKey, name, replaceName },
+  });
+}
+
+/** 分支在执行电脑上建成之后回记关联；服务端据此认定这条需求真的有分支可用。 */
+export function bindRequirementGitBranch(programId: number, requirementKey: string, gitBaseBranch: string, gitBranch: string) {
+  return request<RequirementSummary>("/delivery/requirement/git-branch/bind", {
+    method: "POST",
+    body: { programId, requirementKey, gitBaseBranch, gitBranch },
+  });
 }
 
 export function listItems(programId: number, requirementKey?: string) {

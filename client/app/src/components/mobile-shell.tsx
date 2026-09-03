@@ -4,11 +4,13 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BriefcaseBusiness, Command, Folder, Inbox, Settings, Wifi, WifiOff } from "lucide-react";
+import { Bell, BriefcaseBusiness, Command, Folder, Inbox, Settings } from "lucide-react";
 import { saveLastRoute } from "@/lib/navigation";
 import { getSession, hasPersona } from "@/lib/auth";
-import { useNetworkStatus } from "@/components/network-provider";
+import { useSpace } from "@/components/space-provider";
+import { useMessages } from "@/components/messages-provider";
 import { SpaceSwitcher } from "@/components/space-switcher";
+import { WorkerHeaderState } from "@/components/workbench/worker-status";
 
 /** 对话和任务进度要占满整屏：这些路由自己带返回，不再叠加外壳的头部和底部导航。 */
 function immersive(pathname: string) {
@@ -17,7 +19,8 @@ function immersive(pathname: string) {
 
 export function MobileShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const online = useNetworkStatus();
+  const { bizLine } = useSpace();
+  const { unread } = useMessages();
   const session = getSession();
   const productResearch = hasPersona("product_research", session);
   const business = hasPersona("business", session);
@@ -28,6 +31,9 @@ export function MobileShell({ children }: { children: ReactNode }) {
     ] : []),
     ...(productResearch || business ? [
       { href: "/business", label: "业务", icon: BriefcaseBusiness, match: (path: string) => path.startsWith("/business") },
+    ] : []),
+    ...(productResearch ? [
+      { href: "/messages", label: "消息", icon: Bell, match: (path: string) => path.startsWith("/messages"), badge: unread },
     ] : []),
     { href: "/settings", label: "设置", icon: Settings, match: (path: string) => path.startsWith("/settings") },
   ];
@@ -54,18 +60,15 @@ export function MobileShell({ children }: { children: ReactNode }) {
       <header className={`shell-header glass-surface${stuck ? " is-stuck" : ""}`}>
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">
-            <Command size={18} strokeWidth={2.2} />
+            <Command size={20} strokeWidth={2.2} />
           </span>
           <div>
             <span className="brand-title">交付台</span>
             <SpaceSwitcher />
           </div>
         </div>
-        <span className={`connection-state${online ? "" : " is-offline"}`} title={online ? "连接正常" : "当前离线"}>
-          <span className="connection-state__dot" aria-hidden="true" />
-          {online ? <Wifi size={14} aria-hidden="true" /> : <WifiOff size={14} aria-hidden="true" />}
-          {online ? "已连接" : "离线"}
-        </span>
+        {/* 顶栏只留一件和「现在能不能干活」有关的事：执行电脑的心跳。 */}
+        <WorkerHeaderState key={bizLine} enabled={productResearch} />
       </header>
 
       {children}
@@ -77,7 +80,14 @@ export function MobileShell({ children }: { children: ReactNode }) {
             const active = item.match(pathname);
             return (
               <Link className={`nav-link${active ? " is-active" : ""}`} href={item.href} key={item.href} aria-current={active ? "page" : undefined}>
-                <Icon size={21} aria-hidden="true" />
+                <span className="nav-link__icon">
+                  <Icon size={23} aria-hidden="true" />
+                  {item.badge ? (
+                    <span className="nav-link__badge" aria-label={`${item.badge} 条未读`}>
+                      {item.badge > 99 ? "99+" : item.badge}
+                    </span>
+                  ) : null}
+                </span>
                 <span>{item.label}</span>
               </Link>
             );

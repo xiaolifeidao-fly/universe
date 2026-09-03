@@ -21,8 +21,8 @@ export function ProjectEditScreen() {
   if (!project) {
     return (
       <main className="screen">
-        <div className="screen-title-row"><div><p className="eyebrow">编辑项目</p><h1>项目不可用</h1></div><Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={20} /></Link></div>
-        <EmptyState icon={<Save size={21} />} title="没有可编辑的项目" description="项目编辑 API 接入后会在此处提供完整表单。" />
+        <div className="screen-title-row"><div><p className="eyebrow">编辑项目</p><h1>项目不可用</h1></div><Link className="icon-button" href="/projects" aria-label="返回项目列表" title="返回项目列表"><ArrowLeft size={22} /></Link></div>
+        <EmptyState icon={<Save size={23} />} title="没有可编辑的项目" description="项目编辑 API 接入后会在此处提供完整表单。" />
       </main>
     );
   }
@@ -36,7 +36,7 @@ export function ProjectEditScreen() {
     <main className="screen">
       <div className="screen-title-row">
         <div><p className="eyebrow">项目详情</p><h1>编辑项目</h1></div>
-        <Link className="icon-button" href={`/projects/${project.id}`} aria-label="取消编辑" title="取消编辑"><ArrowLeft size={20} /></Link>
+        <Link className="icon-button" href={`/projects/${project.id}`} aria-label="取消编辑" title="取消编辑"><ArrowLeft size={22} /></Link>
       </div>
       <form className="card form-grid" onSubmit={submit}>
         <div className="field">
@@ -57,7 +57,7 @@ export function ProjectEditScreen() {
           </select>
         </div>
         {message ? <p className="form-message" role="status">{message}</p> : null}
-        <button className="button button-primary full-width" type="submit"><Save size={18} aria-hidden="true" />保存更改</button>
+        <button className="button button-primary full-width" type="submit"><Save size={20} aria-hidden="true" />保存更改</button>
       </form>
     </main>
   );

@@ -133,13 +133,13 @@ export function RequirementEditorScreen({ editing }: { editing: boolean }) {
 
   const backHref = editing ? `/projects/${programId}/requirements/${requirementKey}` : `/projects/${programId}`;
   if (loading) return <main className="screen"><LoadingState title="正在读取需求" /></main>;
-  if (error && editing) return <main className="screen"><EmptyState icon={<Save size={21} />} title="需求不可编辑" description={error} action={<Link className="button button-primary" href={backHref}>返回项目</Link>} /></main>;
+  if (error && editing) return <main className="screen"><EmptyState icon={<Save size={23} />} title="需求不可编辑" description={error} action={<Link className="button button-primary" href={backHref}>返回项目</Link>} /></main>;
 
   return (
     <main className="screen">
       <div className="screen-title-row">
         <div><p className="eyebrow">{editing ? "需求详情" : "项目需求"}</p><h1>{editing ? "编辑需求" : "新建需求"}</h1><p>需求保存后可发起受控的任务拆解。</p></div>
-        <Link className="icon-button" href={backHref} aria-label="取消编辑" title="取消编辑"><ArrowLeft size={20} /></Link>
+        <Link className="icon-button" href={backHref} aria-label="取消编辑" title="取消编辑"><ArrowLeft size={22} /></Link>
       </div>
       <form className="card form-grid" onSubmit={submit}>
         <div className="field"><label htmlFor="requirement-name">需求名称</label><input id="requirement-name" value={state.name} onChange={(event) => update("name", event.target.value)} maxLength={255} placeholder="例如：完善移动端任务依赖管理" /></div>
@@ -158,7 +158,7 @@ export function RequirementEditorScreen({ editing }: { editing: boolean }) {
         <label className="checkbox-row"><input type="checkbox" checked={state.splitTasks} onChange={(event) => update("splitTasks", event.target.checked)} />拆解为多条任务</label>
         <label className="checkbox-row"><input type="checkbox" checked={state.preGenerateTaskDocuments} onChange={(event) => update("preGenerateTaskDocuments", event.target.checked)} />拆解后预生成任务需求文档</label>
         {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
-        <button className="button button-primary full-width" type="submit" disabled={saving || !canWrite}><Save size={18} aria-hidden="true" />{saving ? "正在保存" : "保存需求"}</button>
+        <button className="button button-primary full-width" type="submit" disabled={saving || !canWrite}><Save size={20} aria-hidden="true" />{saving ? "正在保存" : "保存需求"}</button>
         {!canWrite ? <p className="field-help">当前账号只有查看权限，无法保存更改。</p> : null}
       </form>
     </main>

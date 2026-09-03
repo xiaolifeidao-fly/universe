@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
@@ -15,6 +16,7 @@ import {
   Lightbulb,
   ListChecks,
   MessageSquareText,
+  Plus,
   RotateCw,
   Search,
   UserRoundCheck,
@@ -37,14 +39,13 @@ import { DocumentSheet } from "@/components/workbench/document-sheet";
 import { GitSheet } from "@/components/workbench/git-sheet";
 import { ProgramPicker } from "@/components/workbench/program-picker";
 import { UsageSheet } from "@/components/workbench/usage-sheet";
-import { WorkerStatusChip, useWorkerStatus } from "@/components/workbench/worker-status";
 import { getSession } from "@/lib/auth";
 
 const PROGRAM_KEY = "delivery-mobile.workbench-program";
 
 const statusLabels: Record<RequirementStatus, string> = { open: "进行中", done: "已完成", dropped: "已放弃" };
 
-type StatusFilter = "open" | "all" | "done";
+type StatusFilter = "open" | "done";
 type WorkView = "created" | "owner" | "assistant";
 
 const workViews = [
@@ -63,6 +64,7 @@ interface RequirementProgressRow {
 }
 
 export function WorkbenchScreen() {
+  const router = useRouter();
   const { bizLine } = useSpace();
   const [programs, setPrograms] = useState<ProgramSummary[]>([]);
   const [programId, setProgramId] = useState(0);
@@ -77,7 +79,6 @@ export function WorkbenchScreen() {
   const [gitRequirement, setGitRequirement] = useState<RequirementSummary | null>(null);
   const [documentRequirement, setDocumentRequirement] = useState<RequirementSummary | null>(null);
   const userId = String(getSession()?.user.id ?? "");
-  const { status: workerStatus } = useWorkerStatus(programId);
 
   const program = useMemo(() => programs.find((item) => item.programId === programId) ?? null, [programId, programs]);
 
@@ -128,15 +129,21 @@ export function WorkbenchScreen() {
     return members.some((member) => String(member.id) === userId);
   }, [userId]);
 
+  // 身份视角上的数字只代表还要推进的事，已完结的需求不该再占用注意力。
+  const openRequirements = useMemo(
+    () => requirements.filter((requirement) => requirement.status === "open"),
+    [requirements],
+  );
+
   const workViewCounts = useMemo<Record<WorkView, number>>(() => ({
-    created: requirements.filter((requirement) => matchesWorkView(requirement, "created")).length,
-    owner: requirements.filter((requirement) => matchesWorkView(requirement, "owner")).length,
-    assistant: requirements.filter((requirement) => matchesWorkView(requirement, "assistant")).length,
-  }), [matchesWorkView, requirements]);
+    created: openRequirements.filter((requirement) => matchesWorkView(requirement, "created")).length,
+    owner: openRequirements.filter((requirement) => matchesWorkView(requirement, "owner")).length,
+    assistant: openRequirements.filter((requirement) => matchesWorkView(requirement, "assistant")).length,
+  }), [matchesWorkView, openRequirements]);
 
   const roleRequirements = useMemo(
-    () => requirements.filter((requirement) => matchesWorkView(requirement, workView)),
-    [matchesWorkView, requirements, workView],
+    () => openRequirements.filter((requirement) => matchesWorkView(requirement, workView)),
+    [matchesWorkView, openRequirements, workView],
   );
 
   const rows = useMemo<RequirementProgressRow[]>(() => {
@@ -145,8 +152,9 @@ export function WorkbenchScreen() {
       grouped.set(item.requirementKey, [...(grouped.get(item.requirementKey) ?? []), item]);
     }
     const text = keyword.trim().toLowerCase();
-    return roleRequirements
-      .filter((requirement) => (filter === "all" ? true : filter === "done" ? requirement.status !== "open" : requirement.status === "open"))
+    // 已完成只按项目归档看，不再切身份；进行中才按当前身份视角收窄。
+    const scoped = filter === "done" ? requirements.filter((requirement) => requirement.status !== "open") : roleRequirements;
+    return scoped
       .filter((requirement) => !text || requirement.name.toLowerCase().includes(text) || requirement.requirementKey.toLowerCase().includes(text))
       .map((requirement) => {
         const owned = grouped.get(requirement.requirementKey) ?? [];
@@ -159,7 +167,7 @@ export function WorkbenchScreen() {
           : 0;
         return { requirement, total: counted.length, done, running, blocked, progress };
       });
-  }, [filter, items, keyword, roleRequirements]);
+  }, [filter, items, keyword, requirements, roleRequirements]);
 
   const overview = useMemo(() => {
     const related = new Set(roleRequirements.map((requirement) => requirement.requirementKey));
@@ -184,21 +192,19 @@ export function WorkbenchScreen() {
       <section className="workbench-hero" aria-labelledby="workbench-title">
         <div className="workbench-hero__header">
           <div>
-            <p className="workbench-date"><CalendarDays size={14} aria-hidden="true" />{today}</p>
+            <p className="workbench-date"><CalendarDays size={16} aria-hidden="true" />{today}</p>
             <h1 id="workbench-title">工作台</h1>
             <p>把注意力放在正在推进的事情上。</p>
           </div>
           <div className="stack-actions">
-            <Link className="icon-button is-glass" href="/commands" aria-label="运行记录" title="运行记录"><Activity size={20} /></Link>
+            <Link className="icon-button is-glass" href="/commands" aria-label="运行记录" title="运行记录"><Activity size={22} /></Link>
             <button className="icon-button is-glass" type="button" onClick={() => void load()} aria-label="刷新工作台" title="刷新工作台" disabled={loading || loadingPrograms}>
-              <RotateCw size={20} className={loading ? "spin-icon" : ""} />
+              <RotateCw size={22} className={loading ? "spin-icon" : ""} />
             </button>
           </div>
         </div>
 
         <ProgramPicker programs={programs} programId={programId} loading={loadingPrograms} onSelect={setProgramId} />
-
-        {programId ? <WorkerStatusChip status={workerStatus} /> : null}
 
         <div className="workbench-overview" aria-label="项目进度概览">
           <div className="overview-progress">
@@ -206,9 +212,9 @@ export function WorkbenchScreen() {
             <span className="overview-progress__label">整体完成度</span>
           </div>
           <div className="overview-metrics">
-            <div><CirclePlay size={16} aria-hidden="true" /><strong>{overview.running}</strong><span>执行中</span></div>
-            <div className="is-done"><CircleCheck size={16} aria-hidden="true" /><strong>{overview.done}</strong><span>已完成</span></div>
-            <div className={overview.blocked ? "has-alert" : ""}><AlertTriangle size={16} aria-hidden="true" /><strong>{overview.blocked}</strong><span>受阻</span></div>
+            <div><CirclePlay size={18} aria-hidden="true" /><strong>{overview.running}</strong><span>执行中</span></div>
+            <div className="is-done"><CircleCheck size={18} aria-hidden="true" /><strong>{overview.done}</strong><span>已完成</span></div>
+            <div className={overview.blocked ? "has-alert" : ""}><AlertTriangle size={18} aria-hidden="true" /><strong>{overview.blocked}</strong><span>受阻</span></div>
           </div>
         </div>
       </section>
@@ -229,9 +235,11 @@ export function WorkbenchScreen() {
                 key={view.value}
                 onClick={() => setWorkView(view.value)}
               >
-                <Icon size={17} aria-hidden="true" />
-                <span>{view.label}</span>
-                <strong>{workViewCounts[view.value]}</strong>
+                <span className="workbench-role-tabs__top">
+                  <Icon size={19} aria-hidden="true" />
+                  <strong>{workViewCounts[view.value]}</strong>
+                </span>
+                <span className="workbench-role-tabs__label">{view.label}</span>
               </button>
             );
           })}
@@ -239,19 +247,32 @@ export function WorkbenchScreen() {
 
         <div className="workbench-section-heading">
           <div>
-            <p className="eyebrow">{workViews.find((view) => view.value === workView)?.label}</p>
+            <p className="eyebrow">{filter === "done" ? "已完成" : workViews.find((view) => view.value === workView)?.label}</p>
             <h2 id="requirements-heading">与我相关的需求</h2>
           </div>
-          <span>{rows.length}<small> 项</small></span>
+          <div className="workbench-section-heading__aside">
+            <span className="workbench-section-heading__count">{rows.length}<small> 项</small></span>
+            {/* 新增需求的落点就是需求对话：分支建好、需求落库之后接着在那边聊。 */}
+            <button
+              className="icon-button is-primary"
+              type="button"
+              disabled={!programId || !program?.canWrite}
+              onClick={() => router.push(`/workbench/requirements/new/chat?programId=${programId}`)}
+              aria-label="新增需求"
+              title="新增需求"
+            >
+              <Plus size={22} aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div className="workbench-toolbar">
         <label className="workbench-search">
-          <Search size={17} aria-hidden="true" />
+          <Search size={19} aria-hidden="true" />
           <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索需求" aria-label="搜索需求" enterKeyHint="search" />
         </label>
         <div className="segmented" role="group" aria-label="需求筛选">
-          {([["open", "进行中"], ["done", "已完结"], ["all", "全部"]] as const).map(([value, label]) => (
+          {([["open", "进行中"], ["done", "已完成"]] as const).map(([value, label]) => (
             <button key={value} type="button" className={filter === value ? "is-active" : ""} onClick={() => setFilter(value)}>{label}</button>
           ))}
         </div>
@@ -259,7 +280,7 @@ export function WorkbenchScreen() {
 
         {loading && !rows.length ? <LoadingState title="正在读取需求" /> : null}
         {!loading && !error && !rows.length ? (
-          <EmptyState icon={<ListChecks size={22} />} title="这个视角下没有需求" description="换一个身份视角或筛选条件看看。" />
+          <EmptyState icon={<ListChecks size={24} />} title="这个视角下没有需求" description="换一个身份视角或筛选条件看看。" />
         ) : null}
 
         <div className="requirement-board" aria-label="需求列表">
@@ -276,7 +297,7 @@ export function WorkbenchScreen() {
       </section>
 
       {program && !program.canWrite ? (
-        <p className="workspace-readonly"><AlertTriangle size={16} aria-hidden="true" />当前项目只读，不能发起对话或 Git 操作。</p>
+        <p className="workspace-readonly"><AlertTriangle size={18} aria-hidden="true" />当前项目只读，不能发起对话或 Git 操作。</p>
       ) : null}
 
       <GitSheet
@@ -289,7 +310,9 @@ export function WorkbenchScreen() {
       <DocumentSheet
         open={Boolean(documentRequirement)}
         programId={programId}
-        requirement={documentRequirement}
+        ownerKind="requirement"
+        ownerKey={documentRequirement?.requirementKey ?? ""}
+        ownerName={documentRequirement?.name}
         onClose={() => setDocumentRequirement(null)}
       />
     </main>
@@ -323,7 +346,7 @@ function RequirementCard({
             {statusLabels[requirement.status] ?? requirement.status}
           </span>
         </div>
-        <ChevronDown size={18} className={`requirement-card__chevron${expanded ? " is-open" : ""}`} aria-hidden="true" />
+        <ChevronDown size={20} className={`requirement-card__chevron${expanded ? " is-open" : ""}`} aria-hidden="true" />
       </button>
 
       <div className="requirement-card__meter" aria-label={`完成度 ${row.progress}%`}>
@@ -340,14 +363,14 @@ function RequirementCard({
 
       <div className="requirement-card__actions">
         <Link className="chip-button is-primary" href={`/workbench/requirements/${requirementPath}/chat${search}`}>
-          <MessageSquareText size={17} aria-hidden="true" />对话
+          <MessageSquareText size={21} aria-hidden="true" /><span>对话</span>
         </Link>
         <Link className="chip-button" href={`/workbench/requirements/${requirementPath}/progress${search}`}>
-          <CirclePlay size={17} aria-hidden="true" />运行任务
+          <CirclePlay size={21} aria-hidden="true" /><span>运行任务</span>
         </Link>
-        <button className="chip-button" type="button" onClick={onOpenGit}><GitBranch size={17} aria-hidden="true" />Git</button>
-        <button className="chip-button" type="button" onClick={onOpenDocuments}><FileText size={17} aria-hidden="true" />文档</button>
-        <button className="chip-button" type="button" onClick={() => setUsageOpen(true)}><Coins size={17} aria-hidden="true" />消耗</button>
+        <button className="chip-button" type="button" onClick={onOpenGit}><GitBranch size={21} aria-hidden="true" /><span>Git</span></button>
+        <button className="chip-button" type="button" onClick={onOpenDocuments}><FileText size={21} aria-hidden="true" /><span>文档</span></button>
+        <button className="chip-button" type="button" onClick={() => setUsageOpen(true)}><Coins size={21} aria-hidden="true" /><span>消耗</span></button>
       </div>
 
       <UsageSheet

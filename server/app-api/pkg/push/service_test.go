@@ -79,7 +79,11 @@ func TestCommandPayloadStaysSilentForSnapshotStopAndServerRaisedCommands(t *test
 			t.Fatalf("快照命令失败也不应推送通知：%s", commandType)
 		}
 	}
-	for _, commandType := range []string{"task.stop", "task.stop-all", "task.planning-stop", "business.conversation"} {
+	for _, commandType := range []string{
+		"task.stop", "task.stop-all", "task.planning-stop", "business.conversation",
+		// 新加的辅助会话各自带一条停止命令：靠后缀一次收敛，不用逐条补名单。
+		"requirement.review-stop", "requirement.testing-stop", "task.fine-tuning-stop",
+	} {
 		if _, ok := commandPayload(dto.CommandView{CommandID: "cmd-quiet", ProgramID: 7, CommandType: commandType, State: "succeeded"}); ok {
 			t.Fatalf("该命令不应推送通知：%s", commandType)
 		}

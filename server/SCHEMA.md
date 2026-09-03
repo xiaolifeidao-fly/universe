@@ -61,7 +61,7 @@
 | 表 | 作用 | 原型出处 |
 |---|---|---|
 | `zt_delivery_program` | 交付项目（印尼业务 = 一行） | `meta` |
-| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计、测试、原型、执行产物与附件的 OSS 对象索引；正文只在私有 OSS | 原型没有 |
+| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计、测试、原型、执行产物与附件的 OSS 对象索引；正文只在私有 OSS；`owner_kind` / `owner_key` / `stage` 记这份文档属于哪条需求或任务的哪个阶段，未识别出归属时留空 | 原型没有 |
 | `zt_delivery_stage` | 推进阶段（现状 / 第一步 … 终局） | `stages[]` |
 | `zt_delivery_module` | 能力模块 + 权重（数据回传 30% …） | `modules[]` |
 | `zt_delivery_time_plan` | 时间计划：项目的交付时间窗口，对应一条从基准分支切出的发布分支（默认 `release/{截止日期}`） | 原型没有 |
@@ -184,6 +184,7 @@ uk_dlv_snapshot  (biz_line, program_id, stat_date, module_key)
 - 领取以 `UPDATE ... WHERE state = 'pending' AND cancel_requested = false` 原子完成；只有更新成功的 Worker 持有随机 `lease_token`，续租、活动和最终回传都必须同时匹配该 token 与 `worker_id`。
 - `pending`、`leased` 或 `running` 都以两分钟为恢复窗口。未领取命令会重新发送最多三次领取通知后进入 `timed_out`；失联租约低于三次领取尝试时回到 `pending`，否则进入 `timed_out`。每次转变都会写入 `zt_delivery_command_event`，重新调度会再次发送 Redis 唤醒提示。
 - Worker 仅登记已配置本机工作目录的 `(biz_line, program_id)` 映射。绝不上传、保存或下发本机绝对路径；领取查询只会返回同一用户、同一业务线、同一项目且能力匹配的命令。
+- 命令行与事件行是可再生的执行痕迹，不是账本：只读快照类命令（会话快照、Git 只读、用量）终态一小时后清理，其余命令保留一个月，事件行随命令一并删除。手机端会话页每几秒就落一条快照命令，不清理的话这两张表会无上限地涨。
 
 ### 建表
 
@@ -271,6 +272,11 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档、设计文档、测试资料、原型、执行产物和附件会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。
 服务端上传到私有 OSS 后，数据库仅保存对象键、大小和 SHA-256 校验值。
 
+已有云端文件索引表升级到按需求 / 任务归属分组时，执行
+[`migrations/20260909_delivery_cloud_document_owner.sql`](migrations/20260909_delivery_cloud_document_owner.sql)。
+该脚本可安全重复执行；补齐 `owner_kind` / `owner_key` / `stage` 三列和 `idx_dlv_cloud_file_owner`。
+存量记录归属为空，按项目级未归类展示，重新执行一次云端同步即可回填。
+
 已有需求表升级到支持需求详情里 @ 引用历史需求时，执行
 [`migrations/20260818_delivery_requirement_references.sql`](migrations/20260818_delivery_requirement_references.sql)。
 该脚本可安全重复执行；它补齐的 `reference_requirement_keys` 默认为空串，存量需求没有引用。
@@ -294,5 +300,11 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 已有库启用移动端用户命令中心前，执行
 [`migrations/20260903_delivery_command_center.sql`](migrations/20260903_delivery_command_center.sql)。
 该脚本可安全重复执行；它建立权威命令、审计事件、插件注册和工作目录映射四张表。命令输入与结果不写 Redis，本机路径和 Worker 凭证也不得写入任意一张表。
+
+命令表的巡检索引改以 `state` 打头后，执行
+[`migrations/20260910_delivery_command_sweep_index.sql`](migrations/20260910_delivery_command_sweep_index.sql)。
+租约回收与留存期清理都是跨业务线、跨用户的定时巡检，以 `biz_line` 打头的索引一条也用不上；
+移动端会话页每几秒落一条快照命令，表长得快，而领取命令时会顺带跑一次租约回收，扫描成本会直接压在领取延迟上。
+该脚本可安全重复执行。
 
 省掉 `-file` 就只建表。**DDL 不在服务启动时跑** —— 线上建表不该是进程启动的副作用。

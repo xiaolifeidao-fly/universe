@@ -292,6 +292,14 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                         ? "exception"
                         : "active"}
                   />
+                  {pluginInstallation.message ? (
+                    <p
+                      className="local-environment-preferences__plugin-progress-message"
+                      data-failed={pluginInstallation.status === "failed" ? "true" : undefined}
+                    >
+                      {pluginInstallation.message}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
               <div className="local-environment-plugin-link">

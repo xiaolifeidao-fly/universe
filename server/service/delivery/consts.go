@@ -80,7 +80,8 @@ const (
 // 几秒读一次。它们不写工作目录，也不代表用户发起了一次动作，所以运行记录不列、
 // 通知不推、留存期也只按小时算 —— 真正值得回看的是执行类命令。
 var readOnlyCommandTypes = map[string]struct{}{
-	"task.session": {}, "task.planning-session": {}, "requirement.usage": {},
+	"task.session": {}, "task.planning-session": {}, "requirement.usage": {}, "requirement.session": {},
+	"task.testing-session": {}, "task.fine-tuning-session": {},
 	"git.status": {}, "git.branches": {}, "git.changes": {}, "git.change": {},
 	"git.projects": {}, "git.merge-preview": {}, "git.workspace-check": {},
 }

@@ -25,6 +25,7 @@ const PROVIDERS = [
 
 /** 需求窗口里每个入口对应的文案键；桥接给的 key 就是这里的键。 */
 const CONVERSATION_GROUP_LABELS: Record<CodexRequirementUsageGroupKey, string> = {
+  analysis: "delivery.usage.group.analysis",
   planning: "delivery.usage.group.planning",
   prototype: "delivery.usage.group.prototype",
   review: "delivery.usage.group.review",
@@ -249,7 +250,8 @@ export function DeliveryRequirementUsageModal({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={1040}
+      // 任务表右半边有六列数字，1040 会把任务标题挤成一串省略号。
+      width={1120}
       // 高度封了顶，居中比挂在页面上方更稳：屏幕矮的时候不会顶出可视区。
       centered
       className="delivery-usage-modal"
@@ -276,6 +278,8 @@ export function DeliveryRequirementUsageModal({
                   {usage ? (
                     <>
                       <em>{t("delivery.usage.input")} {formatTokens(usage.usage.total.inputTokens)}</em>
+                      {/* 缓存是入里命中的那段，跟在「入」后面才读得出是它的一部分。 */}
+                      <em>{t("delivery.usage.cached")} {formatTokens(usage.usage.total.cachedInputTokens)}</em>
                       <em>{t("delivery.usage.output")} {formatTokens(usage.usage.total.outputTokens)}</em>
                     </>
                   ) : <em>{t("delivery.usage.unused")}</em>}
@@ -356,6 +360,8 @@ function sumProviderUsage(usages: CodexProviderUsage[]): CodexProviderUsage {
   for (const usage of usages) {
     sum.codex.totalTokens += usage.codex.totalTokens;
     sum.claude.totalTokens += usage.claude.totalTokens;
+    sum.total.inputTokens += usage.total.inputTokens;
+    sum.total.cachedInputTokens += usage.total.cachedInputTokens;
     sum.total.outputTokens += usage.total.outputTokens;
     sum.total.totalTokens += usage.total.totalTokens;
     cost += usage.total.costUsd ?? 0;
@@ -365,7 +371,7 @@ function sumProviderUsage(usages: CodexProviderUsage[]): CodexProviderUsage {
   return sum;
 }
 
-/** 需求会话表和任务表右半边共用的五列，列宽也一样——两张表要能上下对着看。 */
+/** 需求会话表和任务表右半边共用的六列，列宽也一样——两张表要能上下对着看。 */
 function usageColumns<T>(
   t: (key: string) => string,
   pick: (record: T) => CodexProviderUsage,
@@ -387,6 +393,15 @@ function usageColumns<T>(
       align: "right",
       className: "delivery-usage-cell-num",
       render: (_, record) => (pick(record).claude.totalTokens ? formatTokens(pick(record).claude.totalTokens) : "—"),
+    },
+    {
+      // 缓存单独一列：它是「入」里命中缓存的那段，计价只有一折，看账时要能单独对上。
+      title: t("delivery.usage.cachedColumn"),
+      key: "cached",
+      width: 92,
+      align: "right",
+      className: "delivery-usage-cell-num",
+      render: (_, record) => (pick(record).total.cachedInputTokens ? formatTokens(pick(record).total.cachedInputTokens) : "—"),
     },
     {
       title: t("delivery.usage.outputColumn"),
@@ -419,7 +434,7 @@ function usageColumns<T>(
   ];
 }
 
-/** 表尾合计右半边的五格，和 usageColumns 一一对应。 */
+/** 表尾合计右半边的六格，和 usageColumns 一一对应。 */
 function SummaryCells({ index, usage, totals }: { index: number; usage: CodexProviderUsage; totals: UsageTotals }) {
   return (
     <>
@@ -430,12 +445,15 @@ function SummaryCells({ index, usage, totals }: { index: number; usage: CodexPro
         {usage.claude.totalTokens ? formatTokens(usage.claude.totalTokens) : "—"}
       </Table.Summary.Cell>
       <Table.Summary.Cell index={index + 2} align="right" className="delivery-usage-cell-num">
-        {usage.total.outputTokens ? formatTokens(usage.total.outputTokens) : "—"}
+        {usage.total.cachedInputTokens ? formatTokens(usage.total.cachedInputTokens) : "—"}
       </Table.Summary.Cell>
       <Table.Summary.Cell index={index + 3} align="right" className="delivery-usage-cell-num">
-        <ShareCell text={formatTokens(usage.total.totalTokens)} value={usage.total.totalTokens} total={totals.tokens} />
+        {usage.total.outputTokens ? formatTokens(usage.total.outputTokens) : "—"}
       </Table.Summary.Cell>
       <Table.Summary.Cell index={index + 4} align="right" className="delivery-usage-cell-num">
+        <ShareCell text={formatTokens(usage.total.totalTokens)} value={usage.total.totalTokens} total={totals.tokens} />
+      </Table.Summary.Cell>
+      <Table.Summary.Cell index={index + 5} align="right" className="delivery-usage-cell-num">
         <ShareCell accent="cost" text={formatCost(usage.total.costUsd)} value={usage.total.costUsd ?? 0} total={totals.cost} />
       </Table.Summary.Cell>
     </>

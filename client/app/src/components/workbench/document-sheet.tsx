@@ -3,19 +3,39 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ExternalLink, FileText, LoaderCircle, RotateCw } from "lucide-react";
 import { ApiError } from "@/api/client";
-import { getCloudDocumentURL, listCloudDocuments, previewCloudDocument, type CloudDocument } from "@/api/documents.api";
-import type { RequirementSummary } from "@/api/management.api";
+import {
+  getCloudDocumentURL,
+  listCloudDocuments,
+  requirementDocumentStages,
+  requirementStageLabels,
+  taskDocumentStages,
+  taskStageLabels,
+  type CloudDocument,
+  type DocumentOwnerKind,
+} from "@/api/documents.api";
 import { Sheet } from "@/components/sheet";
-import { RichText } from "@/components/workbench/rich-text";
+import { DocumentPreviewBody, useDocumentPreview } from "@/components/workbench/document-preview";
 
-type Preview = { file: CloudDocument; mode: "text" | "image" | "frame"; content: string };
+/** 没有阶段信息的文档单独一栏：多半是本次改造之前同步上去的旧记录。 */
+const UNCLASSIFIED = "__unclassified__";
 
-function isText(file: CloudDocument) {
-  return file.contentType.startsWith("text/") || file.contentType.includes("json") || /\.(md|markdown|txt|json|ya?ml|csv|log)$/i.test(file.relativePath);
+/**
+ * 需求和任务各自固定展示的几个阶段。用户从面板点进来时这几栏一定在，
+ * 空栏也要留着——「这个阶段还没有文档」本身就是要看的信息。
+ */
+const pinnedStages: Record<"requirement" | "task", readonly string[]> = {
+  requirement: ["outline", "review", "testing", "fine-tuning"],
+  task: ["document", "design", "testing", "fine-tuning"],
+};
+
+function stageOrderOf(ownerKind: "requirement" | "task"): readonly string[] {
+  return ownerKind === "requirement" ? requirementDocumentStages : taskDocumentStages;
 }
 
-function isImage(file: CloudDocument) {
-  return file.contentType.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(file.relativePath);
+function stageLabelOf(ownerKind: "requirement" | "task", stage: string) {
+  if (stage === UNCLASSIFIED) return "未归类";
+  const labels: Record<string, string> = ownerKind === "requirement" ? requirementStageLabels : taskStageLabels;
+  return labels[stage] ?? stage;
 }
 
 function displaySize(value: number) {
@@ -24,70 +44,84 @@ function displaySize(value: number) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** 需求文档：云端已同步的这条需求目录下的文档，按文件名读，正文直接在面板里看。 */
+/**
+ * 需求或任务的云端文档，按阶段分栏。
+ *
+ * 文档的归属和阶段由本机桥接同步时判定并存在服务端，这里只按归属取自己的那一份目录，
+ * 不再靠路径里出现过需求键来猜。归属为空的旧记录取不到，会退回一次全项目查询并单独列出，
+ * 提示重新同步一次就能各归各位。
+ */
 export function DocumentSheet({
   open,
   programId,
-  requirement,
+  ownerKind,
+  ownerKey,
+  ownerName,
   onClose,
 }: {
   open: boolean;
   programId: number;
-  requirement: RequirementSummary | null;
+  ownerKind: "requirement" | "task";
+  ownerKey: string;
+  ownerName?: string;
   onClose: () => void;
 }) {
   const [files, setFiles] = useState<CloudDocument[]>([]);
+  const [legacy, setLegacy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const [showAll, setShowAll] = useState(false);
-
-  const requirementKey = requirement?.requirementKey ?? "";
+  const [stage, setStage] = useState<string>("");
+  const { preview, loading: previewLoading, error: previewError, open: openPreview, close: closePreview, navigate } = useDocumentPreview(programId, files);
 
   const load = useCallback(async () => {
-    if (!programId) return;
+    if (!programId || !ownerKey) return;
     setLoading(true);
     setError("");
     try {
-      setFiles(await listCloudDocuments(programId));
+      const owned = await listCloudDocuments(programId, { ownerKind: ownerKind as DocumentOwnerKind, ownerKey });
+      if (owned.length) {
+        setFiles(owned);
+        setLegacy(false);
+        return;
+      }
+      // 归属是本次改造后才带上的。旧记录归属为空，按需求键或任务键在路径里认一次，
+      // 认出来的先让用户能看到，同时明确告诉他重新同步就能恢复分栏。
+      const all = await listCloudDocuments(programId);
+      const matched = all.filter((file) => file.relativePath.split("/").includes(ownerKey));
+      setFiles(matched);
+      setLegacy(matched.length > 0);
     } catch (reason) {
       setFiles([]);
+      setLegacy(false);
       setError(reason instanceof ApiError ? reason.message : "无法读取云端文档。");
     } finally {
       setLoading(false);
     }
-  }, [programId]);
+  }, [ownerKey, ownerKind, programId]);
 
   useEffect(() => {
     if (!open) return;
-    setPreview(null);
-    setShowAll(false);
+    closePreview();
+    setStage("");
     void load();
-  }, [load, open]);
+  }, [closePreview, load, open]);
 
-  useEffect(() => () => {
-    if (preview && preview.mode !== "text") URL.revokeObjectURL(preview.content);
-  }, [preview]);
-
-  const owned = useMemo(
-    () => files.filter((file) => requirementKey && file.relativePath.includes(`/${requirementKey}/`)),
-    [files, requirementKey],
-  );
-  const visible = showAll || !owned.length ? files : owned;
-
-  const openPreview = async (file: CloudDocument) => {
-    setLoading(true);
-    setError("");
-    try {
-      const blob = await previewCloudDocument(programId, file);
-      if (isText(file)) setPreview({ file, mode: "text", content: await blob.text() });
-      else setPreview({ file, mode: isImage(file) ? "image" : "frame", content: URL.createObjectURL(blob) });
-    } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : "无法预览该文件。");
-    } finally {
-      setLoading(false);
+  const grouped = useMemo(() => {
+    const rows = new Map<string, CloudDocument[]>();
+    for (const file of files) {
+      const key = file.stage || UNCLASSIFIED;
+      rows.set(key, [...(rows.get(key) ?? []), file]);
     }
-  };
+    const order = stageOrderOf(ownerKind);
+    const tabs = order
+      .filter((item) => pinnedStages[ownerKind].includes(item) || (rows.get(item)?.length ?? 0) > 0)
+      .map((item) => ({ stage: item as string, rows: rows.get(item) ?? [] }));
+    if (rows.has(UNCLASSIFIED)) tabs.push({ stage: UNCLASSIFIED, rows: rows.get(UNCLASSIFIED) ?? [] });
+    return tabs;
+  }, [files, ownerKind]);
+
+  const active = grouped.find((tab) => tab.stage === stage) ?? grouped[0];
+  const visible = active?.rows ?? [];
 
   const openSigned = async (file: CloudDocument) => {
     try {
@@ -101,36 +135,60 @@ export function DocumentSheet({
   return (
     <Sheet
       open={open}
-      title="需求文档"
-      subtitle={requirement?.name || requirementKey}
+      title={ownerKind === "requirement" ? "需求文档" : "任务文档"}
+      subtitle={ownerName || ownerKey}
       onClose={onClose}
       actions={
         <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新文档" title="刷新文档" disabled={loading}>
-          <RotateCw size={19} className={loading ? "spin-icon" : ""} />
+          <RotateCw size={21} className={loading ? "spin-icon" : ""} />
         </button>
       }
     >
-      {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
+      {error || previewError ? <p className="form-message is-error" role="alert">{error || previewError}</p> : null}
 
       {preview ? (
         <div className="document-preview-pane">
-          <button className="chip-button" type="button" onClick={() => setPreview(null)}><ArrowLeft size={16} aria-hidden="true" />返回列表</button>
+          <button className="chip-button" type="button" onClick={closePreview}><ArrowLeft size={18} aria-hidden="true" />返回列表</button>
           <p className="git-detail__path">{preview.file.relativePath}</p>
-          {preview.mode === "text" ? <RichText text={preview.content} /> : null}
-          {preview.mode === "image" ? <img className="document-preview__image" src={preview.content} alt={preview.file.relativePath} /> : null}
-          {preview.mode === "frame" ? <iframe className="document-preview__frame" src={preview.content} title={preview.file.relativePath} sandbox="" /> : null}
+          {previewLoading ? <p className="git-loading"><LoaderCircle size={18} className="spin-icon" aria-hidden="true" />正在打开</p> : null}
+          <DocumentPreviewBody preview={preview} onNavigate={navigate} />
         </div>
       ) : (
         <>
-          {loading && !files.length ? <p className="git-loading"><LoaderCircle size={16} className="spin-icon" aria-hidden="true" />正在读取云端文档</p> : null}
-          {!loading && !visible.length ? (
-            <p className="field-help">这条需求还没有已同步的文档。项目未开启云端同步时，文档只留在执行电脑上。</p>
+          <div className="document-filter" role="tablist" aria-label={ownerKind === "requirement" ? "需求文档阶段" : "任务文档阶段"}>
+            {grouped.map((tab) => (
+              <button
+                key={tab.stage}
+                type="button"
+                role="tab"
+                aria-selected={active?.stage === tab.stage}
+                className={active?.stage === tab.stage ? "is-active" : ""}
+                onClick={() => setStage(tab.stage)}
+              >
+                {stageLabelOf(ownerKind, tab.stage)}
+                {tab.rows.length ? <small className="document-filter__count">{tab.rows.length}</small> : null}
+              </button>
+            ))}
+          </div>
+
+          {legacy ? (
+            <p className="field-help">这些文档还是按旧格式同步上来的，暂时分不出阶段。在电脑上重新同步一次就会各归各位。</p>
           ) : null}
+
+          {(loading || previewLoading) && !files.length ? <p className="git-loading"><LoaderCircle size={18} className="spin-icon" aria-hidden="true" />正在读取云端文档</p> : null}
+          {!loading && !visible.length ? (
+            <p className="field-help">
+              {files.length
+                ? `「${stageLabelOf(ownerKind, active?.stage ?? "")}」还没有已同步的文档。`
+                : "这里还没有已同步的文档。项目未开启云端同步时，文档只留在执行电脑上。"}
+            </p>
+          ) : null}
+
           <ul className="document-simple-list">
             {visible.map((file) => (
               <li key={`${file.category}:${file.relativePath}`}>
                 <button type="button" onClick={() => void openPreview(file)}>
-                  <span className="document-simple-list__icon" aria-hidden="true"><FileText size={17} /></span>
+                  <span className="document-simple-list__icon" aria-hidden="true"><FileText size={19} /></span>
                   <span>
                     <strong>{file.relativePath.split("/").pop()}</strong>
                     <small>{file.relativePath}</small>
@@ -138,16 +196,11 @@ export function DocumentSheet({
                   </span>
                 </button>
                 <button className="icon-button" type="button" onClick={() => void openSigned(file)} aria-label={`在新窗口打开 ${file.relativePath}`} title="在新窗口打开">
-                  <ExternalLink size={17} />
+                  <ExternalLink size={19} />
                 </button>
               </li>
             ))}
           </ul>
-          {owned.length && files.length > owned.length ? (
-            <button className="chip-button" type="button" onClick={() => setShowAll((current) => !current)}>
-              {showAll ? "只看这条需求" : `查看项目全部文档（${files.length}）`}
-            </button>
-          ) : null}
         </>
       )}
     </Sheet>

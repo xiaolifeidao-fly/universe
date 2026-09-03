@@ -96,7 +96,7 @@ export function defaultWorkspaceRoute(session = getSession()) {
 }
 
 export function canAccessWorkspaceRoute(pathname: string, session = getSession()) {
-  if (pathname === "/" || pathname.startsWith("/projects") || pathname.startsWith("/commands") || pathname.startsWith("/workbench")) {
+  if (pathname === "/" || pathname.startsWith("/projects") || pathname.startsWith("/commands") || pathname.startsWith("/workbench") || pathname.startsWith("/messages")) {
     return hasPersona("product_research", session);
   }
   if (pathname.startsWith("/business/workbench")) return hasPersona("business", session);
