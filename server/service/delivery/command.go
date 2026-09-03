@@ -314,6 +314,10 @@ func (s *service) RequestCommandCancellation(ctx context.Context, req dto.Cancel
 	return toCommandView(row), nil
 }
 
+// RegisterCommandWorker 登记一台执行电脑。ProgramIDs 可以为空：那代表「这台电脑
+// 在听这条业务线，但还没有绑定任何项目工作目录」，客户端据此把「插件没开」和
+// 「插件开着但没绑目录」分开说。空列表会把这台 Worker 之前报过的映射全部清掉，
+// 而它领不到任何命令 —— 领取只走 workspace 行。
 func (s *service) RegisterCommandWorker(ctx context.Context, req dto.RegisterCommandWorkerRequest) (dto.CommandWorkerView, error) {
 	if !req.BizLine.Valid() {
 		return dto.CommandWorkerView{}, contract.ErrBizLineRequired
@@ -726,9 +730,10 @@ func normalizeProgramIDs(values []int64) ([]int64, error) {
 		seen[value] = struct{}{}
 		result = append(result, value)
 	}
-	if len(result) == 0 {
-		return nil, errors.New("请至少登记一个本机项目工作目录映射")
-	}
+	// 空列表是合法的：插件一起来就该注册，哪怕本机还没绑过任何项目工作目录。
+	// 否则「插件没开」和「插件开着但还没绑目录」在客户端长成同一句「未登记执行
+	// 电脑」，而这两件事的处理方式完全不同。没有映射的 Worker 领不到任何命令
+	// （领取按 workspace 行走），它只是在说「这台电脑在听这条业务线」。
 	return result, nil
 }
 
