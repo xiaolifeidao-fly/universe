@@ -45,7 +45,7 @@ import { useStickToBottom } from "../hooks/useStickToBottom";
 import { DeliveryDocumentSetPanel } from "./DeliveryDocumentSet";
 import { SessionContextMeter } from "./DeliverySessionContext";
 import { DeliveryConversationMentionInput, type DeliveryConversationMentionCatalog, type DeliveryConversationMentionFile } from "./DeliveryConversationMentionInput";
-import { SessionChangeSummary, SessionMessageContent, SessionProcessGroup, groupSessionItems } from "./DeliverySessionMessage";
+import { SessionChangeSummary, SessionMessageContent, SessionProcessGroup, SessionTurnUsage, groupSessionItems } from "./DeliverySessionMessage";
 
 interface DeliveryRequirementAnalysisSessionProps {
   requirement: DeliveryRequirementRecord | null;
@@ -363,12 +363,18 @@ export function DeliveryRequirementAnalysisSession({
                         ? <SessionProcessGroup items={group.items} key={`${turn.id}-${group.id}`} />
                         : <AnalysisTranscriptItem item={group.item} programId={programId} toolName={toolName} key={`${turn.id}-${group.id}`} />))}
                       <SessionChangeSummary items={turn.items} programId={programId} />
+                      {/* 分析会话一样烧 token，每轮跟着回合走，才看得出是哪一问贵。 */}
+                      <SessionTurnUsage usage={turn.usage} />
                     </Fragment>
                   ))
                 ) : (
                   <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("delivery.analysis.empty").replace("{tool}", toolName)} />
                 )}
                 {active && !switchingThreadId ? <div className="delivery-session-thinking"><LoadingOutlined spin /> {toolName}</div> : null}
+                {/* 会话合计压在最后：一条分析聊到第十轮，要的是「这条一共花了多少」。 */}
+                {!newConversation && conversation?.usage?.totalTokens
+                  ? <SessionTurnUsage usage={conversation.usage} label={t("delivery.usage.sessionTotal")} />
+                  : null}
               </div>
             ),
           },

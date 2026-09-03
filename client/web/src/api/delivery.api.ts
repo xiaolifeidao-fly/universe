@@ -1480,6 +1480,9 @@ export class CodexRequirementAnalysisConversation {
 
   documents: DeliveryDocumentFile[] = [];
 
+  /** 本条会话所有回合的合计消耗。 */
+  usage: CodexTokenUsage = new CodexTokenUsage();
+
   /** 这条会话当前占了多少上下文；桥接按最后一个报了读数的回合给。 */
   context: CodexSessionContext = new CodexSessionContext();
 }
