@@ -24,7 +24,7 @@ import {
 } from "../api/businessRequirement.api";
 import type { CodexConversationItem } from "@/api/delivery.api";
 import { SessionMarkdown, SessionProcessGroup, groupSessionItems } from "../../delivery/components/DeliverySessionMessage";
-import { BusinessRequirementDocuments } from "./BusinessRequirementDocuments";
+import { BusinessRequirementDocumentPanel } from "./BusinessRequirementDocumentPanel";
 import { BusinessRequirementMentionInput } from "./BusinessRequirementMentionInput";
 
 /** 与服务端和远端桥一致的单条消息附件上限。 */
@@ -231,7 +231,8 @@ export function BusinessWorkbench() {
 	}, [loadConversation, selectedRequirementId]);
 
 	// 与本地插件会话一致：POST 只受理一轮，随后由浏览器轮询本系统的
-	// 会话快照。本系统再转查远端 Bridge，并把完成的内容沉淀为业务文档。
+	// 会话快照。本系统再转查远端 Bridge，把完成的内容追加成一条 AI 回复；
+	// 只有「确认文档」那一轮才会同时落成这场访谈唯一的业务诉求文档。
 	// sending 期间不轮询：那时远端会话还没登记成 running，快照会返回 active=false，
 	// 既会把等待态闪掉，也会把轮询自己拆掉，直到 POST 返回才重新开始。
 	// 用「上一次拿到结果后再排下一次」代替固定间隔，慢响应不会堆叠成并发请求。
@@ -460,7 +461,7 @@ export function BusinessWorkbench() {
               </header>
 
 			  {conversation.documents?.length ? (
-                <BusinessRequirementDocuments documents={conversation.documents} collapsible defaultOpen={false} />
+                <BusinessRequirementDocumentPanel intakeDocument={conversation.documents[0]} collapsible />
               ) : null}
 
 			  <div className="manager-business-chat__messages">

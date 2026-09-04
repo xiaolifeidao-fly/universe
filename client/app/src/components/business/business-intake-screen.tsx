@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChevronLeft, ChevronRight, ClipboardList, FileText, LoaderCircle, Paperclip, RotateCw, Search, UserRound } from "lucide-react";
+import { AlertTriangle, ClipboardList, FileText, LoaderCircle, Paperclip, RotateCw, Search, UserRound } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
@@ -100,19 +100,19 @@ export function BusinessIntakeScreen() {
 }
 
 function BusinessIntakeDetail({ conversation }: { conversation: BusinessConversation }) {
-  const documents = conversation.documents ?? [];
-  const latest = documents[documents.length - 1];
+  // 一场访谈只有一份文档：业务方点「确认文档」之后才产出，服务端只回这一份。
+  const intakeDocument = conversation.documents?.[0];
   return (
     <div className="business-intake-detail">
       <dl className="business-detail-grid">
         <div><dt>关联项目</dt><dd>{conversation.program.name || conversation.program.programCode}</dd></div>
         <div><dt>提出人</dt><dd>{conversation.requirement.createdByName || conversation.requirement.createdBy}</dd></div>
         <div><dt>提交时间</dt><dd>{formatDate(conversation.requirement.createdAt)}</dd></div>
-        <div><dt>当前状态</dt><dd>{conversation.active ? "交流中" : latest ? "已整理" : "已提交"}</dd></div>
+        <div><dt>当前状态</dt><dd>{conversation.active ? "交流中" : intakeDocument ? "已整理" : "已提交"}</dd></div>
       </dl>
       <section className="business-detail-section">
-        <div className="section-heading"><span>AI 整理文档</span><FileText size={20} /></div>
-        {documents.length ? <CollectedDocuments documents={documents} /> : <p className="muted">暂时没有 AI 整理文档。</p>}
+        <div className="section-heading"><span>业务诉求文档</span><FileText size={20} /></div>
+        {intakeDocument ? <CollectedDocument intakeDocument={intakeDocument} /> : <p className="muted">业务方还没有确认业务诉求文档。</p>}
       </section>
       <section className="business-detail-section">
         <div className="section-heading"><span>访谈记录</span><span className="muted">{conversation.messages.length} 条</span></div>
@@ -136,24 +136,15 @@ function BusinessIntakeDetail({ conversation }: { conversation: BusinessConversa
 }
 
 /**
- * 每一轮访谈都会沉淀一版整理文档，产研看的往往不只是最后一版：默认停在最新的
- * 那版，可以按版本前后翻，和控制台的文档列表一个口径。
+ * 产研看到的那份业务诉求文档。访谈过程中不再逐轮沉淀整理，一场对话就这一份，
+ * 所以这里没有版本步进，和控制台的文档面板一个口径。
  */
-function CollectedDocuments({ documents }: { documents: BusinessDocument[] }) {
-  const [index, setIndex] = useState(documents.length - 1);
-  const active = documents[index] ?? documents[documents.length - 1];
+function CollectedDocument({ intakeDocument }: { intakeDocument: BusinessDocument }) {
   return (
     <div className="business-collected-document">
-      {documents.length > 1 ? (
-        <div className="business-document-toolbar">
-          <button className="icon-button" type="button" disabled={index <= 0} onClick={() => setIndex(index - 1)} aria-label="上一版" title="上一版"><ChevronLeft size={21} aria-hidden="true" /></button>
-          <span>共 {documents.length} 版</span>
-          <button className="icon-button" type="button" disabled={index >= documents.length - 1} onClick={() => setIndex(index + 1)} aria-label="下一版" title="下一版"><ChevronRight size={21} aria-hidden="true" /></button>
-        </div>
-      ) : null}
-      <span className="status is-success">第 {active.version} 版{active.confirmed ? " · 已确认" : ""}</span>
-      <h3>{active.title}</h3>
-      <RichText text={active.content} />
+      {intakeDocument.confirmed ? <span className="status is-success">已确认</span> : null}
+      <h3>{intakeDocument.title}</h3>
+      <RichText text={intakeDocument.content} />
     </div>
   );
 }

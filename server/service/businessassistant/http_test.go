@@ -202,13 +202,14 @@ func TestBusinessConversationMessageLabelsReferences(t *testing.T) {
 	message := businessConversationMessage(
 		dto.ProgramContext{ProgramID: 1, Name: "业务项目", ProgramCode: "biz-1"},
 		[]dto.MessageView{{Role: "user", Content: "这次想做直播"}},
-		[]dto.DocumentReference{{RequirementTitle: "上次访谈", Title: "AI 访谈整理", Version: 3, Content: "结论：先做选品"}},
+		[]dto.DocumentReference{{RequirementTitle: "上次访谈", Title: "业务诉求文档 · 选品", Content: "结论：先做选品"}},
 		dto.ConversationModeStatement,
 	)
 	if !strings.Contains(message, "业务方引用的既有资料") {
 		t.Fatalf("reference block missing: %s", message)
 	}
-	if !strings.Contains(message, "【上次访谈 · AI 访谈整理（第 3 版）】") || !strings.Contains(message, "结论：先做选品") {
+	// 一场访谈只有一份文档，标题里不再带版本号，否则读的人会去找“第几版”。
+	if !strings.Contains(message, "【上次访谈 · 业务诉求文档 · 选品】") || !strings.Contains(message, "结论：先做选品") {
 		t.Fatalf("reference body missing: %s", message)
 	}
 	if strings.Index(message, "业务方引用的既有资料") > strings.Index(message, "业务方本轮输入") {
@@ -221,7 +222,7 @@ func TestBusinessConversationMessageSkipsEmptyReference(t *testing.T) {
 	message := businessConversationMessage(
 		dto.ProgramContext{ProgramID: 1},
 		[]dto.MessageView{{Role: "user", Content: "继续"}},
-		[]dto.DocumentReference{{RequirementTitle: "空访谈", Title: "空文档", Version: 1, Content: "   "}},
+		[]dto.DocumentReference{{RequirementTitle: "空访谈", Title: "空文档", Content: "   "}},
 		dto.ConversationModeStatement,
 	)
 	if strings.Contains(message, "空文档") {

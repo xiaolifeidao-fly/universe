@@ -5671,6 +5671,10 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .local-environment-preferences__plugin-content > b { display: block; color: var(--manager-text); font-size: var(--manager-fs-base); font-weight: 650; line-height: var(--manager-lh-snug); }
 .local-environment-preferences__copy p { margin: 4px 0 0; color: var(--manager-text-faint); font-size: var(--manager-fs-sm); line-height: var(--manager-lh-base); }
 .local-environment-preferences__select { align-self: start; width: 100%; }
+.local-environment-preferences__bridge { display: grid; align-self: start; gap: 4px; width: 100%; }
+.local-environment-preferences__bridge .ant-input,
+.local-environment-preferences__bridge .ant-input-affix-wrapper { font-family: var(--manager-mono); }
+.local-environment-preferences__bridge-error { margin: 0; color: var(--manager-danger); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-base); }
 .local-environment-preferences__plugin { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .local-environment-preferences__plugin-icon { width: 28px; height: 28px; color: var(--manager-text-faint); background: var(--manager-panel); border-color: var(--manager-border); }
 .local-environment-preferences__plugin-content { display: grid; min-width: 0; flex: 1; gap: 5px; padding-top: 1px; }
@@ -8981,7 +8985,7 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 .manager-business-chat__project h2 { margin: 3px 0; font-size: 17px; }
 .manager-business-chat__project p { margin: 0; color: var(--manager-text-soft); font-size: var(--manager-fs-sm); line-height: 1.5; }
 
-/* AI 整理文档的版本浏览器：业务工作台的聊天列和收集详情抽屉共用同一套外观。 */
+/* 业务诉求文档面板：业务工作台的聊天列和收集详情抽屉共用同一套外观。 */
 .business-document {
   display: flex;
   min-height: 0;
@@ -9040,53 +9044,6 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
   gap: 6px;
 }
 
-/* 版本步进器：左右各一个箭头，中间的下拉给出全部版本和生成时间。
-   翻版本是高频动作，箭头一路点到底比每次都展开下拉快得多。 */
-.business-document__versions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--manager-border);
-  border-radius: 999px;
-  background: var(--manager-surface);
-}
-
-.business-document__versions .ant-select-selector {
-  border-color: transparent !important;
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.business-document__count {
-  padding: 0 8px 0 2px;
-  color: var(--manager-text-faint);
-  font-size: 11px;
-}
-
-.business-document__option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.business-document__option span { color: var(--manager-text-faint); font-size: 11px; }
-
-/* 停在历史版本上必须一眼可辨，否则旧结论会被当成当前结论读。 */
-.business-document__history {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 8px 7px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--manager-warning) 26%, var(--manager-border));
-  color: var(--manager-warning);
-  background: color-mix(in srgb, var(--manager-warning) 10%, var(--manager-surface));
-  font-size: var(--manager-fs-sm);
-}
-
-.business-document__history .ant-btn { flex: none; }
-
 .business-document__body {
   min-height: 0;
   max-height: 320px;
@@ -9107,7 +9064,6 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 
 .business-document__modal-title b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .business-document__modal-title svg { flex: none; color: var(--manager-primary); }
-.business-document__modal .business-document__versions { margin-left: auto; }
 .business-document__modal .ant-modal-body { padding-top: 0; }
 
 /* 聊天列里的文档块：跟随消息区左右对齐，高度封顶后自己滚。 */

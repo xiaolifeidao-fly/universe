@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS `zt_business_requirement_message` (
   KEY `idx_business_requirement_message` (`biz_line`, `requirement_id`, `created_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 每次远端 AI 的整理都形成一个可追溯版本，供后续产品产研继续梳理。
+-- 一场访谈只落一份文档：业务方点「确认文档」之后才写入，重新确认整份覆盖同一行，
+-- 供后续产品产研继续梳理。version 只记录它被重写过几次；早期按轮次追加的历史行仍在
+-- 表里，读取一律取最高版本那一行。
 CREATE TABLE IF NOT EXISTS `zt_business_requirement_document` (
   `id`             bigint       NOT NULL AUTO_INCREMENT,
   `biz_line`       varchar(32)  NOT NULL,

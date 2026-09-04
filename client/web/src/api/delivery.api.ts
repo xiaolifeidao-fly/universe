@@ -14,7 +14,10 @@ import {
   type ApiResponse,
 } from "@/utils/axios";
 import { withBizLine } from "@/utils/bizLine";
-import { DELIVERY_TASK_PLANNER_BRIDGE_URL } from "@/project-workspaces/deliveryTaskPlanner";
+import {
+  getDeliveryTaskPlannerBridgeUrl as codexBridgeUrl,
+  normalizeDeliveryTaskPlannerBridgeUrl,
+} from "@/project-workspaces/deliveryTaskPlanner";
 import { getProjectWorkspace } from "@/project-workspaces/projectWorkspacePreferences";
 
 /** 任务状态，与服务端 service/delivery 的常量一一对应。 */
@@ -2417,7 +2420,10 @@ export async function rebuildSnapshot(programId: number, statDate?: string) {
   return unwrapApiResponse(response.data);
 }
 
-const CODEX_BRIDGE_URL = DELIVERY_TASK_PLANNER_BRIDGE_URL;
+/** 偏好设置里改完地址要能先试连再保存，所以插件相关接口允许临时指定桥接地址。 */
+function pluginBridgeUrl(baseUrl?: string) {
+  return normalizeDeliveryTaskPlannerBridgeUrl(baseUrl ?? "") || codexBridgeUrl();
+}
 
 function requiredProjectWorkspace(programId: number) {
   const workspace = getProjectWorkspace(programId);
@@ -2432,7 +2438,7 @@ function bridgeWorkspaceParams(programId: number, values: Record<string, unknown
 }
 
 export async function fetchCodexLocalProjects(programId: number) {
-  const response = await instance.get<CodexLocalProjectCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/workspaces`, {
+  const response = await instance.get<CodexLocalProjectCatalog>(`${codexBridgeUrl()}/v1/codex/workspaces`, {
     params: { programId },
     timeout: 10000,
   });
@@ -2442,7 +2448,7 @@ export async function fetchCodexLocalProjects(programId: number) {
 }
 
 export async function validateCodexWorkspace(programId: number, workspace: string) {
-  const response = await instance.get<CodexWorkspaceValidation>(`${CODEX_BRIDGE_URL}/v1/codex/workspace/validate`, {
+  const response = await instance.get<CodexWorkspaceValidation>(`${codexBridgeUrl()}/v1/codex/workspace/validate`, {
     params: { programId, workspace },
     timeout: 10000,
   });
@@ -2457,7 +2463,7 @@ export async function fetchCodexGitBranches(programId: number, workspace = "") {
   const params = workspace.trim()
     ? { programId, workspace: workspace.trim() }
     : bridgeWorkspaceParams(programId, { programId });
-  const response = await instance.get<CodexGitBranchCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/git/branches`, {
+  const response = await instance.get<CodexGitBranchCatalog>(`${codexBridgeUrl()}/v1/codex/git/branches`, {
     params,
     timeout: 200000,
   });
@@ -2471,7 +2477,7 @@ export async function fetchCodexGitBranches(programId: number, workspace = "") {
  * 传 branch 时顺带判断每个工程里有没有这条需求分支，用于建分支勾选和面板标注。
  */
 export async function fetchCodexGitProjects(programId: number, branch = "") {
-  const response = await instance.get<CodexGitProjectCatalog>(`${CODEX_BRIDGE_URL}/v1/codex/git/projects`, {
+  const response = await instance.get<CodexGitProjectCatalog>(`${codexBridgeUrl()}/v1/codex/git/projects`, {
     params: bridgeWorkspaceParams(programId, { programId, ...(branch ? { branch } : {}) }),
     timeout: 30000,
   });
@@ -2481,7 +2487,7 @@ export async function fetchCodexGitProjects(programId: number, branch = "") {
 }
 
 export async function fetchCodexGitWorkspaceStatus(programId: number) {
-  const response = await instance.get<CodexGitWorkspaceStatus>(`${CODEX_BRIDGE_URL}/v1/codex/git/status`, {
+  const response = await instance.get<CodexGitWorkspaceStatus>(`${codexBridgeUrl()}/v1/codex/git/status`, {
     params: bridgeWorkspaceParams(programId, { programId }),
     timeout: 15000,
   });
@@ -2493,7 +2499,7 @@ export async function fetchCodexGitWorkspaceStatus(programId: number) {
  * workspace 传子项目目录时读的是那个子项目的改动，不传就是项目根工作目录。
  */
 export async function fetchCodexGitChanges(programId: number, workspace = "") {
-  const response = await instance.get<CodexGitChangeList>(`${CODEX_BRIDGE_URL}/v1/codex/git/changes`, {
+  const response = await instance.get<CodexGitChangeList>(`${codexBridgeUrl()}/v1/codex/git/changes`, {
     params: workspace.trim()
       ? { programId, workspace: workspace.trim() }
       : bridgeWorkspaceParams(programId, { programId }),
@@ -2503,7 +2509,7 @@ export async function fetchCodexGitChanges(programId: number, workspace = "") {
 }
 
 export async function fetchCodexGitChangeDetail(programId: number, path: string, workspace = "") {
-  const response = await instance.get<CodexGitChangeDetail>(`${CODEX_BRIDGE_URL}/v1/codex/git/change`, {
+  const response = await instance.get<CodexGitChangeDetail>(`${codexBridgeUrl()}/v1/codex/git/change`, {
     params: workspace.trim()
       ? { programId, workspace: workspace.trim(), path }
       : bridgeWorkspaceParams(programId, { programId, path }),
@@ -2526,7 +2532,7 @@ export async function prepareCodexGitBranch(
   } = {},
 ) {
   const response = await instance.post<CodexGitPrepareResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/git/prepare`,
+    `${codexBridgeUrl()}/v1/codex/git/prepare`,
     {
       ...(options.workspace?.trim()
         ? { workspace: options.workspace.trim() }
@@ -2547,7 +2553,7 @@ export async function prepareCodexGitBranch(
 
 /** workspace 由调用方传入：这一步的目录还没保存进偏好设置，也可能还不是 Git 仓库。 */
 export async function checkCodexGitWorkspace(programId: number, workspace: string) {
-  const response = await instance.get<CodexGitWorkspaceCheck>(`${CODEX_BRIDGE_URL}/v1/codex/git/workspace-check`, {
+  const response = await instance.get<CodexGitWorkspaceCheck>(`${codexBridgeUrl()}/v1/codex/git/workspace-check`, {
     params: { programId, workspace: workspace.trim() },
     timeout: 30000,
   });
@@ -2581,7 +2587,7 @@ export async function initializeCodexGitWorkspace(payload: {
   baseBranch?: string;
 }) {
   const response = await instance.post<CodexGitInitResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/git/init`,
+    `${codexBridgeUrl()}/v1/codex/git/init`,
     {
       programId: payload.programId,
       workspace: payload.workspace.trim(),
@@ -2600,7 +2606,7 @@ export async function initializeCodexGitWorkspace(payload: {
 /** 目录早就是仓库、只是子模块还没拉下来时补这一步；克隆量级的超时，不按普通接口给。 */
 export async function initializeCodexGitSubmodules(programId: number, workspace: string) {
   const response = await instance.post<CodexGitSubmoduleResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/git/submodules`,
+    `${codexBridgeUrl()}/v1/codex/git/submodules`,
     { programId, workspace: workspace.trim() },
     { timeout: 30 * 60 * 1000 },
   );
@@ -2612,7 +2618,7 @@ export async function initializeCodexGitSubmodules(programId: number, workspace:
 /** 按项目管理员已保存的云端同步范围，立即把当前工作目录的选中内容上传到服务端。 */
 export async function syncCodexCloudWorkspace(programId: number) {
   const response = await instance.post<CodexCloudSyncResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/cloud-sync`,
+    `${codexBridgeUrl()}/v1/codex/cloud-sync`,
     bridgeWorkspaceParams(programId, { programId }),
     { timeout: 5 * 60 * 1000 },
   );
@@ -2635,7 +2641,7 @@ export async function createCodexGitBranch(
   skipRoot = false,
 ) {
   const response = await instance.post<CodexGitBranchResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/git/branch`,
+    `${codexBridgeUrl()}/v1/codex/git/branch`,
     bridgeWorkspaceParams(programId, { programId, baseBranch, branch, targets, ...(skipRoot ? { skipRoot: true } : {}) }),
     { timeout: 600000 },
   );
@@ -2663,7 +2669,7 @@ export async function pushCodexGitBranch(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexGitPushResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/git/push`,
+    `${codexBridgeUrl()}/v1/codex/git/push`,
     {
       ...(options.workspace?.trim()
         ? { workspace: options.workspace.trim() }
@@ -2687,7 +2693,7 @@ export async function pushCodexGitBranch(
 }
 
 export function codexConversationAttachmentUrl(path: string) {
-  return path ? `${CODEX_BRIDGE_URL}${path}` : "";
+  return path ? `${codexBridgeUrl()}${path}` : "";
 }
 
 export async function fetchCodexConversationAttachment(programId: number, path: string) {
@@ -2713,7 +2719,7 @@ export function workspaceFileAbsolutePath(programId: number, relativePath: strin
 /** 在本机文件管理器里打开该文件所在目录并选中它。桥接只唤起文件管理器，不读文件内容。 */
 export async function revealCodexWorkspaceFile(programId: number, path: string) {
   const response = await instance.post<{ path: string; directory: string; relativePath: string }>(
-    `${CODEX_BRIDGE_URL}/v1/codex/workspace-file/reveal`,
+    `${codexBridgeUrl()}/v1/codex/workspace-file/reveal`,
     bridgeWorkspaceParams(programId, { programId, path }),
     { timeout: 15000 },
   );
@@ -2721,7 +2727,7 @@ export async function revealCodexWorkspaceFile(programId: number, path: string) 
 }
 
 export async function fetchCodexBridgeHealth(programId: number, provider: AITool = "codex") {
-  const response = await instance.get<CodexBridgeHealth>(`${CODEX_BRIDGE_URL}/v1/ai/health`, {
+  const response = await instance.get<CodexBridgeHealth>(`${codexBridgeUrl()}/v1/ai/health`, {
     params: bridgeWorkspaceParams(programId, { programId, provider }),
     timeout: 10000,
   });
@@ -2733,30 +2739,30 @@ export async function fetchCodexBridgeHealth(programId: number, provider: AITool
  * only question needed when entering the board: is the local plugin bridge up?
  */
 export async function fetchDeliveryTaskPlannerHealth() {
-  const response = await instance.get<CodexBridgeHealth>(`${CODEX_BRIDGE_URL}/healthz`, {
+  const response = await instance.get<CodexBridgeHealth>(`${codexBridgeUrl()}/healthz`, {
     timeout: 3000,
   });
   return plainToInstance(CodexBridgeHealth, response.data);
 }
 
-export async function fetchDeliveryTaskPlannerRuntimeInfo() {
-  const response = await instance.get<DeliveryTaskPlannerRuntimeInfo>(`${CODEX_BRIDGE_URL}/v1/plugin/info`, {
+export async function fetchDeliveryTaskPlannerRuntimeInfo(baseUrl?: string) {
+  const response = await instance.get<DeliveryTaskPlannerRuntimeInfo>(`${pluginBridgeUrl(baseUrl)}/v1/plugin/info`, {
     timeout: 3000,
   });
   return plainToInstance(DeliveryTaskPlannerRuntimeInfo, response.data);
 }
 
-export async function fetchDeliveryTaskPlannerUpdate(force = false) {
-  const response = await instance.get<DeliveryTaskPlannerUpdateStatus>(`${CODEX_BRIDGE_URL}/v1/plugin/update`, {
+export async function fetchDeliveryTaskPlannerUpdate(force = false, baseUrl?: string) {
+  const response = await instance.get<DeliveryTaskPlannerUpdateStatus>(`${pluginBridgeUrl(baseUrl)}/v1/plugin/update`, {
     params: force ? { force: true } : undefined,
     timeout: 8000,
   });
   return plainToInstance(DeliveryTaskPlannerUpdateStatus, response.data);
 }
 
-export async function installDeliveryTaskPlannerUpdate(expectedVersion: string) {
+export async function installDeliveryTaskPlannerUpdate(expectedVersion: string, baseUrl?: string) {
   const response = await instance.post<DeliveryTaskPlannerUpdateInstallation>(
-    `${CODEX_BRIDGE_URL}/v1/plugin/update/install`,
+    `${pluginBridgeUrl(baseUrl)}/v1/plugin/update/install`,
     { expectedVersion },
     { timeout: 10000 },
   );
@@ -2765,7 +2771,7 @@ export async function installDeliveryTaskPlannerUpdate(expectedVersion: string) 
 
 export async function restartDeliveryTaskPlannerUpdate(jobId: string) {
   const response = await instance.post<DeliveryTaskPlannerUpdateInstallation>(
-    `${CODEX_BRIDGE_URL}/v1/plugin/update/restart`,
+    `${codexBridgeUrl()}/v1/plugin/update/restart`,
     { jobId },
     { timeout: 10000 },
   );
@@ -2773,7 +2779,7 @@ export async function restartDeliveryTaskPlannerUpdate(jobId: string) {
 }
 
 export async function fetchCodexModels(programId: number, provider: AITool = "codex") {
-  const response = await instance.get<CodexModelCatalog>(`${CODEX_BRIDGE_URL}/v1/ai/models`, {
+  const response = await instance.get<CodexModelCatalog>(`${codexBridgeUrl()}/v1/ai/models`, {
     params: bridgeWorkspaceParams(programId, { programId, provider }),
     timeout: 10000,
   });
@@ -2784,7 +2790,7 @@ export async function fetchCodexModels(programId: number, provider: AITool = "co
 
 export async function fetchCodexRequirementDocument(programId: number, itemKey: string) {
   const response = await instance.get<CodexRequirementDocument>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-document`,
+    `${codexBridgeUrl()}/v1/codex/requirement-document`,
     { params: bridgeWorkspaceParams(programId, { programId, itemKey }), timeout: 20000 },
   );
   return plainToInstance(CodexRequirementDocument, response.data);
@@ -2792,7 +2798,7 @@ export async function fetchCodexRequirementDocument(programId: number, itemKey: 
 
 export async function saveCodexRequirementDocument(programId: number, itemKey: string, content: string) {
   const response = await instance.post<CodexRequirementDocument>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-document`,
+    `${codexBridgeUrl()}/v1/codex/requirement-document`,
     bridgeWorkspaceParams(programId, { programId, itemKey, content }),
     { timeout: 20000 },
   );
@@ -2801,7 +2807,7 @@ export async function saveCodexRequirementDocument(programId: number, itemKey: s
 
 export async function fetchDeliveryDocumentSet(programId: number, scope: DeliveryDocumentScope, key: string) {
   const response = await instance.get<DeliveryDocumentSet>(
-    `${CODEX_BRIDGE_URL}/v1/codex/document-set`,
+    `${codexBridgeUrl()}/v1/codex/document-set`,
     { params: bridgeWorkspaceParams(programId, { programId, scope, key }), timeout: 20000 },
   );
   const documentSet = plainToInstance(DeliveryDocumentSet, response.data);
@@ -2816,7 +2822,7 @@ export async function fetchDeliveryDocumentFile(
   path: string,
 ) {
   const response = await instance.get<DeliveryDocumentContent>(
-    `${CODEX_BRIDGE_URL}/v1/codex/document-file`,
+    `${codexBridgeUrl()}/v1/codex/document-file`,
     { params: bridgeWorkspaceParams(programId, { programId, scope, key, path }), timeout: 20000 },
   );
   return plainToInstance(DeliveryDocumentContent, response.data);
@@ -2830,7 +2836,7 @@ export async function saveDeliveryDocumentFile(
   content: string,
 ) {
   const response = await instance.post<DeliveryDocumentContent>(
-    `${CODEX_BRIDGE_URL}/v1/codex/document-file`,
+    `${codexBridgeUrl()}/v1/codex/document-file`,
     bridgeWorkspaceParams(programId, { programId, scope, key, path, content }),
     { timeout: 20000 },
   );
@@ -2859,7 +2865,7 @@ export async function uploadDeliveryDocuments(
   form.append("workspace", requiredProjectWorkspace(programId));
   files.forEach((file) => form.append("files", file, file.name));
   const response = await instance.post<DeliveryDocumentSet>(
-    `${CODEX_BRIDGE_URL}/v1/codex/document-upload`,
+    `${codexBridgeUrl()}/v1/codex/document-upload`,
     form,
     { timeout: 120000 },
   );
@@ -2876,7 +2882,7 @@ export async function fetchDeliveryDocumentAttachment(
   path: string,
 ) {
   const response = await instance.post<CodexConversationAttachment>(
-    `${CODEX_BRIDGE_URL}/v1/codex/document-attachment`,
+    `${codexBridgeUrl()}/v1/codex/document-attachment`,
     bridgeWorkspaceParams(programId, { programId, scope, key, path }),
     { timeout: 20000 },
   );
@@ -2885,7 +2891,7 @@ export async function fetchDeliveryDocumentAttachment(
 
 export async function fetchCodexRequirementOutline(programId: number, requirementKey: string) {
   const response = await instance.get<CodexRequirementOutline>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-outline`,
+    `${codexBridgeUrl()}/v1/codex/requirement-outline`,
     { params: bridgeWorkspaceParams(programId, { programId, requirementKey }), timeout: 20000 },
   );
   return plainToInstance(CodexRequirementOutline, response.data);
@@ -2893,7 +2899,7 @@ export async function fetchCodexRequirementOutline(programId: number, requiremen
 
 export async function saveCodexRequirementOutline(programId: number, requirementKey: string, markdown: string) {
   const response = await instance.post<CodexRequirementOutline>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-outline`,
+    `${codexBridgeUrl()}/v1/codex/requirement-outline`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, markdown }),
     { timeout: 20000 },
   );
@@ -2902,7 +2908,7 @@ export async function saveCodexRequirementOutline(programId: number, requirement
 
 export async function fetchCodexRequirementPrototype(programId: number, requirementKey: string) {
   const response = await instance.get<CodexRequirementPrototype>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-prototype`,
+    `${codexBridgeUrl()}/v1/codex/requirement-prototype`,
     { params: bridgeWorkspaceParams(programId, { programId, requirementKey }), timeout: 20000 },
   );
   const prototype = plainToInstance(CodexRequirementPrototype, response.data);
@@ -2924,7 +2930,7 @@ export async function generateCodexRequirementPrototype(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexRequirementPrototypeActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-prototype/generate`,
+    `${codexBridgeUrl()}/v1/codex/requirement-prototype/generate`,
     bridgeWorkspaceParams(programId, {
       programId,
       requirementKey,
@@ -2966,7 +2972,7 @@ export async function fetchCodexRequirementPrototypeConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.get<CodexRequirementPrototypeConversation>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-prototype/conversation`,
+    `${codexBridgeUrl()}/v1/codex/requirement-prototype/conversation`,
     {
       params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
       timeout: 20000,
@@ -2983,7 +2989,7 @@ export async function sendCodexRequirementPrototypeMessage(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexRequirementPrototypeConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-prototype/conversation`,
+    `${codexBridgeUrl()}/v1/codex/requirement-prototype/conversation`,
     bridgeWorkspaceParams(programId, {
       programId,
       requirementKey,
@@ -3010,7 +3016,7 @@ export async function startCodexExecution(
   redo = false,
 ) {
   const response = await instance.post<CodexExecutionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/execute`,
+    `${codexBridgeUrl()}/v1/codex/execute`,
     bridgeWorkspaceParams(programId, {
       programId,
       task,
@@ -3045,7 +3051,7 @@ export async function fetchCodexTaskTestingCasesConversation(
   threadId = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexTaskTestingCasesConversation>(`${CODEX_BRIDGE_URL}/v1/codex/task-testing-cases`, {
+  const response = await instance.get<CodexTaskTestingCasesConversation>(`${codexBridgeUrl()}/v1/codex/task-testing-cases`, {
     params: bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3070,7 +3076,7 @@ export async function sendCodexTaskTestingCasesMessage(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/task-testing-cases`,
+    `${codexBridgeUrl()}/v1/codex/task-testing-cases`,
     bridgeWorkspaceParams(programId, {
       programId,
       itemKey,
@@ -3094,7 +3100,7 @@ export async function stopCodexTaskTestingCasesConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/task-testing-cases/stop`,
+    `${codexBridgeUrl()}/v1/codex/task-testing-cases/stop`,
     bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3132,7 +3138,7 @@ export async function startCodexExecutionSequence(
   } = options;
   const executionConstraints = rawExecutionConstraints?.trim();
   const response = await instance.post<CodexExecutionSequenceResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/execute-sequence`,
+    `${codexBridgeUrl()}/v1/codex/execute-sequence`,
     bridgeWorkspaceParams(programId, {
       programId,
       ...executionOptions,
@@ -3156,7 +3162,7 @@ export async function startCodexExecutionBatch(
   redo = false,
 ) {
   const response = await instance.post<CodexExecutionBatchResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/execute-batch`,
+    `${codexBridgeUrl()}/v1/codex/execute-batch`,
     bridgeWorkspaceParams(programId, {
       programId,
       itemKeys,
@@ -3173,7 +3179,7 @@ export async function startCodexExecutionBatch(
 }
 
 export async function fetchCodexConversation(programId: number, itemKey: string, threadId = "", provider: AITool = "codex") {
-  const response = await instance.get<CodexConversation>(`${CODEX_BRIDGE_URL}/v1/codex/conversation`, {
+  const response = await instance.get<CodexConversation>(`${codexBridgeUrl()}/v1/codex/conversation`, {
     params: bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3208,7 +3214,7 @@ export async function uploadCodexConversationAttachments(programId: number, item
   form.append("workspace", requiredProjectWorkspace(programId));
   files.forEach((file) => form.append("files", file, file.name));
   const response = await instance.post<{ attachments: CodexConversationAttachment[] }>(
-    `${CODEX_BRIDGE_URL}/v1/codex/attachments`,
+    `${codexBridgeUrl()}/v1/codex/attachments`,
     form,
     { timeout: 60000 },
   );
@@ -3222,7 +3228,7 @@ export async function sendCodexConversationMessage(
   options: SendCodexConversationMessageOptions = {},
 ) {
   const response = await instance.post<CodexConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/conversation`,
+    `${codexBridgeUrl()}/v1/codex/conversation`,
     bridgeWorkspaceParams(programId, { programId, itemKey, message, ...options }),
     { timeout: 30000 },
   );
@@ -3231,7 +3237,7 @@ export async function sendCodexConversationMessage(
 
 export async function stopCodexConversation(programId: number, itemKey: string, threadId = "", provider: AITool = "codex") {
   const response = await instance.post<CodexConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/stop`,
+    `${codexBridgeUrl()}/v1/codex/stop`,
     bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3259,7 +3265,7 @@ export class CodexStopAllResult {
 /** 停掉一个项目下所有任务执行：在跑的中断，排队的取消。 */
 export async function stopAllCodexExecutions(programId: number, provider: AITool = "codex") {
   const response = await instance.post<CodexStopAllResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/stop-all`,
+    `${codexBridgeUrl()}/v1/codex/stop-all`,
     bridgeWorkspaceParams(programId, { programId, provider }),
     { timeout: 20000 },
   );
@@ -3358,7 +3364,7 @@ export async function fetchCodexRequirementTestingConversation(
   threadId = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexRequirementTestingConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-testing`, {
+  const response = await instance.get<CodexRequirementTestingConversation>(`${codexBridgeUrl()}/v1/codex/requirement-testing`, {
     params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3372,7 +3378,7 @@ export async function sendCodexRequirementTestingMessage(
   options: SendCodexRequirementTestingMessageOptions = {},
 ) {
   const response = await instance.post<CodexRequirementTestingActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-testing`,
+    `${codexBridgeUrl()}/v1/codex/requirement-testing`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, message, ...options }),
     { timeout: 30000 },
   );
@@ -3386,7 +3392,7 @@ export async function stopCodexRequirementTestingConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexRequirementTestingActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-testing/stop`,
+    `${codexBridgeUrl()}/v1/codex/requirement-testing/stop`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3429,7 +3435,7 @@ export async function fetchCodexRequirementAnalysisConversation(
   threadId = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexRequirementAnalysisConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-analysis`, {
+  const response = await instance.get<CodexRequirementAnalysisConversation>(`${codexBridgeUrl()}/v1/codex/requirement-analysis`, {
     params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3443,7 +3449,7 @@ export async function sendCodexRequirementAnalysisMessage(
   options: SendCodexRequirementAnalysisMessageOptions = {},
 ) {
   const response = await instance.post<CodexRequirementAnalysisActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-analysis`,
+    `${codexBridgeUrl()}/v1/codex/requirement-analysis`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, message, ...options }),
     { timeout: 30000 },
   );
@@ -3457,7 +3463,7 @@ export async function stopCodexRequirementAnalysisConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexRequirementAnalysisActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-analysis/stop`,
+    `${codexBridgeUrl()}/v1/codex/requirement-analysis/stop`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3506,7 +3512,7 @@ export async function fetchCodexRequirementReviewConversation(
   threadId = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexRequirementReviewConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-review`, {
+  const response = await instance.get<CodexRequirementReviewConversation>(`${codexBridgeUrl()}/v1/codex/requirement-review`, {
     params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3520,7 +3526,7 @@ export async function sendCodexRequirementReviewMessage(
   options: SendCodexRequirementReviewMessageOptions = {},
 ) {
   const response = await instance.post<CodexRequirementReviewActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-review`,
+    `${codexBridgeUrl()}/v1/codex/requirement-review`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, message, ...options }),
     { timeout: 30000 },
   );
@@ -3534,7 +3540,7 @@ export async function stopCodexRequirementReviewConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexRequirementReviewActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-review/stop`,
+    `${codexBridgeUrl()}/v1/codex/requirement-review/stop`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3572,7 +3578,7 @@ export async function fetchCodexRequirementFineTuningConversation(
   threadId = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexRequirementFineTuningConversation>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-fine-tuning`, {
+  const response = await instance.get<CodexRequirementFineTuningConversation>(`${codexBridgeUrl()}/v1/codex/requirement-fine-tuning`, {
     params: bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3589,7 +3595,7 @@ export async function sendCodexRequirementFineTuningMessage(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexRequirementReviewActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-fine-tuning`,
+    `${codexBridgeUrl()}/v1/codex/requirement-fine-tuning`,
     bridgeWorkspaceParams(programId, {
       programId, requirementKey, provider, message: message.trim(),
       ...(options.threadId ? { threadId: options.threadId } : {}),
@@ -3610,7 +3616,7 @@ export async function stopCodexRequirementFineTuningConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexRequirementReviewActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/requirement-fine-tuning/stop`,
+    `${codexBridgeUrl()}/v1/codex/requirement-fine-tuning/stop`,
     bridgeWorkspaceParams(programId, { programId, requirementKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3623,7 +3629,7 @@ export async function fetchCodexTaskFineTuningConversation(
   threadId = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexTaskFineTuningConversation>(`${CODEX_BRIDGE_URL}/v1/codex/task-fine-tuning`, {
+  const response = await instance.get<CodexTaskFineTuningConversation>(`${codexBridgeUrl()}/v1/codex/task-fine-tuning`, {
     params: bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
     timeout: 20000,
   });
@@ -3640,7 +3646,7 @@ export async function sendCodexTaskFineTuningMessage(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/task-fine-tuning`,
+    `${codexBridgeUrl()}/v1/codex/task-fine-tuning`,
     bridgeWorkspaceParams(programId, {
       programId, itemKey, provider, message: message.trim(),
       ...(options.threadId ? { threadId: options.threadId } : {}),
@@ -3661,7 +3667,7 @@ export async function stopCodexTaskFineTuningConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexConversationActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/task-fine-tuning/stop`,
+    `${codexBridgeUrl()}/v1/codex/task-fine-tuning/stop`,
     bridgeWorkspaceParams(programId, { programId, itemKey, provider, ...(threadId ? { threadId } : {}) }),
     { timeout: 20000 },
   );
@@ -3728,7 +3734,7 @@ export class CodexRequirementUsage {
  * 用的是同一个接口，不必为每条任务各问一次。
  */
 export async function fetchCodexRequirementUsage(programId: number, requirementKey: string) {
-  const response = await instance.get<CodexRequirementUsage>(`${CODEX_BRIDGE_URL}/v1/codex/requirement-usage`, {
+  const response = await instance.get<CodexRequirementUsage>(`${codexBridgeUrl()}/v1/codex/requirement-usage`, {
     params: bridgeWorkspaceParams(programId, { programId, requirementKey }),
     timeout: 30000,
   });
@@ -3744,7 +3750,7 @@ export async function fetchCodexPlanningConversation(
   requirementKey = "",
   provider: AITool = "codex",
 ) {
-  const response = await instance.get<CodexPlanningConversation>(`${CODEX_BRIDGE_URL}/v1/codex/planning`, {
+  const response = await instance.get<CodexPlanningConversation>(`${codexBridgeUrl()}/v1/codex/planning`, {
     params: bridgeWorkspaceParams(programId, { programId, provider, ...(threadId ? { threadId } : {}), ...(requirementKey ? { requirementKey } : {}) }),
     timeout: 20000,
   });
@@ -3771,7 +3777,7 @@ export async function sendCodexPlanningMessage(
   options: SendCodexPlanningMessageOptions = {},
 ) {
   const response = await instance.post<CodexPlanningActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/planning`,
+    `${codexBridgeUrl()}/v1/codex/planning`,
     bridgeWorkspaceParams(programId, { programId, message, ...options }),
     { timeout: 30000 },
   );
@@ -3785,7 +3791,7 @@ export async function stopCodexPlanningConversation(
   provider: AITool = "codex",
 ) {
   const response = await instance.post<CodexPlanningActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/planning/stop`,
+    `${codexBridgeUrl()}/v1/codex/planning/stop`,
     bridgeWorkspaceParams(programId, { programId, provider, ...(threadId ? { threadId } : {}), ...(requirementKey ? { requirementKey } : {}) }),
     { timeout: 20000 },
   );
@@ -3852,7 +3858,7 @@ export async function fetchCodexEnvironmentSetupConversation(
   provider: AITool = "codex",
   selection: { useGit: boolean; environments: string[] } = { useGit: false, environments: [] },
 ) {
-  const response = await instance.get<CodexEnvironmentSetupConversation>(`${CODEX_BRIDGE_URL}/v1/codex/environment-setup`, {
+  const response = await instance.get<CodexEnvironmentSetupConversation>(`${codexBridgeUrl()}/v1/codex/environment-setup`, {
     params: {
       provider,
       useGit: selection.useGit,
@@ -3877,7 +3883,7 @@ export async function fetchCodexEnvironmentSetupConversation(
 
 export async function startCodexEnvironmentSetup(options: StartCodexEnvironmentSetupOptions) {
   const response = await instance.post<CodexEnvironmentSetupActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/environment-setup`,
+    `${codexBridgeUrl()}/v1/codex/environment-setup`,
     options,
     { timeout: 30000 },
   );
@@ -3886,7 +3892,7 @@ export async function startCodexEnvironmentSetup(options: StartCodexEnvironmentS
 
 export async function stopCodexEnvironmentSetup(threadId = "", provider: AITool = "codex") {
   const response = await instance.post<CodexEnvironmentSetupActionResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/environment-setup/stop`,
+    `${codexBridgeUrl()}/v1/codex/environment-setup/stop`,
     { provider, ...(threadId ? { threadId } : {}) },
     { timeout: 20000 },
   );
@@ -4175,7 +4181,7 @@ export class CodexGitMergeResult {
  * 预览会先 fetch 远端，比普通接口慢一个量级，超时按 fetch 的量级给。
  */
 export async function fetchCodexGitMergePreview(programId: number, target: string, sources: string[]) {
-  const response = await instance.get<CodexGitMergePreview>(`${CODEX_BRIDGE_URL}/v1/codex/git/merge-preview`, {
+  const response = await instance.get<CodexGitMergePreview>(`${codexBridgeUrl()}/v1/codex/git/merge-preview`, {
     // sources 用重复参数传，不拼逗号串：Git 分支名本身允许带逗号。
     params: bridgeWorkspaceParams(programId, { programId, target, sources }),
     paramsSerializer: { indexes: null },
@@ -4214,7 +4220,7 @@ export async function mergeCodexGitBranches(
 ) {
   const provider = options.provider ?? "codex";
   const response = await instance.post<CodexGitMergeResult>(
-    `${CODEX_BRIDGE_URL}/v1/codex/git/merge`,
+    `${codexBridgeUrl()}/v1/codex/git/merge`,
     bridgeWorkspaceParams(programId, {
       programId,
       target,

@@ -114,9 +114,8 @@ export function BusinessRequirementMentionInput({
         <span className="delivery-conversation-mention-option is-file">
           <FileTextOutlined />
           <span>{candidate.requirementTitle || candidate.title}</span>
-          <small>
-            {candidate.title} · {t("businessMention.version").replace("{version}", String(candidate.version))}
-          </small>
+          {/* 一场访谈只有一份文档，标题之外不再标版本号。 */}
+          <small>{candidate.title}</small>
         </span>
       ),
     }));

@@ -49,7 +49,7 @@ export class BusinessRequirementMessage {
   createdAt?: string;
 }
 
-/** @ 候选：本项目其它访谈已经沉淀下来的整理文档，只给名字，正文在发送时由服务端解析。 */
+/** @ 候选：本项目其它访谈确认下来的诉求文档，只给名字，正文在发送时由服务端解析。 */
 export class BusinessDocumentReference {
 	documentId = 0;
 	requirementId = 0;
@@ -64,8 +64,9 @@ export class BusinessRequirementDocument {
   type = "ai_intake";
   title = "";
   content = "";
+  /** 重新确认会整份重写同一条记录，这个计数只用来看它被改过几次。 */
   version = 0;
-  /** 业务方点「确认文档」产出的那一版；其余是每轮访谈自动沉淀的整理。 */
+  /** 业务方点「确认文档」产出的那份；改造前每轮自动沉淀的旧整理没有这个标记。 */
   confirmed = false;
   createdAt?: string;
 }

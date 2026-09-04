@@ -40,7 +40,7 @@ export interface BusinessMessage {
   createdAt: string | null;
 }
 
-/** @ 候选：同项目其它访谈沉淀下来的整理文档，只给名字，正文由服务端在发送时解析。 */
+/** @ 候选：同项目其它访谈确认下来的诉求文档，只给名字，正文由服务端在发送时解析。 */
 export interface BusinessDocumentReference {
   documentId: number;
   requirementId: number;

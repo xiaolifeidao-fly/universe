@@ -1,7 +1,7 @@
 "use client";
 
 import { CopyOutlined, DesktopOutlined, ExportOutlined, LinkOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { Button, Modal, Progress, Select, Space, Switch, Tag, Tooltip, message } from "antd";
+import { Button, Input, Modal, Progress, Select, Space, Switch, Tag, Tooltip, message } from "antd";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type DeliveryTaskPlannerUpdateInstallation,
@@ -15,7 +15,13 @@ import {
   saveLocalEnvironmentPreference,
 } from "@/project-workspaces/environmentPreferences";
 import { ENVIRONMENT_PRESETS } from "@/project-workspaces/environmentPresets";
-import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
+import {
+  DELIVERY_TASK_PLANNER_DEFAULT_BRIDGE_URL,
+  DELIVERY_TASK_PLANNER_REPOSITORY_URL,
+  getDeliveryTaskPlannerBridgeUrl,
+  normalizeDeliveryTaskPlannerBridgeUrl,
+  saveDeliveryTaskPlannerBridgeUrl,
+} from "@/project-workspaces/deliveryTaskPlanner";
 import { ProgramEnvironmentSetupModal } from "@/app/(console)/programs/components/ProgramEnvironmentSetupModal";
 import { copyTextToClipboard } from "@/utils/clipboard";
 
@@ -48,14 +54,21 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
   const { locale, t } = useLocale();
   const [useGit, setUseGit] = useState(false);
   const [environments, setEnvironments] = useState<string[]>([]);
+  const [bridgeUrl, setBridgeUrl] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
   const [pluginInstalled, setPluginInstalled] = useState(false);
+  // 连不上桥接和插件没装是两回事：前者多半是端口被占或服务没起，后者才该去装插件。
+  const [bridgeOffline, setBridgeOffline] = useState(false);
   const [pluginVersion, setPluginVersion] = useState("");
   const [pluginUpdatedAt, setPluginUpdatedAt] = useState("");
   const [pluginCheckedAt, setPluginCheckedAt] = useState(0);
   const [pluginStatusLoading, setPluginStatusLoading] = useState(false);
   const [pluginInstallation, setPluginInstallation] = useState<DeliveryTaskPlannerUpdateInstallation | null>(null);
   const pluginInstallationRef = useRef<DeliveryTaskPlannerUpdateInstallation | null>(null);
+
+  // 桥接默认在本机，也允许指向远端服务；填空按默认处理，填错则先不去连。
+  const probeBridgeUrl = normalizeDeliveryTaskPlannerBridgeUrl(bridgeUrl) || DELIVERY_TASK_PLANNER_DEFAULT_BRIDGE_URL;
+  const bridgeUrlInvalid = Boolean(bridgeUrl.trim()) && !normalizeDeliveryTaskPlannerBridgeUrl(bridgeUrl);
 
   const setVisiblePluginInstallation = useCallback((installation?: DeliveryTaskPlannerUpdateInstallation | null) => {
     const visibleInstallation = installation && VISIBLE_PLUGIN_UPDATE_STATES.has(installation.status)
@@ -70,8 +83,9 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     let serviceReachable = false;
     let runtimeVersionAvailable = false;
     try {
-      const info = await fetchDeliveryTaskPlannerRuntimeInfo();
+      const info = await fetchDeliveryTaskPlannerRuntimeInfo(probeBridgeUrl);
       serviceReachable = true;
+      setBridgeOffline(false);
       runtimeVersionAvailable = info.installed && Boolean(info.version);
       setPluginInstalled(info.installed);
       setPluginVersion(info.version);
@@ -81,8 +95,9 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     }
 
     try {
-      const update = await fetchDeliveryTaskPlannerUpdate(false);
+      const update = await fetchDeliveryTaskPlannerUpdate(false, probeBridgeUrl);
       serviceReachable = true;
+      setBridgeOffline(false);
       if (!runtimeVersionAvailable && update.localVersion) {
         setPluginInstalled(true);
         setPluginVersion(update.localVersion);
@@ -96,8 +111,11 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
         // job so polling continues and the progress can recover after restart.
         const current = pluginInstallationRef.current;
         if (!current || !ACTIVE_PLUGIN_UPDATE_STATES.has(current.status)) {
+          setBridgeOffline(true);
           setPluginInstalled(false);
           setPluginVersion("");
+          setPluginUpdatedAt("");
+          setPluginCheckedAt(0);
           pluginInstallationRef.current = null;
           setPluginInstallation(null);
         }
@@ -105,7 +123,7 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     } finally {
       if (showLoading) setPluginStatusLoading(false);
     }
-  }, [setVisiblePluginInstallation]);
+  }, [probeBridgeUrl, setVisiblePluginInstallation]);
 
   useEffect(() => {
     if (!open) {
@@ -115,8 +133,17 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     const saved = getLocalEnvironmentPreference();
     setUseGit(saved.useGit);
     setEnvironments(saved.environments);
-    void checkPluginRuntime();
-  }, [checkPluginRuntime, open]);
+    setBridgeUrl(getDeliveryTaskPlannerBridgeUrl());
+  }, [open]);
+
+  // 打开面板时，以及地址改完停手之后，都按当前填的地址重新探测一次插件状态。
+  useEffect(() => {
+    if (!open || bridgeUrlInvalid) return;
+    const timer = window.setTimeout(() => {
+      void checkPluginRuntime();
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [bridgeUrlInvalid, checkPluginRuntime, open]);
 
   useEffect(() => {
     if (!open || !pluginInstallation || !ACTIVE_PLUGIN_UPDATE_STATES.has(pluginInstallation.status)) return;
@@ -126,16 +153,22 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
     return () => window.clearInterval(timer);
   }, [checkPluginRuntime, open, pluginInstallation?.jobId, pluginInstallation?.status]);
 
+  const bridgeUrlHint = t("programs.environment.bridgeUrlHint")
+    .replace("{default}", DELIVERY_TASK_PLANNER_DEFAULT_BRIDGE_URL);
+  const bridgeOfflineHint = t("programs.environment.pluginBridgeOfflineHint")
+    .replace("{url}", probeBridgeUrl);
   const pluginUpdateStatusLabel = pluginInstallation
     ? t(`programs.environment.pluginUpdate.${pluginInstallation.status}`)
     : "";
 
   const checkPluginUpdate = async () => {
     setPluginStatusLoading(true);
+    let serviceReachable = false;
     try {
       let runtimeVersionAvailable = false;
       try {
-        const info = await fetchDeliveryTaskPlannerRuntimeInfo();
+        const info = await fetchDeliveryTaskPlannerRuntimeInfo(probeBridgeUrl);
+        serviceReachable = true;
         runtimeVersionAvailable = info.installed && Boolean(info.version);
         setPluginInstalled(info.installed);
         setPluginVersion(info.version);
@@ -144,7 +177,8 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
         // endpoint below still returns the installed version for them.
       }
 
-      const update = await fetchDeliveryTaskPlannerUpdate(true);
+      const update = await fetchDeliveryTaskPlannerUpdate(true, probeBridgeUrl);
+      serviceReachable = true;
       if (!runtimeVersionAvailable && update.localVersion) {
         setPluginInstalled(true);
         setPluginVersion(update.localVersion);
@@ -157,22 +191,40 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
         && ACTIVE_PLUGIN_UPDATE_STATES.has(update.installation.status);
       if (!update.updateAvailable || !update.remoteVersion || installationInProgress) return;
 
-      setVisiblePluginInstallation(await installDeliveryTaskPlannerUpdate(update.remoteVersion));
+      setVisiblePluginInstallation(await installDeliveryTaskPlannerUpdate(update.remoteVersion, probeBridgeUrl));
     } catch (error) {
       message.error((error as Error).message || t("programs.environment.pluginUpdate.failed"));
     } finally {
+      // 一次都没调通就是桥接没起来：这时候手上的版本号也已经不可信了。
+      setBridgeOffline(!serviceReachable);
+      if (!serviceReachable) {
+        setPluginInstalled(false);
+        setPluginVersion("");
+        setPluginUpdatedAt("");
+        setPluginCheckedAt(0);
+      }
       setPluginStatusLoading(false);
     }
   };
 
-  const save = () => {
+  const savePreferences = () => {
+    if (bridgeUrlInvalid) {
+      message.error(t("programs.environment.bridgeUrlInvalid"));
+      return false;
+    }
     saveLocalEnvironmentPreference(useGit, environments);
+    saveDeliveryTaskPlannerBridgeUrl(bridgeUrl);
+    return true;
+  };
+
+  const save = () => {
+    if (!savePreferences()) return;
     message.success(t("programs.environment.preferencesSaved"));
     onClose();
   };
 
   const openSetup = () => {
-    saveLocalEnvironmentPreference(useGit, environments);
+    if (!savePreferences()) return;
     setSetupOpen(true);
   };
 
@@ -238,6 +290,28 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                 }))}
               />
             </div>
+            <div className="local-environment-preferences__setting-row is-selection">
+              <div className="local-environment-preferences__copy">
+                <b>{t("programs.environment.bridgeUrl")}</b>
+                <p>{bridgeUrlHint}</p>
+              </div>
+              <div className="local-environment-preferences__bridge">
+                <Input
+                  allowClear
+                  spellCheck={false}
+                  value={bridgeUrl}
+                  status={bridgeUrlInvalid ? "error" : undefined}
+                  placeholder={DELIVERY_TASK_PLANNER_DEFAULT_BRIDGE_URL}
+                  aria-label={t("programs.environment.bridgeUrl")}
+                  onChange={(event) => setBridgeUrl(event.target.value)}
+                />
+                {bridgeUrlInvalid ? (
+                  <p className="local-environment-preferences__bridge-error">
+                    {t("programs.environment.bridgeUrlInvalid")}
+                  </p>
+                ) : null}
+              </div>
+            </div>
           </section>
           <section className="local-environment-preferences__plugin" aria-label={t("programs.environment.pluginTitle")}>
             <span className="local-environment-preferences__plugin-icon"><LinkOutlined /></span>
@@ -258,6 +332,10 @@ export function LocalEnvironmentPreferencesModal({ open, onClose }: LocalEnviron
                 <span>{t("programs.environment.pluginVersion")}</span>
                 {pluginStatusLoading ? (
                   <Tag>{t("programs.environment.pluginChecking")}</Tag>
+                ) : bridgeOffline ? (
+                  <Tooltip title={bridgeOfflineHint}>
+                    <Tag color="orange">{t("programs.environment.pluginBridgeOffline")}</Tag>
+                  </Tooltip>
                 ) : pluginInstalled && pluginVersion ? (
                   <Tag color="green">{pluginVersion}</Tag>
                 ) : (

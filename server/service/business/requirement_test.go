@@ -83,3 +83,23 @@ func TestContainsUserMessageIgnoresBlankAndAssistantRows(t *testing.T) {
 		t.Fatal("expected a real business statement to count")
 	}
 }
+
+// 每轮访谈都落一份文档，会让一场对话攒出十几份内容雷同的整理；现在只有业务方
+// 点过「确认文档」的那一轮才产出文档，其余轮次只往对话里追加回复。
+func TestIntakeDocumentTitleOnlyNamesTheConfirmedTurn(t *testing.T) {
+	if title := intakeDocumentTitle(dto.ConversationModeStatement, "封号严重"); title != "" {
+		t.Fatalf("an interview turn must not write a document: %q", title)
+	}
+	// 老数据里 remote_mode 是空串，同样按普通发言处理。
+	if title := intakeDocumentTitle("", "封号严重"); title != "" {
+		t.Fatalf("a legacy turn without a mode must not write a document: %q", title)
+	}
+	title := intakeDocumentTitle(dto.ConversationModeDocument, "封号严重")
+	if title != confirmedDocumentTitlePrefix+"封号严重" {
+		t.Fatalf("unexpected confirmed document title: %q", title)
+	}
+	// 标题前缀就是「已确认」标记的来源，两端必须能对上。
+	if !toDocumentView(&repository.BusinessRequirementDocument{Title: title}).Confirmed {
+		t.Fatal("the confirmed document must read back as confirmed")
+	}
+}

@@ -53,7 +53,11 @@ type BusinessRequirementMessage struct {
 func (BusinessRequirementMessage) TableName() string { return "zt_business_requirement_message" }
 func (*BusinessRequirementMessage) Init()            {}
 
-// BusinessRequirementDocument is a versioned AI-generated intake artefact.
+// BusinessRequirementDocument is the one document an intake conversation
+// produces, written when the business user confirms the interview is done.
+// Confirming again rewrites this row rather than adding another; Version only
+// counts those rewrites, and stays in the unique index so a conversation
+// created before the per-turn document was dropped keeps its old rows valid.
 // Product/research receives these server-stored documents as input to its own
 // later grooming process; they are not delivery requirement documents.
 type BusinessRequirementDocument struct {

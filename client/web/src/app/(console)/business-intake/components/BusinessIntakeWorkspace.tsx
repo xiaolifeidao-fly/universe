@@ -13,7 +13,7 @@ import {
   fetchCollectedBusinessRequirements,
 } from "../api/businessIntake.api";
 import { SessionMarkdown } from "../../delivery/components/DeliverySessionMessage";
-import { BusinessRequirementDocuments } from "../../business-workbench/components/BusinessRequirementDocuments";
+import { BusinessRequirementDocumentPanel } from "../../business-workbench/components/BusinessRequirementDocumentPanel";
 
 function formatTime(value: string | undefined, locale: string) {
   if (!value) return "-";
@@ -115,7 +115,7 @@ export function BusinessIntakeWorkspace() {
         {detailLoading && !selected ? <div className="manager-business-intake__loading"><Spin size="large" /></div> : selected ? (
           <>
             <Divider orientation="left">{t("businessIntake.documents")}</Divider>
-            <BusinessRequirementDocuments documents={selected.documents} collapsible defaultOpen={false} />
+            <BusinessRequirementDocumentPanel intakeDocument={selected.documents[0]} />
             <Divider orientation="left">{t("businessIntake.conversation")}</Divider>
             <div className="manager-business-intake__messages">
               {selected.messages.map((item: BusinessRequirementMessage) => {

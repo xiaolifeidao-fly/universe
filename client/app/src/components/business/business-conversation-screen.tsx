@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { AtSign, ArrowLeft, ChevronLeft, ChevronRight, FileCheck2, FileText, LoaderCircle, Paperclip, RotateCw, Search, SendHorizontal, X } from "lucide-react";
+import { AtSign, ArrowLeft, FileCheck2, FileText, LoaderCircle, Paperclip, RotateCw, Search, SendHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "@/api/client";
 import {
@@ -49,7 +49,6 @@ export function BusinessConversationScreen() {
   const [referenced, setReferenced] = useState<BusinessDocumentReference[]>([]);
   const [referencesOpen, setReferencesOpen] = useState(false);
   const [documentsOpen, setDocumentsOpen] = useState(false);
-  const [documentIndex, setDocumentIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   // 服务端每次 GET 都会同步转查一次远端 Bridge，快慢不定，响应可能乱序到达。
@@ -109,11 +108,6 @@ export function BusinessConversationScreen() {
     composer.style.height = "auto";
     composer.style.height = `${Math.min(composer.scrollHeight, 148)}px`;
   }, [message]);
-
-  // 轮询每秒都会换一份快照，版本指针只在真的多出一版时才跟到最新，
-  // 否则正在翻旧版本的人会被不断弹回最后一版。
-  const documentCount = conversation?.documents?.length ?? 0;
-  useEffect(() => { setDocumentIndex(Math.max(0, documentCount - 1)); }, [documentCount]);
 
   const uploadFiles = async (files: File[]) => {
     if (!validRequirement || !files.length) return;
@@ -210,8 +204,9 @@ export function BusinessConversationScreen() {
     return <div className="chat-screen"><EmptyState icon={<FileText size={24} />} title="当前账号没有业务方身份" description="无法进入业务诉求会话。" /></div>;
   }
 
-  const documents = conversation?.documents ?? [];
-  const activeDocument = documents[documentIndex] ?? documents[documents.length - 1];
+  // 一场访谈只有一份文档：访谈途中不再逐轮沉淀，业务方点「确认文档」之后才产出，
+  // 再次确认是整份重写。服务端已经只返回这一份，这里取第一条即可。
+  const intakeDocument = conversation?.documents?.[0];
   const composerLocked = sending || Boolean(conversation?.active);
 
   return (
@@ -220,20 +215,20 @@ export function BusinessConversationScreen() {
         <button className="icon-button" type="button" onClick={() => router.push("/business/workbench")} aria-label="返回业务工作台" title="返回"><ArrowLeft size={22} /></button>
         <div className="chat-header__title"><small>业务工作台</small><strong>{conversation?.requirement.title || "新的业务诉求"}</strong></div>
         <div className="chat-header__actions">
-          <button className="icon-button" type="button" onClick={() => setDocumentsOpen(true)} aria-label="查看整理文档" title="整理文档"><FileText size={21} /></button>
+          <button className="icon-button" type="button" onClick={() => setDocumentsOpen(true)} aria-label="查看业务诉求文档" title="业务诉求文档"><FileText size={21} /></button>
           <button className="icon-button" type="button" onClick={() => void load()} aria-label="刷新会话" title="刷新" disabled={loading}><RotateCw size={21} className={loading ? "spin-icon" : ""} /></button>
         </div>
       </header>
 
       <div className="chat-body">
-        {loading && !conversation ? <EmptyState icon={<LoaderCircle size={24} className="spin-icon" />} title="正在读取业务会话" description="正在恢复访谈记录和整理文档。" /> : null}
+        {loading && !conversation ? <EmptyState icon={<LoaderCircle size={24} className="spin-icon" />} title="正在读取业务会话" description="正在恢复访谈记录和业务诉求文档。" /> : null}
         {!loading && !conversation ? <EmptyState tone="error" icon={<X size={24} />} title="无法读取业务会话" description={error || "请稍后重试。"} action={<button className="button button-primary" type="button" onClick={() => void load()}>重新读取</button>} /> : null}
         {conversation ? (
           <div className="business-message-list">
-            {documents.length ? (
+            {intakeDocument ? (
               <button className="business-document-banner" type="button" onClick={() => setDocumentsOpen(true)}>
-                <span><FileCheck2 size={20} /><strong>AI 最新整理 · 第 {documents[documents.length - 1].version} 版</strong></span>
-                <small>{documents[documents.length - 1].confirmed ? "已确认业务诉求文档" : "点击查看本轮整理内容"}</small>
+                <span><FileCheck2 size={20} /><strong>{intakeDocument.title || "业务诉求文档"}</strong></span>
+                <small>{intakeDocument.confirmed ? "已确认的业务诉求文档，点击查看" : "点击查看整理内容"}</small>
               </button>
             ) : null}
             {conversation.remoteError ? <p className="form-message is-error" role="alert">{conversation.remoteError}</p> : null}
@@ -298,10 +293,10 @@ export function BusinessConversationScreen() {
         </div>
       </form>
 
-      <Sheet open={documentsOpen} title="AI 整理文档" subtitle={documents.length ? `共 ${documents.length} 个版本` : "尚未生成"} onClose={() => setDocumentsOpen(false)}>
-        {documents.length && activeDocument ? (
-          <BusinessDocumentViewer document={activeDocument} documents={documents} index={documentIndex} onSelect={setDocumentIndex} />
-        ) : <EmptyState icon={<FileText size={23} />} title="暂时没有整理文档" description="完成一轮业务访谈后，AI 会在这里沉淀整理结果。" />}
+      <Sheet open={documentsOpen} title="业务诉求文档" subtitle={intakeDocument ? (intakeDocument.confirmed ? "已确认" : "待确认") : "尚未生成"} onClose={() => setDocumentsOpen(false)}>
+        {intakeDocument ? (
+          <BusinessDocumentViewer intakeDocument={intakeDocument} />
+        ) : <EmptyState icon={<FileText size={23} />} title="还没有业务诉求文档" description="聊清楚之后点「确认文档」，AI 会把整场对话整理成这一份文档。" />}
       </Sheet>
 
       <ReferencePickerSheet
@@ -411,7 +406,7 @@ function AttachmentList({
   );
 }
 
-/** @ 引用面板：同项目其它访谈已经沉淀的整理文档，选中的作为本轮只读上下文发出。 */
+/** @ 引用面板：同项目其它访谈确认下来的诉求文档，选中的作为本轮只读上下文发出。 */
 function ReferencePickerSheet({
   open,
   selected,
@@ -470,16 +465,16 @@ function ReferencePickerSheet({
 
   return (
     <Sheet open={open} title="引用历史文档" subtitle={`已选 ${selected.length}/${MAX_REFERENCES} 份`} onClose={onClose}>
-      <label className="workbench-search"><Search size={19} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题搜索本项目的整理文档" aria-label="搜索可引用的文档" /></label>
+      <label className="workbench-search"><Search size={19} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="按标题搜索本项目的诉求文档" aria-label="搜索可引用的文档" /></label>
       {error ? <p className="form-message is-error" role="alert">{error}</p> : null}
       {loading && !candidates.length ? <p className="muted">正在读取可引用的文档…</p> : null}
-      {!loading && !candidates.length && !error ? <EmptyState icon={<FileText size={23} />} title="没有可引用的文档" description="同一个项目的其它访谈产出整理文档后，可以在这里引用。" /> : null}
+      {!loading && !candidates.length && !error ? <EmptyState icon={<FileText size={23} />} title="没有可引用的文档" description="同一个项目的其它访谈确认出诉求文档后，可以在这里引用。" /> : null}
       <div className="option-list">
         {candidates.map((item) => (
           <button className={`option-row${selectedIds.has(item.documentId) ? " is-selected" : ""}`} type="button" key={item.documentId} onClick={() => toggle(item)}>
             <span>
-              <strong>{item.title || "业务诉求整理"}</strong>
-              <small>{item.requirementTitle || "未命名业务诉求"} · 第 {item.version} 版</small>
+              <strong>{item.title || "业务诉求文档"}</strong>
+              <small>{item.requirementTitle || "未命名业务诉求"}</small>
             </span>
             {selectedIds.has(item.documentId) ? <span className="status is-active">已引用</span> : null}
           </button>
@@ -489,16 +484,11 @@ function ReferencePickerSheet({
   );
 }
 
-function BusinessDocumentViewer({ document, documents, index, onSelect }: { document: BusinessDocument; documents: BusinessDocument[]; index: number; onSelect: (index: number) => void }) {
+function BusinessDocumentViewer({ intakeDocument }: { intakeDocument: BusinessDocument }) {
   return (
     <div className="business-document-viewer">
-      <div className="business-document-toolbar">
-        <button className="icon-button" type="button" disabled={index <= 0} onClick={() => onSelect(index - 1)} aria-label="上一版" title="上一版"><ChevronLeft size={21} aria-hidden="true" /></button>
-        <span>第 {document.version} 版{document.confirmed ? " · 已确认" : ""}</span>
-        <button className="icon-button" type="button" disabled={index >= documents.length - 1} onClick={() => onSelect(index + 1)} aria-label="下一版" title="下一版"><ChevronRight size={21} aria-hidden="true" /></button>
-      </div>
-      <h2>{document.title || "业务诉求整理"}</h2>
-      <RichText text={document.content} />
+      <h2>{intakeDocument.title || "业务诉求文档"}</h2>
+      <RichText text={intakeDocument.content} />
     </div>
   );
 }

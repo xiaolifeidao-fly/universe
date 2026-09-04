@@ -2457,10 +2457,6 @@ a {
 .business-confirm-row small { min-width: 0; overflow: hidden; color: var(--app-muted); font-size: var(--app-fs-2xs); text-overflow: ellipsis; white-space: nowrap; }
 
 .business-document-viewer h2 { margin: 18px 0 10px; font-size: var(--app-fs-xl); }
-/* 翻版本只有「上一版 / 下一版」两个方向，字号抬高后两侧各留 82px 会把中间那行
-   版本说明挤没，改成左右两颗图标按钮，中间整行都留给版本文案。 */
-.business-document-toolbar { display: grid; grid-template-columns: var(--app-tap) minmax(0, 1fr) var(--app-tap); align-items: center; gap: 12px; }
-.business-document-toolbar span { overflow: hidden; color: var(--app-muted); font-size: var(--app-fs-sm); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 
 .business-intake__notice {
   display: flex;

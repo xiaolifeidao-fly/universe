@@ -510,8 +510,8 @@ func businessReferenceBlock(references []dto.DocumentReference) string {
 			continue
 		}
 		builder.WriteString(fmt.Sprintf(
-			"\n\n【%s · %s（第 %d 版）】\n%s",
-			strings.TrimSpace(reference.RequirementTitle), strings.TrimSpace(reference.Title), reference.Version, content,
+			"\n\n【%s · %s】\n%s",
+			strings.TrimSpace(reference.RequirementTitle), strings.TrimSpace(reference.Title), content,
 		))
 	}
 	return builder.String()
@@ -570,9 +570,11 @@ func businessSystemPrompt(program dto.ProgramContext) string {
 当前项目：%s（%s）
 项目说明：%s
 
-请围绕该项目理解用户的业务背景、问题、目标、受影响对象和预期结果。每次回答都先回应用户，再给出可执行的初步整理；信息不足时提出少量具体问题。可使用“已了解”“初步需求点”“待澄清”等简短小节。不要编造事实、不要承诺研发排期，也不要把内容写成产研任务或技术方案。你的回复会作为业务方原始观点的服务端文档，供后续产品产研继续梳理。
+请围绕该项目理解用户的业务背景、问题、目标、受影响对象和预期结果。每次回答都先回应用户，再给出可执行的初步整理；信息不足时提出少量具体问题。可使用“已了解”“初步需求点”“待澄清”等简短小节。不要编造事实、不要承诺研发排期，也不要把内容写成产研任务或技术方案。
 
-追问要克制：同一件事不要反复追问，一轮最多问 2 到 3 个真正影响理解的问题，其余先按已知信息整理并标注“待澄清”。业务方随时可以点界面上的「确认文档」，让你停止追问、直接产出完整文档，所以不必为了凑齐信息而一直提问。`, program.Name, program.ProgramCode, program.Summary)
+这一轮只是对话，不产出文档：不要写“以下是文档”“文档如下”，也不要按正式文档的小节结构成篇输出。整场访谈只在业务方点「确认文档」之后产出唯一一份文档，在那之前你的整理都只是帮业务方确认自己有没有说清楚。
+
+追问要克制：同一件事不要反复追问，一轮最多问 2 到 3 个真正影响理解的问题，其余先按已知信息整理并标注“待澄清”。当背景、问题、目标、涉及角色和主要诉求都已经说清楚，剩下的疑问不影响理解时，就不要再找问题问了：明确告诉业务方“该了解的已经差不多了”，把还没澄清的点列出来说明可以留到后续补充，并引导他点界面上的「确认文档」，由你把整场对话整理成完整文档。`, program.Name, program.ProgramCode, program.Summary)
 }
 
 // businessDocumentPrompt is the turn the 「确认文档」 button starts. The
@@ -594,5 +596,5 @@ func businessDocumentPrompt(program dto.ProgramContext) string {
 6. 约束与边界（时间、合规、依赖，以及明确不做的事）
 7. 待澄清事项（仍然影响判断的问题，逐条列出）
 
-写作要求：只使用会话里出现过的事实，缺失的内容写“待补充”并说明缺什么，绝不编造；比平时的访谈整理写得更详细完整，正文不要少于 800 字，但也不要为了凑字数重复。整篇只输出这份文档：结尾不要再追问，不要写产研任务、技术方案或研发排期。这份文档会作为业务方原始诉求的正式记录留档。`, program.Name, program.ProgramCode, program.Summary)
+写作要求：只使用会话里出现过的事实，缺失的内容写“待补充”并说明缺什么，绝不编造；比平时的访谈整理写得更详细完整，正文不要少于 800 字，但也不要为了凑字数重复。整篇只输出这份文档：结尾不要再追问，不要写产研任务、技术方案或研发排期。这是整场访谈唯一的一份文档，会作为业务方原始诉求的正式记录留档；如果之前已经产出过，本次输出会整份覆盖它，所以要独立成篇、把该说的都说全，不要写成对上一份的增补。`, program.Name, program.ProgramCode, program.Summary)
 }
