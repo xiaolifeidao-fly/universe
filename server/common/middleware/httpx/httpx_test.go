@@ -136,3 +136,54 @@ func TestProjectScopePermissions(t *testing.T) {
 }
 
 func containsResponse(value, wanted string) bool { return strings.Contains(value, wanted) }
+
+// TestRequirePlatformAdminIgnoresProductResearchPersona pins the one difference
+// between RequirePlatformAdmin and RequireAdmin. Without it, a platform admin
+// who is not a product-research user cannot resolve a compute-pool dispute or
+// ban a node — the only console that can act on the pool would be closed to
+// exactly the people who run it.
+func TestRequirePlatformAdminIgnoresProductResearchPersona(t *testing.T) {
+	SetUserAuthenticator(testAuthenticator{principal: UserPrincipal{ID: "1", Role: "admin"}})
+	defer SetUserAuthenticator(nil)
+
+	engine := gin.New()
+	engine.POST("/api/galaxy/admin/disputes/resolve", RequirePlatformAdmin(),
+		func(context *gin.Context) { JSON(context, "ok", nil) })
+	engine.POST("/api/system/users", RequireAdmin(),
+		func(context *gin.Context) { JSON(context, "ok", nil) })
+
+	platform := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/galaxy/admin/disputes/resolve", nil)
+	request.Header.Set("token", "valid")
+	engine.ServeHTTP(platform, request)
+	if !containsResponse(platform.Body.String(), `"success":true`) {
+		t.Fatalf("平台管理员应当能裁决工单，实际 %s", platform.Body.String())
+	}
+
+	// RequireAdmin 的身份门仍在，这条测试同时钉住「没顺手把它拆掉」。
+	delivery := httptest.NewRecorder()
+	deliveryRequest := httptest.NewRequest(http.MethodPost, "/api/system/users", nil)
+	deliveryRequest.Header.Set("token", "valid")
+	engine.ServeHTTP(delivery, deliveryRequest)
+	if !containsResponse(delivery.Body.String(), "当前登录身份不是产品产研") {
+		t.Fatalf("RequireAdmin 的产研身份门不该被拆掉，实际 %s", delivery.Body.String())
+	}
+}
+
+// TestRequirePlatformAdminStillRequiresAdminRole 平台门只放宽身份，不放宽角色。
+func TestRequirePlatformAdminStillRequiresAdminRole(t *testing.T) {
+	SetUserAuthenticator(testAuthenticator{principal: UserPrincipal{ID: "2", Role: "member"}})
+	defer SetUserAuthenticator(nil)
+
+	engine := gin.New()
+	engine.POST("/api/galaxy/admin/disputes/resolve", RequirePlatformAdmin(),
+		func(context *gin.Context) { JSON(context, "ok", nil) })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/galaxy/admin/disputes/resolve", nil)
+	request.Header.Set("token", "valid")
+	engine.ServeHTTP(recorder, request)
+	if !containsResponse(recorder.Body.String(), "无权执行平台管理操作") {
+		t.Fatalf("普通成员不该能裁决工单，实际 %s", recorder.Body.String())
+	}
+}

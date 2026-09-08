@@ -32,6 +32,122 @@
 
 ---
 
+## 共享算力池 `zt_galaxy_*`（缩写 `gx`）
+
+Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一鉴权、调度、计量与结算。
+设计见 [`doc/galaxy/`](../doc/galaxy/README.md)。
+
+共享池按**平台维度**运行，不按空间隔离：池内表的 `biz_line` 固定为 `galaxy`。
+任务宇宙等按空间运行的业务接进来时，其 `unit` 行携带适配器解析出的真实空间。
+
+**供给单元是贡献，不是节点**——座位、额度、队列、绑定、限流全部以 `cid` 为主键。
+一台机器（节点）可以有多个贡献，同机两个贡献的额度互相独立。
+
+| 表 | 作用 |
+|---|---|
+| `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
+| `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
+| `zt_galaxy_contribution` | 贡献：kind + provider + 模型白名单 + 座位 + 挂机时段 + 信誉 |
+| `zt_galaxy_quota_grant` | 授权行 `(cid, unit, limit, window, reset_at)`；额度以 Hub 为权威 |
+| `zt_galaxy_quota_window` | Redis 计数器的分钟级快照，供对账与控制台展示 |
+| `zt_galaxy_seat_binding` | 座位绑定留痕；权威在 Redis（带 TTL），这里供审计 |
+| `zt_galaxy_unit` | 工作单元：一次请求 / 一个回合 / 一个任务的权威记录 |
+| `zt_galaxy_unit_event` | 单元事件流；只记结构化事实，不记 body 与凭据 |
+| `zt_galaxy_meter_record` | 计量流水，幂等键 `(unit_id, attempt, unit)`，对账以它求和为准 |
+| `zt_galaxy_usage_mismatch` | 节点自报与 Hub 解析的偏差超阈值的记录，累计影响信誉 |
+| `zt_galaxy_consumer_key` | 算力密钥：存 sha256，带有效期、冻结期与允许范围 |
+| `zt_galaxy_consumer_balance` | 密钥的单位余额 |
+| `zt_galaxy_consent_record` | 提供者加入同意与消费者数据告知确认；两者都是硬前置 |
+| `zt_galaxy_price` | kind 的「单位 → 单价」表，单价按每百万单位的微分存 |
+| `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
+| `zt_galaxy_credit_account` | 提供者积分账户 |
+| `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
+| `zt_galaxy_audit_probe` | 抽检记录：以 Hub 自有账号影子重放，比对结构相似度 |
+| `zt_galaxy_package` | 额度商品：多少钱换多少额度、密钥有效期多久 |
+| `zt_galaxy_order` | 订单。支付与履约分两步，回调只推到 `paid`，履约幂等 |
+| `zt_galaxy_ledger_session` | 有状态会话：钉在哪个贡献、跑到第几回合、工作区在哪个 commit |
+| `zt_galaxy_ledger_turn` | 回合摘要。`(sid, seq)` 是幂等键，重复提交不重跑 |
+| `zt_galaxy_ledger_checkpoint` | 节点侧 CLI 的高保真快照，绑 CLI 版本 |
+| `zt_galaxy_dispute` | 争议工单。`(unit_id, attempt)` 唯一，同一次执行只能有一张 |
+
+**建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，
+并顺带写入 `llm.chat` 的默认定价；或者直接执行 `server/galaxy.sql`（只建表，定价表是空的，
+请求会因为「未定价」只计量不计费）。与 delivery 一致，建表不做成进程启动的副作用。
+
+`galaxy.sql` 不是手写的，是让 GORM 自己走一遍建表流程抄下来的
+（`service/galaxy/internal/repository/ddldump_test.go`，`GALAXY_DDL_OUT=... go test -run TestDumpDDL`），
+所以先跑 SQL 再跑 galaxyinit 不会被 ALTER。它因此刻意不写 COLUMN COMMENT、不加多余 DEFAULT ——
+AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，字段说明放在 `--` 行注释里。
+表清单的唯一出处是 `repository.models()`，`TestGalaxySQLCoversEveryTable` 守着两者不漂。
+
+已经建过库的环境走增量：`server/migrations/20260907_galaxy_dispute.sql`。
+
+**抽检表的隐私取舍：** `zt_galaxy_audit_probe` 会**短期保留**被抽中那次请求的原文
+（比例上限 1%/贡献/日），因为不留原文就无法重放比对；但节点的响应只保留**结构签名**
+（出现过哪些事件类型 / JSON 键路径），不保留响应内容。比对一跑完就把原文清空，
+超过 24 小时没跑的也一并清空 —— 保留它的唯一理由是「还要重放一次」，理由消失就该删。
+
+**争议工单为什么钉 `(unit_id, attempt)` 而不只钉 `unit_id`：** 结算幂等键就是这两个 ——
+重跑过的单元每次尝试各自结算过一遍，只钉 `unit_id` 会让一次「支持申诉」把两次的钱
+都退掉。追回也不抹原始流水，而是在三本账上各记一笔反向的（`refund` / `clawback` /
+`baddebt`，幂等键加 `:dispute` 后缀）：抹掉原始记录就对不出「这笔钱进来过又出去了」，
+事后没法审。`detail` 是申诉人自述且限长 512 —— 请求内容平台本来就不留存，
+界面上也明确劝阻粘贴。
+
+**业务空间放在 `space` 而不是 `biz_line`：** 共享池按平台维度运行，池内表的
+`biz_line` 固定 `galaxy`，所有索引以它打头。任务宇宙这类按空间运行的业务，
+其空间记在 `zt_galaxy_unit.space` 与 `zt_galaxy_ledger_session.space` 里
+（对应待决策 O-02）。这样既能按空间回查，又不会让池内的索引因为多值 `biz_line` 而失效。
+
+**为什么额度计数器不在 MySQL：** 放置路径上要读写「已用 + 已预留」，这是每请求
+两次以上的高频写。它们在 Redis（`quota:{cid}:{unit}:{窗口}`），MySQL 只保存分钟级
+快照与流水；两者定期对账，对不上以 `meter_record` 求和为准。
+
+---
+
+## 管理端身份与权限 `zt_manager_*`（缩写 `mgr`）
+
+登录**管理端**（`client/manager` / `manager-api`）的人，与下面 `zt_identity_*` 那套
+**业务用户**是两套账号，没有外键、没有数据关联、令牌互不通用。分开的理由：管理端的
+处置动作会动真钱（封禁节点、裁决争议、发算力密钥、改业务线授权），合成一套的话，
+一个 web 控制台的业务账号就能进到这些地方；而且业务用户那边只有 `role=admin`
+一个布尔，配不出「这个人能看池水位但不能封节点」。
+
+| 表 | 作用 |
+|---|---|
+| `zt_manager_user` | 管理端账号；bcrypt 密码，平台级、不带 `biz_line` |
+| `zt_manager_role` | 角色；`writable` 是角色级的读写总开关 |
+| `zt_manager_resource` | 受控资源树：菜单 / 页面 / **接口**，接口的身份是 `(method, 路由模板)` |
+| `zt_manager_user_role` / `zt_manager_role_resource` | 两组关联 |
+| `zt_manager_login_record` | 登录留痕，成功与失败都记 |
+
+**授权是两道门叠加，写操作两道都得过**：先按 `(method, FullPath)` 查资源授权，
+再查角色的 `writable`。只有资源授权配不出「这个角色临时只读」（要逐条撤销写资源）；
+只有 `writable` 配不出「能改用户、不能封节点」。`resource_url` 存的是 **gin 的路由
+模板**（`/api/users/:id`）而不是具体请求路径，否则每个 id 都要在表里占一行。
+
+**接口资源不手写，从真实路由表生成**（`managerinit` 遍历 `engine.Routes()`）。
+手写清单和路由迟早分叉，而分叉的后果是「登录用户一律 403」——一个看起来像 bug
+的配置故障。进程启动时还会再比对一次，把没登记的路由打进日志。
+
+**未登记的路由默认拒绝**，不是默认放行：忘了登记是配置疏漏，按放行处理等于新接口
+天生对所有人开放。唯一的例外是 `super_admin` 角色，它绕过资源过滤——一次配错授权
+就能把所有人关在门外，必须留一条改回来的活路。
+
+**令牌在 Redis 里**（`manager:token:*`，滑动过期），另有 `manager:user:{id}:tokens`
+反向索引，撤权 / 禁用 / 改密时按人踢掉全部会话。所以 Redis 是 manager-api 的启动
+硬依赖。表里刻意没有 `token_version`——那是无状态签名令牌的撤销手段，这里用不上。
+
+新环境两步：[`server/manager.sql`](manager.sql) 建表，
+[`server/manager_seed.sql`](manager_seed.sql) 写入角色、资源、超级管理员与授权。
+只建表不灌数据的话表是空的，谁也登不进去。
+
+也可以用 `cd server/manager-api && go run ./cmd/managerinit` 一步做完（直接写库）。
+两条路等价：seed SQL 由 `cmd/managerseed` 从同一份路由表生成，
+接口资源不会和代码分叉。
+
+---
+
 ## 控制台身份与授权 `zt_identity_*`（缩写 `identity`）
 
 | 表 | 作用 |

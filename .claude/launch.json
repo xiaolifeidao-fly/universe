@@ -18,16 +18,60 @@
     {
       "name": "web-preview",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "client/web", "run", "dev", "--", "-p", "7897"],
+      "runtimeArgs": [
+        "--prefix",
+        "client/web",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7897"
+      ],
       "port": 7897,
       "autoPort": false
     },
     {
       "name": "app-preview",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "client/app", "run", "dev", "--", "-p", "7896"],
+      "runtimeArgs": [
+        "--prefix",
+        "client/app",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7896"
+      ],
       "port": 7896,
       "autoPort": false
+    },
+    {
+      "name": "manager",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "client/manager",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7895"
+      ],
+      "port": 7895
+    },
+    {
+      "name": "galaxy",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "client/galaxy",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7898"
+      ],
+      "port": 7898
     }
   ]
 }

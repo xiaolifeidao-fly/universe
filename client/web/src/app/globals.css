@@ -7840,13 +7840,15 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 }
 
 /* ── 任务面板设计初衷弹窗（TaskBoardStoryModal） ────────────────────────────
-   三个场景各自一张示意图，动画全部走 CSS keyframes，不引入任何动画库。
+   四个场景各自一张示意图，动画全部走 CSS keyframes，不引入任何动画库。
    颜色只用 manager-* 语义变量：现状用 amber/red，任务面板用 primary/green。 */
 .board-story .ant-modal-body { padding-top: 4px; }
 .board-story__heading { display: grid; gap: 2px; }
 .board-story__heading strong { color: var(--manager-text); font-size: var(--manager-fs-lg); }
 .board-story__heading small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 400; }
 .board-story__switcher { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 14px; }
+.board-story__switcher .ant-segmented { min-width: 0; max-width: 100%; overflow-x: auto; }
+.board-story__switcher .ant-segmented-group { min-width: max-content; }
 .board-story__scene-title { margin: 0 0 12px; color: var(--manager-text); font-size: var(--manager-fs-xl); font-weight: 650; line-height: var(--manager-lh-tight); }
 .board-story__stage {
 	position: relative; display: grid; align-content: center; gap: 18px;
@@ -7971,11 +7973,45 @@ button.delivery-session-history__item:hover { background: color-mix(in srgb, var
 @keyframes storyBarSerial { 0% { transform: scaleX(0.02); } 60%, 100% { transform: scaleX(0.26); } }
 @keyframes storyBarParallel { 0% { transform: scaleX(0.02); } 60%, 100% { transform: scaleX(1); } }
 
+/* 场景四：用户授权闲置节点，平台撮合算力提供者与使用者。 */
+.board-story-sharing { display: grid; grid-template-columns: minmax(180px, 1fr) 56px minmax(210px, 1.08fr) 56px minmax(180px, 1fr); align-items: center; gap: 12px; }
+.board-story-sharing__group { display: grid; min-width: 0; gap: 8px; }
+.board-story-sharing__group-title { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); font-weight: 650; }
+.board-story-sharing__endpoint { display: flex; min-width: 0; min-height: 58px; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--manager-border); border-radius: var(--manager-r-sm); background: var(--manager-surface); }
+.board-story-sharing__endpoint > .anticon { flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; font-size: 16px; }
+.board-story-sharing__endpoint > span { display: grid; min-width: 0; gap: 2px; }
+.board-story-sharing__endpoint strong { overflow-wrap: anywhere; color: var(--manager-text); font-size: var(--manager-fs-xs); line-height: 1.35; }
+.board-story-sharing__endpoint small { color: var(--manager-text-faint); font-size: var(--manager-fs-micro); line-height: 1.35; }
+.board-story-sharing__endpoint--provider { border-color: color-mix(in srgb, var(--manager-green) 32%, var(--manager-border)); }
+.board-story-sharing__endpoint--provider > .anticon { background: color-mix(in srgb, var(--manager-green) 12%, var(--manager-surface)); color: var(--manager-green); }
+.board-story-sharing__endpoint--consumer { border-color: color-mix(in srgb, var(--manager-primary) 32%, var(--manager-border)); }
+.board-story-sharing__endpoint--consumer > .anticon { background: var(--manager-primary-light); color: var(--manager-primary); }
+.board-story-sharing__platform { display: grid; min-width: 0; justify-items: center; gap: 5px; padding: 16px 14px; border: 1px solid color-mix(in srgb, var(--manager-primary) 42%, var(--manager-border)); border-radius: var(--manager-r); background: var(--manager-surface); box-shadow: var(--manager-shadow-sm); text-align: center; }
+.board-story-sharing__platform-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 8px; background: var(--manager-primary-light); color: var(--manager-primary); font-size: 22px; }
+.board-story-sharing__platform > strong { color: var(--manager-text); font-size: var(--manager-fs-base); }
+.board-story-sharing__platform > small { color: var(--manager-text-faint); font-size: var(--manager-fs-xs); line-height: var(--manager-lh-snug); }
+.board-story-sharing__platform > span { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--manager-green); font-size: var(--manager-fs-micro); font-weight: 650; }
+.board-story-sharing__transfer { position: relative; display: flex; align-items: center; justify-content: flex-end; height: 24px; color: var(--manager-primary); }
+.board-story-sharing__transfer::before { content: ""; position: absolute; inset-inline: 0 7px; top: 11px; height: 2px; background: color-mix(in srgb, var(--manager-primary) 30%, transparent); }
+.board-story-sharing__transfer i { position: absolute; inset-inline-start: 0; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--manager-primary); animation: storySharingTransfer 2.4s ease-in-out infinite; }
+.board-story-sharing__transfer--out i { animation-delay: 0.6s; }
+.board-story-sharing__transfer > .anticon { position: relative; z-index: 1; font-size: 13px; }
+.board-story-sharing__guard { grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 30px; padding: 6px 10px; border: 1px dashed color-mix(in srgb, var(--manager-green) 42%, var(--manager-border)); border-radius: var(--manager-r-sm); background: color-mix(in srgb, var(--manager-green) 8%, transparent); color: var(--manager-green); font-size: var(--manager-fs-xs); font-weight: 600; text-align: center; }
+@keyframes storySharingTransfer { 0% { inset-inline-start: 0; opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } 100% { inset-inline-start: calc(100% - 12px); opacity: 0; } }
+
 @media (max-width: 860px) {
 	.board-story__columns, .board-story-compute, .board-story-fanout { grid-template-columns: minmax(0, 1fr); }
 	.board-story-roles { grid-template-columns: minmax(0, 1fr); }
 	.board-story-lane { grid-template-columns: minmax(0, 1fr); }
 	.board-story-lane__score { justify-self: start; }
+	.board-story-sharing { grid-template-columns: minmax(0, 1fr); }
+	.board-story-sharing__transfer { justify-self: center; width: 56px; transform: rotate(90deg); }
+	.board-story-sharing__guard { grid-column: 1; }
+}
+@media (max-width: 560px) {
+	.board-story__switcher { align-items: flex-end; flex-wrap: wrap; }
+	.board-story__switcher .ant-segmented { width: 100%; }
+	.board-story__stage { min-height: 240px; padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
 	.board-story__stage *, .board-story__stage { animation: none !important; }

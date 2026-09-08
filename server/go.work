@@ -5,6 +5,12 @@ use (
 	./common
 	./contract
 	./delivery-api
+	./manager-api
 	./service
+	./galaxy-api
+	./galaxy-api/adapters/core
+	./galaxy-api/adapters/delivery
+	./galaxy-api/adapters/relay
+	./galaxy-api/adapters/videofarm
 	./web-api
 )

@@ -271,3 +271,34 @@ func normalizeObjectKey(raw string, allowEmpty bool) (string, error) {
 	}
 	return cleaned, nil
 }
+
+// SignedPutURL 创建短期有效的 PUT 直传地址。共享池的大产物不经服务端中转：
+// 消费者与节点各自拿签名地址直传 OSS，服务端只签 URL、不搬字节。
+//
+// Content-Type 参与签名，客户端上传时必须带同一个值，否则 OSS 会拒绝。
+func (c *AliyunOSS) SignedPutURL(objectKey, contentType string, expiresAt time.Time) (string, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return "", fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	expiresAt = expiresAt.UTC()
+	if !expiresAt.After(c.now().UTC()) {
+		return "", errors.New("OSS 签名地址已过期")
+	}
+	expires := strconv.FormatInt(expiresAt.Unix(), 10)
+	stringToSign := strings.Join([]string{http.MethodPut, "", strings.TrimSpace(contentType), expires}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	signature := base64.StdEncoding.EncodeToString(signer.Sum(nil))
+
+	parsed, err := url.Parse(c.objectURL(key))
+	if err != nil {
+		return "", fmt.Errorf("构造 OSS 签名地址失败: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("OSSAccessKeyId", c.accessKeyID)
+	query.Set("Expires", expires)
+	query.Set("Signature", signature)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}

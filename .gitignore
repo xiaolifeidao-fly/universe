@@ -5,6 +5,8 @@
 server/web-api/configs/application.properties
 server/web-api/configs/application_dev.properties
 server/app-api/configs/application.properties
+server/manager-api/configs/application.properties
+server/galaxy-api/configs/application.properties
 # 只有 *.example.properties 进版本库，真配置一律本地持有。
 !server/**/configs/*.example.properties
 
@@ -36,5 +38,27 @@ server/app-api/configs/application.properties
 /client/app/package/
 /client/app/run/
 /client/app/*.tar.gz
+/client/galaxy/node_modules/
+/client/galaxy/.next/
+/client/galaxy/tsconfig.tsbuildinfo
+/client/galaxy/package/
+/client/galaxy/*.tar.gz
+/client/manager/node_modules/
+/client/manager/.next/
+/client/manager/tsconfig.tsbuildinfo
+/client/manager/package/
+/client/manager/*.tar.gz
+# symlink (client/shared 没有自己的依赖，靠这个软链复用 client/manager 的 node_modules)
+/client/shared/node_modules
+/server/manager-api/bin/
+/server/manager-api/logs/
+/server/manager-api/package/
+/server/manager-api/run/
+/server/manager-api/*.tar.gz
+/server/galaxy-api/bin/
+/server/galaxy-api/logs/
+/server/galaxy-api/package/
+/server/galaxy-api/run/
+/server/galaxy-api/*.tar.gz
 
 .codex/delivery-task-*
