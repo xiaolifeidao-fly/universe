@@ -41,12 +41,16 @@ server/galaxy-api/configs/application.properties
 /client/galaxy/node_modules/
 /client/galaxy/.next/
 /client/galaxy/tsconfig.tsbuildinfo
+/client/galaxy/logs/
 /client/galaxy/package/
+/client/galaxy/run/
 /client/galaxy/*.tar.gz
 /client/manager/node_modules/
 /client/manager/.next/
 /client/manager/tsconfig.tsbuildinfo
+/client/manager/logs/
 /client/manager/package/
+/client/manager/run/
 /client/manager/*.tar.gz
 # symlink (client/shared 没有自己的依赖，靠这个软链复用 client/manager 的 node_modules)
 /client/shared/node_modules

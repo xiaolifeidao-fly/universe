@@ -256,7 +256,7 @@
   }
 }
 
-/* ─── Nav menu (flat — manager 目前没有分组导航) ─── */
+/* ─── Nav menu ─── */
 
 .manager-shell-menu.ant-menu .ant-menu-item {
   height: 44px;
@@ -336,6 +336,84 @@
   color: #fff;
   background: linear-gradient(135deg, var(--manager-primary), color-mix(in srgb, var(--manager-primary) 48%, #fff));
   box-shadow: 0 4px 12px -5px color-mix(in srgb, var(--manager-primary) 78%, transparent);
+}
+
+/* ─── Nav submenu（系统设置这类折叠分组） ─── */
+
+/*
+ * 子菜单标题要和顶层菜单项**逐项对齐**：antd 给它的默认值是另一套
+ * （高 40 / 圆角 16 / 上下 margin 4 / 内联 padding-left 24），混在一起就成了
+ * 一个方框，视觉上像从菜单里掉出来的。
+ */
+.manager-shell-menu.ant-menu .ant-menu-submenu-title {
+  height: 44px;
+  min-height: 44px;
+  margin: 2px 0 !important;
+  padding: 0 10px !important;
+  border-radius: 11px;
+  color: var(--manager-text-soft) !important;
+  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover {
+  color: var(--manager-text) !important;
+  background: rgba(24, 34, 48, 0.045) !important;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: #fff;
+  box-shadow: var(--manager-shadow-sm);
+  transform: translateY(-1px);
+}
+
+/* 折叠箭头：antd 默认色比这套弱对比的文字还重，压一档。 */
+.manager-shell-menu.ant-menu .ant-menu-submenu-arrow {
+  color: var(--manager-text-faint);
+}
+
+/*
+ * 子列表：antd 给 inline 子菜单铺了一层 rgba(0,0,0,0.02) 的底 —— 在这套
+ * 药丸式菜单里它就是一个突兀的灰块。去掉底色，改用一条竖导引线表达层级，
+ * 位置正好落在父项图标的中线上。
+ */
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline {
+  position: relative;
+  background: transparent !important;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline::before {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 22px;
+  width: 1px;
+  background: var(--manager-border);
+  content: "";
+}
+
+/*
+ * 子项的缩进必须在这里显式写。antd 是用**内联样式** padding-left 做层级缩进的，
+ * 而上面 .ant-menu-item 那条规则带了 !important，会把它盖掉 —— 结果就是子项
+ * 贴着左边、和父项左对齐，看不出从属关系。
+ *
+ * 47px = 父项 padding-left 10 + 图标 26 + 图标与文字的 gap 11，
+ * 让子项文字正好落在父项文字的起点上。
+ */
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline > .ant-menu-item {
+  padding-left: 47px !important;
+}
+
+/* 父项在子页面被选中时也要有在场感，否则折叠起来就完全看不出自己在哪。 */
+.manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  color: var(--manager-text) !important;
+  font-weight: 600;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: #fff;
+  box-shadow: var(--manager-shadow-sm);
 }
 
 /* ─── Data card / empty state ─── */

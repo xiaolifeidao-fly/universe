@@ -163,7 +163,7 @@ func (s *service) Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageRep
 			}
 			tables[row.Kind] = table
 		}
-		line := dto.UsageLine{Kind: row.Kind, Unit: row.Unit, Amount: row.Amount, Calls: row.Calls}
+		line := dto.UsageLine{Kind: row.Kind, Provider: row.Provider, Unit: row.Unit, Amount: row.Amount, Calls: row.Calls}
 		if price, ok := table[row.Unit]; ok {
 			line.UnitPrice = price.Price
 			line.Cost = row.Amount * price.Price / priceScale
@@ -173,10 +173,14 @@ func (s *service) Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageRep
 		report.Lines = append(report.Lines, line)
 	}
 	sort.Slice(report.Lines, func(i, j int) bool {
-		if report.Lines[i].Kind == report.Lines[j].Kind {
-			return report.Lines[i].Unit < report.Lines[j].Unit
+		left, right := report.Lines[i], report.Lines[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
 		}
-		return report.Lines[i].Kind < report.Lines[j].Kind
+		if left.Provider != right.Provider {
+			return left.Provider < right.Provider
+		}
+		return left.Unit < right.Unit
 	})
 	return report, nil
 }

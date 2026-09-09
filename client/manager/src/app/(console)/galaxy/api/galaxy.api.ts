@@ -116,6 +116,9 @@ export class AuditProbeView {
 export class UsageLine {
   kind = "";
 
+  /** 走的是哪个上游：claude_oauth / codex_chatgpt。 */
+  provider = "";
+
   unit = "";
 
   amount = 0;

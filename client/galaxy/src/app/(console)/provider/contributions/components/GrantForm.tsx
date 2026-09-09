@@ -2,7 +2,7 @@
 
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { Button, Col, Form, Input, InputNumber, Row, Select, Space, message } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { unitLabel } from "@/utils/format";
 import {
@@ -41,6 +41,13 @@ interface FormValues {
  */
 export function GrantForm({ contribution, onSaved }: { contribution: ContributionView; onSaved: () => void }) {
   const { t } = useLocale();
+  // 候选项来自节点探测、随 hello 报上来的上游模型清单。
+  // mode="tags" 保留自由输入 —— 这两个框收的是**通配模式**（claude-sonnet-*、*），
+  // 做成纯下拉会把这个能力废掉，所以候选项只是提示，不是约束。
+  const modelOptions = useMemo(
+    () => (contribution.availableModels ?? []).map((model) => ({ value: model, label: model })),
+    [contribution.availableModels],
+  );
   const [form] = Form.useForm<FormValues>();
   const [saving, setSaving] = useState(false);
 
@@ -69,6 +76,7 @@ export function GrantForm({ contribution, onSaved }: { contribution: Contributio
     setSaving(true);
     try {
       await saveContributionLimits({
+        nodeId: contribution.nodeId,
         cid: contribution.cid,
         modelsAllow: values.modelsAllow ?? [],
         modelsDeny: values.modelsDeny ?? [],
@@ -90,13 +98,27 @@ export function GrantForm({ contribution, onSaved }: { contribution: Contributio
     <Form<FormValues> form={form} layout="vertical" onFinish={(values) => void submit(values)}>
       <Row gutter={16}>
         <Col xs={24} md={12}>
-          <Form.Item label={t("provider.limits.modelsAllow")} name="modelsAllow">
-            <Select mode="tags" tokenSeparators={[","]} placeholder={t("provider.limits.modelsPlaceholder")} />
+          <Form.Item
+            label={t("provider.limits.modelsAllow")}
+            name="modelsAllow"
+            extra={modelOptions.length === 0 ? t("provider.limits.modelsUnknown") : undefined}
+          >
+            <Select
+              mode="tags"
+              tokenSeparators={[","]}
+              options={modelOptions}
+              placeholder={t("provider.limits.modelsPlaceholder")}
+            />
           </Form.Item>
         </Col>
         <Col xs={24} md={12}>
           <Form.Item label={t("provider.limits.modelsDeny")} name="modelsDeny">
-            <Select mode="tags" tokenSeparators={[","]} placeholder={t("provider.limits.modelsPlaceholder")} />
+            <Select
+              mode="tags"
+              tokenSeparators={[","]}
+              options={modelOptions}
+              placeholder={t("provider.limits.modelsPlaceholder")}
+            />
           </Form.Item>
         </Col>
         <Col xs={12} md={6}>
@@ -119,8 +141,12 @@ export function GrantForm({ contribution, onSaved }: { contribution: Contributio
               <Row key={field.key} gutter={8} align="middle">
                 <Col xs={24} md={7}>
                   <Form.Item {...field} name={[field.name, "unit"]} noStyle>
+                    {/* width 不能省：Form.Item 带 noStyle 会去掉表单项的块级包装，
+                        Select 于是按内容撑宽 —— 已选中的行看着正常，新加的空行会塌成
+                        搜索框那么窄，下拉跟着塌，每个选项被挤成一列单字。 */}
                     <Select
                       showSearch
+                      style={{ width: "100%" }}
                       placeholder={t("provider.quota.unit")}
                       options={COMMON_UNITS.map((unit) => ({ value: unit, label: `${unitLabel(unit)}（${unit}）` }))}
                     />
@@ -133,7 +159,7 @@ export function GrantForm({ contribution, onSaved }: { contribution: Contributio
                 </Col>
                 <Col xs={12} md={5}>
                   <Form.Item {...field} name={[field.name, "window"]} noStyle>
-                    <Select options={WINDOWS.map((value) => ({ value, label: value }))} />
+                    <Select style={{ width: "100%" }} options={WINDOWS.map((value) => ({ value, label: value }))} />
                   </Form.Item>
                 </Col>
                 <Col xs={20} md={5}>

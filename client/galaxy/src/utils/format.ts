@@ -21,6 +21,20 @@ export function unitLabel(unit: string): string {
   return UNIT_LABELS[unit] ?? unit;
 }
 
+/**
+ * provider 是节点侧执行模块的名字。账单上写 claude_oauth 没人看得懂，
+ * 消费者要知道的是「这笔用量走的是 Claude 还是 Codex」。
+ * 认不出来的照原样显示 —— 新接一个上游只是没有中文名，不会在账单里变成空白。
+ */
+const PROVIDER_LABELS: Record<string, string> = {
+  claude_oauth: "Claude",
+  codex_chatgpt: "Codex",
+};
+
+export function providerLabel(provider: string): string {
+  return PROVIDER_LABELS[provider] ?? provider;
+}
+
 /** 计量单位各有各的量纲：token 是个数，time.seconds 是时长，bytes 是体积。 */
 export function formatUnitValue(unit: string, value: number): string {
   if (unit.endsWith(".seconds")) return formatDuration(value);

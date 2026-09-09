@@ -1,12 +1,13 @@
 "use client";
 
-import { CheckCircleFilled, ReloadOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
+import { CheckCircleFilled, CopyOutlined, ReloadOutlined, StopOutlined, SyncOutlined } from "@ant-design/icons";
 import { Alert, Button, Empty, Popconfirm, Space, Spin, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatTime, formatUnitValue, unitLabel } from "@/utils/format";
+import { copyText, formatTime, formatUnitValue, unitLabel } from "@/utils/format";
 import {
+  fetchConsumerEndpoint,
   acceptNotice,
   fetchKeys,
   fetchNotice,
@@ -31,6 +32,9 @@ export function ConsumerKeys() {
   const [notice, setNotice] = useState<NoticeStatus | null>(null);
   const [issued, setIssued] = useState<IssuedKeyView | null>(null);
   const [loading, setLoading] = useState(true);
+  // SDK 要填的 base_url。**由服务端给** —— 消费者路由挂在 galaxy-api 的 /v1 上，
+  // 那个地址前端猜不出来（控制台和 API 可能不同域、不同端口），配两处也迟早对不上。
+  const [baseUrl, setBaseUrl] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -43,6 +47,13 @@ export function ConsumerKeys() {
       setLoading(false);
     }
   }, [t]);
+
+  useEffect(() => {
+    void fetchConsumerEndpoint()
+      .then((row) => setBaseUrl(row.baseUrl))
+      // 取不到就不显示这一块，好过显示一个猜来的、打过去 404 的地址。
+      .catch(() => setBaseUrl(""));
+  }, []);
 
   useEffect(() => {
     void load();
@@ -76,6 +87,12 @@ export function ConsumerKeys() {
     } catch (error) {
       message.error((error as Error).message || t("common.loadFailed"));
     }
+  };
+
+  const copyBase = async () => {
+    const ok = await copyText(baseUrl);
+    if (ok) message.success(t("common.copied"));
+    else message.warning(t("common.copyFailed"));
   };
 
   const columns: ColumnsType<ConsumerKeyView> = [
@@ -176,6 +193,25 @@ export function ConsumerKeys() {
             </Button>
           </Space>
         </div>
+
+        {/* base_url 必须显示出来：副标题说「把 base_url 指向 Galaxy」，但不给地址，
+            用户还得去翻文档或者猜。密钥在下面表格里，两样凑齐才能直接用 SDK。 */}
+        {baseUrl ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ marginBottom: 6, color: "var(--manager-text-muted)" }}>
+            {t("consumer.keys.baseUrlLabel")}
+          </div>
+          <div className="galaxy-secret">
+            <code style={{ flex: 1 }}>{baseUrl}</code>
+            <Button size="small" icon={<CopyOutlined />} onClick={() => void copyBase()}>
+              {t("common.copy")}
+            </Button>
+          </div>
+          <div style={{ marginTop: 6, color: "var(--manager-text-muted)", fontSize: 12 }}>
+            {t("consumer.keys.baseUrlHint")}
+          </div>
+        </div>
+        ) : null}
 
         {/* 数据告知是签发密钥的硬前置：没确认过就买不了额度，也发不出密钥（C-13）。 */}
         {notice && !notice.accepted ? (

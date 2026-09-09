@@ -33,7 +33,7 @@ export function ExecutionRecords() {
       setLoading(true);
       try {
         const [nodes, list, balance] = await Promise.all([fetchNodes(), fetchRecords(targetCid), fetchCredits()]);
-        setContributions(nodes.flatMap((node) => node.contributions));
+        setContributions(nodes.flatMap((node) => node.contributions ?? []));
         setRecords(list);
         setCredits(balance.balance);
       } catch (error) {

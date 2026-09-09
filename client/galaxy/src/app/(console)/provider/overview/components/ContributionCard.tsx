@@ -19,7 +19,7 @@ export function ContributionCard({ contribution, onChanged }: { contribution: Co
   const change = async (status: "active" | "paused" | "disabled") => {
     setBusy(true);
     try {
-      await setContributionStatus(contribution.cid, status);
+      await setContributionStatus(contribution.nodeId, contribution.cid, status);
       message.success(t("provider.contribution.statusSaved"));
       onChanged();
     } catch (error) {

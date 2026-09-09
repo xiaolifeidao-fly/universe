@@ -52,7 +52,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	authenticated := group.Group("", h.requireNode())
 	authenticated.POST("/hello", h.hello)
 	authenticated.POST("/heartbeat", h.heartbeat)
-	authenticated.GET("/next", h.next)
+	authenticated.POST("/next", h.next)
 	authenticated.POST("/units/:unitId/stream", h.stream)
 	authenticated.POST("/units/:unitId/progress", h.progress)
 	authenticated.POST("/units/:unitId/complete", h.complete)
@@ -147,7 +147,14 @@ func (h *Handler) heartbeat(context *gin.Context) {
 // next 长轮询领活。请求体列出有空位的通道；没活可领时返 204，节点立刻再来一轮。
 func (h *Handler) next(context *gin.Context) {
 	var req dto.NextRequest
-	// GET 带 body 是这个协议刻意的选择：通道列表每次都不一样，塞进 query 会很长且难读。
+	// 用 POST 而不是 GET。
+	//
+	// 通道列表每次都不一样，塞进 query 会很长且难读，所以它在请求体里；而 fetch
+	// 规范明令 GET / HEAD **不能带请求体** —— Node 的 undici 直接拒："Request with
+	// GET/HEAD method cannot have body."，加 duplex: "half" 也绕不过去。
+	// 结果是节点连一次活都领不到，长轮询循环空转重试。
+	// 领活本身也不是只读的：它会占住租约、扣并发，POST 反而更贴切。
+	//
 	// 空 body 表示这一轮没有可领的通道，不能当成「所有通道都有空位」。
 	if context.Request.Body != nil {
 		_ = json.NewDecoder(context.Request.Body).Decode(&req)

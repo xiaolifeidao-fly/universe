@@ -81,14 +81,28 @@ func (r *KindRegistry) List() []contract.KindSpec {
 	return specs
 }
 
-// ValidateContribution 校验一条贡献申报是否落在注册表允许的范围内（hello 的校验规则）。
-func (r *KindRegistry) ValidateContribution(kind string, version int, provider string, units []contract.MeterUnit, seats, platformSeatLimit int) (contract.KindSpec, error) {
+// ValidateCapability 只看「这个能力这套 Hub 认不认」，不问额度和座位。
+//
+// 节点上报能力清单时用它：那一刻还没有额度也没有座位 —— 共享多少是主人在控制台
+// 定的事，节点无权表态。带额度的完整校验留给 ValidateContribution，
+// 在主人真的开启一条贡献时才跑。
+func (r *KindRegistry) ValidateCapability(kind string, version int, provider string) (contract.KindSpec, error) {
 	spec, ok := r.Lookup(kind, version)
 	if !ok {
 		return contract.KindSpec{}, fmt.Errorf("%w: %s", contract.ErrKindNotRegistered, contract.KindRef(kind, version))
 	}
 	if !spec.SupportsProvider(provider) {
 		return spec, fmt.Errorf("provider %s 不属于 %s", provider, spec.Kind)
+	}
+	return spec, nil
+}
+
+// ValidateContribution 校验一条**要开启**的贡献：在能力本身之外，还要额度单位
+// 属于这个 kind、座位数不超平台上限。
+func (r *KindRegistry) ValidateContribution(kind string, version int, provider string, units []contract.MeterUnit, seats, platformSeatLimit int) (contract.KindSpec, error) {
+	spec, err := r.ValidateCapability(kind, version, provider)
+	if err != nil {
+		return spec, err
 	}
 	for _, unit := range units {
 		if !spec.AllowsUnit(unit) {

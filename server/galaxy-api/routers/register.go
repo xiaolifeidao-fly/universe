@@ -183,6 +183,10 @@ func loadConfig() galaxy.Config {
 	config.KeyFreeze = time.Duration(intProperty("galaxy.key_freeze_days", 30)) * 24 * time.Hour
 	config.ProviderTermsVersion = defaultString(httpx.Property("galaxy.provider_terms_version"), config.ProviderTermsVersion)
 	config.ConsumerNoticeVersion = defaultString(httpx.Property("galaxy.consumer_notice_version"), config.ConsumerNoticeVersion)
+	// 不配就由 withDefaults 从 galaxy.instance 派生成 <instance>/v1。
+	config.ConsumerBaseURL = strings.TrimSpace(httpx.Property("galaxy.consumer_base_url"))
+	// 节点侧的对外地址。不配就由 withDefaults 从 consumer_base_url 去掉 /v1 派生。
+	config.ProviderHubURL = strings.TrimSpace(httpx.Property("galaxy.provider_hub_url"))
 	config.SessionIdleTTL = time.Duration(intProperty("galaxy.session_idle_hours", 24)) * time.Hour
 	return config
 }

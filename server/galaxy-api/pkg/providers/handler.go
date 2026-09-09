@@ -31,6 +31,17 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/contribution/limits", h.saveContributionLimits)
 	api.GET("/records", h.listRecords)
 	api.GET("/credits", h.credits)
+	api.GET("/endpoint", h.providerEndpoint)
+}
+
+// providerEndpoint 提供者的 ai-bridge 要填的 pool.hubURL。
+//
+// 和消费者那边的 /consumer/endpoint 对称，理由也一样：这个地址只有部署方知道
+// （反代端口、公网入口、是不是套了 TLS），前端拼不出来。节点连错地方时它连不上
+// Hub，也就不会出现在任何列表里 —— 界面上除了一个空列表什么都看不见，
+// 所以这个值必须由 Hub 主动报出来，而不是从「已连上的节点」里读。
+func (h *Handler) providerEndpoint(context *gin.Context) {
+	httpx.JSON(context, gin.H{"hubUrl": h.service.Config().ProviderHubURL}, nil)
 }
 
 // acceptTerms 加入共享池前必须明示同意（P-16）：订阅条款风险、数据经本机处理、
@@ -82,6 +93,10 @@ func (h *Handler) revokeNode(context *gin.Context) {
 // 停掉的贡献排空在途后释放座位，不中断在跑的请求。
 func (h *Handler) setContributionStatus(context *gin.Context) {
 	var req struct {
+		// NodeID 不能省：cid 在这里是**去掉节点前缀**的短名（relay_codex），
+		// 主人有两台机器时就重名了。不带节点，服务端只能猜一个，而它猜的是
+		// 排序第一个（node_id 是 ULID，等于最老那台）—— 改到的是别的机器。
+		NodeID string `json:"nodeId"`
 		CID    string `json:"cid" binding:"required"`
 		Status string `json:"status" binding:"required"`
 	}
@@ -89,7 +104,7 @@ func (h *Handler) setContributionStatus(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	err := h.service.SetContributionStatus(context.Request.Context(), httpx.CallerID(context), req.CID, req.Status)
+	err := h.service.SetContributionStatus(context.Request.Context(), httpx.CallerID(context), req.NodeID, req.CID, req.Status)
 	httpx.JSON(context, req.Status, err)
 }
 

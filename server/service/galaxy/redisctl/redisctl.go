@@ -275,9 +275,13 @@ func (c *ControlPlane) UpdateLaneRuntime(ctx context.Context, runtimes []galaxy.
 			"queued":     runtime.Queued,
 		}
 		if !runtime.ThrottledUntil.IsZero() {
-			values["throttledUntil"] = runtime.ThrottledUntil.UnixMilli()
-		} else {
-			values["throttledUntil"] = 0
+			// 心跳可能晚于 429 收尾到达，空值或旧时间不能清掉较新的冷却。
+			// 用绝对时间判断到期，无需主动写零。
+			pipe.Eval(ctx, `
+local current = tonumber(redis.call('HGET', KEYS[1], 'throttledUntil') or '0')
+local incoming = tonumber(ARGV[1])
+if incoming > current then redis.call('HSET', KEYS[1], 'throttledUntil', incoming) end
+return 1`, []string{c.contribKey(runtime.CID)}, runtime.ThrottledUntil.UnixMilli())
 		}
 		if len(runtime.CachedArtifacts) > 0 {
 			values["cachedArtifacts"] = encode(runtime.CachedArtifacts)

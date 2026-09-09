@@ -5,7 +5,7 @@ import { Alert, Button, Select, Space, Spin, Table, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatMoney, formatNumber, formatUnitPrice, formatUnitValue, unitLabel } from "@/utils/format";
+import { formatMoney, formatNumber, formatUnitPrice, formatUnitValue, providerLabel, unitLabel } from "@/utils/format";
 import {
   fetchKeys,
   fetchUsage,
@@ -22,6 +22,9 @@ const RANGES = [7, 30, 90];
  * input 与 output token 分行列出，各按各的单价算 —— 这是定价口径要求的
  * （决策 D-02），把它们合成一个「总 token」会让账单对不上。
  * calls 与 time.seconds 不计价，只作供给侧额度与统计，所以单价列显示「不计价」。
+ *
+ * 同一个能力下 Claude 与 Codex 也分行列出：kind 都是 llm.chat，不拆开的话
+ * 消费者只能看见一个合计，看不出这笔钱花在哪个上游上。
  */
 export function UsageReportView() {
   const { t } = useLocale();
@@ -58,6 +61,22 @@ export function UsageReportView() {
 
   const columns: ColumnsType<UsageLine> = [
     { title: t("consumer.usage.kind"), dataIndex: "kind", width: 160 },
+    {
+      title: t("consumer.usage.provider"),
+      dataIndex: "provider",
+      width: 170,
+      render: (provider: string) =>
+        provider ? (
+          <span>
+            {providerLabel(provider)}
+            <span style={{ marginLeft: 6, color: "var(--manager-text-muted)", fontSize: "var(--manager-fs-sm)" }}>
+              {provider}
+            </span>
+          </span>
+        ) : (
+          <span style={{ color: "var(--manager-text-muted)" }}>{t("consumer.usage.unknownProvider")}</span>
+        ),
+    },
     {
       title: t("consumer.usage.unit"),
       dataIndex: "unit",
@@ -140,13 +159,13 @@ export function UsageReportView() {
               </div>
             </div>
             <Table<UsageLine>
-              rowKey={(row) => `${row.kind}:${row.unit}`}
+              rowKey={(row) => `${row.kind}:${row.provider}:${row.unit}`}
               size="small"
               columns={columns}
               dataSource={report?.lines ?? []}
               locale={{ emptyText: t("consumer.usage.empty") }}
               pagination={false}
-              scroll={{ x: 900 }}
+              scroll={{ x: 1050 }}
             />
           </>
         )}

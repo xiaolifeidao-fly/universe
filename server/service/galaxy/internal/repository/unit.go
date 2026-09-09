@@ -135,38 +135,53 @@ func (r *GalaxyRepository) SaveMeterRecords(ctx context.Context, rows []*GalaxyM
 	}).Create(rows).Error
 }
 
-// UsageRow 是用量查询的聚合结果：按 kind + 单位求和。
+// UsageRow 是用量查询的聚合结果：按 kind + 上游 + 单位求和。
 type UsageRow struct {
-	Kind   string `gorm:"column:kind"`
-	Unit   string `gorm:"column:unit"`
-	Amount int64  `gorm:"column:amount"`
-	Calls  int64  `gorm:"column:calls"`
+	Kind string `gorm:"column:kind"`
+	// Provider 是执行这笔用量的上游（claude_oauth / codex_chatgpt 等）。
+	// 单元行被清掉或还没写上游时是空串。
+	Provider string `gorm:"column:provider"`
+	Unit     string `gorm:"column:unit"`
+	Amount   int64  `gorm:"column:amount"`
+	Calls    int64  `gorm:"column:calls"`
 }
 
+// SumUsage 按 kind + 上游 + 单位汇总用量。
+//
+// 上游只记在单元表上，计量流水里没有 —— 流水的幂等键是 (unit_id, attempt, unit)，
+// 往里加一列冗余就多一处会和单元表对不上的事实。所以这里按 unit_id 关联回去取，
+// 走的是 uk_gx_unit_id 唯一索引，每行一次点查。
+// 关联用 LEFT JOIN：单元行不在了也不能把这笔用量从账单里抹掉，
+// 只是上游显示成空而已。
 func (r *GalaxyRepository) SumUsage(ctx context.Context, q UnitQuery) ([]UsageRow, error) {
-	tx := r.Db.WithContext(ctx).Model(&GalaxyMeterRecord{}).
-		Select("kind, unit, SUM(amount) AS amount, COUNT(DISTINCT unit_id) AS calls").
-		Where("biz_line = ?", q.BizLine)
+	tx := r.Db.WithContext(ctx).
+		Table((&GalaxyMeterRecord{}).TableName()+" AS m").
+		Joins("LEFT JOIN "+(&GalaxyUnit{}).TableName()+" AS u ON u.biz_line = m.biz_line AND u.unit_id = m.unit_id").
+		Select("m.kind AS kind, COALESCE(u.provider, '') AS provider, m.unit AS unit, " +
+			"SUM(m.amount) AS amount, COUNT(DISTINCT m.unit_id) AS calls").
+		Where("m.biz_line = ?", q.BizLine)
 	if q.ConsumerKey != "" {
-		tx = tx.Where("consumer_key = ?", q.ConsumerKey)
+		tx = tx.Where("m.consumer_key = ?", q.ConsumerKey)
 	}
 	if len(q.ConsumerKeys) > 0 {
-		tx = tx.Where("consumer_key IN ?", q.ConsumerKeys)
+		tx = tx.Where("m.consumer_key IN ?", q.ConsumerKeys)
 	}
 	if q.CID != "" {
-		tx = tx.Where("cid = ?", q.CID)
+		tx = tx.Where("m.cid = ?", q.CID)
 	}
 	if q.Kind != "" {
-		tx = tx.Where("kind = ?", q.Kind)
+		tx = tx.Where("m.kind = ?", q.Kind)
 	}
 	if !q.From.IsZero() {
-		tx = tx.Where("created_at >= ?", q.From)
+		tx = tx.Where("m.created_at >= ?", q.From)
 	}
 	if !q.To.IsZero() {
-		tx = tx.Where("created_at < ?", q.To)
+		tx = tx.Where("m.created_at < ?", q.To)
 	}
 	var rows []UsageRow
-	err := tx.Group("kind, unit").Order("kind, unit").Find(&rows).Error
+	// 分组按 u.provider 而不是 COALESCE 的别名：别名和 u.provider 同名，
+	// MySQL 在 GROUP BY 里会当成歧义列报错。NULL 与空串在分组上是同一组，结果一样。
+	err := tx.Group("m.kind, u.provider, m.unit").Order("m.kind, u.provider, m.unit").Find(&rows).Error
 	return rows, err
 }
 

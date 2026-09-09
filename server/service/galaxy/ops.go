@@ -198,11 +198,20 @@ func (s *service) Sweep(ctx context.Context) error {
 	if _, err := s.repository.ExpireConsumerKeys(ctx, bizLine, time.Now(), s.config.KeyFreeze); err != nil {
 		return err
 	}
+	now := time.Now()
+	// 心跳过期的机器降为离线。
+	//
+	// 这一步不能省，也不能靠下面那个「遍历贡献」的循环代劳：那条路只看得见
+	// 有贡献的机器。刚配对、还没 hello 的机器一条贡献都没有，于是 status 永远
+	// 停在 pair 时写下的 active —— 界面上就是一台「在线」了半小时、
+	// 却一次心跳都没有过的机器。
+	if _, err := s.repository.MarkStaleNodesOffline(ctx, bizLine, now.Add(-s.config.HeartbeatTimeout)); err != nil {
+		return err
+	}
 	rows, err := s.repository.ListActiveContributions(ctx, bizLine)
 	if err != nil {
 		return err
 	}
-	now := time.Now()
 	windows := make([]*repository.GalaxyQuotaWindow, 0, len(rows))
 	grants, err := s.loadGrants(ctx, cidsOf(rows))
 	if err != nil {

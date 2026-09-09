@@ -5,8 +5,18 @@ import { Button, Empty, Popconfirm, Space, Spin, Tag, message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { formatRelative } from "@/utils/format";
-import { fetchNodes, fetchTerms, revokeNode, type NodeView, type TermsStatus } from "../../api/provider.api";
+import {
+  fetchNodes,
+  fetchTerms,
+  isNodeOnline,
+  revokeNode,
+  visibleContributions,
+  type NodeView,
+  type TermsStatus,
+} from "../../api/provider.api";
+import { pingBridge } from "../../api/bridge.api";
 import { ContributionCard } from "./ContributionCard";
+import { ToolVersions } from "./ToolVersions";
 import { JoinPoolCard } from "./JoinPoolCard";
 
 /**
@@ -20,6 +30,8 @@ export function ProviderOverview() {
   const [terms, setTerms] = useState<TermsStatus | null>(null);
   const [nodes, setNodes] = useState<NodeView[]>([]);
   const [loading, setLoading] = useState(true);
+  // 本机 bridge 的 nodeId。工具版本只能问本机拿，所以只在这台机器的卡片上显示。
+  const [localNodeId, setLocalNodeId] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -39,6 +51,10 @@ export function ProviderOverview() {
     return () => clearInterval(timer);
   }, [load]);
 
+  useEffect(() => {
+    void pingBridge().then((ping) => setLocalNodeId(ping?.nodeId ?? ""));
+  }, []);
+
   const revoke = async (nodeId: string) => {
     try {
       await revokeNode(nodeId);
@@ -51,7 +67,13 @@ export function ProviderOverview() {
 
   return (
     <div className="galaxy-page">
-      <JoinPoolCard terms={terms} onAccepted={() => void load()} />
+      <JoinPoolCard
+        terms={terms}
+        joined={nodes.length > 0}
+        online={nodes.find(isNodeOnline) ?? null}
+        onAccepted={() => void load()}
+        onPaired={() => void load()}
+      />
 
       <section className="galaxy-card">
         <div className="galaxy-card__head">
@@ -77,7 +99,7 @@ export function ProviderOverview() {
                   <b style={{ fontSize: "var(--manager-fs-base)" }}>{node.displayName || node.nodeId}</b>
                   {node.banned ? (
                     <Tag color="error">{t("provider.node.banned")}</Tag>
-                  ) : node.status === "active" ? (
+                  ) : isNodeOnline(node) ? (
                     <Tag color="success">{t("provider.node.online")}</Tag>
                   ) : (
                     <Tag>{t("provider.node.offline")}</Tag>
@@ -99,8 +121,14 @@ export function ProviderOverview() {
                     </Button>
                   </Popconfirm>
                 </div>
+                {/* 工具版本只对本机有意义：版本是问本机 bridge 拿的，
+                    浏览器够不到别的机器上的 bridge。 */}
+                {localNodeId && localNodeId === node.nodeId ? <ToolVersions /> : null}
                 <div className="galaxy-grid">
-                  {node.contributions.map((contribution) => (
+                  {/* visibleContributions 顺便兜住 null：服务端已经保证列不会是 null
+                      （见 orEmpty 与 TestListFieldsNeverSerializeToNull），但整页白屏
+                      的代价太大，不值得只靠一端的约定。 */}
+                  {visibleContributions(node.contributions).map((contribution) => (
                     <ContributionCard key={contribution.cid} contribution={contribution} onChanged={() => void load()} />
                   ))}
                 </div>

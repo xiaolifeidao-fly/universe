@@ -2,6 +2,7 @@ package redisctl
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -24,6 +25,20 @@ func newTestPlane(t *testing.T) (*ControlPlane, *miniredis.Miniredis) {
 	}
 	t.Cleanup(func() { _ = plane.Close() })
 	return plane, server
+}
+
+func TestHeartbeatDoesNotClearUpstreamThrottle(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	until := time.Now().Add(5 * time.Minute)
+	for _, deadline := range []time.Time{until, {}, until.Add(-time.Minute)} {
+		if err := plane.UpdateLaneRuntime(ctx, []galaxy.LaneRuntime{{CID: "c1", UpstreamOK: true, ThrottledUntil: deadline}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := server.HGet(plane.contribKey("c1"), "throttledUntil"); got != fmt.Sprint(until.UnixMilli()) {
+			t.Fatalf("heartbeat shortened cooldown: %s", got)
+		}
+	}
 }
 
 func seedContribution(t *testing.T, plane *ControlPlane, cid string, seats, seatConc int, limits contract.Metering) galaxy.ContributionSnapshot {

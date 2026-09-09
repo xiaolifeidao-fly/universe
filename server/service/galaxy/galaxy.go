@@ -47,6 +47,23 @@ type Config struct {
 	ProviderTermsVersion  string
 	ConsumerNoticeVersion string
 
+	// ConsumerBaseURL 消费者 SDK 要填的 base_url，控制台原样展示。
+	//
+	// 不填就从 Instance 派生（Instance + "/v1"）—— 消费者路由就挂在 /v1 上。
+	// 需要显式配置的是「对外地址和 Instance 不同」的部署：Instance 是 Hub 之间
+	// 互相寻址用的内网地址，而这个要给用户的 SDK 用，走的是公网入口。
+	ConsumerBaseURL string
+
+	// ProviderHubURL 提供者的 ai-bridge 要填的 pool.hubURL，控制台原样展示。
+	//
+	// 和 ConsumerBaseURL 是同一个公网入口的两副面孔：消费者打 /v1/*，节点打
+	// /agent/v1/*。所以不填就从 ConsumerBaseURL 去掉尾巴上的 /v1 派生。
+	//
+	// 都拿不到才退回 Instance。单机开发时那个值恰好是对的，但生产部署下
+	// Instance 是 Hub 之间互相寻址的内网地址 —— 把它显示给用户，用户照着填，
+	// 节点就会去连一个它根本够不到的地方。这条必须显式配。
+	ProviderHubURL string
+
 	// UsageMismatchRatio 节点自报与 Hub 解析的偏差告警阈值。
 	UsageMismatchRatio float64
 
@@ -125,6 +142,21 @@ func (c Config) withDefaults() Config {
 	if c.ProviderTermsVersion == "" {
 		c.ProviderTermsVersion = defaults.ProviderTermsVersion
 	}
+	// base_url 没配就从 Instance 派生。放在 withDefaults 里而不是 DefaultConfig，
+	// 是因为它依赖 Instance —— 那个值要等 loadConfig 读完配置才定下来。
+	if strings.TrimSpace(c.ConsumerBaseURL) == "" && strings.TrimSpace(c.Instance) != "" {
+		c.ConsumerBaseURL = strings.TrimRight(strings.TrimSpace(c.Instance), "/") + "/v1"
+	}
+	// 节点地址同理派生，但源头取 ConsumerBaseURL 而不是 Instance —— 上面那行刚把
+	// 「对外地址」的结论算完，这里再从 Instance 算一遍就会在显式配了
+	// consumer_base_url 的部署上给出两个不一致的地址。
+	if strings.TrimSpace(c.ProviderHubURL) == "" {
+		if base := strings.TrimSpace(c.ConsumerBaseURL); base != "" {
+			c.ProviderHubURL = strings.TrimRight(strings.TrimSuffix(strings.TrimRight(base, "/"), "/v1"), "/")
+		} else if instance := strings.TrimSpace(c.Instance); instance != "" {
+			c.ProviderHubURL = strings.TrimRight(instance, "/")
+		}
+	}
 	if c.ConsumerNoticeVersion == "" {
 		c.ConsumerNoticeVersion = defaults.ConsumerNoticeVersion
 	}
@@ -183,7 +215,7 @@ type Service interface {
 
 	ListNodes(ctx context.Context, ownerUserID string) ([]dto.NodeView, error)
 	ListExecutionRecords(ctx context.Context, ownerUserID, cid string, limit int) ([]dto.ExecutionRecord, error)
-	SetContributionStatus(ctx context.Context, ownerUserID, cid, status string) error
+	SetContributionStatus(ctx context.Context, ownerUserID, nodeID, cid, status string) error
 	// SaveContributionLimits 控制台改授权。额度以 Hub 为权威：改完节点下一次 hello
 	// 拿到的 quotaEffective 就与本地申报不同，节点以 Hub 为准。
 	SaveContributionLimits(ctx context.Context, req dto.SaveContributionLimitsRequest) error

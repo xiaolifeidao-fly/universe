@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -35,11 +36,19 @@ func (r *GalaxyRepository) TakePairingCode(ctx context.Context, bizLine, code, n
 	return &row, nil
 }
 
+// SaveNode 建行或更新一台机器。
+//
+// **token_hash 与 display_name 刻意不在 DoUpdates 里。** 这个方法有两个调用方：
+// Pair 建行时带着新签的令牌和主人起的名字（走 INSERT，不经 DoUpdates），
+// Hello 每次上报只带版本、资源和状态（这两个字段是零值）。把它们列进 DoUpdates，
+// hello 就会用空串覆盖掉真值 —— 节点在 hello 成功的那一刻把自己的令牌抹掉，
+// 紧接着的心跳、领活、回报全部 401「节点令牌无效」，而且再也回不来。
+// 撤销令牌有 RevokeNode 专门管，不需要从这里走。
 func (r *GalaxyRepository) SaveNode(ctx context.Context, row *GalaxyNode) error {
 	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "biz_line"}, {Name: "node_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"owner_user_id", "display_name", "token_hash", "bridge_version", "contract_version", "resources_json", "status", "last_beat_at", "updated_time",
+			"owner_user_id", "bridge_version", "contract_version", "resources_json", "status", "last_beat_at", "updated_time",
 		}),
 	}).Create(row).Error
 }
@@ -66,11 +75,17 @@ func (r *GalaxyRepository) FindNode(ctx context.Context, bizLine, nodeID string)
 	return &row, nil
 }
 
+// ListNodesByOwner 主人自己看得到的机器。**撤销掉的不算**。
+//
+// 不过滤的话，撤销之后那一行还在列表里，而且渲染成「离线」—— 和撤销前一模一样，
+// 撤销按钮也还在。用户点了没有任何变化，只会认为这个功能坏了。
+// 平台侧的 ListNodes 不过滤，运营排障要看得到撤销记录。
 func (r *GalaxyRepository) ListNodesByOwner(ctx context.Context, bizLine, ownerUserID string) ([]*GalaxyNode, error) {
 	var rows []*GalaxyNode
 	err := r.Db.WithContext(ctx).
 		Where("biz_line = ?", bizLine).
 		Where("owner_user_id = ?", ownerUserID).
+		Where("status <> ?", "revoked").
 		Order("created_time desc").Find(&rows).Error
 	return rows, err
 }
@@ -81,17 +96,49 @@ func (r *GalaxyRepository) TouchNode(ctx context.Context, bizLine, nodeID string
 		Updates(map[string]any{"last_beat_at": at, "status": "active"}).Error
 }
 
+// MarkStaleNodesOffline 把心跳过期的机器降为离线，返回降了几台。
+//
+// 它按**节点自己的** last_beat_at 判，不看贡献：一台刚配对、还没 hello 的机器
+// 一条贡献都没有，靠遍历贡献的那条路永远扫不到它，status 会一直停在 active。
+// last_beat_at 为空的一并降 —— 那是有行但从没心跳过，同样不该显示成在线。
+func (r *GalaxyRepository) MarkStaleNodesOffline(ctx context.Context, bizLine string, before time.Time) (int64, error) {
+	result := r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Where("biz_line = ?", bizLine).Where("status = ?", "active").
+		Where("(last_beat_at IS NULL OR last_beat_at < ?)", before).
+		Update("status", "offline")
+	return result.RowsAffected, result.Error
+}
+
+// MarkNodeOffline 把一台机器降为离线。**撤销掉的不动。**
+//
+// 巡检是按贡献倒推节点的（ops.Sweep：贡献没有快照就把它那台机器记成离线），
+// 而撤销只改节点行和控制面，库里的贡献行还在 —— 于是撤销之后最迟一分钟，
+// 这条 UPDATE 就把 revoked 改回 offline，机器从「撤销后不再显示」变回列表里
+// 一台离线的僵尸。用户看到的是「撤销了、也确实没了，过一会儿它自己又回来了」，
+// 而它的令牌早已置空，永远连不回来，只能再撤一次 —— 再等一分钟又回来。
+// 撤销是终态：那台机器要回来只能重新配对，而重新配对建的是新的一行。
 func (r *GalaxyRepository) MarkNodeOffline(ctx context.Context, bizLine, nodeID string) error {
 	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
 		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
+		Where("status <> ?", "revoked").
 		Update("status", "offline").Error
 }
 
 // RevokeNode 撤销令牌。token_hash 置空后节点的下一次请求就是 401，它会停止重试。
 func (r *GalaxyRepository) RevokeNode(ctx context.Context, bizLine, ownerUserID, nodeID string) error {
-	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+	result := r.Db.WithContext(ctx).Model(&GalaxyNode{}).
 		Where("biz_line = ?", bizLine).Where("owner_user_id = ?", ownerUserID).Where("node_id = ?", nodeID).
-		Updates(map[string]any{"token_hash": "", "status": "revoked"}).Error
+		Updates(map[string]any{"token_hash": "", "status": "revoked"})
+	if result.Error != nil {
+		return result.Error
+	}
+	// 一行都没命中要报错。Updates 命中 0 行是不报错的，直接 return nil 的话
+	// 前端会弹「已撤销」，而那台机器其实一点没动 —— 用户看到的就是「撤销不好用」，
+	// 却没有任何线索说明为什么。
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("找不到这台机器，或它不属于你")
+	}
+	return nil
 }
 
 // ---------- 同意记录 ----------

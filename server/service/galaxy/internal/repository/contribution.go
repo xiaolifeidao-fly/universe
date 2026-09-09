@@ -50,6 +50,53 @@ func (r *GalaxyRepository) ReplaceContributions(ctx context.Context, bizLine, no
 	})
 }
 
+// SyncContributionInventory 用节点上报的**能力清单**对齐贡献表。
+//
+// 和 ReplaceContributions 的区别是权威归属反过来了：
+//
+//	ReplaceContributions  节点说了算 —— 这次没报的贡献直接置 disabled，额度整组重写
+//	SyncContributionInventory  节点只报「本机有什么、能不能用」，
+//	                           「共享不共享、共享多少」是主人在控制台定的
+//
+// 所以这里**只写节点报得出来的那几列**：kind / provider / available / 原因。
+// status、seats、models、schedule 一律不碰 —— 它们是主人的设置，
+// 被一次心跳覆盖掉，等于主人每次重启插件都要重新配一遍。额度更不碰，
+// 那是 quota_grant 的事，走控制台的改额度接口。
+//
+// 这次没报上来的能力不删行，只置 available=false：Claude 登录态过期是常事，
+// 删了的话主人的勾选跟着没了，登录回来还得重配。
+func (r *GalaxyRepository) SyncContributionInventory(ctx context.Context, bizLine, nodeID string, rows []*GalaxyContribution) error {
+	return r.Tx(ctx, func(tx *GalaxyRepository) error {
+		reported := make([]string, 0, len(rows))
+		for _, row := range rows {
+			reported = append(reported, row.CID)
+		}
+		gone := tx.Db.WithContext(ctx).Model(&GalaxyContribution{}).
+			Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID)
+		if len(reported) > 0 {
+			gone = gone.Where("cid NOT IN ?", reported)
+		}
+		if err := gone.Updates(map[string]any{
+			"available":          false,
+			"unavailable_reason": "节点最近一次上报里没有这项能力",
+		}).Error; err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if err := tx.Db.WithContext(ctx).Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "biz_line"}, {Name: "cid"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"node_id", "owner_user_id", "kind", "kind_version", "provider",
+					"available", "unavailable_reason", "models_available_json", "updated_time",
+				}),
+			}).Create(row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (r *GalaxyRepository) FindContribution(ctx context.Context, bizLine, cid string) (*GalaxyContribution, error) {
 	var row GalaxyContribution
 	err := r.Db.WithContext(ctx).Where("biz_line = ?", bizLine).Where("cid = ?", cid).First(&row).Error
@@ -59,18 +106,38 @@ func (r *GalaxyRepository) FindContribution(ctx context.Context, bizLine, cid st
 	return &row, nil
 }
 
+// ListContributionsByNode 一台机器上的**全部**贡献，包含 disabled 的。
+//
+// 这里曾经过滤 status <> 'disabled'，那是个死锁：Hello 把新探测到的能力一律建成
+// disabled（「探测到不等于愿意共享」），而控制台的机器列表走的就是这个查询 ——
+// 于是新能力永远不显示，主人也就永远没机会把它打开。用户看到的是「配对成功了，
+// 但找不到任何可以配置共享内容的地方」。
+//
+// 过滤要放在各调用方，因为每个人的判据不一样：
+//
+//	· effectiveContributions（调度）自己就按「主人没关 + 本机可用」筛，不依赖这里；
+//	· 心跳只拿它同步额度计数器，多几行 disabled 无害；
+//	· 撤销清理**必须**看到全部，否则 disabled 的贡献会被漏掉。
 func (r *GalaxyRepository) ListContributionsByNode(ctx context.Context, bizLine, nodeID string) ([]*GalaxyContribution, error) {
 	var rows []*GalaxyContribution
 	err := r.Db.WithContext(ctx).
-		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).Where("status <> ?", "disabled").
+		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
 		Order("cid").Find(&rows).Error
 	return rows, err
 }
 
+// ListContributionsByOwner 主人名下的**全部**贡献，包含 disabled 的。
+//
+// 和 ListContributionsByNode 同一个坑：这里曾经过滤 status <> 'disabled'，
+// 而 findOwnedContribution（开关、改额度都走它）用的就是这个查询 —— 于是对一条
+// 关着的贡献做任何操作都报「贡献不存在」。而关着的贡献唯一能做的操作就是打开它，
+// 所以那是个完整的死锁：看得见、点不动。
+//
+// 调度侧不受影响，它走的是 ListActiveContributions（显式列 active/draining/paused）。
 func (r *GalaxyRepository) ListContributionsByOwner(ctx context.Context, bizLine, ownerUserID string) ([]*GalaxyContribution, error) {
 	var rows []*GalaxyContribution
 	err := r.Db.WithContext(ctx).
-		Where("biz_line = ?", bizLine).Where("owner_user_id = ?", ownerUserID).Where("status <> ?", "disabled").
+		Where("biz_line = ?", bizLine).Where("owner_user_id = ?", ownerUserID).
 		Order("node_id, cid").Find(&rows).Error
 	return rows, err
 }
@@ -88,6 +155,19 @@ func (r *GalaxyRepository) SetContributionStatus(ctx context.Context, bizLine, c
 	return r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
 		Where("biz_line = ?", bizLine).Where("cid = ?", cid).
 		Update("status", status).Error
+}
+
+// DisableContributionsByNode 把一台机器名下的贡献全部关掉。撤销与封禁都走它。
+//
+// 撤销**必须**做这一步，光摘控制面不够：巡检按贡献倒推节点状态，留下来的 active
+// 贡献行会让它把刚撤销的机器判成离线（见 MarkNodeOffline 上的注释），而且这些
+// 幽灵行还会进池水位、Hub 重启时被重新装回控制面。
+//
+// 和 ReplaceContributions 一样只置 disabled 不删行：历史用量与账本还引用着这些 cid。
+func (r *GalaxyRepository) DisableContributionsByNode(ctx context.Context, bizLine, nodeID string) error {
+	return r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
+		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
+		Update("status", "disabled").Error
 }
 
 func (r *GalaxyRepository) AdjustReputation(ctx context.Context, bizLine, cid string, delta float64) error {

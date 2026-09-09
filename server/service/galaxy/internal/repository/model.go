@@ -8,7 +8,7 @@
 // biz_line 固定为 galaxy（决策 D-05）。
 package repository
 
-// 时间列一律写 `type:timestamp null`，不要写成 `type:timestamp` 或 `type:timestamp;null`。
+// 时间列一律写 `type:timestamp null default null`。
 //
 // `;null` 是个空写法：GORM 不认识这个标签元素，发出去的 DDL 里没有 NULL。而 MySQL 在
 // explicit_defaults_for_timestamp=OFF 时（5.7 默认，8.x 也可能被配成这样）会对没有显式
@@ -19,6 +19,13 @@ package repository
 //
 // 报错那半反而是好事，静默那半才要命：zt_galaxy_price.effective_from 在唯一键里，
 // 一旦带上 ON UPDATE，任何一次 UPDATE 都会改写它，定价历史当场就乱了。
+//
+// **光写 `null` 压不住它。** 这是踩过之后补上的：`type:timestamp null` 建出来的列
+// 实测仍然是 null=NO、default=CURRENT_TIMESTAMP、extra="on update CURRENT_TIMESTAMP"
+// —— MySQL 对每张表第一个 TIMESTAMP 列的这条隐式规则，只有显式给 DEFAULT 才能关掉。
+// 症状是 zt_galaxy_node.last_beat_at 被 sweep 的 UPDATE 顺手刷新，
+// 界面上出现「离线，最近心跳 51 秒前」这种自相矛盾的一行。
+// 已经建好的库要跑 server/migrations/20260908_timestamp_no_auto_update.sql 修回来。
 
 import "time"
 
@@ -38,7 +45,7 @@ type GalaxyNode struct {
 
 	Status     string     `gorm:"column:status;type:varchar(16);index:idx_gx_node_owner,priority:3" description:"active/offline/revoked"`
 	Banned     bool       `gorm:"column:banned;default:false" description:"平台封禁"`
-	LastBeatAt *time.Time `gorm:"column:last_beat_at;type:timestamp null" description:"最近一次心跳"`
+	LastBeatAt *time.Time `gorm:"column:last_beat_at;type:timestamp null default null" description:"最近一次心跳"`
 
 	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime" description:"更新时间"`
@@ -55,8 +62,8 @@ type GalaxyPairingCode struct {
 
 	OwnerUserID  string     `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_pairing_owner,priority:2"`
 	TermsVersion string     `gorm:"column:terms_version;type:varchar(32)" description:"签发时的条款版本，pair 时再校验一次"`
-	ExpiresAt    time.Time  `gorm:"column:expires_at;type:timestamp null" description:"过期时刻"`
-	ConsumedAt   *time.Time `gorm:"column:consumed_at;type:timestamp null" description:"被兑换的时刻，非空即失效"`
+	ExpiresAt    time.Time  `gorm:"column:expires_at;type:timestamp null default null" description:"过期时刻"`
+	ConsumedAt   *time.Time `gorm:"column:consumed_at;type:timestamp null default null" description:"被兑换的时刻，非空即失效"`
 	NodeID       string     `gorm:"column:node_id;type:varchar(64)" description:"兑换出的节点"`
 	CreatedTime  time.Time  `gorm:"column:created_time;autoCreateTime"`
 }
@@ -78,13 +85,37 @@ type GalaxyContribution struct {
 	Provider    string `gorm:"column:provider;type:varchar(64);index:idx_gx_contribution_lane,priority:3" description:"路由键，选节点 provider"`
 
 	ModelsAllowJSON string `gorm:"column:models_allow_json;type:varchar(1024)" description:"模型白名单模式数组"`
-	ModelsDenyJSON  string `gorm:"column:models_deny_json;type:varchar(1024)" description:"模型黑名单模式数组"`
-	Seats           int    `gorm:"column:seats;default:3" description:"同时服务的消费者数量上限"`
-	SeatConcurrency int    `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
-	ScheduleJSON    string `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
+	// ModelsAvailableJSON 是**节点报上来的事实**：上游现在有哪些模型。
+	// 和 ModelsAllow/Deny 是两回事 —— 那两个是主人定的规则（还支持 claude-sonnet-* 这种
+	// 通配），这个只是给控制台当候选项，免得主人得自己记住上游有什么。
+	ModelsAvailableJSON string `gorm:"column:models_available_json;type:varchar(4096)" description:"节点上报的上游可用模型名"`
+	ModelsDenyJSON      string `gorm:"column:models_deny_json;type:varchar(1024)" description:"模型黑名单模式数组"`
+	Seats               int    `gorm:"column:seats;default:3" description:"同时服务的消费者数量上限"`
+	SeatConcurrency     int    `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
+	ScheduleJSON        string `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
 
 	Status     string  `gorm:"column:status;type:varchar(16);index:idx_gx_contribution_node,priority:3" description:"active/draining/paused/disabled"`
 	Reputation float64 `gorm:"column:reputation;default:1" description:"信誉分 0..1，抽检与投诉扣分"`
+
+	// Available / UnavailableReason 是**节点报上来的事实**，和 Status 是两回事：
+	// Status 说的是「主人愿不愿意共享」，这两个说的是「这台机器现在能不能干」。
+	// 分开存是因为它们会独立变化 —— Claude 登录态过期时能力不可用，但主人的
+	// 勾选不该被清掉，登录回来就该自动恢复，而不是让他重新配一遍。
+	// UnavailableReason 原样展示给主人（「请运行 claude auth login」这种），
+	// 所以它必须是人话，不是错误码。
+	// **不要给它加 default 标签。** GORM 对带 default 的字段，在值为零值（false）时
+	// 会把这一列从 INSERT 里整个省掉、让数据库默认值生效；而 SyncContributionInventory
+	// 的 upsert 用的是 ON DUPLICATE KEY UPDATE available=VALUES(available)，
+	// VALUES(available) 于是取到默认值 1 —— 结果就是 available=false **永远写不进去**。
+	//
+	// 表现极具迷惑性：节点如实上报「Claude 登录态失效」，库里却一直是「可用」，
+	// effectiveContributions 照常把它下发，节点给一个用不了的上游建通道，
+	// 派到它头上的请求全部失败。而界面上它显示「共享中 / 在线」，一切正常。
+	//
+	// 建表语句里的 NOT NULL DEFAULT 1 保留：那是给迁移时的存量行用的，
+	// 新写入一律由 Hello 显式给值（那也是唯一创建这张表行的地方）。
+	Available         bool   `gorm:"column:available" description:"节点最近一次上报说这个能力本机可不可用"`
+	UnavailableReason string `gorm:"column:unavailable_reason;type:varchar(256)" description:"不可用的原因，人话，直接展示给主人"`
 
 	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
@@ -121,7 +152,7 @@ type GalaxyQuotaWindow struct {
 
 	Used       int64     `gorm:"column:used"`
 	Reserved   int64     `gorm:"column:reserved"`
-	SnapshotAt time.Time `gorm:"column:snapshot_at;type:timestamp null"`
+	SnapshotAt time.Time `gorm:"column:snapshot_at;type:timestamp null default null"`
 }
 
 func (r *GalaxyQuotaWindow) TableName() string { return "zt_galaxy_quota_window" }
@@ -136,9 +167,9 @@ type GalaxySeatBinding struct {
 	ConsumerKey string `gorm:"column:consumer_key;type:varchar(64);uniqueIndex:uk_gx_seat_binding,priority:3"`
 	Lane        string `gorm:"column:lane;type:varchar(128);uniqueIndex:uk_gx_seat_binding,priority:4"`
 
-	BoundAt    time.Time  `gorm:"column:bound_at;type:timestamp null"`
-	LastUsedAt time.Time  `gorm:"column:last_used_at;type:timestamp null"`
-	ReleasedAt *time.Time `gorm:"column:released_at;type:timestamp null"`
+	BoundAt    time.Time  `gorm:"column:bound_at;type:timestamp null default null"`
+	LastUsedAt time.Time  `gorm:"column:last_used_at;type:timestamp null default null"`
+	ReleasedAt *time.Time `gorm:"column:released_at;type:timestamp null default null"`
 }
 
 func (r *GalaxySeatBinding) TableName() string { return "zt_galaxy_seat_binding" }
@@ -172,9 +203,9 @@ type GalaxyUnit struct {
 	ErrorCode  string `gorm:"column:error_code;type:varchar(48)"`
 	ErrorMsg   string `gorm:"column:error_message;type:varchar(512)" description:"面向消费者的简明错误，不含请求内容"`
 
-	FirstByteAt *time.Time `gorm:"column:first_byte_at;type:timestamp null" description:"首字节时刻，决定失败语义"`
-	StartedAt   *time.Time `gorm:"column:started_at;type:timestamp null"`
-	FinishedAt  *time.Time `gorm:"column:finished_at;type:timestamp null"`
+	FirstByteAt *time.Time `gorm:"column:first_byte_at;type:timestamp null default null" description:"首字节时刻，决定失败语义"`
+	StartedAt   *time.Time `gorm:"column:started_at;type:timestamp null default null"`
+	FinishedAt  *time.Time `gorm:"column:finished_at;type:timestamp null default null"`
 
 	EstimateJSON string `gorm:"column:estimate_json;type:varchar(512)"`
 	ActualJSON   string `gorm:"column:actual_json;type:varchar(512)"`
@@ -257,14 +288,14 @@ type GalaxyConsumerKey struct {
 	RPM                  int    `gorm:"column:rpm;default:120"`
 
 	Status      string     `gorm:"column:status;type:varchar(16);index:idx_gx_consumer_key_owner,priority:3" description:"active/expired/frozen/revoked"`
-	IssuedAt    time.Time  `gorm:"column:issued_at;type:timestamp null"`
-	ExpiresAt   time.Time  `gorm:"column:expires_at;type:timestamp null" description:"到期后请求返回 key_expired"`
-	FrozenUntil *time.Time `gorm:"column:frozen_until;type:timestamp null" description:"冻结期内可续期换发"`
+	IssuedAt    time.Time  `gorm:"column:issued_at;type:timestamp null default null"`
+	ExpiresAt   time.Time  `gorm:"column:expires_at;type:timestamp null default null" description:"到期后请求返回 key_expired"`
+	FrozenUntil *time.Time `gorm:"column:frozen_until;type:timestamp null default null" description:"冻结期内可续期换发"`
 	RenewedFrom string     `gorm:"column:renewed_from_key_id;type:varchar(64)"`
 
 	// 数据告知：密钥签发时必须记录消费者确认（C-13）。
 	NoticeVersion string    `gorm:"column:notice_version;type:varchar(32)"`
-	NoticeAckAt   time.Time `gorm:"column:notice_ack_at;type:timestamp null"`
+	NoticeAckAt   time.Time `gorm:"column:notice_ack_at;type:timestamp null default null"`
 
 	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
@@ -294,7 +325,7 @@ type GalaxyConsentRecord struct {
 	SubjectType  string    `gorm:"column:subject_type;type:varchar(16);index:idx_gx_consent_subject,priority:2" description:"provider/consumer"`
 	UserID       string    `gorm:"column:user_id;type:varchar(64);index:idx_gx_consent_subject,priority:3"`
 	TermsVersion string    `gorm:"column:terms_version;type:varchar(32);index:idx_gx_consent_subject,priority:4"`
-	AcceptedAt   time.Time `gorm:"column:accepted_at;type:timestamp null"`
+	AcceptedAt   time.Time `gorm:"column:accepted_at;type:timestamp null default null"`
 	IP           string    `gorm:"column:ip;type:varchar(64)"`
 	UserAgent    string    `gorm:"column:user_agent;type:varchar(256)"`
 	CreatedTime  time.Time `gorm:"column:created_time;autoCreateTime"`
@@ -309,7 +340,7 @@ type GalaxyPrice struct {
 	BizLine       string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_price,priority:1"`
 	Kind          string    `gorm:"column:kind;type:varchar(64);uniqueIndex:uk_gx_price,priority:2"`
 	Unit          string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_price,priority:3"`
-	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null;uniqueIndex:uk_gx_price,priority:4"`
+	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null default null;uniqueIndex:uk_gx_price,priority:4"`
 	// Price 是每百万单位的价格（微分），避免浮点累积误差。
 	Price         int64   `gorm:"column:price" description:"每百万单位价格，单位微分"`
 	Currency      string  `gorm:"column:currency;type:varchar(8);default:'CNY'"`
@@ -330,7 +361,7 @@ type GalaxyArtifact struct {
 	Size        int64      `gorm:"column:size"`
 	SHA256      string     `gorm:"column:sha256;type:varchar(64)"`
 	ContentType string     `gorm:"column:content_type;type:varchar(128)"`
-	ExpiresAt   *time.Time `gorm:"column:expires_at;type:timestamp null" description:"按 kind 保留期清理"`
+	ExpiresAt   *time.Time `gorm:"column:expires_at;type:timestamp null default null" description:"按 kind 保留期清理"`
 	Deleted     bool       `gorm:"column:deleted;default:false"`
 	CreatedTime time.Time  `gorm:"column:created_time;autoCreateTime"`
 }
@@ -427,7 +458,7 @@ type GalaxyAuditProbe struct {
 	Verdict      string     `gorm:"column:verdict;type:varchar(16);index:idx_gx_audit_probe_pending,priority:2" description:"pending/ready/pass/suspect/forged/skipped"`
 	Detail       string     `gorm:"column:detail;type:varchar(512)"`
 	CreatedAt    time.Time  `gorm:"column:created_at;autoCreateTime;index:idx_gx_audit_probe_cid,priority:3;index:idx_gx_audit_probe_pending,priority:3"`
-	CheckedAt    *time.Time `gorm:"column:checked_at;type:timestamp null"`
+	CheckedAt    *time.Time `gorm:"column:checked_at;type:timestamp null default null"`
 }
 
 func (r *GalaxyAuditProbe) TableName() string { return "zt_galaxy_audit_probe" }
@@ -485,8 +516,8 @@ type GalaxyOrder struct {
 	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_order_user,priority:3" description:"pending/paid/fulfilled/cancelled"`
 	// PaymentRef 支付渠道的流水号，同时是回调幂等键。
 	PaymentRef  string     `gorm:"column:payment_ref;type:varchar(128)"`
-	PaidAt      *time.Time `gorm:"column:paid_at;type:timestamp null"`
-	FulfilledAt *time.Time `gorm:"column:fulfilled_at;type:timestamp null"`
+	PaidAt      *time.Time `gorm:"column:paid_at;type:timestamp null default null"`
+	FulfilledAt *time.Time `gorm:"column:fulfilled_at;type:timestamp null default null"`
 	CreatedTime time.Time  `gorm:"column:created_time;autoCreateTime;index:idx_gx_order_user,priority:4"`
 	UpdatedTime time.Time  `gorm:"column:updated_time;autoUpdateTime"`
 }
@@ -525,7 +556,7 @@ type GalaxyLedgerSession struct {
 	CloseReason          string `gorm:"column:close_reason;type:varchar(128)"`
 
 	CreatedTime time.Time  `gorm:"column:created_time;autoCreateTime"`
-	LastTurnAt  *time.Time `gorm:"column:last_turn_at;type:timestamp null"`
+	LastTurnAt  *time.Time `gorm:"column:last_turn_at;type:timestamp null default null"`
 	UpdatedTime time.Time  `gorm:"column:updated_time;autoUpdateTime"`
 }
 
@@ -553,8 +584,8 @@ type GalaxyLedgerTurn struct {
 	// WorkspaceLost 记录续接时丢掉了未推送的改动。这件事必须让用户看见，
 	// 不能悄悄发生（T-09）。
 	WorkspaceLost bool       `gorm:"column:workspace_lost;default:false"`
-	StartedAt     time.Time  `gorm:"column:started_at;type:timestamp null"`
-	EndedAt       *time.Time `gorm:"column:ended_at;type:timestamp null"`
+	StartedAt     time.Time  `gorm:"column:started_at;type:timestamp null default null"`
+	EndedAt       *time.Time `gorm:"column:ended_at;type:timestamp null default null"`
 }
 
 func (r *GalaxyLedgerTurn) TableName() string { return "zt_galaxy_ledger_turn" }
@@ -614,7 +645,7 @@ type GalaxyDispute struct {
 	RefundJSON     string     `gorm:"column:refund_json;type:varchar(512)" description:"实际退回的量，按计量单位。空表示成立但没有可退的钱"`
 	ClawbackAmount int64      `gorm:"column:clawback_amount;default:0" description:"从提供者积分里扣回的金额"`
 	HandledBy      string     `gorm:"column:handled_by;type:varchar(64)"`
-	HandledAt      *time.Time `gorm:"column:handled_at;type:timestamp null"`
+	HandledAt      *time.Time `gorm:"column:handled_at;type:timestamp null default null"`
 
 	// created_time 进这两个索引的末位：两个列表查询都是「按状态 / 按人过滤，
 	// 再按时间倒序取前 N 条」。不带它，MySQL 取到行之后还要 filesort 一遍。

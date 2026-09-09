@@ -20,16 +20,18 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 	now := time.Now()
 	views := make([]dto.AdminNodeView, 0, len(nodes))
 	for _, node := range nodes {
+		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
+		if err != nil {
+			return nil, err
+		}
+		// 和 ListNodes 同一个理由：nil 切片序列化成 null，会覆盖掉前端的默认 []。
 		view := dto.AdminNodeView{
 			NodeView: dto.NodeView{
 				NodeID: node.NodeID, DisplayName: node.DisplayName, BridgeVersion: node.BridgeVersion,
 				Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
+				Contributions: make([]dto.ContributionView, 0, len(rows)),
 			},
 			OwnerUserID: node.OwnerUserID,
-		}
-		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
-		if err != nil {
-			return nil, err
 		}
 		grants, err := s.loadGrants(ctx, cidsOf(rows))
 		if err != nil {
@@ -57,16 +59,7 @@ func (s *service) BanNode(ctx context.Context, req dto.BanNodeRequest) error {
 	if err := s.control.DropNode(ctx, req.NodeID); err != nil {
 		return err
 	}
-	rows, err := s.repository.ListContributionsByNode(ctx, bizLine, req.NodeID)
-	if err != nil {
-		return err
-	}
-	for _, row := range rows {
-		if err := s.repository.SetContributionStatus(ctx, bizLine, row.CID, statusDisabled); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.repository.DisableContributionsByNode(ctx, bizLine, req.NodeID)
 }
 
 // AdminProbes 最近的抽检结果。只返回签名与判定，请求原文在比对完成时就已清掉。

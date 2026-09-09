@@ -36,6 +36,10 @@ type PairRequest struct {
 	Code          string `json:"code" binding:"required"`
 	DisplayName   string `json:"displayName"`
 	BridgeVersion string `json:"bridgeVersion"`
+	// PreviousNodeID 这台机器上一次配对拿到的 nodeId（节点从本地令牌文件里读）。
+	// 给了就把那条旧记录退役，避免同一台机器每重配一次就多一个僵尸节点。
+	// 可选：全新机器没有它；老版本节点也不会传。
+	PreviousNodeID string `json:"previousNodeId"`
 }
 
 type PairResult struct {
@@ -60,6 +64,32 @@ type ContributionInput struct {
 	Quota           []QuotaGrantInput `json:"quota"`
 	Schedule        []ScheduleInput   `json:"schedule"`
 	UpstreamOK      *bool             `json:"upstreamOK"`
+	// AvailableModels 上游现在有哪些模型，节点探测后上报，控制台拿它当候选项。
+	// 刻意不叫 models：上面那个 Models 是 {allow,deny} 对象，同名会让反序列化直接失败。
+	AvailableModels []string `json:"availableModels"`
+	// Available / UnavailableReason 是节点探测到的事实：这台机器现在能不能干这件事。
+	// 它和「主人愿不愿意共享」是两回事 —— 后者由控制台定，节点无权表态。
+	// 不可用的原因要写成人话，它会原样显示给主人（「请运行 claude auth login」）。
+	Available         *bool  `json:"available"`
+	UnavailableReason string `json:"unavailableReason"`
+}
+
+// EnabledContribution 是 Hub 下发给节点的**生效配置**：主人在控制台开着、
+// 且节点报了可用的那些能力，连同额度、座位、模型范围和挂机时段。
+//
+// 节点按它建通道。本机配置文件不再决定共享什么 —— 那是主人在控制台的事，
+// 「随时随地能调」这条要求就落在这里：改完下一次心跳（≤15s）节点就换过来了。
+type EnabledContribution struct {
+	CID             string            `json:"cid"`
+	Kind            string            `json:"kind"`
+	KindVersion     int               `json:"kindVersion"`
+	Provider        string            `json:"provider"`
+	ModelsAllow     []string          `json:"modelsAllow"`
+	ModelsDeny      []string          `json:"modelsDeny"`
+	Seats           int               `json:"seats"`
+	SeatConcurrency int               `json:"seatConcurrency"`
+	Quota           []QuotaGrantInput `json:"quota"`
+	Schedule        []ScheduleInput   `json:"schedule"`
 }
 
 type QuotaGrantInput struct {
@@ -95,6 +125,9 @@ type HelloResult struct {
 	// QuotaEffective 是 Hub 侧生效值。主人在控制台改过额度时它与节点本地不同，
 	// 节点以此为准更新展示副本。
 	QuotaEffective map[string][]QuotaGrantInput `json:"quotaEffective"`
+	// Enabled 是节点这一刻该跑的全部通道。空数组表示一条都不该跑（全被关了或全不可用），
+	// 这和「字段缺失」必须分得开 —— 后者是老版本 Hub，节点应当维持现状而不是全停。
+	Enabled []EnabledContribution `json:"enabled"`
 }
 
 // HeartbeatRequest 每 15s 一次。节点自报负载，Hub 回下发取消与额度更新。
@@ -119,6 +152,10 @@ type HeartbeatResult struct {
 	Drain       []string                     `json:"drain"`
 	QuotaUpdate map[string]contract.Metering `json:"quotaUpdate"`
 	ServerTime  int64                        `json:"serverTime"`
+	// Enabled 和 hello 里那个是同一份东西，搭在心跳上下发。
+	// 主人在控制台开关一条贡献、改额度或改时段，节点最迟一个心跳周期就换过来 ——
+	// 「随时随地能调」靠的就是这一条，不需要主人回到那台机器上做任何事。
+	Enabled []EnabledContribution `json:"enabled"`
 }
 
 // ---------- 节点：领活与回传 ----------
@@ -252,7 +289,10 @@ type UsageQuery struct {
 // UsageLine 一行扣费明细。input 与 output token 分行列出、按各自单价计算（验收标准）。
 type UsageLine struct {
 	Kind string `json:"kind"`
-	Unit string `json:"unit"`
+	// Provider 是这笔用量走的上游（claude_oauth / codex_chatgpt 等）。
+	// 同一个 kind 下 Claude 与 Codex 分行列出：账单要能看出钱花在哪个上游。
+	Provider string `json:"provider"`
+	Unit     string `json:"unit"`
 	// Amount 该单位的累计量；Calls 是产生它的请求数。
 	Amount int64 `json:"amount"`
 	Calls  int64 `json:"calls"`
@@ -272,13 +312,15 @@ type UsageReport struct {
 // ---------- 提供者视图 ----------
 
 type ContributionView struct {
-	CID             string            `json:"cid"`
-	NodeID          string            `json:"nodeId"`
-	Kind            string            `json:"kind"`
-	KindVersion     int               `json:"kindVersion"`
-	Provider        string            `json:"provider"`
-	ModelsAllow     []string          `json:"modelsAllow"`
-	ModelsDeny      []string          `json:"modelsDeny"`
+	CID         string   `json:"cid"`
+	NodeID      string   `json:"nodeId"`
+	Kind        string   `json:"kind"`
+	KindVersion int      `json:"kindVersion"`
+	Provider    string   `json:"provider"`
+	ModelsAllow []string `json:"modelsAllow"`
+	ModelsDeny  []string `json:"modelsDeny"`
+	// 节点报的上游可用模型。给控制台当候选项，不参与任何调度判定。
+	AvailableModels []string          `json:"availableModels"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
 	Status          string            `json:"status"`
@@ -290,6 +332,13 @@ type ContributionView struct {
 	Quota           []QuotaStatusView `json:"quota"`
 	Schedule        []ScheduleInput   `json:"schedule"`
 	ThrottledUntil  *time.Time        `json:"throttledUntil,omitempty"`
+	// Available / UnavailableReason 是节点报的「这台机器现在能不能干」，
+	// 和 Status（主人愿不愿意共享）是两回事，界面上要分开显示：
+	// 一个是「你关掉了」，另一个是「你的 Claude 登录态过期了」，处置方式完全不同。
+	Available         bool   `json:"available"`
+	UnavailableReason string `json:"unavailableReason,omitempty"`
+	// SeatsBound 有多少消费者绑在这条贡献上。大于 0 时不允许下线。
+	SeatsBound int `json:"seatsBound"`
 }
 
 type QuotaStatusView struct {
@@ -604,7 +653,9 @@ type WorkloadQuery struct {
 // 额度以 Hub 为权威（三维额度规则第 8 条）：这里改完之后，节点下一次 hello
 // 拿到的 quotaEffective 就与它本地申报的不同，节点以 Hub 为准更新展示副本。
 type SaveContributionLimitsRequest struct {
-	OwnerUserID     string            `json:"-"`
+	OwnerUserID string `json:"-"`
+	// NodeID 用来消歧：cid 是去掉节点前缀的短名，多台机器上会重名。
+	NodeID          string            `json:"nodeId"`
 	CID             string            `json:"cid" binding:"required"`
 	ModelsAllow     []string          `json:"modelsAllow"`
 	ModelsDeny      []string          `json:"modelsDeny"`

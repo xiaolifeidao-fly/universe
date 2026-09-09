@@ -43,6 +43,9 @@ func (h *Handler) RegisterNative(group *gin.RouterGroup) {
 // RegisterConsole 挂在 /api/galaxy 下，用控制台用户令牌鉴权。
 func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	console := group.Group("/consumer", httpx.RequireUser())
+	// SDK 接入要的两样东西之一（另一样是密钥）。地址由服务端给，
+	// 前端不该再配一遍 —— 配两处迟早对不上。
+	console.GET("/endpoint", h.consumerEndpoint)
 	console.GET("/notice", h.currentNotice)
 	console.POST("/notice/accept", h.acceptNotice)
 	console.GET("/keys", h.listKeys)
@@ -309,6 +312,11 @@ func (h *Handler) describeKey(context *gin.Context) {
 
 // currentNotice 当前的数据告知版本与本人是否已确认。
 // 和提供者那边的 /terms 对称：前端要能在下单之前就知道拦不拦得住。
+// consumerEndpoint 消费者 SDK 要填的 base_url。
+func (h *Handler) consumerEndpoint(context *gin.Context) {
+	httpx.JSON(context, gin.H{"baseUrl": h.service.Config().ConsumerBaseURL}, nil)
+}
+
 func (h *Handler) currentNotice(context *gin.Context) {
 	version := h.service.Config().ConsumerNoticeVersion
 	accepted, err := h.service.HasConsent(context.Request.Context(), "consumer", httpx.CallerID(context), version)

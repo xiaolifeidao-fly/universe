@@ -108,6 +108,9 @@ export class PaymentChannelView {
 export class UsageLine {
   kind = "";
 
+  /** 走的是哪个上游：claude_oauth / codex_chatgpt。单元行不在了就是空串。 */
+  provider = "";
+
   unit = "";
 
   amount = 0;
@@ -129,6 +132,15 @@ export class UsageReport {
   totalFee = 0;
 
   currency = "CNY";
+}
+
+/** SDK 要填的 base_url。由服务端给（配置在 galaxy.instance / galaxy.consumer_base_url），前端不再自己拼。 */
+export class ConsumerEndpoint {
+  baseUrl = "";
+}
+
+export async function fetchConsumerEndpoint() {
+  return getData(ConsumerEndpoint, "/galaxy/consumer/endpoint");
 }
 
 export async function fetchNotice() {

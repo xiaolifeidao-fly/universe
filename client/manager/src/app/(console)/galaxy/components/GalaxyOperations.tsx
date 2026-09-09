@@ -145,7 +145,11 @@ export function GalaxyOperations() {
     {
       title: t("galaxy.node.contributions"),
       dataIndex: "contributions",
-      render: (contributions: AdminNodeView["contributions"]) => (
+      // ?? [] 是护栏：服务端已经保证列不会是 null，但一台刚配对、还没 hello 的
+      // 机器贡献就是空的，这一列崩掉会带走整个运营页。
+      render: (value: AdminNodeView["contributions"]) => {
+        const contributions = value ?? [];
+        return (
         <Space size={6} wrap>
           {contributions.length === 0 ? "-" : null}
           {contributions.map((item) => (
@@ -155,7 +159,8 @@ export function GalaxyOperations() {
             </Tag>
           ))}
         </Space>
-      ),
+        );
+      },
     },
     {
       title: t("galaxy.actions"),
@@ -202,6 +207,13 @@ export function GalaxyOperations() {
 
   const usageColumns: ColumnsType<UsageLine> = [
     { title: t("galaxy.usage.kind"), dataIndex: "kind", width: 160 },
+    // 上游单独一列：llm.chat 底下 Claude 与 Codex 的量各算各的，合在一起看不出池子里谁在被用。
+    {
+      title: t("galaxy.usage.provider"),
+      dataIndex: "provider",
+      width: 170,
+      render: (provider: string) => provider || "-",
+    },
     { title: t("galaxy.usage.unit"), dataIndex: "unit", width: 220 },
     { title: t("galaxy.usage.amount"), dataIndex: "amount", align: "right", width: 140 },
     { title: t("galaxy.usage.calls"), dataIndex: "calls", align: "right", width: 120 },
@@ -292,13 +304,13 @@ export function GalaxyOperations() {
                   {t("galaxy.usage.total")}: ¥{((usage?.totalFee ?? 0) / 1_000_000).toFixed(2)}
                 </div>
                 <Table<UsageLine>
-                  rowKey={(row) => `${row.kind}:${row.unit}`}
+                  rowKey={(row) => `${row.kind}:${row.provider}:${row.unit}`}
                   size="small"
                   loading={loading}
                   columns={usageColumns}
                   dataSource={usage?.lines ?? []}
                   pagination={false}
-                  scroll={{ x: 800 }}
+                  scroll={{ x: 970 }}
                 />
               </>
             ),

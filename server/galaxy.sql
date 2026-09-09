@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
   `resources_json`   text,                                         -- 探测到的本机资源，仅供放置的资源需求过滤
   `status`           varchar(16),                                  -- active/offline/revoked
   `banned`           boolean DEFAULT false,                        -- 平台封禁
-  `last_beat_at`     timestamp null,                               -- 最近一次心跳
+  `last_beat_at`     timestamp NULL DEFAULT NULL,                               -- 最近一次心跳
   `created_time`     datetime(3) NULL,                             -- 创建时间
   `updated_time`     datetime(3) NULL,                             -- 更新时间
   PRIMARY KEY (`id`),
@@ -59,8 +59,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_pairing_code` (
   `code`          varchar(32),                               -- 配对码明文，10 分钟有效
   `owner_user_id` varchar(64),
   `terms_version` varchar(32),                               -- 签发时的条款版本，pair 时再校验一次
-  `expires_at`    timestamp null,                            -- 过期时刻
-  `consumed_at`   timestamp null,                            -- 被兑换的时刻，非空即失效
+  `expires_at`    timestamp NULL DEFAULT NULL,                            -- 过期时刻
+  `consumed_at`   timestamp NULL DEFAULT NULL,                            -- 被兑换的时刻，非空即失效
   `node_id`       varchar(64),                               -- 兑换出的节点
   `created_time`  datetime(3) NULL,
   PRIMARY KEY (`id`),
@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `kind_version`      bigint,
   `provider`          varchar(64),                                  -- 路由键，选节点 provider
   `models_allow_json` varchar(1024),                                -- 模型白名单模式数组
+  `models_available_json` varchar(4096) DEFAULT NULL,               -- 节点上报的上游可用模型名，仅作控制台候选项
   `models_deny_json`  varchar(1024),                                -- 模型黑名单模式数组
   `seats`             bigint DEFAULT 3,                             -- 同时服务的消费者数量上限
   `seat_concurrency`  bigint DEFAULT 2,                             -- 单座位并发上限
@@ -113,7 +114,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_quota_window` (
   `window_key`  varchar(24),
   `used`        bigint,
   `reserved`    bigint,
-  `snapshot_at` timestamp null,
+  `snapshot_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_quota_window` (`biz_line`,`cid`,`unit`,`window_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -124,9 +125,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_seat_binding` (
   `cid`          varchar(96),
   `consumer_key` varchar(64),
   `lane`         varchar(128),
-  `bound_at`     timestamp null,
-  `last_used_at` timestamp null,
-  `released_at`  timestamp null,
+  `bound_at`     timestamp NULL DEFAULT NULL,
+  `last_used_at` timestamp NULL DEFAULT NULL,
+  `released_at`  timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_seat_binding` (`biz_line`,`cid`,`consumer_key`,`lane`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -160,9 +161,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_unit` (
   `error_class`   varchar(24),
   `error_code`    varchar(48),
   `error_message` varchar(512),                                                   -- 面向消费者的简明错误，不含请求内容
-  `first_byte_at` timestamp null,                                                 -- 首字节时刻，决定失败语义
-  `started_at`    timestamp null,
-  `finished_at`   timestamp null,
+  `first_byte_at` timestamp NULL DEFAULT NULL,                                                 -- 首字节时刻，决定失败语义
+  `started_at`    timestamp NULL DEFAULT NULL,
+  `finished_at`   timestamp NULL DEFAULT NULL,
   `estimate_json` varchar(512),
   `actual_json`   varchar(512),
   `instance`      varchar(128),                                                   -- 持有消费者连接的 Hub 实例
@@ -243,12 +244,12 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_key` (
   `concurrency`            bigint DEFAULT 4,
   `rpm`                    bigint DEFAULT 120,
   `status`                 varchar(16),                                    -- active/expired/frozen/revoked
-  `issued_at`              timestamp null,
-  `expires_at`             timestamp null,                                 -- 到期后请求返回 key_expired
-  `frozen_until`           timestamp null,                                 -- 冻结期内可续期换发
+  `issued_at`              timestamp NULL DEFAULT NULL,
+  `expires_at`             timestamp NULL DEFAULT NULL,                                 -- 到期后请求返回 key_expired
+  `frozen_until`           timestamp NULL DEFAULT NULL,                                 -- 冻结期内可续期换发
   `renewed_from_key_id`    varchar(64),
   `notice_version`         varchar(32),
-  `notice_ack_at`          timestamp null,
+  `notice_ack_at`          timestamp NULL DEFAULT NULL,
   `created_time`           datetime(3) NULL,
   `updated_time`           datetime(3) NULL,
   PRIMARY KEY (`id`),
@@ -275,7 +276,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consent_record` (
   `subject_type`  varchar(16),                                                          -- provider/consumer
   `user_id`       varchar(64),
   `terms_version` varchar(32),
-  `accepted_at`   timestamp null,
+  `accepted_at`   timestamp NULL DEFAULT NULL,
   `ip`            varchar(64),
   `user_agent`    varchar(256),
   `created_time`  datetime(3) NULL,
@@ -288,7 +289,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_price` (
   `biz_line`       varchar(32),
   `kind`           varchar(64),
   `unit`           varchar(48),
-  `effective_from` timestamp null,
+  `effective_from` timestamp NULL DEFAULT NULL,
   `price`          bigint,                                                -- 每百万单位价格，单位微分
   `currency`       varchar(8) DEFAULT 'CNY',
   `provider_share` double DEFAULT 0.700000,                               -- 提供者分成比例
@@ -306,7 +307,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_artifact` (
   `size`         bigint,
   `sha256`       varchar(64),
   `content_type` varchar(128),
-  `expires_at`   timestamp null,                               -- 按 kind 保留期清理
+  `expires_at`   timestamp NULL DEFAULT NULL,                               -- 按 kind 保留期清理
   `deleted`      boolean DEFAULT false,
   `created_time` datetime(3) NULL,
   PRIMARY KEY (`id`),
@@ -348,8 +349,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_order` (
   `key_id`        varchar(64),                                              -- 履约后落到哪把密钥
   `status`        varchar(16),                                              -- pending/paid/fulfilled/cancelled
   `payment_ref`   varchar(128),
-  `paid_at`       timestamp null,
-  `fulfilled_at`  timestamp null,
+  `paid_at`       timestamp NULL DEFAULT NULL,
+  `fulfilled_at`  timestamp NULL DEFAULT NULL,
   `created_time`  datetime(3) NULL,
   `updated_time`  datetime(3) NULL,
   PRIMARY KEY (`id`),
@@ -382,7 +383,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_ledger_session` (
   `workspace_ref_json`     varchar(1024),                                -- 工作区分支与 commit，跨节点续接靠它
   `close_reason`           varchar(128),
   `created_time`           datetime(3) NULL,
-  `last_turn_at`           timestamp null,
+  `last_turn_at`           timestamp NULL DEFAULT NULL,
   `updated_time`           datetime(3) NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_ledger_session` (`biz_line`,`sid`),
@@ -405,8 +406,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_ledger_turn` (
   `external_thread_id` varchar(128),                         -- 节点侧 CLI thread，换节点后失效
   `state`              varchar(16),
   `workspace_lost`     boolean DEFAULT false,
-  `started_at`         timestamp null,
-  `ended_at`           timestamp null,
+  `started_at`         timestamp NULL DEFAULT NULL,
+  `ended_at`           timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_ledger_turn` (`biz_line`,`sid`,`seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -508,7 +509,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_audit_probe` (
   `verdict`          varchar(16),                                         -- pending/ready/pass/suspect/forged/skipped
   `detail`           varchar(512),
   `created_at`       datetime(3) NULL,
-  `checked_at`       timestamp null,
+  `checked_at`       timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   INDEX `idx_gx_audit_probe_pending` (`biz_line`,`verdict`,`created_at`),
   UNIQUE INDEX `uk_gx_audit_probe` (`biz_line`,`probe_id`),
@@ -533,7 +534,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_dispute` (
   `refund_json`      varchar(512),                                               -- 实际退回的量，按计量单位。空表示成立但没有可退的钱
   `clawback_amount`  bigint DEFAULT 0,                                           -- 从提供者积分里扣回的金额
   `handled_by`       varchar(64),
-  `handled_at`       timestamp null,
+  `handled_at`       timestamp NULL DEFAULT NULL,
   `created_time`     datetime(3) NULL,
   `updated_time`     datetime(3) NULL,
   PRIMARY KEY (`id`),

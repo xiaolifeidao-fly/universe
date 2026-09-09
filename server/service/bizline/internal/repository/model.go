@@ -40,7 +40,7 @@ type BizLineShareLink struct {
 	BizLine     string    `gorm:"column:biz_line;type:varchar(32);index:idx_bizline_share_line" description:"业务线编码"`
 	Permission  string    `gorm:"column:permission;type:varchar(16)" description:"加入后的权限 read/write"`
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人用户标识"`
-	ExpiresAt   time.Time `gorm:"column:expires_at;type:timestamp" description:"过期时间，默认签发后 1 小时"`
+	ExpiresAt   time.Time `gorm:"column:expires_at;type:timestamp null default null" description:"过期时间，默认签发后 1 小时"`
 	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
 }
 

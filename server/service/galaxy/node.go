@@ -77,6 +77,9 @@ func (s *service) IssuePairingCode(ctx context.Context, req dto.IssuePairingCode
 	if !agreed {
 		return dto.PairingCodeView{}, contract.ErrConsentRequired
 	}
+	if err := s.assertNoOnlineNode(ctx, req.OwnerUserID); err != nil {
+		return dto.PairingCodeView{}, err
+	}
 	row := &repository.GalaxyPairingCode{
 		BizLine:      bizLine,
 		Code:         pairingCode(),
@@ -109,6 +112,11 @@ func (s *service) Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult
 	if !agreed {
 		return dto.PairResult{}, contract.ErrConsentRequired
 	}
+	// 签发那里已经拦过一次，这里再拦一次不是多余：码有 10 分钟有效期，
+	// 连点两下「生成配对码」就能在一台机器上线之前攒下两个码，拿去配第二台。
+	if err := s.assertNoOnlineNode(ctx, code.OwnerUserID); err != nil {
+		return dto.PairResult{}, err
+	}
 
 	secret := "gnt_" + randomToken(32)
 	node := &repository.GalaxyNode{
@@ -125,7 +133,74 @@ func (s *service) Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult
 	if err := s.repository.SaveNode(ctx, node); err != nil {
 		return dto.PairResult{}, err
 	}
+	// 新节点已经落库，再去退役旧的那条 —— 顺序反了万一 SaveNode 失败，
+	// 主人就既没有新节点、旧的也被撤了。
+	if previous := strings.TrimSpace(req.PreviousNodeID); previous != "" && previous != nodeID {
+		s.retirePreviousNode(ctx, previous, code.OwnerUserID)
+	}
 	return dto.PairResult{NodeID: nodeID, Token: secret}, nil
+}
+
+// assertNoOnlineNode 名下已经有机器在线时不放行配对。
+//
+// 换机器的路径因此是「先撤销、再配对」，而不是配一台新的、把旧的晾在那儿 ——
+// 后者会留下一堆主人自己也说不清还在不在跑的机器。重新配对同一台也走这条路。
+//
+// 判活以节点 status 为准：巡检每分钟把心跳过期的降为 offline，控制台机器列表上
+// 那个绿标看的也是它。两边必须是同一条标准，否则会出现列表说在线、上面却还摆着
+// 「生成配对码」的自相矛盾。
+func (s *service) assertNoOnlineNode(ctx context.Context, ownerUserID string) error {
+	nodes, err := s.repository.ListNodesByOwner(ctx, bizLine, ownerUserID)
+	if err != nil {
+		return err
+	}
+	online := firstOnlineNode(nodes)
+	if online == nil {
+		return nil
+	}
+	name := online.DisplayName
+	if name == "" {
+		name = online.NodeID
+	}
+	return fmt.Errorf("%s 已经在线，有机器在线时不再配对；要换一台机器或者重新配对这一台，请先撤销它", name)
+}
+
+// firstOnlineNode 名下第一台在线的机器，没有则 nil。
+// 封禁的不算在线 —— 它已经接不了活，拿它挡住配对只会让主人卡在一台没用的机器上。
+func firstOnlineNode(nodes []*repository.GalaxyNode) *repository.GalaxyNode {
+	for _, node := range nodes {
+		if node != nil && !node.Banned && node.Status == statusActive {
+			return node
+		}
+	}
+	return nil
+}
+
+// retirePreviousNode 把同一台机器上一次配对出来的节点退役。
+//
+// 为什么需要：Pair 每次都新建 node（nodeID 是新的 ULID），所以同一台机器每重新
+// 配对一次就多一条记录，旧的那条永远停在「离线」。主人看到的是列表里越堆越多的
+// 僵尸机器；更糟的是它们的贡献行还留在库里 —— 「改授权改到了别的机器上」那个 bug
+// 就是从这儿来的。
+//
+// 只退役**同一个主人**名下的节点：previousNodeId 是客户端传的，不校验的话，
+// 任何拿到一张配对码的人都能顺手把别人的机器踢下线。
+//
+// 刻意不要求「证明你持有旧令牌」：重新配对的最常见原因恰恰是旧令牌已经失效
+// （被撤销、库重建过）。校验到同主人就够了 —— 能拿到这张配对码的人，
+// 本来就能往这个账号里加机器，退役他自己的一台不扩大任何权限。
+//
+// 失败一律静默：新节点已经建好，配对本身是成功的。为一次可选的清理让整个配对
+// 报错回滚，代价远大于多留一个僵尸。
+func (s *service) retirePreviousNode(ctx context.Context, nodeID, ownerUserID string) {
+	row, err := s.repository.FindNode(ctx, bizLine, nodeID)
+	if err != nil || row == nil || row.OwnerUserID != ownerUserID {
+		return
+	}
+	// 走和主人自己点「撤销」同一条路：退役也要把那台机器的贡献行一起关掉，
+	// 否则巡检又会把它判成离线、连人带贡献一起搬回总览 —— 重新配对之后
+	// 看到的「同一台机器出现两次」就是这么来的。
+	_ = s.RevokeNode(ctx, ownerUserID, nodeID)
 }
 
 // AuthenticateNode 节点通道的鉴权入口。撤销后 token_hash 置空，这里查不到即 401。
@@ -147,7 +222,15 @@ func (s *service) AuthenticateNode(ctx context.Context, token string) (NodeIdent
 	return NodeIdentity{NodeID: row.NodeID, OwnerUserID: row.OwnerUserID, DisplayName: row.DisplayName, Banned: row.Banned}, nil
 }
 
-// Hello 全量替换该节点的贡献集合。未勾选的能力 Hub 不可见（P-03）。
+// Hello 对齐该节点的**能力清单**，并把主人在控制台定下的生效配置发回去。
+//
+// 权威归属：节点报「本机有什么、能不能用」，Hub 存「共享不共享、共享多少」。
+// 所以这里既不删行、也不碰 status / seats / models / schedule / 额度 ——
+// 那些是主人的设置，被一次重启覆盖掉等于每次都要重配一遍。
+//
+// 这推翻了原设计的 P-03「未勾选的能力 Hub 不可见」：要让主人在控制台上勾，
+// 平台就必须先知道有什么可勾。代价是平台在主人同意共享之前就知道这台机器上
+// 装了 Claude 还是 Codex —— 这是明确的产品决定，条款正文也要跟着改。
 func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloResult, error) {
 	if req.Contract != s.config.ContractVersion {
 		return dto.HelloResult{}, contract.NewUnitError(contract.ErrorClassProtocol, contract.CodeContractMismatch, false,
@@ -163,12 +246,10 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 
 	now := time.Now()
 	result := dto.HelloResult{QuotaEffective: map[string][]dto.QuotaGrantInput{}}
-	rows := make([]*repository.GalaxyContribution, 0, len(req.Contributions))
-	grants := map[string][]*repository.GalaxyQuotaGrant{}
-	snapshots := make([]ContributionSnapshot, 0, len(req.Contributions))
+	inventory := make([]*repository.GalaxyContribution, 0, len(req.Contributions))
 
 	for _, input := range req.Contributions {
-		spec, grantList, err := s.validateContribution(input)
+		spec, err := s.validateCapability(input)
 		if err != nil {
 			result.Rejected = append(result.Rejected, struct {
 				CID    string `json:"cid"`
@@ -176,55 +257,33 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 			}{CID: input.CID, Reason: err.Error()})
 			continue
 		}
-		cid := scopedCID(req.NodeID, input.CID)
-		rows = append(rows, &repository.GalaxyContribution{
-			BizLine:         bizLine,
-			CID:             cid,
-			NodeID:          req.NodeID,
-			OwnerUserID:     req.OwnerUserID,
-			Kind:            spec.Kind,
-			KindVersion:     spec.Version,
-			Provider:        input.Provider,
-			ModelsAllowJSON: encodeJSON(input.Models.Allow),
-			ModelsDenyJSON:  encodeJSON(input.Models.Deny),
-			Seats:           defaultInt(input.Seats, 3),
-			SeatConcurrency: defaultInt(input.SeatConcurrency, 2),
-			ScheduleJSON:    encodeJSON(input.Schedule),
-			Status:          statusActive,
-			Reputation:      1,
+		// 新能力默认是关的：探测到不等于愿意共享，那一下点头必须由主人来做。
+		// 已经存在的行不会被这里的 Status 覆盖（见 SyncContributionInventory）。
+		inventory = append(inventory, &repository.GalaxyContribution{
+			BizLine: bizLine, CID: scopedCID(req.NodeID, input.CID),
+			NodeID: req.NodeID, OwnerUserID: req.OwnerUserID,
+			Kind: spec.Kind, KindVersion: spec.Version, Provider: input.Provider,
+			Status:            statusDisabled,
+			Reputation:        1,
+			Available:         input.Available == nil || *input.Available,
+			UnavailableReason: truncate(input.UnavailableReason, 256),
+			// 截断而不是拒绝：模型清单只是候选项，一个上游返回几百个模型
+			// 不该让整台机器的 hello 失败。
+			ModelsAvailableJSON: truncate(encodeStrings(input.AvailableModels), 4096),
 		})
-		for _, grant := range grantList {
-			grants[cid] = append(grants[cid], &repository.GalaxyQuotaGrant{
-				BizLine: bizLine, CID: cid, Unit: grant.Unit,
-				LimitValue: grant.Limit, Window: grant.Window, ResetAt: grant.ResetAt,
-			})
-		}
 		result.Accepted = append(result.Accepted, input.CID)
 	}
 
-	if err := s.repository.ReplaceContributions(ctx, bizLine, req.NodeID, rows, grants); err != nil {
+	if err := s.repository.SyncContributionInventory(ctx, bizLine, req.NodeID, inventory); err != nil {
 		return dto.HelloResult{}, err
 	}
 
-	// Hub 侧额度为权威：主人在控制台改过的值会覆盖节点申报，节点以返回值更新展示副本。
-	effective, err := s.loadGrants(ctx, cidsOf(rows))
+	plan, err := s.effectiveContributions(ctx, req.NodeID, req.Resources, now)
 	if err != nil {
 		return dto.HelloResult{}, err
 	}
-	for _, row := range rows {
-		snapshot := s.snapshotFromRow(row, effective[row.CID], now)
-		snapshot.UpstreamOK = true
-		// 资源跟着贡献走而不是另开一张节点表：放置的硬过滤在贡献这一层做，
-		// 每次都去 join 一次节点会把「已绑定请求 ≤ 3 次 Redis 操作」这条打破。
-		snapshot.Resources = req.Resources
-		snapshots = append(snapshots, snapshot)
-		local := unscopedCID(req.NodeID, row.CID)
-		for _, grant := range effective[row.CID] {
-			result.QuotaEffective[local] = append(result.QuotaEffective[local], dto.QuotaGrantInput{
-				Unit: grant.Unit, Limit: grant.Limit, Window: grant.Window, ResetAt: grant.ResetAt,
-			})
-		}
-	}
+	result.Enabled = plan.Enabled
+	result.QuotaEffective = plan.Quota
 
 	if err := s.control.RegisterNode(ctx, NodeRuntime{
 		NodeID:        req.NodeID,
@@ -237,14 +296,8 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 	}); err != nil {
 		return dto.HelloResult{}, err
 	}
-	if err := s.control.ReplaceContributions(ctx, req.NodeID, snapshots); err != nil {
+	if err := s.pushToControlPlane(ctx, req.NodeID, plan, now); err != nil {
 		return dto.HelloResult{}, err
-	}
-	for _, snapshot := range snapshots {
-		plan := BuildQuotaPlan(effective[snapshot.CID], now)
-		if _, _, err := s.control.SyncQuota(ctx, snapshot.CID, plan.Limits, plan.Windows); err != nil {
-			return dto.HelloResult{}, err
-		}
 	}
 	if err := s.repository.SaveNode(ctx, &repository.GalaxyNode{
 		BizLine: bizLine, NodeID: req.NodeID, OwnerUserID: req.OwnerUserID,
@@ -254,6 +307,105 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 		return dto.HelloResult{}, err
 	}
 	return result, nil
+}
+
+// validateCapability 校验节点上报的一项能力。只问「这套 Hub 认不认这个 kind /
+// provider」——额度、座位、模型范围都是主人在控制台定的，节点报什么都不作数。
+func unavailableReason(row *repository.GalaxyContribution) string {
+	if row.Available {
+		return ""
+	}
+	return row.UnavailableReason
+}
+
+func (s *service) validateCapability(input dto.ContributionInput) (contract.KindSpec, error) {
+	return s.kinds.ValidateCapability(input.Kind, input.KindVersion, input.Provider)
+}
+
+// effectivePlan 是「这个节点这一刻该跑什么」算出来的结果，同时喂给节点和控制面。
+type effectivePlan struct {
+	// Enabled 下发给节点，让它按这个集合建通道。
+	Enabled []dto.EnabledContribution
+	// Snapshots 写进控制面，放置算法只看得到这些。
+	Snapshots []ContributionSnapshot
+	// Quota 是给节点更新展示副本用的生效额度。
+	Quota  map[string][]dto.QuotaGrantInput
+	Grants map[string][]QuotaGrant
+}
+
+// effectiveContributions 把「主人开着 + 本机可用」的那些贡献算出来。
+//
+// 两个条件缺一不可，而且各自的失败要分得开：主人关掉的不该下发给节点，
+// 本机不可用的（Claude 登录态过期）也不该进放置候选 —— 但后者主人的勾选要留着，
+// 登录回来下一次心跳就自动恢复，不用他再点一次。
+func (s *service) effectiveContributions(ctx context.Context, nodeID string, resources map[string]any, now time.Time) (effectivePlan, error) {
+	rows, err := s.repository.ListContributionsByNode(ctx, bizLine, nodeID)
+	if err != nil {
+		return effectivePlan{}, err
+	}
+	live := make([]*repository.GalaxyContribution, 0, len(rows))
+	for _, row := range rows {
+		// 判据是「主人没关 + 本机可用」，不是「status == active」。
+		//
+		// draining 也要留在下发集合里：额度触顶时心跳会把状态写成 draining，
+		// 意思是「停止接新单、在跑的正常跑完」。要是这时候把它从集合里摘掉，
+		// 节点会直接拆掉通道，跑到一半的请求当场断线 —— 排空的意义就没了。
+		// 「要不要接新单」由心跳响应里的 Drain 列表单独表达，和这里是两件事。
+		if row.Status != statusDisabled && row.Available {
+			live = append(live, row)
+		}
+	}
+	grants, err := s.loadGrants(ctx, cidsOf(live))
+	if err != nil {
+		return effectivePlan{}, err
+	}
+	plan := effectivePlan{
+		Enabled:   make([]dto.EnabledContribution, 0, len(live)),
+		Snapshots: make([]ContributionSnapshot, 0, len(live)),
+		Quota:     map[string][]dto.QuotaGrantInput{},
+		Grants:    grants,
+	}
+	for _, row := range live {
+		snapshot := s.snapshotFromRow(row, grants[row.CID], now)
+		snapshot.UpstreamOK = true
+		// 资源跟着贡献走而不是另开一张节点表：放置的硬过滤在贡献这一层做，
+		// 每次都去 join 一次节点会把「已绑定请求 ≤ 3 次 Redis 操作」这条打破。
+		snapshot.Resources = resources
+		plan.Snapshots = append(plan.Snapshots, snapshot)
+
+		local := unscopedCID(nodeID, row.CID)
+		quota := make([]dto.QuotaGrantInput, 0, len(grants[row.CID]))
+		for _, grant := range grants[row.CID] {
+			quota = append(quota, dto.QuotaGrantInput{
+				Unit: grant.Unit, Limit: grant.Limit, Window: grant.Window, ResetAt: grant.ResetAt,
+			})
+		}
+		plan.Quota[local] = quota
+		plan.Enabled = append(plan.Enabled, dto.EnabledContribution{
+			// 下发给节点的是**本机短名**：cid 在 Hub 侧带了 nodeId 前缀消歧，
+			// 但节点只认自己起的那个名字（设计 2.7）。
+			CID: local, Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
+			ModelsAllow: orEmpty(decodeStrings(row.ModelsAllowJSON)),
+			ModelsDeny:  orEmpty(decodeStrings(row.ModelsDenyJSON)),
+			Seats:       row.Seats, SeatConcurrency: row.SeatConcurrency,
+			Quota: quota, Schedule: orEmpty(decodeSchedule(row.ScheduleJSON)),
+		})
+	}
+	return plan, nil
+}
+
+// pushToControlPlane 把算好的集合写进控制面：放置算法只看得到这里的东西。
+func (s *service) pushToControlPlane(ctx context.Context, nodeID string, plan effectivePlan, now time.Time) error {
+	if err := s.control.ReplaceContributions(ctx, nodeID, plan.Snapshots); err != nil {
+		return err
+	}
+	for _, snapshot := range plan.Snapshots {
+		quotaPlan := BuildQuotaPlan(plan.Grants[snapshot.CID], now)
+		if _, _, err := s.control.SyncQuota(ctx, snapshot.CID, quotaPlan.Limits, quotaPlan.Windows); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *service) validateContribution(input dto.ContributionInput) (contract.KindSpec, []QuotaGrant, error) {
@@ -352,6 +504,15 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 			}
 		}
 	}
+
+	// 生效配置搭在心跳上下发。主人在控制台开关一条贡献、改额度或改时段，
+	// 节点最迟一个心跳周期（15s）就换过来 —— 「随时随地能调」靠的就是这一条，
+	// 不需要主人回到那台机器上做任何事。
+	plan, err := s.effectiveContributions(ctx, req.NodeID, nil, now)
+	if err != nil {
+		return dto.HeartbeatResult{}, err
+	}
+	result.Enabled = plan.Enabled
 	return result, nil
 }
 
@@ -383,13 +544,17 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 	views := make([]dto.NodeView, 0, len(nodes))
 	now := time.Now()
 	for _, node := range nodes {
-		view := dto.NodeView{
-			NodeID: node.NodeID, DisplayName: node.DisplayName, BridgeVersion: node.BridgeVersion,
-			Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
-		}
 		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
 		if err != nil {
 			return nil, err
+		}
+		// 切片必须初始化，不能靠 append 建出来：nil 切片会被序列化成 JSON 的 null，
+		// 而前端拿到 null 会把类的默认值 [] 覆盖掉，下一步 .map() 就崩。
+		// 刚配对完、还没 hello 的机器正好是这个状态 —— 也就是每个新用户的第一眼。
+		view := dto.NodeView{
+			NodeID: node.NodeID, DisplayName: node.DisplayName, BridgeVersion: node.BridgeVersion,
+			Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
+			Contributions: make([]dto.ContributionView, 0, len(rows)),
 		}
 		grants, err := s.loadGrants(ctx, cidsOf(rows))
 		if err != nil {
@@ -409,15 +574,25 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		snapshot = s.snapshotFromRow(row, grants, time.Time{})
 	}
 	plan := BuildQuotaPlan(grants, now)
+	// 每一个列都过一遍 orEmpty：模型白名单、挂机时段、额度都可能是空的，
+	// 而空的 Go 切片如果是 nil，序列化出去就是 null。
 	view := dto.ContributionView{
 		CID: unscopedCID(row.NodeID, row.CID), NodeID: row.NodeID,
 		Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
-		ModelsAllow: decodeStrings(row.ModelsAllowJSON), ModelsDeny: decodeStrings(row.ModelsDenyJSON),
-		Seats: row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status, Reputation: row.Reputation,
+		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
+		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
+		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
+		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status, Reputation: row.Reputation,
 		Online:    Online(snapshot, now, s.config.HeartbeatTimeout),
 		SeatsUsed: snapshot.SeatsUsed, Inflight: snapshot.Inflight,
 		SeatsEffective: EffectiveSeats(snapshot, plan, now, nil),
-		Schedule:       decodeSchedule(row.ScheduleJSON),
+		Schedule:       orEmpty(decodeSchedule(row.ScheduleJSON)),
+		Quota:          make([]dto.QuotaStatusView, 0, len(grants)),
+		Available:      row.Available,
+		// 原因只在真不可用时给：可用时留着上一次的旧原因，界面会显示一句
+		// 早就不成立的「请运行 claude auth login」。
+		UnavailableReason: unavailableReason(row),
+		SeatsBound:        snapshot.SeatsUsed,
 	}
 	if !snapshot.ThrottledUntil.IsZero() && snapshot.ThrottledUntil.After(now) {
 		throttled := snapshot.ThrottledUntil
@@ -484,15 +659,32 @@ func (s *service) ListExecutionRecords(ctx context.Context, ownerUserID, cid str
 
 // SetContributionStatus 主人暂停 / 恢复 / 停掉一条贡献（P-08、P-09）。
 // 停掉的贡献排空在途后释放座位，不中断在跑的请求。
-func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, cid, status string) error {
+func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, nodeID, cid, status string) error {
 	switch status {
 	case statusActive, statusPaused, statusDisabled:
 	default:
 		return fmt.Errorf("非法的贡献状态: %s", status)
 	}
-	row, err := s.findOwnedContribution(ctx, ownerUserID, cid)
+	row, err := s.findOwnedContribution(ctx, ownerUserID, nodeID, cid)
 	if err != nil {
 		return err
+	}
+	// 有消费者绑在这条贡献上就不许关。
+	//
+	// 座位不是「正在跑一条请求」，而是「某个消费者的会话钉在了这台机器上」——
+	// 会话中途换机器会丢上下文，所以绑定要等空闲 TTL 到期才释放。主人想停机的
+	// 心情是真的，但把别人跑到一半的会话踹掉更不可接受；额度和时段随时能改，
+	// 那两项才是「我现在就想少给一点」的正确出口。
+	if status != statusActive && row.Status == statusActive {
+		snapshot, found, err := s.control.GetContribution(ctx, row.CID)
+		if err != nil {
+			return err
+		}
+		if found && snapshot.SeatsUsed > 0 {
+			return fmt.Errorf("还有 %d 个消费者绑在这条贡献上，现在不能下线；"+
+				"他们的会话结束（或空闲 %s 后自动释放）就能关。想立刻少给一点的话，额度和挂机时段随时可以改",
+				snapshot.SeatsUsed, s.config.BindIdleTTL)
+		}
 	}
 	if err := s.repository.SetContributionStatus(ctx, bizLine, row.CID, status); err != nil {
 		return err
@@ -500,22 +692,49 @@ func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, cid, s
 	return s.control.SetDraining(ctx, row.CID, status != statusActive)
 }
 
-func (s *service) findOwnedContribution(ctx context.Context, ownerUserID, cid string) (*repository.GalaxyContribution, error) {
+// findOwnedContribution 按 (nodeID, cid) 定位主人自己的一条贡献。
+//
+// nodeID 不是可选的装饰：视图里的 cid 是**去掉节点前缀**的短名（relay_codex），
+// 主人有两台机器时必然重名。以前这里不带节点、命中即返回第一个，而返回顺序是
+// node_id 升序、node_id 又是 ULID —— 于是永远改到**最老那台**的行上。
+// 表现是开关点了报成功、界面纹丝不动，因为改的根本不是你看的那条。
+//
+// 带了 nodeID 就锁死；没带且撞上多条时**报错**，不替调用方猜 ——
+// 猜错一次就是刚才那种「成功了但什么都没变」，比直接失败难查得多。
+func (s *service) findOwnedContribution(ctx context.Context, ownerUserID, nodeID, cid string) (*repository.GalaxyContribution, error) {
 	rows, err := s.repository.ListContributionsByOwner(ctx, bizLine, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
+	matched := make([]*repository.GalaxyContribution, 0, 2)
 	for _, row := range rows {
+		if nodeID != "" && row.NodeID != nodeID {
+			continue
+		}
 		if row.CID == cid || unscopedCID(row.NodeID, row.CID) == cid {
-			return row, nil
+			matched = append(matched, row)
 		}
 	}
-	return nil, fmt.Errorf("贡献不存在")
+	switch len(matched) {
+	case 0:
+		return nil, fmt.Errorf("贡献不存在")
+	case 1:
+		return matched[0], nil
+	default:
+		return nil, fmt.Errorf("有 %d 台机器都叫 %s，请指定是哪一台", len(matched), cid)
+	}
 }
 
 // RevokeNode 撤销即断连（P-01）：令牌失效，控制面里的贡献立即摘除。
+//
+// 库里的贡献行也要一起关掉，只摘控制面是不够的：巡检按贡献倒推节点状态，
+// 撤销留下的 active 贡献行会让它在一分钟内把这台机器从 revoked 改回 offline，
+// 撤销掉的机器于是自己回到总览里（见 repository.MarkNodeOffline 上的注释）。
 func (s *service) RevokeNode(ctx context.Context, ownerUserID, nodeID string) error {
 	if err := s.repository.RevokeNode(ctx, bizLine, ownerUserID, nodeID); err != nil {
+		return err
+	}
+	if err := s.repository.DisableContributionsByNode(ctx, bizLine, nodeID); err != nil {
 		return err
 	}
 	return s.control.DropNode(ctx, nodeID)
@@ -596,6 +815,31 @@ func encodeJSON(value any) string {
 	return string(raw)
 }
 
+// orEmpty 把 nil 切片换成空切片。
+//
+// nil 切片序列化出去是 JSON 的 null，而控制台用 class-transformer 建实例：
+// 拿到 null 会把类字段的默认 [] 覆盖掉，下一步 .map() 就是
+// 「Cannot read properties of null」。踩过一次 —— 刚配对完还没 hello 的机器
+// 贡献列表为空，正好是每个新用户看到的第一屏。
+func orEmpty[T any](values []T) []T {
+	if values == nil {
+		return []T{}
+	}
+	return values
+}
+
+// encodeStrings 空切片存空串，不存 "null" —— 后者读回来还得再判一次。
+func encodeStrings(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 func decodeStrings(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -659,7 +903,7 @@ func capStrings(values []string, max int) []string {
 // 改完立刻写回控制面，不等节点下一次 hello —— 主人按下「把额度调小」通常是因为
 // 现在就想少跑一点，让它等 15 秒心跳都算慢。
 func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContributionLimitsRequest) error {
-	row, err := s.findOwnedContribution(ctx, req.OwnerUserID, req.CID)
+	row, err := s.findOwnedContribution(ctx, req.OwnerUserID, req.NodeID, req.CID)
 	if err != nil {
 		return err
 	}

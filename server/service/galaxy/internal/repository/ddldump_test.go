@@ -17,12 +17,19 @@ import (
 // recordingPool 是一个只记不执行的连接池。
 // 让 GORM 自己走一遍建表流程，把它真正会下发的 DDL 抄下来 ——
 // 手写 galaxy.sql 必然和 AutoMigrate 建出来的对不上，字段类型和索引名都会漂。
-type recordingPool struct{ statements []string }
+//
+// 同一套记录也用来盯住几条「写错了不会报错、只会悄悄改坏数据」的 UPDATE，
+// 见 node_test.go：语句和绑定值都抄下来，才能断言 WHERE 里那个条件真的在。
+type recordingPool struct {
+	statements []string
+	args       [][]any
+}
 
 func (p *recordingPool) PrepareContext(context.Context, string) (*sql.Stmt, error) { return nil, nil }
 
-func (p *recordingPool) ExecContext(_ context.Context, query string, _ ...any) (sql.Result, error) {
+func (p *recordingPool) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
 	p.statements = append(p.statements, query)
+	p.args = append(p.args, args)
 	return driver.RowsAffected(0), nil
 }
 

@@ -84,7 +84,7 @@ type DeliveryCommandWorker struct {
 	WorkerID         string    `gorm:"column:worker_id;type:varchar(64);uniqueIndex:uk_dlv_command_worker,priority:3;index:idx_dlv_command_worker_heartbeat,priority:3" description:"插件稳定实例标识"`
 	DisplayName      string    `gorm:"column:display_name;type:varchar(128)" description:"插件或电脑显示名"`
 	CapabilitiesJSON string    `gorm:"column:capabilities_json;type:text" description:"支持的命令类型 JSON 数组"`
-	LastHeartbeatAt  time.Time `gorm:"column:last_heartbeat_at;type:timestamp;index:idx_dlv_command_worker_heartbeat,priority:4" description:"最近一次注册、领取或心跳时间"`
+	LastHeartbeatAt  time.Time `gorm:"column:last_heartbeat_at;type:timestamp null default null;index:idx_dlv_command_worker_heartbeat,priority:4" description:"最近一次注册、领取或心跳时间"`
 	CreatedTime      time.Time `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
 	UpdatedTime      time.Time `gorm:"column:updated_time;autoUpdateTime" description:"更新时间"`
 }
@@ -374,7 +374,7 @@ type DeliveryRequirementCompletionNotification struct {
 	RecipientName   string `gorm:"column:recipient_name;type:varchar(64)" description:"接收人显示名快照"`
 	// NotificationReadAt 只属于当前 RecipientID；点击后不会影响同需求的其他负责人或协助者。
 	NotificationReadAt *time.Time `gorm:"column:notification_read_at;type:timestamp NULL;index:idx_dlv_requirement_completion_recipient,priority:4" description:"完成提醒已读时间"`
-	CompletedAt        time.Time  `gorm:"column:completed_at;type:timestamp;index:idx_dlv_requirement_completion_recipient,priority:5" description:"本次标记完成的时间"`
+	CompletedAt        time.Time  `gorm:"column:completed_at;type:timestamp null default null;index:idx_dlv_requirement_completion_recipient,priority:5" description:"本次标记完成的时间"`
 	CreatedTime        time.Time  `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
 	UpdatedTime        time.Time  `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"最近刷新时间"`
 }

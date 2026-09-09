@@ -4,6 +4,7 @@ import (
 	gocontext "context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,11 +18,46 @@ import (
 
 const callerContextKey = "galaxy.caller"
 
+// ConsumerKeyHeader 是算力密钥的专用头。
+//
+// 为什么不只认 Authorization：已登录的 Claude Code 会把自己的 OAuth token 放进
+// Authorization，环境变量里的 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY 都被它盖掉，
+// 消费者唯一能稳定带上来的是 ANTHROPIC_CUSTOM_HEADERS 里的自定义头。
+// 官方 SDK 则发 x-api-key。三个位置都看，谁像算力密钥就用谁。
+const ConsumerKeyHeader = "X-Galaxy-Key"
+
+// consumerKeyPrefix 与 galaxy.IssueKey 签发的前缀一致。
+const consumerKeyPrefix = "sk-galaxy-"
+
+// consumerSecret 从请求里找出算力密钥。带前缀的优先；一个都不像就把第一个非空的
+// 交给 AuthenticateKey，让它给出「密钥不存在」而不是「缺少密钥」。
+func consumerSecret(context *gin.Context) string {
+	candidates := []string{
+		context.GetHeader(ConsumerKeyHeader),
+		strings.TrimPrefix(strings.TrimSpace(context.GetHeader("Authorization")), "Bearer "),
+		context.GetHeader("x-api-key"),
+	}
+	first := ""
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if strings.HasPrefix(candidate, consumerKeyPrefix) {
+			return candidate
+		}
+		if first == "" {
+			first = candidate
+		}
+	}
+	return first
+}
+
 // RequireConsumerKey 校验 sk- 算力密钥。四种拒绝各有自己的状态码与错误码，
 // 客户端据此决定是重试、续期还是换模型。
 func RequireConsumerKey(service galaxy.Service) gin.HandlerFunc {
 	return func(context *gin.Context) {
-		caller, err := service.AuthenticateKey(context.Request.Context(), context.GetHeader("Authorization"))
+		caller, err := service.AuthenticateKey(context.Request.Context(), consumerSecret(context))
 		if err != nil {
 			var unitError *contract.UnitError
 			if errors.As(err, &unitError) {
