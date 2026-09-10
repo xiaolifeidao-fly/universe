@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -15,7 +16,13 @@ type UnitQuery struct {
 	// 调用方要自己保证「这人一把密钥都没有」时根本不查 —— 空切片会被当成没有这个条件。
 	ConsumerKeys []string
 	CID          string
-	Kind         string
+	// CIDs 是「这个人名下的全部贡献」。同一个短名在两台机器上各有一条，
+	// 主人问「这个能力跑了什么」时两条都要算进来。
+	CIDs  []string
+	Kind  string
+	Model string
+	// State 按终态筛（completed / failed…）。空表示不筛。
+	State string
 	// Primitive 让 relay/session/job 在 SQL 里就分开。放内存里过滤的话，
 	// LIMIT 先生效、过滤后生效，一页能被筛得几乎为空。
 	Primitive string
@@ -86,7 +93,10 @@ func (r *GalaxyRepository) ListUnitEvents(ctx context.Context, bizLine, unitID s
 	return rows, err
 }
 
-func (r *GalaxyRepository) ListUnits(ctx context.Context, q UnitQuery) ([]*GalaxyUnit, int64, error) {
+// unitScope 是单元表的过滤条件。列表、计数、统计都从这里长出来 ——
+// 三处各拼一遍 WHERE 的话，统计口径迟早和列表对不上，而那种错不会报错，
+// 只会让「总计 316 次」和翻页翻出来的行数对不上。
+func (r *GalaxyRepository) unitScope(ctx context.Context, q UnitQuery) *gorm.DB {
 	tx := r.Db.WithContext(ctx).Model(&GalaxyUnit{}).Where("biz_line = ?", q.BizLine)
 	if q.ConsumerKey != "" {
 		tx = tx.Where("consumer_key = ?", q.ConsumerKey)
@@ -97,8 +107,17 @@ func (r *GalaxyRepository) ListUnits(ctx context.Context, q UnitQuery) ([]*Galax
 	if q.CID != "" {
 		tx = tx.Where("cid = ?", q.CID)
 	}
+	if len(q.CIDs) > 0 {
+		tx = tx.Where("cid IN ?", q.CIDs)
+	}
 	if q.Kind != "" {
 		tx = tx.Where("kind = ?", q.Kind)
+	}
+	if q.Model != "" {
+		tx = tx.Where("model = ?", q.Model)
+	}
+	if q.State != "" {
+		tx = tx.Where("state = ?", q.State)
 	}
 	if q.Primitive != "" {
 		tx = tx.Where("primitive = ?", q.Primitive)
@@ -109,6 +128,11 @@ func (r *GalaxyRepository) ListUnits(ctx context.Context, q UnitQuery) ([]*Galax
 	if !q.To.IsZero() {
 		tx = tx.Where("created_time < ?", q.To)
 	}
+	return tx
+}
+
+func (r *GalaxyRepository) ListUnits(ctx context.Context, q UnitQuery) ([]*GalaxyUnit, int64, error) {
+	tx := r.unitScope(ctx, q)
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -119,6 +143,129 @@ func (r *GalaxyRepository) ListUnits(ctx context.Context, q UnitQuery) ([]*Galax
 	var rows []*GalaxyUnit
 	err := tx.Order("created_time desc, id desc").Find(&rows).Error
 	return rows, total, err
+}
+
+// UnitSummary 一组单元的整体统计。它统计的是**整个筛选条件**，不是当前这一页。
+type UnitSummary struct {
+	Calls  int64
+	Failed int64
+	// AvgDurationMs 只算跑到终态的那些。没有终态时间的单元参与不了平均，
+	// 把它们当 0 会让平均值随「正在跑的有几个」上下跳。
+	AvgDurationMs int64
+	Usage         map[string]int64
+}
+
+// SummariseUnits 次数、失败数、平均耗时与各计量单位的合计。
+//
+// 用量不从单元行的 actual_json 里加 —— 那是个 JSON 字符串，SQL 加不动，
+// 捞回内存里加就变成「统计要先把几万行拉过来」。计量流水本来就是为求和存在的。
+func (r *GalaxyRepository) SummariseUnits(ctx context.Context, q UnitQuery) (UnitSummary, error) {
+	summary := UnitSummary{Usage: map[string]int64{}}
+
+	var counted struct {
+		Calls    int64
+		Failed   int64
+		AvgMicro *float64
+	}
+	err := r.unitScope(ctx, q).Select(
+		"COUNT(*) AS calls, " +
+			"SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS failed, " +
+			"AVG(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL " +
+			"THEN TIMESTAMPDIFF(MICROSECOND, started_at, finished_at) END) AS avg_micro",
+	).Scan(&counted).Error
+	if err != nil {
+		return summary, err
+	}
+	summary.Calls = counted.Calls
+	summary.Failed = counted.Failed
+	if counted.AvgMicro != nil {
+		summary.AvgDurationMs = int64(*counted.AvgMicro / 1000)
+	}
+
+	var rows []struct {
+		Unit   string
+		Amount int64
+	}
+	usage := r.Db.WithContext(ctx).
+		Table((&GalaxyMeterRecord{}).TableName()+" AS m").
+		Joins("JOIN "+(&GalaxyUnit{}).TableName()+" AS u ON u.biz_line = m.biz_line AND u.unit_id = m.unit_id").
+		Select("m.unit AS unit, SUM(m.amount) AS amount").
+		Where("m.biz_line = ?", q.BizLine)
+	if q.CID != "" {
+		usage = usage.Where("u.cid = ?", q.CID)
+	}
+	if len(q.CIDs) > 0 {
+		usage = usage.Where("u.cid IN ?", q.CIDs)
+	}
+	if q.ConsumerKey != "" {
+		usage = usage.Where("u.consumer_key = ?", q.ConsumerKey)
+	}
+	if len(q.ConsumerKeys) > 0 {
+		usage = usage.Where("u.consumer_key IN ?", q.ConsumerKeys)
+	}
+	if q.Kind != "" {
+		usage = usage.Where("u.kind = ?", q.Kind)
+	}
+	if q.Model != "" {
+		usage = usage.Where("u.model = ?", q.Model)
+	}
+	if q.State != "" {
+		usage = usage.Where("u.state = ?", q.State)
+	}
+	if !q.From.IsZero() {
+		usage = usage.Where("u.created_time >= ?", q.From)
+	}
+	if !q.To.IsZero() {
+		usage = usage.Where("u.created_time < ?", q.To)
+	}
+	if err := usage.Group("m.unit").Scan(&rows).Error; err != nil {
+		return summary, err
+	}
+	for _, row := range rows {
+		summary.Usage[row.Unit] = row.Amount
+	}
+	return summary, nil
+}
+
+// DistinctUnitModels 这些贡献上出现过的模型，供筛选下拉用。
+func (r *GalaxyRepository) DistinctUnitModels(ctx context.Context, bizLine string, cids []string) ([]string, error) {
+	if len(cids) == 0 {
+		return []string{}, nil
+	}
+	var models []string
+	err := r.Db.WithContext(ctx).Model(&GalaxyUnit{}).
+		Where("biz_line = ?", bizLine).Where("cid IN ?", cids).Where("model <> ''").
+		Distinct().Order("model").Pluck("model", &models).Error
+	if models == nil {
+		models = []string{}
+	}
+	return models, err
+}
+
+// SumConsumerCostByUnit 每次请求扣了多少钱（微分）。
+//
+// 账本行是按 (unit_id, unit) 一行行记的，一次请求通常有 input / output 两行；
+// 逐笔视图要的是这一次的合计，所以在 SQL 里就按 unit_id 加好。
+func (r *GalaxyRepository) SumConsumerCostByUnit(ctx context.Context, bizLine string, unitIDs []string) (map[string]int64, error) {
+	costs := map[string]int64{}
+	if len(unitIDs) == 0 {
+		return costs, nil
+	}
+	var rows []struct {
+		UnitID string
+		Cost   int64
+	}
+	err := r.Db.WithContext(ctx).Model(&GalaxyConsumerLedger{}).
+		Where("biz_line = ?", bizLine).Where("unit_id IN ?", unitIDs).Where("type = ?", "settle").
+		Select("unit_id, SUM(amount * price DIV 1000000) AS cost").
+		Group("unit_id").Scan(&rows).Error
+	if err != nil {
+		return costs, err
+	}
+	for _, row := range rows {
+		costs[row.UnitID] = row.Cost
+	}
+	return costs, nil
 }
 
 // ---------- 计量 ----------
@@ -157,7 +304,7 @@ func (r *GalaxyRepository) SumUsage(ctx context.Context, q UnitQuery) ([]UsageRo
 	tx := r.Db.WithContext(ctx).
 		Table((&GalaxyMeterRecord{}).TableName()+" AS m").
 		Joins("LEFT JOIN "+(&GalaxyUnit{}).TableName()+" AS u ON u.biz_line = m.biz_line AND u.unit_id = m.unit_id").
-		Select("m.kind AS kind, COALESCE(u.provider, '') AS provider, m.unit AS unit, " +
+		Select("m.kind AS kind, COALESCE(u.provider, '') AS provider, m.unit AS unit, "+
 			"SUM(m.amount) AS amount, COUNT(DISTINCT m.unit_id) AS calls").
 		Where("m.biz_line = ?", q.BizLine)
 	if q.ConsumerKey != "" {

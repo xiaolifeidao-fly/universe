@@ -480,7 +480,7 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	if err != nil {
 		return dto.HeartbeatResult{}, err
 	}
-	result := dto.HeartbeatResult{Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
+	result := dto.HeartbeatResult{HubURL: s.config.ProviderHubURL, Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
 	for _, snapshot := range snapshots {
 		s.observeLane(snapshot, now)
 		local := unscopedCID(req.NodeID, snapshot.CID)
@@ -644,13 +644,24 @@ func (s *service) ListExecutionRecords(ctx context.Context, ownerUserID, cid str
 	if err != nil {
 		return nil, err
 	}
+	kept := make([]*repository.GalaxyUnit, 0, len(units))
+	ids := make([]string, 0, len(units))
 	for _, unit := range units {
 		if target == "" && !owned[unit.CID] {
 			continue
 		}
+		kept = append(kept, unit)
+		ids = append(ids, unit.UnitID)
+	}
+	credits, err := s.repository.SumProviderCreditByUnit(ctx, bizLine, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, unit := range kept {
 		records = append(records, dto.ExecutionRecord{
 			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, State: unit.State,
 			ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
+			Credits:   credits[unit.UnitID],
 			StartedAt: unit.StartedAt, FinishedAt: unit.FinishedAt,
 		})
 	}

@@ -1,0 +1,10 @@
+{
+  "name": "@galaxy/orbit",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node ../scripts/desktop.cjs dev orbit",
+    "build": "node ../scripts/desktop.cjs build orbit",
+    "package": "node ../scripts/desktop.cjs package orbit"
+  }
+}

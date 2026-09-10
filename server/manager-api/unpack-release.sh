@@ -67,3 +67,13 @@ for name in bin/manager-api manager-api start.sh stop.sh; do
 done
 
 echo "release unpacked: $ARCHIVE -> $RELEASE_DIR"
+
+# 包里刻意不带 configs/application.properties，免得覆盖服务器上的那份。
+# 但首次部署就没人给它建，进程会因为缺 sqlconn/redis 这些必填项起不来，
+# 所以这里显式提醒一句。
+if [ ! -f "$RELEASE_DIR/configs/application.properties" ]; then
+  echo ""
+  echo "缺少配置：$RELEASE_DIR/configs/application.properties（包里不带，避免覆盖线上配置）"
+  echo "首次部署请从模板复制后按需修改："
+  echo "  cp $RELEASE_DIR/configs/application.example.properties $RELEASE_DIR/configs/application.properties"
+fi

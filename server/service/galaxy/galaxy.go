@@ -72,6 +72,15 @@ type Config struct {
 
 	// SessionIdleTTL 会话多久没有新回合就自动关闭并释放座位。
 	SessionIdleTTL time.Duration
+
+	// PayoutRate 多少积分兑一块钱。默认 100 —— 界面上的「≈ ¥12.84」就是按它折的，
+	// 折算口径只有这一处，前端不自己乘。
+	PayoutRate int
+	// PayoutMinCredits 单次提现的起提积分。低于它的申请直接拒 ——
+	// 一笔一块钱的提现，人工处理成本远高于金额本身。
+	PayoutMinCredits int64
+	// PayoutHoldDays 争议期。这段时间内结算的积分算「待结算」，提不出来。
+	PayoutHoldDays int
 }
 
 func DefaultConfig() Config {
@@ -95,6 +104,9 @@ func DefaultConfig() Config {
 		PresignPutTTL:         15 * time.Minute,
 		PresignGetTTL:         60 * time.Minute,
 		SessionIdleTTL:        24 * time.Hour,
+		PayoutRate:            100,
+		PayoutMinCredits:      1000,
+		PayoutHoldDays:        7,
 	}
 }
 
@@ -172,6 +184,15 @@ func (c Config) withDefaults() Config {
 	if c.SessionIdleTTL <= 0 {
 		c.SessionIdleTTL = defaults.SessionIdleTTL
 	}
+	if c.PayoutRate <= 0 {
+		c.PayoutRate = defaults.PayoutRate
+	}
+	if c.PayoutMinCredits <= 0 {
+		c.PayoutMinCredits = defaults.PayoutMinCredits
+	}
+	if c.PayoutHoldDays < 0 {
+		c.PayoutHoldDays = defaults.PayoutHoldDays
+	}
 	return c
 }
 
@@ -221,6 +242,17 @@ type Service interface {
 	SaveContributionLimits(ctx context.Context, req dto.SaveContributionLimitsRequest) error
 	RevokeNode(ctx context.Context, ownerUserID, nodeID string) error
 	CreditBalance(ctx context.Context, ownerUserID string) (int64, error)
+
+	// ---------- 提供者：今天与收益 ----------
+	// ProviderDashboard 「今天」那一页要的全部数字，一次查完 ——
+	// 收益、用量、在线时长互相解释，分成几个接口取会给出对不上的两半。
+	ProviderDashboard(ctx context.Context, ownerUserID string) (dto.ProviderDashboard, error)
+	ProviderLedger(ctx context.Context, query dto.LedgerQuery) (dto.CreditLedgerPage, error)
+	// ProviderRecords 执行记录分页 + 当前筛选条件下的统计。仍然匿名化（C-12）。
+	ProviderRecords(ctx context.Context, query dto.ProviderRecordQuery) (dto.ProviderRecordPage, error)
+	ListPayouts(ctx context.Context, ownerUserID string, limit int) ([]dto.PayoutView, error)
+	// CreatePayout 发起提现。先条件扣积分再建单，扣不动就是余额不够。
+	CreatePayout(ctx context.Context, req dto.CreatePayoutRequest) (dto.PayoutView, error)
 
 	// ---------- 消费者 ----------
 	IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.IssuedKeyView, error)
@@ -309,6 +341,10 @@ type Service interface {
 	OwnedUnitEvents(ctx context.Context, ownerUserID, unitID string, fromSeq int) ([]UnitEventView, error)
 	// OwnedUsage 与 Usage 只差一处，而那一处是安全边界：统计范围由令牌决定。
 	OwnedUsage(ctx context.Context, ownerUserID string, query dto.UsageQuery) (dto.UsageReport, error)
+	// OwnedUsageRecords 逐笔扣费。汇总回答「这个月花了多少」，它回答
+	// 「那一次为什么扣了这么多」——申诉从这里进去。
+	OwnedUsageRecords(ctx context.Context, query dto.UsageRecordQuery) (dto.UsageRecordPage, error)
+	ConsumerDashboard(ctx context.Context, ownerUserID string, days int) (dto.ConsumerDashboard, error)
 
 	// ---------- 争议工单 ----------
 	// 消费者与提供者互不可见，出了问题只能由平台居中裁决。

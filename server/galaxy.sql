@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
   `status`           varchar(16),                                  -- active/offline/revoked
   `banned`           boolean DEFAULT false,                        -- 平台封禁
   `last_beat_at`     timestamp NULL DEFAULT NULL,                               -- 最近一次心跳
+  `online_since`     timestamp NULL DEFAULT NULL,                               -- 本轮连续在线起点
   `created_time`     datetime(3) NULL,                             -- 创建时间
   `updated_time`     datetime(3) NULL,                             -- 更新时间
   PRIMARY KEY (`id`),
@@ -490,6 +491,30 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_platform_ledger` (
   `created_at` datetime(3) NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_platform_ledger` (`biz_line`,`txn_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 提现申请。账本只前进不回退，而提现在钱真的打出去之前还有一段人工过程
+-- （待打款 / 驳回 / 重试）—— 那段状态放在这张表上，账本上只在受理那一刻记一笔 payout。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_payout` (
+  `id`            bigint AUTO_INCREMENT,
+  `biz_line`      varchar(32),
+  `payout_id`     varchar(64),
+  `owner_user_id` varchar(64),
+  `credits`       bigint,                                          -- 提现的积分数
+  `amount`        bigint,                                          -- 折算出的金额，微分
+  `currency`      varchar(8) DEFAULT 'CNY',
+  `fee`           bigint,                                          -- 手续费，微分
+  `method`        varchar(16),                                     -- alipay/wechat/bank
+  `account`       varchar(128),                                    -- 收款账号，展示时打码
+  `status`        varchar(16),                                     -- pending/paid/rejected
+  `note`          varchar(256),                                    -- 驳回原因等，面向申请人
+  `handled_by`    varchar(64),
+  `handled_at`    timestamp NULL DEFAULT NULL,
+  `created_time`  datetime(3) NULL,
+  `updated_time`  datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_payout` (`biz_line`,`payout_id`),
+  INDEX `idx_gx_payout_owner` (`biz_line`,`owner_user_id`,`status`,`created_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_audit_probe` (

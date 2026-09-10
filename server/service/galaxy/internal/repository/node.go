@@ -45,6 +45,20 @@ func (r *GalaxyRepository) TakePairingCode(ctx context.Context, bizLine, code, n
 // 紧接着的心跳、领活、回报全部 401「节点令牌无效」，而且再也回不来。
 // 撤销令牌有 RevokeNode 专门管，不需要从这里走。
 func (r *GalaxyRepository) SaveNode(ctx context.Context, row *GalaxyNode) error {
+	// 先补本轮在线起点，再 upsert。合成一条 UPDATE 做不到：判断依据是**旧的** status，
+	// 而同一条语句里 status 已经被改成 active 了，赋值顺序还由 map 的遍历顺序决定。
+	if row.Status == "active" {
+		at := time.Now()
+		if row.LastBeatAt != nil {
+			at = *row.LastBeatAt
+		}
+		if err := r.markOnlineSince(ctx, row.BizLine, row.NodeID, at); err != nil {
+			return err
+		}
+		if row.OnlineSince == nil {
+			row.OnlineSince = &at
+		}
+	}
 	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "biz_line"}, {Name: "node_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
@@ -91,9 +105,22 @@ func (r *GalaxyRepository) ListNodesByOwner(ctx context.Context, bizLine, ownerU
 }
 
 func (r *GalaxyRepository) TouchNode(ctx context.Context, bizLine, nodeID string, at time.Time) error {
+	if err := r.markOnlineSince(ctx, bizLine, nodeID, at); err != nil {
+		return err
+	}
 	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
 		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
 		Updates(map[string]any{"last_beat_at": at, "status": "active"}).Error
+}
+
+// markOnlineSince 只在「刚回到在线」时刷新起点：已经是 active 且记过起点的不动。
+// 撤销掉的机器不碰 —— 它不该被一次迟到的心跳复活成在线。
+func (r *GalaxyRepository) markOnlineSince(ctx context.Context, bizLine, nodeID string, at time.Time) error {
+	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
+		Where("status <> ?", "revoked").
+		Where("status <> ? OR online_since IS NULL", "active").
+		Update("online_since", at).Error
 }
 
 // MarkStaleNodesOffline 把心跳过期的机器降为离线，返回降了几台。

@@ -1,0 +1,53 @@
+{
+  "name": "@galaxy/orbit-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Galaxy Orbit desktop application",
+  "main": "dist/main.js",
+  "build": {
+    "appId": "com.galaxy.orbit",
+    "productName": "Orbit",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../.desktop/orbit",
+        "to": "next"
+      }
+    ],
+    "directories": {
+      "output": "../../release/orbit"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ]
+    }
+  },
+  "scripts": {
+    "dev": "node ../../scripts/desktop.cjs dev orbit",
+    "build": "node ../../scripts/desktop.cjs build orbit",
+    "package": "node ../../scripts/desktop.cjs package orbit",
+    "typecheck": "tsc --noEmit",
+    "build:electron": "node ../../scripts/build-electron.cjs orbit"
+  },
+  "devDependencies": {
+    "electron": "40.10.2",
+    "typescript": "^5",
+    "@types/node": "^20"
+  }
+}

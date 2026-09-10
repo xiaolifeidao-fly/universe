@@ -46,6 +46,9 @@ type GalaxyNode struct {
 	Status     string     `gorm:"column:status;type:varchar(16);index:idx_gx_node_owner,priority:3" description:"active/offline/revoked"`
 	Banned     bool       `gorm:"column:banned;default:false" description:"平台封禁"`
 	LastBeatAt *time.Time `gorm:"column:last_beat_at;type:timestamp null default null" description:"最近一次心跳"`
+	// OnlineSince 本轮连续在线的起点。掉线降级后再上来会重新记 ——
+	// 「已连续共享 6 天」要是把中间断掉的两天也算进去，那句话就是假的。
+	OnlineSince *time.Time `gorm:"column:online_since;type:timestamp null default null" description:"本轮连续在线起点"`
 
 	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime" description:"更新时间"`
@@ -431,6 +434,43 @@ type GalaxyPlatformLedger struct {
 
 func (r *GalaxyPlatformLedger) TableName() string { return "zt_galaxy_platform_ledger" }
 func (r *GalaxyPlatformLedger) Init()             {}
+
+// GalaxyPayout 一次提现申请。
+//
+// 积分账本（zt_galaxy_provider_ledger）记的是「钱怎么动的」，它只前进不回退，
+// 一笔 payout 流水写下去就是既成事实。但提现在钱真的打出去之前还有一段人工过程：
+// 待打款、被驳回、重试。把这段状态塞进账本会让账本变得可修改，对不平；
+// 所以申请单独一张表，账本上只在**受理**那一刻记一笔 payout。
+//
+// 驳回时反向记一笔 refund 把积分还回账户，而不是删掉原来那笔 ——
+// 删了就对不出「这笔钱申请过又退回来了」。
+type GalaxyPayout struct {
+	ID          int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_payout,priority:1;index:idx_gx_payout_owner,priority:1"`
+	PayoutID    string `gorm:"column:payout_id;type:varchar(64);uniqueIndex:uk_gx_payout,priority:2"`
+	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_payout_owner,priority:2"`
+
+	// Credits 提现的积分数；Amount 是按兑换比折出的钱（微分），下单那一刻快照进来，
+	// 之后改比例不影响已受理的申请。
+	Credits  int64  `gorm:"column:credits"`
+	Amount   int64  `gorm:"column:amount"`
+	Currency string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
+	Fee      int64  `gorm:"column:fee" description:"手续费，微分"`
+
+	Method  string `gorm:"column:method;type:varchar(16)" description:"alipay/wechat/bank"`
+	Account string `gorm:"column:account;type:varchar(128)" description:"收款账号，展示时打码"`
+
+	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_payout_owner,priority:3" description:"pending/paid/rejected"`
+	Note   string `gorm:"column:note;type:varchar(256)" description:"驳回原因等，面向申请人"`
+
+	HandledBy   string     `gorm:"column:handled_by;type:varchar(64)"`
+	HandledAt   *time.Time `gorm:"column:handled_at;type:timestamp null default null"`
+	CreatedTime time.Time  `gorm:"column:created_time;autoCreateTime;index:idx_gx_payout_owner,priority:4"`
+	UpdatedTime time.Time  `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyPayout) TableName() string { return "zt_galaxy_payout" }
+func (r *GalaxyPayout) Init()             {}
 
 // GalaxyAuditProbe 抽检记录：以 Hub 自有账号影子重放，比对结构相似度。
 //

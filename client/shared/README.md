@@ -11,6 +11,7 @@
 | 路径 | 内容 | 状态 |
 |---|---|---|
 | `styles/tokens.css` | `--manager-*` CSS 变量 + 基础 reset + 自托管字体声明 + `.manager-mono` | manager 已用；web 未切换（仍是内联拷贝，数值一致） |
+| `styles/galaxy.css` | galaxy 桌面端（Nova / Orbit）的结构与组件类（`.gx-*`） | 两端都在用。**里面一个颜色字面量都没有** —— 调色板由各端 `globals.css` 的 `--gx-*` 提供，两个端才能共用同一份骨架 |
 | `theme/managerTheme.ts` | antd `ThemeConfig`（`modernTheme`/`managerTheme`） | manager 已用；web 未切换 |
 | `i18n/createLocaleProvider.tsx` | 通用 i18n Provider 工厂（`AppLocale` 类型、`useLocale()`、antd `ConfigProvider` 挂载） | manager 已用；web 未切换（web 自己的 LocaleProvider.tsx 带着几千行文案字典，机制和内容耦合在一起，没有单独抽机制层） |
 | `auth/createAuthStore.ts` | 通用登录态存储工厂（token / user 读写） | manager 已用；web 未切换（web 的 AuthUser 字段更多，和「业务方/产研」身份体系耦合） |
@@ -41,6 +42,10 @@
 文件继续用——`managerTheme` 是纯数据、`createAuthStore` 只碰 localStorage、
 `createHttpClient` 只碰 axios，**都不渲染 antd 组件**，也就不依赖 React context 的同一性。
 判据就是这一条：**shared 里凡是会渲染第三方 UI 组件的文件，第三个 app 都不能直接用。**
+
+纯 CSS 不受这条限制（`tokens.css` / `galaxy.css` 不经过任何 JS 解析，也就不存在
+「两份实例两套 context」的问题），所以 galaxy 的设计系统骨架放在这里；它的
+**React 层**（`components/ui/`）则按端各存一份 —— 那些文件会渲染 antd 的浮层。
 
 **根治**：把 `client/` 做成 npm workspaces，三个 app 共用一份提升到 `client/node_modules`
 的 antd/react，符号链接可以整个删掉。改完之后 galaxy 的 LocaleProvider 可以换回 shared 工厂。

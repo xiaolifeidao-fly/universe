@@ -58,6 +58,9 @@ type Options struct {
 	// Providers 协议族 → provider（路由键）。provider 决定节点侧加载哪个执行模块。
 	Providers map[string]string
 	BodyLimit int64
+	// Models 对外声明的模型清单（GET /v1/models）。来自 galaxy.models，
+	// 不配走 DefaultModels。见 models.go 开头关于「为什么不从节点汇总」的说明。
+	Models []string
 }
 
 func (o Options) withDefaults() Options {
@@ -69,6 +72,10 @@ func (o Options) withDefaults() Options {
 	}
 	if o.BodyLimit <= 0 {
 		o.BodyLimit = DefaultBodyLimit
+	}
+	o.Models = normalizeModels(o.Models)
+	if len(o.Models) == 0 {
+		o.Models = normalizeModels(DefaultModels)
 	}
 	return o
 }

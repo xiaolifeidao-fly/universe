@@ -62,6 +62,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
 | `zt_galaxy_credit_account` | 提供者积分账户 |
 | `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
+| `zt_galaxy_payout` | 提现申请。账本只记受理那一笔，待打款/驳回这段状态在这张表上 |
 | `zt_galaxy_audit_probe` | 抽检记录：以 Hub 自有账号影子重放，比对结构相似度 |
 | `zt_galaxy_package` | 额度商品：多少钱换多少额度、密钥有效期多久 |
 | `zt_galaxy_order` | 订单。支付与履约分两步，回调只推到 `paid`，履约幂等 |
@@ -80,7 +81,8 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，字段说明放在 `--` 行注释里。
 表清单的唯一出处是 `repository.models()`，`TestGalaxySQLCoversEveryTable` 守着两者不漂。
 
-已经建过库的环境走增量：`server/migrations/20260907_galaxy_dispute.sql`。
+已经建过库的环境走增量：`server/migrations/20260907_galaxy_dispute.sql`、
+`server/migrations/20260910_galaxy_payout.sql`。
 
 **抽检表的隐私取舍：** `zt_galaxy_audit_probe` 会**短期保留**被抽中那次请求的原文
 （比例上限 1%/贡献/日），因为不留原文就无法重放比对；但节点的响应只保留**结构签名**

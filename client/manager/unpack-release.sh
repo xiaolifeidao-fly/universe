@@ -66,3 +66,12 @@ for name in start.sh stop.sh; do
 done
 
 echo "release unpacked: $ARCHIVE -> $RELEASE_DIR"
+
+# 包里刻意不带 .env，免得覆盖服务器上的那份。但首次部署就没人给它建，
+# 运行期读不到 SERVER_TARGET，页面能开、请求全 502，很难一眼看出是缺配置。
+if [ ! -f "$RELEASE_DIR/.env" ]; then
+  echo ""
+  echo "缺少配置：$RELEASE_DIR/.env（包里不带，避免覆盖线上配置）"
+  echo "首次部署请从模板复制后按需修改："
+  echo "  cp $RELEASE_DIR/.env.example $RELEASE_DIR/.env"
+fi

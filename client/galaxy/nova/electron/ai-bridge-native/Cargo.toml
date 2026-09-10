@@ -1,0 +1,58 @@
+[package]
+name = "ai-bridge-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# node feature 打开时才链 napi：测试二进制没有 Node 宿主提供那些符号。
+napi = { version = "2", default-features = false, features = ["napi6", "async", "serde-json", "tokio_rt"], optional = true }
+napi-derive = { version = "2", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "process", "fs", "macros", "signal"] }
+axum = { version = "0.8", features = ["http1", "tokio"] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
+tower = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "stream", "json"] }
+futures-util = "0.3"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+subtle = "2"
+rand = "0.8"
+ipnet = "2"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+base64 = "0.22"
+dirs = "5"
+tokio-util = { version = "0.7.19", features = ["rt"] }
+unicode-normalization = "0.1.25"
+async-trait = "0.1.92"
+async-stream = "0.3.6"
+sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
+
+[features]
+# 默认不开：`cargo test` 直接可跑。打包脚本用 --features node 产出 .node。
+default = []
+node = ["dep:napi", "dep:napi-derive", "dep:napi-build"]
+
+[build-dependencies]
+napi-build = { version = "2", optional = true }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "debuginfo"
+
+[dev-dependencies]
+async-trait = "0.1.92"
+tempfile = "3.27.0"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.189"

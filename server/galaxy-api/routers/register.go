@@ -154,6 +154,9 @@ func buildRegistry(deps *corepkg.Deps) (*corepkg.Registry, error) {
 	if enabled["relay"] {
 		adapters = append(adapters, relay.New(deps, relay.Options{
 			BodyLimit: int64(intProperty("galaxy.body_limit_bytes", relay.DefaultBodyLimit)),
+			// 对外声明的模型清单。去空白、去重、空清单回落 DefaultModels 都在
+			// relay 那边做 —— 那份清单的语义归它管，这里只负责把配置切开。
+			Models: strings.Split(httpx.Property("galaxy.models"), ","),
 		}))
 	}
 	if enabled["delivery"] {
@@ -188,6 +191,9 @@ func loadConfig() galaxy.Config {
 	// 节点侧的对外地址。不配就由 withDefaults 从 consumer_base_url 去掉 /v1 派生。
 	config.ProviderHubURL = strings.TrimSpace(httpx.Property("galaxy.provider_hub_url"))
 	config.SessionIdleTTL = time.Duration(intProperty("galaxy.session_idle_hours", 24)) * time.Hour
+	config.PayoutRate = intProperty("galaxy.payout_rate", config.PayoutRate)
+	config.PayoutMinCredits = int64(intProperty("galaxy.payout_min_credits", int(config.PayoutMinCredits)))
+	config.PayoutHoldDays = intProperty("galaxy.payout_hold_days", config.PayoutHoldDays)
 	return config
 }
 

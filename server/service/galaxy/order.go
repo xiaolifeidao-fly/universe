@@ -39,13 +39,38 @@ func (s *service) ListPackages(ctx context.Context, listedOnly bool) ([]dto.Pack
 }
 
 func packageView(row *repository.GalaxyPackage) dto.PackageView {
+	kinds := decodeStrings(row.AllowedKindsJSON)
+	tiers := decodeStrings(row.ModelTierJSON)
 	return dto.PackageView{
 		PackageCode: row.PackageCode, Title: row.Title, Units: decodeMetering(row.UnitsJSON),
 		Amount: row.Amount, Currency: row.Currency, TTLDays: row.TTLDays,
-		AllowedKinds: decodeStrings(row.AllowedKindsJSON), ModelTier: decodeStrings(row.ModelTierJSON),
+		AllowedKinds: kinds, ModelTier: tiers,
 		Concurrency: row.Concurrency, RPM: row.RPM,
-		Listed: row.Listed, SortOrder: row.SortOrder,
+		Category: packageCategory(kinds, tiers),
+		Listed:   row.Listed, SortOrder: row.SortOrder,
 	}
+}
+
+// packageCategory 这份额度包卖的是哪一类算力。
+//
+// 按模型档而不是按 kind 分：llm.chat 下面同时有 Claude 和 Codex，光看 kind
+// 会把两类商品堆进同一栏。范围为空（不限）的包归 other —— 它什么都能用，
+// 硬塞进某一栏反而是错的。
+func packageCategory(kinds, tiers []string) string {
+	for _, kind := range kinds {
+		if strings.HasPrefix(kind, "video.") {
+			return "video"
+		}
+	}
+	for _, tier := range tiers {
+		switch pattern := strings.ToLower(tier); {
+		case strings.HasPrefix(pattern, "claude"):
+			return "claude"
+		case strings.HasPrefix(pattern, "gpt"), strings.HasPrefix(pattern, "o1"), strings.Contains(pattern, "codex"):
+			return "codex"
+		}
+	}
+	return "other"
 }
 
 func (s *service) SavePackage(ctx context.Context, req dto.SavePackageRequest) error {

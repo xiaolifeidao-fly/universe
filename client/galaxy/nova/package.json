@@ -1,0 +1,10 @@
+{
+  "name": "@galaxy/nova",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node ../scripts/desktop.cjs dev nova",
+    "build": "node ../scripts/desktop.cjs build nova",
+    "package": "node ../scripts/desktop.cjs package nova"
+  }
+}

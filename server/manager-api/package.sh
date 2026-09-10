@@ -22,7 +22,13 @@ echo "building $APP_NAME for $TARGET_OS/$TARGET_ARCH..."
 GOWORK=off GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" CGO_ENABLED="${CGO_ENABLED:-0}" \
   go build -trimpath -ldflags="-s -w" -o "$DIST_DIR/bin/$APP_NAME" .
 
-cp -R configs "$DIST_DIR/configs"
+# 只带 *.example.properties，不带 configs/application.properties：那是部署机上的
+# 真配置（库密码、token secret），跟着包发出去会在解包时把服务器上的那份覆盖掉。
+# 首次部署由 unpack-release.sh 提示从模板复制一份。
+mkdir -p "$DIST_DIR/configs"
+for file in configs/*.example.properties; do
+  [ -f "$file" ] && cp "$file" "$DIST_DIR/configs/"
+done
 cp start.sh stop.sh "$DIST_DIR/"
 
 chmod +x "$DIST_DIR/bin/$APP_NAME" "$DIST_DIR/start.sh" "$DIST_DIR/stop.sh"

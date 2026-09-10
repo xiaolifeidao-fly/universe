@@ -35,7 +35,7 @@ func models() []any {
 		&GalaxyLedgerSession{}, &GalaxyLedgerTurn{}, &GalaxyLedgerCheckpoint{},
 		// 结算三本账、抽检与争议
 		&GalaxyCreditAccount{}, &GalaxyConsumerLedger{}, &GalaxyProviderLedger{},
-		&GalaxyPlatformLedger{}, &GalaxyAuditProbe{}, &GalaxyDispute{},
+		&GalaxyPlatformLedger{}, &GalaxyPayout{}, &GalaxyAuditProbe{}, &GalaxyDispute{},
 	}
 }
 

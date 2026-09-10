@@ -66,3 +66,21 @@ server/galaxy-api/configs/application.properties
 /server/galaxy-api/*.tar.gz
 
 .codex/delivery-task-*
+# Galaxy desktop builds
+/client/galaxy/.next-*/
+/client/galaxy/.desktop/
+/client/galaxy/release/
+/client/galaxy/nova/common/
+/client/galaxy/orbit/common/
+/client/galaxy/*/node_modules/
+/client/galaxy/*/electron/common/
+/client/galaxy/*/electron/node_modules/
+/client/galaxy/*/webview/node_modules/
+/client/galaxy/*/webview/.next/
+/client/galaxy/*/webview/tsconfig.tsbuildinfo
+/client/galaxy/*/webview/package/
+/client/galaxy/*/webview/logs/
+/client/galaxy/*/webview/run/
+/client/galaxy/*/webview/*.tar.gz
+/client/galaxy/*/electron/dist/
+/client/galaxy/.electron-tests/

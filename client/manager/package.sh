@@ -29,9 +29,10 @@ rm -rf "$DIST_DIR/.next/cache"
 rm -rf "$DIST_DIR/.next/standalone"
 [ -d public ] && cp -R public "$DIST_DIR/"
 
-# .env 必须进包：src/pages/api/[...all].ts 是**运行期**读 SERVER_TARGET 转发给后端的，
-# 不像 NEXT_PUBLIC_* 那样在构建时就编进产物。少了它前端所有请求都会 502。
-for file in package.json package-lock.json next.config.mjs .env .env.production .env.example; do
+# 只带 .env.example，不带 .env：.env 是部署机上的真配置，跟着包发出去会在解包时
+# 把服务器上的那份覆盖掉。首次部署由 unpack-release.sh 提示从模板复制一份 ——
+# 少了 .env，src/pages/api/[...all].ts 运行期读不到 SERVER_TARGET，前端请求全是 502。
+for file in package.json package-lock.json next.config.mjs .env.example; do
   [ -f "$file" ] && cp "$file" "$DIST_DIR/"
 done
 

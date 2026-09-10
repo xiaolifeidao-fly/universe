@@ -4,6 +4,8 @@ package providers
 
 import (
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -32,6 +34,47 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.GET("/records", h.listRecords)
 	api.GET("/credits", h.credits)
 	api.GET("/endpoint", h.providerEndpoint)
+	// 「今天」那一页：一个请求拿全。
+	api.GET("/dashboard", h.dashboard)
+	api.GET("/ledger", h.ledger)
+	api.GET("/payouts", h.listPayouts)
+	api.POST("/payouts", h.createPayout)
+}
+
+// dashboard 「今天」那一页的全部数字。
+func (h *Handler) dashboard(context *gin.Context) {
+	view, err := h.service.ProviderDashboard(context.Request.Context(), httpx.CallerID(context))
+	httpx.JSON(context, view, err)
+}
+
+// ledger 积分账本。分页，按类型筛。
+func (h *Handler) ledger(context *gin.Context) {
+	offset, _ := strconv.Atoi(context.Query("offset"))
+	limit, _ := strconv.Atoi(context.Query("limit"))
+	page, err := h.service.ProviderLedger(context.Request.Context(), dto.LedgerQuery{
+		OwnerUserID: httpx.CallerID(context), Type: context.Query("type"),
+		Offset: offset, Limit: limit,
+	})
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) listPayouts(context *gin.Context) {
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
+	views, err := h.service.ListPayouts(context.Request.Context(), httpx.CallerID(context), limit)
+	httpx.JSON(context, views, err)
+}
+
+// createPayout 提现。金额与手续费一律由服务端按积分算，请求里只带积分数 ——
+// 让前端把「到账多少」传上来，等于把兑换比交给了客户端。
+func (h *Handler) createPayout(context *gin.Context) {
+	var req dto.CreatePayoutRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.OwnerUserID = httpx.CallerID(context)
+	view, err := h.service.CreatePayout(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
 }
 
 // providerEndpoint 提供者的 ai-bridge 要填的 pool.hubURL。
@@ -121,10 +164,54 @@ func (h *Handler) saveContributionLimits(context *gin.Context) {
 }
 
 // listRecords 「我的机器上跑过什么」（P-14）：匿名化，不含消费者内容与身份。
+//
+// 带 offset / model / state / day 的请求走分页版本，返回 {records, total, stats}；
+// 不带的沿用老形状（一个数组），让还没改的调用方不至于突然拿到一个对象。
 func (h *Handler) listRecords(context *gin.Context) {
-	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "100"))
-	records, err := h.service.ListExecutionRecords(context.Request.Context(), httpx.CallerID(context), context.Query("cid"), limit)
-	httpx.JSON(context, records, err)
+	paged := context.Query("offset") != "" || context.Query("model") != "" ||
+		context.Query("state") != "" || context.Query("day") != "" || context.Query("paged") == "1"
+	if !paged {
+		limit, _ := strconv.Atoi(context.DefaultQuery("limit", "100"))
+		records, err := h.service.ListExecutionRecords(context.Request.Context(), httpx.CallerID(context), context.Query("cid"), limit)
+		httpx.JSON(context, records, err)
+		return
+	}
+	offset, _ := strconv.Atoi(context.Query("offset"))
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
+	query := dto.ProviderRecordQuery{
+		OwnerUserID: httpx.CallerID(context), CID: context.Query("cid"),
+		Model: context.Query("model"), State: context.Query("state"),
+		Offset: offset, Limit: limit,
+	}
+	query.From, query.To = dayRange(context.Query("day"))
+	page, err := h.service.ProviderRecords(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// dayRange 把 day=today / yesterday / 2026-09-10 翻成一个左闭右开区间。
+//
+// 区间在服务端算，不接受前端传来的 from/to：跨零点那一刻两边的「今天」会差一天，
+// 而这一页上「今日调用 316」和列表里的行数必须是同一个口径。
+func dayRange(day string) (time.Time, time.Time) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	switch strings.TrimSpace(day) {
+	case "", "all":
+		return time.Time{}, time.Time{}
+	case "today":
+		return start, start.AddDate(0, 0, 1)
+	case "yesterday":
+		return start.AddDate(0, 0, -1), start
+	case "7d":
+		return start.AddDate(0, 0, -6), start.AddDate(0, 0, 1)
+	case "30d":
+		return start.AddDate(0, 0, -29), start.AddDate(0, 0, 1)
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", day, now.Location())
+	if err != nil {
+		return time.Time{}, time.Time{}
+	}
+	return parsed, parsed.AddDate(0, 0, 1)
 }
 
 func (h *Handler) credits(context *gin.Context) {

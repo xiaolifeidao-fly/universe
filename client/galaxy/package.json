@@ -1,37 +1,43 @@
 {
-  "name": "galaxy-console",
+  "name": "galaxy",
   "version": "0.1.0",
   "private": true,
-  "description": "Galaxy 共享算力池控制台（提供者 + 消费者），Next.js + antd",
+  "description": "Galaxy Nova and Orbit desktop workspace",
   "scripts": {
     "postinstall": "node scripts/link-shared.js",
-    "dev": "next dev -p 7898",
-    "build": "next build",
-    "start": "next start -p 7898",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@ant-design/icons": "^4.8.2",
-    "@ant-design/nextjs-registry": "^1.0.0",
-    "antd": "^5.29.3",
-    "axios": "^1.6.8",
-    "class-transformer": "^0.5.1",
-    "dotenv": "^16.4.6",
-    "http-proxy-middleware": "^3.0.3",
-    "next": "14.1.3",
-    "react": "^18",
-    "react-dom": "^18",
-    "reflect-metadata": "^0.2.2"
+    "dev": "npm run dev:nova",
+    "build": "npm run build:nova && npm run build:orbit",
+    "start": "node scripts/desktop.cjs start nova",
+    "lint": "npm run lint --workspace @galaxy/nova-webview && npm run lint --workspace @galaxy/orbit-webview",
+    "typecheck": "npm run typecheck --workspace @galaxy/nova-webview && npm run typecheck --workspace @galaxy/orbit-webview && npm run typecheck --workspace @galaxy/nova-electron && npm run typecheck --workspace @galaxy/orbit-electron && npm run typecheck --workspace ai-bridge && npm run typecheck --workspace @galaxy/ai-bridge-native",
+    "dev:nova": "node scripts/desktop.cjs dev nova",
+    "dev:orbit": "node scripts/desktop.cjs dev orbit",
+    "build:nova": "node scripts/desktop.cjs build nova",
+    "build:orbit": "node scripts/desktop.cjs build orbit",
+    "package:nova": "node scripts/desktop.cjs package nova",
+    "package:orbit": "node scripts/desktop.cjs package orbit",
+    "test:desktop": "node scripts/test-electron.cjs",
+    "test:standalone": "node scripts/smoke-desktop.cjs",
+    "build:electron": "node scripts/build-electron.cjs nova && node scripts/build-electron.cjs orbit",
+    "test:bridge": "npm run test --workspace @galaxy/ai-bridge-native && npm run test --workspace ai-bridge",
+    "build:bridge-native": "npm run build --workspace @galaxy/ai-bridge-native"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "autoprefixer": "^10.0.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.1.3",
-    "postcss": "^8",
-    "typescript": "^5"
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0"
+  },
+  "workspaces": [
+    "common",
+    "nova",
+    "nova/electron",
+    "nova/webview",
+    "orbit",
+    "orbit/electron",
+    "orbit/webview",
+    "nova/electron/ai-bridge-native",
+    "nova/electron/ai-bridge"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

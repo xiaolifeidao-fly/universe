@@ -2,7 +2,3 @@
 	path = delivery-task-planner
 	url = git@github.com:xiaolifeidao-fly/delivery-task-planner.git
 	branch = main
-[submodule "galaxy"]
-	path = galaxy
-	url = git@github.com:xiaolifeidao-fly/galaxy.git
-	branch = main

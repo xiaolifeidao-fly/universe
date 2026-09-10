@@ -51,6 +51,10 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	console.GET("/keys", h.listKeys)
 	console.POST("/keys/revoke", h.revokeKey)
 	console.GET("/usage", h.consoleUsage)
+	// 逐笔扣费与页头那排数字。汇总回答「这个月花了多少」，逐笔回答
+	// 「那一次为什么扣了这么多」——申诉从后者进去。
+	console.GET("/usage/records", h.consoleUsageRecords)
+	console.GET("/dashboard", h.consoleDashboard)
 	console.POST("/keys/renew", h.renewKey)
 	// 会话与任务的只读视图。路径都带上 :sid / :jobId 这一段再接动作，
 	// 避免 /jobs/cancel 这种静态段和 /jobs/:jobId 在同一层打架。
@@ -372,6 +376,60 @@ func (h *Handler) consoleUsage(context *gin.Context) {
 		From: parseTime(context.Query("from")), To: parseTime(context.Query("to")),
 	})
 	httpx.JSON(context, report, err)
+}
+
+// consoleUsageRecords 逐笔扣费。范围同样由令牌决定，keyId 只能收窄。
+func (h *Handler) consoleUsageRecords(context *gin.Context) {
+	offset, _ := strconv.Atoi(context.Query("offset"))
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
+	query := dto.UsageRecordQuery{
+		OwnerUserID: httpx.CallerID(context), KeyID: context.Query("keyId"),
+		Kind: context.Query("kind"), State: context.Query("state"),
+		Offset: offset, Limit: limit,
+	}
+	// 时间窗和提供者那边同一套写法：day=today / 7d / 2026-09-10。
+	query.From, query.To = dayRange(context.Query("day"))
+	if from := parseTime(context.Query("from")); !from.IsZero() {
+		query.From = from
+	}
+	if to := parseTime(context.Query("to")); !to.IsZero() {
+		query.To = to
+	}
+	page, err := h.service.OwnedUsageRecords(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// consoleDashboard 密钥页与使用记录页共用的那排数字。
+func (h *Handler) consoleDashboard(context *gin.Context) {
+	days, _ := strconv.Atoi(context.DefaultQuery("days", "10"))
+	view, err := h.service.ConsumerDashboard(context.Request.Context(), httpx.CallerID(context), days)
+	httpx.JSON(context, view, err)
+}
+
+// dayRange 把 day=today / 7d / 2026-09-10 翻成左闭右开区间。
+//
+// 和 providers 那份是同一套词汇：两个端的「今天」必须指同一段时间，
+// 否则同一次请求在贡献者那边算今天、在使用者那边算昨天。
+func dayRange(day string) (time.Time, time.Time) {
+	now := time.Now()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	switch strings.TrimSpace(day) {
+	case "", "all":
+		return time.Time{}, time.Time{}
+	case "today":
+		return start, start.AddDate(0, 0, 1)
+	case "yesterday":
+		return start.AddDate(0, 0, -1), start
+	case "7d":
+		return start.AddDate(0, 0, -6), start.AddDate(0, 0, 1)
+	case "30d":
+		return start.AddDate(0, 0, -29), start.AddDate(0, 0, 1)
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", day, now.Location())
+	if err != nil {
+		return time.Time{}, time.Time{}
+	}
+	return parsed, parsed.AddDate(0, 0, 1)
 }
 
 // ---------- 会话与任务（控制台只读） ----------

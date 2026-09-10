@@ -1,0 +1,71 @@
+/**
+ * Orbit（使用端） 的调色板 + 应用级样式。
+ *
+ * 结构与组件类在 @shared/styles/galaxy.css（两个端共用一份，那里一个颜色字面量都没有）；
+ * 这里只定义 --gx-* 这一组值。字体声明与 reset 继续从 tokens.css 拿 ——
+ * 那份文件里已经有自托管的 Instrument Serif / JetBrains Mono，重复声明只会多下一份。
+ *
+ * Orbit 与 Nova 的差别只有这一组值：同一套骨架，一个青绿、一个暖铜。改色先改这里。
+ */
+
+@import "../../../../../shared/styles/tokens.css";
+@import "../../../../../shared/styles/galaxy.css";
+
+:root {
+  --gx-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", system-ui,
+    sans-serif;
+  --gx-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --gx-serif: "Instrument Serif", "Songti SC", Georgia, "Times New Roman", serif;
+
+  /* 冷静的青绿。Orbit 上的强调色管的是「钱和额度」——余额、可买、去支付；
+     消耗与扣费一律用墨色，免得账单看起来像在庆祝。 */
+  --gx-app: #f1f5f4;
+  --gx-surface: #ffffff;
+  --gx-muted: #eef3f2;
+  --gx-ink: #14201f;
+  --gx-ink-hover: #2a3a38;
+  --gx-on-ink: #f1f5f4;
+  --gx-soft: #4b5957;
+  --gx-faint: #7f8b89;
+  --gx-line: rgba(20, 32, 31, 0.09);
+  --gx-line-strong: rgba(20, 32, 31, 0.13);
+  --gx-border: rgba(20, 32, 31, 0.16);
+  --gx-hover: rgba(20, 32, 31, 0.05);
+
+  --gx-accent: #0f7b74;
+  --gx-accent-ink: #0a5c57;
+  --gx-accent-lite: #35a89f;
+  --gx-accent-soft: rgba(15, 123, 116, 0.1);
+  --gx-accent-soft-strong: rgba(15, 123, 116, 0.18);
+
+  --gx-ok: #2f7d4a;
+  --gx-ok-soft: rgba(47, 125, 74, 0.12);
+  --gx-warn: #9a6f14;
+  --gx-warn-ink: #7a560f;
+  --gx-warn-soft: rgba(190, 140, 30, 0.14);
+  --gx-danger: #a8352b;
+  --gx-danger-soft: rgba(168, 53, 43, 0.1);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--gx-app);
+  color: var(--gx-ink);
+  font-family: var(--gx-sans);
+}
+
+/* 桌面应用不需要整页滚动：滚的是 .gx-body，命令条和左栏始终在原地。 */
+body {
+  overflow: hidden;
+}
+
+a {
+  color: var(--gx-accent-ink);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--gx-accent);
+}

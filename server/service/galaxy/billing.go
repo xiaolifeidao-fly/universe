@@ -66,7 +66,7 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 		providerCredit += share
 		platformFee += cost - share
 		provider = append(provider, &repository.GalaxyProviderLedger{
-			BizLine: bizLine, TxnID: txn, CID: runtime.CID, Type: "settle",
+			BizLine: bizLine, TxnID: txn, CID: runtime.CID, Type: ledgerSettle,
 			Unit: unit, Amount: amount, Price: price.Price, UnitID: runtime.RID,
 		})
 		// 余额扣减：P0 内测密钥可能没有该单位的余额行，扣不动就只记账不阻断。

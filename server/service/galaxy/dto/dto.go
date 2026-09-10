@@ -148,6 +148,8 @@ type LaneInput struct {
 }
 
 type HeartbeatResult struct {
+	// HubURL 是平台公布的节点接入地址，供 bridge 自行校验本地配置。
+	HubURL      string                       `json:"hubUrl,omitempty"`
 	Cancel      []string                     `json:"cancel"`
 	Drain       []string                     `json:"drain"`
 	QuotaUpdate map[string]contract.Metering `json:"quotaUpdate"`
@@ -366,14 +368,17 @@ type NodeView struct {
 // ExecutionRecord 是「我的机器上跑过什么」的匿名化日志（P-14）：
 // 只有 kind、时间、用量、结果，没有消费者内容也没有消费者身份。
 type ExecutionRecord struct {
-	UnitID     string            `json:"unitId"`
-	Kind       string            `json:"kind"`
-	Model      string            `json:"model"`
-	State      string            `json:"state"`
-	ErrorCode  string            `json:"errorCode,omitempty"`
-	Usage      contract.Metering `json:"usage"`
-	StartedAt  *time.Time        `json:"startedAt,omitempty"`
-	FinishedAt *time.Time        `json:"finishedAt,omitempty"`
+	UnitID    string            `json:"unitId"`
+	Kind      string            `json:"kind"`
+	Model     string            `json:"model"`
+	State     string            `json:"state"`
+	ErrorCode string            `json:"errorCode,omitempty"`
+	Usage     contract.Metering `json:"usage"`
+	// Credits 这一次给主人记了多少积分。失败不计费的那些是 0。
+	// 它来自账本而不是用量乘单价 —— 分成比例改过之后，重算出来的和账上的对不上。
+	Credits    int64      `json:"credits"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 }
 
 // ---------- 池水位 ----------
@@ -410,6 +415,10 @@ type PackageView struct {
 	ModelTier    []string          `json:"modelTier,omitempty"`
 	Concurrency  int               `json:"concurrency"`
 	RPM          int               `json:"rpm"`
+	// Category 是商品归属（claude / codex / video / other），由 kind 与模型档推出来。
+	// 派生规则放服务端：控制台按它分栏，两个端各写一份匹配规则的话，
+	// 同一个额度包会在 Nova 和 Orbit 上落进不同的栏。
+	Category string `json:"category"`
 	// Listed / SortOrder 只对运营有意义：消费者那条接口固定 listedOnly=true，
 	// 拿到的 Listed 永远是 true。运营目录要看得见下架的，也要在改一个字段时
 	// 把其余字段原样带回去 —— SavePackage 是整行覆盖，不带回来就等于清零。
@@ -740,4 +749,184 @@ type DisputeView struct {
 	HandledAt      *time.Time        `json:"handledAt,omitempty"`
 	CreatedTime    time.Time         `json:"createdTime"`
 	UpdatedTime    time.Time         `json:"updatedTime"`
+}
+
+// ---------- 提供者：今天与收益 ----------
+
+// ProviderDashboard 是「今天」这一页要的全部数字，一次查完。
+//
+// 拆成四五个接口让前端并发拉是另一种做法，但这一页的数字互相解释：
+// 「今天赚了 1,284」和「今天跑了 316 次」必须是同一个时刻的口径，
+// 分开取会在跨零点或结算落后时给出对不上的两半。
+type ProviderDashboard struct {
+	// 有没有机器、在不在共享，决定这一页显示仪表盘还是引导配对。
+	Nodes  int  `json:"nodes"`
+	Online bool `json:"online"`
+	// SharingSince 本轮连续在线的起点。节点掉线再上线会重新计。
+	SharingSince *time.Time `json:"sharingSince,omitempty"`
+
+	Credits   CreditSummary `json:"credits"`
+	Today     DayStats      `json:"today"`
+	Yesterday DayStats      `json:"yesterday"`
+	// Trend 最近 7 天的积分，画小柱图用。缺的那天补 0，前端不用自己对齐日期。
+	Trend []DailyPoint `json:"trend"`
+}
+
+// CreditSummary 积分的四个口径。可提现 + 待结算才是「已经赚到的」，
+// 分开显示是因为待结算那部分要过 7 天争议期。
+type CreditSummary struct {
+	Available int64 `json:"available"`
+	Pending   int64 `json:"pending"`
+	Withdrawn int64 `json:"withdrawn"`
+	Today     int64 `json:"today"`
+	Week      int64 `json:"week"`
+	Month     int64 `json:"month"`
+	Total     int64 `json:"total"`
+}
+
+// DayStats 一天的执行统计。用来回答「今天跑了多少、成功率如何」。
+type DayStats struct {
+	Calls   int64             `json:"calls"`
+	Failed  int64             `json:"failed"`
+	Usage   contract.Metering `json:"usage"`
+	Credits int64             `json:"credits"`
+	// AvgDurationMs 只统计有终态时间的单元，跑到一半的不算。
+	AvgDurationMs int64 `json:"avgDurationMs"`
+}
+
+type DailyPoint struct {
+	Date   string `json:"date"`
+	Amount int64  `json:"amount"`
+}
+
+// LedgerQuery 积分账本的过滤条件。Type 是账本类型（settle/payout/clawback…），
+// 空表示全部。
+type LedgerQuery struct {
+	OwnerUserID string `form:"-"`
+	Type        string `form:"type"`
+	Offset      int    `form:"offset"`
+	Limit       int    `form:"limit"`
+}
+
+// CreditLedgerEntry 账本上的一行。
+type CreditLedgerEntry struct {
+	Type   string `json:"type"`
+	Amount int64  `json:"amount"`
+	Unit   string `json:"unit,omitempty"`
+	UnitID string `json:"unitId,omitempty"`
+	// CID 对主人是可读的（那是他自己的机器），和给消费者看的争议视图不一样。
+	CID       string    `json:"cid,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type CreditLedgerPage struct {
+	Total   int64               `json:"total"`
+	Entries []CreditLedgerEntry `json:"entries"`
+}
+
+// ProviderRecordQuery 执行记录的过滤条件。
+//
+// CID 是去掉节点前缀的短名，和界面上显示的一致；服务端自己扩回全局 id。
+type ProviderRecordQuery struct {
+	OwnerUserID string    `form:"-"`
+	CID         string    `form:"cid"`
+	Model       string    `form:"model"`
+	State       string    `form:"state"`
+	From        time.Time `form:"-"`
+	To          time.Time `form:"-"`
+	Offset      int       `form:"offset"`
+	Limit       int       `form:"limit"`
+}
+
+// ProviderRecordPage 一页执行记录 + 这个过滤条件下的整体统计。
+//
+// 统计跟着分页一起返回而不是单独一个接口：它统计的是**当前筛选条件**下的全部，
+// 不是当前这一页。分成两个接口，两边的筛选条件迟早会不一致。
+type ProviderRecordPage struct {
+	Total   int64             `json:"total"`
+	Records []ExecutionRecord `json:"records"`
+	Stats   DayStats          `json:"stats"`
+	// Models 是这个人机器上出现过的模型，供筛选下拉用。
+	Models []string `json:"models"`
+}
+
+// PayoutView 一次提现申请。Account 已打码，原样的收款账号不回给前端。
+type PayoutView struct {
+	PayoutID    string     `json:"payoutId"`
+	Credits     int64      `json:"credits"`
+	Amount      int64      `json:"amount"`
+	Currency    string     `json:"currency"`
+	Fee         int64      `json:"fee"`
+	Method      string     `json:"method"`
+	Account     string     `json:"account"`
+	Status      string     `json:"status"`
+	Note        string     `json:"note,omitempty"`
+	HandledAt   *time.Time `json:"handledAt,omitempty"`
+	CreatedTime time.Time  `json:"createdTime"`
+}
+
+// CreatePayoutRequest 发起提现。
+type CreatePayoutRequest struct {
+	OwnerUserID string `json:"-"`
+	Credits     int64  `json:"credits" binding:"required"`
+	Method      string `json:"method" binding:"required"`
+	Account     string `json:"account" binding:"required"`
+}
+
+// ---------- 消费者：概览与逐笔记录 ----------
+
+// ConsumerDashboard 是密钥页与使用记录页共用的那一排数字。
+type ConsumerDashboard struct {
+	Keys       int               `json:"keys"`
+	ActiveKeys int               `json:"activeKeys"`
+	Balance    contract.Metering `json:"balance"`
+	Today      DayStats          `json:"today"`
+	// SpentMicros 最近 N 天的花费（微分），Days 说明是几天。
+	SpentMicros int64  `json:"spentMicros"`
+	Days        int    `json:"days"`
+	Currency    string `json:"currency"`
+	// AvgFirstByteMs 首字延迟。排队 + 上游，端到端口径。
+	AvgFirstByteMs int64 `json:"avgFirstByteMs"`
+}
+
+// UsageRecordQuery 逐笔用量的过滤条件。KeyID 只能收窄到自己名下的密钥。
+type UsageRecordQuery struct {
+	OwnerUserID string    `form:"-"`
+	KeyID       string    `form:"keyId"`
+	Kind        string    `form:"kind"`
+	State       string    `form:"state"`
+	From        time.Time `form:"-"`
+	To          time.Time `form:"-"`
+	Offset      int       `form:"offset"`
+	Limit       int       `form:"limit"`
+}
+
+// UsageRecord 一次请求的扣费明细。
+//
+// 和 UsageLine 的区别是粒度：那个是「这段时间一共花了多少」，这个是「这一次花了多少」。
+// 申诉钉的是 (unitId, attempt)，所以逐笔视图必须把 unitId 摆出来。
+type UsageRecord struct {
+	UnitID   string `json:"unitId"`
+	KeyID    string `json:"keyId"`
+	KeyAlias string `json:"keyAlias,omitempty"`
+	Kind     string `json:"kind"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	State    string `json:"state"`
+	Attempt  int    `json:"attempt"`
+
+	ErrorCode string            `json:"errorCode,omitempty"`
+	Usage     contract.Metering `json:"usage"`
+	// Cost 这一次的扣费（微分）。失败不计费的那些是 0。
+	Cost       int64      `json:"cost"`
+	Currency   string     `json:"currency"`
+	StartedAt  *time.Time `json:"startedAt,omitempty"`
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	// DurationMs 端到端耗时，没跑完的是 0。
+	DurationMs int64 `json:"durationMs"`
+}
+
+type UsageRecordPage struct {
+	Total   int64         `json:"total"`
+	Records []UsageRecord `json:"records"`
 }
