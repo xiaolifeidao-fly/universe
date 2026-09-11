@@ -32,7 +32,7 @@ const messages = {
     "locale.zh-CN": "简体中文",
     "locale.en-US": "English",
 
-    "brand.subtitle": "GALAXY · 使用端",
+    "brand.subtitle": "GALAXY · 控制台",
 
     "shell.logout": "退出登录",
 
@@ -69,7 +69,7 @@ const messages = {
     "login.noAccount": "还没有账号？",
     "login.register": "注册一个",
     "login.tagline1": "一把密钥，",
-    "login.tagline2": "用上别人闲着的算力。",
+    "login.tagline2": "接上 Claude 和 GPT。",
     "login.point1.title": "官方 SDK 直接接",
     "login.point1.desc": "改一个 base_url 就能用，不改代码",
     "login.point2.title": "按需买，不订阅",
@@ -78,7 +78,7 @@ const messages = {
     "login.point3.desc": "输入 / 输出 tokens 分行记，扣费与请求号一一对应",
     "login.foot": "算力密钥的明文只在签发那一刻显示一次，之后平台也查不回来。",
 
-    "notice.body": "你的请求会经第三方提供者的机器处理。平台不留存请求内容，提供者也看不到你是谁。确认之后才能购买额度与使用密钥。",
+    "notice.body": "你的请求会交由第三方处理。平台不留存请求内容，处理方也无法得知你是谁。确认之后才能购买额度与使用密钥。",
     "notice.accept": "我已阅读并确认",
     "notice.accepted": "已确认 {version}",
 
@@ -217,6 +217,30 @@ const messages = {
     "detail.requestId": "请求号",
     "detail.provider": "上游",
     "detail.unknownProvider": "已清理",
+
+    // 失败原因。错误码是内部排障口径，界面上只给人话；排障靠同一页上的请求号。
+    "error.node_offline": "执行中断",
+    "error.node_unavailable": "暂时没有可用容量",
+    "error.no_capacity": "暂时没有可用容量",
+    "error.queue_wait_timeout": "排队超时",
+    "error.lease_expired": "执行超时",
+    "error.lease_invalid": "执行超时",
+    "error.capability_mismatch": "模型暂时不可用",
+    "error.stream_idle_timeout": "响应中途停止",
+    "error.output_checksum_mismatch": "结果校验未通过",
+    "error.upstream_timeout": "上游超时",
+    "error.invalid_body": "请求格式有误",
+    "error.model_not_allowed": "这把密钥不能用这个模型",
+    "error.content_policy": "触发内容策略",
+    "error.artifact_missing": "引用的文件不存在",
+    "error.insufficient_balance": "额度不足",
+    "error.key_invalid": "密钥无效",
+    "error.key_expired": "密钥已过期",
+    "error.scope_denied": "超出密钥允许范围",
+    "error.unit_cancelled": "已取消",
+    "error.redis_unavailable": "平台暂时不可用",
+    "error.contract_mismatch": "平台暂时不可用",
+    "error.unknown": "请求失败",
     "detail.usage": "用量",
     "detail.charge": "扣费",
     "detail.dispute": "对这一笔提出申诉",
@@ -229,7 +253,7 @@ const messages = {
     "dispute.reason.not_delivered": "没有交付结果",
     "dispute.reason.wrong_output": "结果明显不对",
     "dispute.reason.overcharged": "扣费与用量对不上",
-    "dispute.reason.forged": "怀疑响应是伪造的",
+    "dispute.reason.forged": "怀疑结果不是所选模型给出的",
     "dispute.reason.other": "其它",
     "dispute.status.open": "待裁决",
     "dispute.status.accepted": "已支持",
@@ -251,7 +275,7 @@ const messages = {
     "sessions.col.time": "最近一次",
     "sessions.close": "关闭会话",
     "sessions.closed": "会话已关闭",
-    "sessions.migrated": "换过节点",
+    "sessions.migrated": "中途续接过",
 
     "jobs.empty": "没有长任务",
     "jobs.col.job": "任务",
@@ -281,12 +305,27 @@ const messages = {
     "account.danger": "注销账号",
     "account.dangerHint": "注销前请先用完或退回密钥里的余额。注销后密钥立即失效，使用记录保留 90 天以备申诉。",
     "account.dangerContact": "注销需要人工核对余额与在途订单，请联系平台客服办理。",
+
+    // 计量单位的人话名。unitLabel() 按 unit id 查这里，查不到就原样显示 id ——
+    // 新接一个上游只是还没有译名，不该在账单里变成空白。
+    "unit.llm.input_tokens": "输入 token",
+    "unit.llm.output_tokens": "输出 token",
+    "unit.llm.cache_read_tokens": "缓存读取 token",
+    "unit.llm.cache_write_tokens": "缓存写入 token",
+    "unit.llm.calls": "调用次数",
+    "unit.time.seconds": "占用时长",
+    "unit.video.input_seconds": "输入时长",
+    "unit.video.output_seconds": "输出时长",
+    "unit.cpu.seconds": "CPU 秒",
+    "unit.gpu.seconds": "GPU 秒",
+    "unit.storage.bytes": "存储",
+    "unit.egress.bytes": "出网流量",
   },
   "en-US": {
     "locale.zh-CN": "简体中文",
     "locale.en-US": "English",
 
-    "brand.subtitle": "GALAXY · CONSUMER",
+    "brand.subtitle": "GALAXY · CONSOLE",
 
     "shell.logout": "Sign out",
 
@@ -323,7 +362,7 @@ const messages = {
     "login.noAccount": "No account yet?",
     "login.register": "Create one",
     "login.tagline1": "One key,",
-    "login.tagline2": "and someone else's idle compute.",
+    "login.tagline2": "for Claude and GPT.",
     "login.point1.title": "Works with official SDKs",
     "login.point1.desc": "Point base_url at Galaxy — no code changes",
     "login.point2.title": "Pay as you go",
@@ -332,7 +371,7 @@ const messages = {
     "login.point3.desc": "Input and output tokens are booked separately, each tied to a request id",
     "login.foot": "A key's plaintext is shown once at issue time — not even the platform can read it back.",
 
-    "notice.body": "Your requests are executed on third-party providers' machines. The platform does not retain request content, and providers cannot see who you are. Confirm before buying quota or using a key.",
+    "notice.body": "Your requests are processed by third parties. The platform does not retain request content, and whoever processes a request cannot tell who you are. Confirm before buying quota or using a key.",
     "notice.accept": "I have read and confirm",
     "notice.accepted": "Confirmed {version}",
 
@@ -471,6 +510,30 @@ const messages = {
     "detail.requestId": "Request id",
     "detail.provider": "Upstream",
     "detail.unknownProvider": "cleared",
+
+    // 失败原因。错误码是内部排障口径，界面上只给人话；排障靠同一页上的请求号。
+    "error.node_offline": "Execution interrupted",
+    "error.node_unavailable": "No capacity available",
+    "error.no_capacity": "No capacity available",
+    "error.queue_wait_timeout": "Timed out in queue",
+    "error.lease_expired": "Execution timed out",
+    "error.lease_invalid": "Execution timed out",
+    "error.capability_mismatch": "Model temporarily unavailable",
+    "error.stream_idle_timeout": "Response stalled",
+    "error.output_checksum_mismatch": "Output failed verification",
+    "error.upstream_timeout": "Upstream timed out",
+    "error.invalid_body": "Malformed request",
+    "error.model_not_allowed": "Model not allowed for this key",
+    "error.content_policy": "Blocked by content policy",
+    "error.artifact_missing": "Referenced file is missing",
+    "error.insufficient_balance": "Insufficient quota",
+    "error.key_invalid": "Invalid key",
+    "error.key_expired": "Key expired",
+    "error.scope_denied": "Outside this key's scope",
+    "error.unit_cancelled": "Cancelled",
+    "error.redis_unavailable": "Platform temporarily unavailable",
+    "error.contract_mismatch": "Platform temporarily unavailable",
+    "error.unknown": "Request failed",
     "detail.usage": "Usage",
     "detail.charge": "Charged",
     "detail.dispute": "Dispute this charge",
@@ -483,7 +546,7 @@ const messages = {
     "dispute.reason.not_delivered": "Nothing was delivered",
     "dispute.reason.wrong_output": "The output is clearly wrong",
     "dispute.reason.overcharged": "Charge doesn't match usage",
-    "dispute.reason.forged": "The response looks forged",
+    "dispute.reason.forged": "The output doesn't look like the chosen model's",
     "dispute.reason.other": "Something else",
     "dispute.status.open": "Under review",
     "dispute.status.accepted": "Accepted",
@@ -505,7 +568,7 @@ const messages = {
     "sessions.col.time": "Last turn",
     "sessions.close": "Close",
     "sessions.closed": "Session closed",
-    "sessions.migrated": "migrated",
+    "sessions.migrated": "resumed",
 
     "jobs.empty": "No jobs",
     "jobs.col.job": "Job",
@@ -535,6 +598,21 @@ const messages = {
     "account.danger": "Close account",
     "account.dangerHint": "Spend or return the balance on your keys first. Closing revokes every key immediately; usage records are kept 90 days for disputes.",
     "account.dangerContact": "Closing needs a manual check of balances and in-flight orders — contact support to start it.",
+
+    // 计量单位的人话名。unitLabel() 按 unit id 查这里，查不到就原样显示 id ——
+    // 新接一个上游只是还没有译名，不该在账单里变成空白。
+    "unit.llm.input_tokens": "Input tokens",
+    "unit.llm.output_tokens": "Output tokens",
+    "unit.llm.cache_read_tokens": "Cache read tokens",
+    "unit.llm.cache_write_tokens": "Cache write tokens",
+    "unit.llm.calls": "Calls",
+    "unit.time.seconds": "Time used",
+    "unit.video.input_seconds": "Input duration",
+    "unit.video.output_seconds": "Output duration",
+    "unit.cpu.seconds": "CPU seconds",
+    "unit.gpu.seconds": "GPU seconds",
+    "unit.storage.bytes": "Storage",
+    "unit.egress.bytes": "Egress",
   },
 } as const;
 

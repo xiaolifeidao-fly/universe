@@ -6,7 +6,7 @@ async function buildElectron(product) {
   if (!['nova', 'orbit'].includes(product)) throw new Error('Expected nova or orbit');
   const cwd = path.resolve(__dirname, '..', product, 'electron');
   if (product === 'nova') {
-    // relay 数据面是 Rust 原生模块，先出 .node 再编 TS —— 桌面服务要按包名解析它。
+    // 桥接的实现是 Rust 原生模块，先出 .node 再编 TS —— 桌面薄壳要按包名解析它。
     const native = spawnSync(process.execPath, [path.join(cwd, 'ai-bridge-native', 'scripts', 'build.cjs')], { cwd: path.join(cwd, 'ai-bridge-native'), stdio: 'inherit' });
     if (native.error || native.status !== 0) throw native.error || new Error('ai-bridge-native build failed');
     const bridge = spawnSync(process.execPath, [require.resolve('typescript/bin/tsc'), '-p', 'tsconfig.json'], { cwd: path.join(cwd, 'ai-bridge'), stdio: 'inherit' });

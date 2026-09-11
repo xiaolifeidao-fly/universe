@@ -137,3 +137,63 @@ ON DUPLICATE KEY UPDATE
 -- 对外开放之前必须把 sandbox_channels 清空：留着它，任何能登录控制台的人
 -- 都能给自己发额度。改完配置重启 galaxy-api 生效。
 -- -------------------------------------------------------------------------
+
+
+-- -------------------------------------------------------------------------
+-- 门户模型目录（zt_galaxy_model）
+--
+-- 这张表只管**门户上怎么把这个模型讲清楚**，不参与计价也不参与派单：
+--   · 客户端能填哪些模型名 → galaxy.models（relay 的 /v1/models 读它）
+--   · 一次请求扣多少钱     → zt_galaxy_price，按 kind 计价，与模型无关
+--
+-- 所以下面三个单价一律留 0 —— 0 的含义是「按 kind 的统一价显示」，不是免费。
+-- 计费引擎目前就是按 kind 统一计价的，在这里填一个按模型的价，门户上写的
+-- 和账单上扣的会对不上，那是最不该出现的一种不一致。等按模型计价真的落地
+-- 之后再回来填这三列。
+--
+-- context_tokens 是**默认值，上线前请按上游实际能力核对**：Claude 一族按公开
+-- 的 200K 上下文填；其余留 0（未声明），门户上那一行就不显示。
+-- -------------------------------------------------------------------------
+
+INSERT INTO `zt_galaxy_model`
+  (`biz_line`, `model_id`, `display_name`, `vendor`, `family`, `kind`,
+   `context_tokens`, `max_output_tokens`, `input_price`, `output_price`, `cache_price`,
+   `currency`, `tags_json`, `summary`, `listed`, `featured`, `sort_order`,
+   `created_time`, `updated_time`)
+VALUES
+  ('galaxy', 'claude-opus-5', 'Claude Opus 5', 'anthropic', 'claude', 'llm.chat',
+   200000, 0, 0, 0, 0, 'CNY', '["复杂推理","长代码库","Agent"]',
+   'Anthropic 目前最强的一档，交给它的是那种想清楚比写得快更重要的活。',
+   1, 1, 10, NOW(3), NOW(3)),
+
+  ('galaxy', 'claude-sonnet-5', 'Claude Sonnet 5', 'anthropic', 'claude', 'llm.chat',
+   200000, 0, 0, 0, 0, 'CNY', '["日常编码","速度均衡","Claude Code"]',
+   '日常写代码的默认选择，快、稳、便宜，Claude Code 里跑得最多的就是它。',
+   1, 1, 20, NOW(3), NOW(3)),
+
+  ('galaxy', 'claude-fable-5-1', 'Claude Fable 5.1', 'anthropic', 'claude', 'llm.chat',
+   200000, 0, 0, 0, 0, 'CNY', '["长文本","写作"]',
+   '偏长文本与写作的一档。',
+   1, 0, 30, NOW(3), NOW(3)),
+
+  ('galaxy', 'claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'anthropic', 'claude', 'llm.chat',
+   200000, 0, 0, 0, 0, 'CNY', '["低延迟","批量","便宜"]',
+   '最轻的一档，适合分类、抽取、批量跑这类量大而单次简单的活。',
+   1, 0, 40, NOW(3), NOW(3)),
+
+  ('galaxy', 'gpt-5.6-terra', 'GPT-5.6 Terra', 'openai', 'gpt', 'llm.chat',
+   0, 0, 0, 0, 0, 'CNY', '["OpenAI 兼容","Codex"]',
+   'OpenAI 一族，Codex CLI 与 OpenAI SDK 直接指过来就能用。',
+   1, 1, 50, NOW(3), NOW(3))
+ON DUPLICATE KEY UPDATE
+  `display_name`   = VALUES(`display_name`),
+  `vendor`         = VALUES(`vendor`),
+  `family`         = VALUES(`family`),
+  `kind`           = VALUES(`kind`),
+  `context_tokens` = VALUES(`context_tokens`),
+  `tags_json`      = VALUES(`tags_json`),
+  `summary`        = VALUES(`summary`),
+  `listed`         = VALUES(`listed`),
+  `featured`       = VALUES(`featured`),
+  `sort_order`     = VALUES(`sort_order`),
+  `updated_time`   = NOW(3);

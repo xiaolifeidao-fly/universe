@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
@@ -70,5 +71,61 @@ func TestDisableContributionsByNodeStaysOnItsNode(t *testing.T) {
 		if !strings.Contains(statement, want) {
 			t.Fatalf("语句里缺了 %s：%s", want, statement)
 		}
+	}
+}
+
+// queryPool 在 recordingPool 之上把查询也抄下来。查询一律答「没有行」——
+// 要盯的是 WHERE 条件，不是结果。
+type queryPool struct {
+	recordingPool
+}
+
+func (p *queryPool) QueryContext(_ context.Context, query string, args ...any) (*sql.Rows, error) {
+	p.statements = append(p.statements, query)
+	p.args = append(p.args, args)
+	return nil, sql.ErrNoRows
+}
+
+func queryRecordingRepository(t *testing.T) (*GalaxyRepository, *queryPool) {
+	t.Helper()
+	pool := &queryPool{}
+	database, err := gorm.Open(mysql.New(mysql.Config{
+		Conn: pool, SkipInitializeWithVersion: true,
+	}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	repository := &GalaxyRepository{}
+	repository.SetDb(database)
+	return repository, pool
+}
+
+// TestNodeNamesKeepsRevokedButStaysWithOwner 执行记录要标出是哪台机器跑的。
+//
+// 两个条件缺一不可：跑活的那台可能早就解绑了，照 ListNodesByOwner 那样滤掉 revoked，
+// 老记录就只剩一串 id；owner 条件一丢，拿到别人的 node_id 就能读到别人给机器起的名字。
+func TestNodeNamesKeepsRevokedButStaysWithOwner(t *testing.T) {
+	repository, pool := queryRecordingRepository(t)
+	_, _ = repository.NodeNames(context.Background(), "galaxy", "u_owner", []string{"n_mac", "n_rack"})
+	statement := lastStatement(t, &pool.recordingPool)
+	for _, want := range []string{"biz_line = ?", "owner_user_id = ?", "u_owner", "node_id IN", "n_mac", "n_rack"} {
+		if !strings.Contains(statement, want) {
+			t.Fatalf("语句里缺了 %s：%s", want, statement)
+		}
+	}
+	if strings.Contains(statement, "status") {
+		t.Fatalf("解绑的机器也得查得出名字，不能按状态过滤：%s", statement)
+	}
+	if strings.Contains(statement, "SELECT *") {
+		t.Fatalf("只取名字两列，别把回连密钥一起捞出来：%s", statement)
+	}
+}
+
+// TestNodeNamesSkipsEmptyIDs 这一页一条记录都没有时不查库。
+func TestNodeNamesSkipsEmptyIDs(t *testing.T) {
+	repository, pool := queryRecordingRepository(t)
+	names, err := repository.NodeNames(context.Background(), "galaxy", "u_owner", nil)
+	if err != nil || len(names) != 0 || len(pool.statements) != 0 {
+		t.Fatalf("没有 id 不该查库：names=%v err=%v statements=%v", names, err, pool.statements)
 	}
 }

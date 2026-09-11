@@ -1,5 +1,5 @@
 import { ElectronApi, Invoke } from './base';
-import type { BridgePing, BridgePingOptions, BridgeState, BridgePairPayload, BridgePairResult, UpstreamLoginResult, ToolStatus, BridgeRuntimeStatus, BridgeToken, BridgeTokenInput, BridgeIssuedToken } from './bridge.model';
+import type { BridgePing, BridgePingOptions, BridgeState, BridgeHubSync, BridgePairPayload, BridgePairResult, UpstreamLoginResult, ToolStatus, BridgeRuntimeStatus, BridgeToken, BridgeTokenInput, BridgeIssuedToken } from './bridge.model';
 
 /** Typed Nova-owned bridge API. No arbitrary local URL, file path or shell command is exposed. */
 export class BridgeApi extends ElectronApi {
@@ -10,6 +10,7 @@ export class BridgeApi extends ElectronApi {
   @Invoke start(): Promise<BridgeRuntimeStatus> { return this.invokeApi('start'); }
   @Invoke stop(): Promise<BridgeRuntimeStatus> { return this.invokeApi('stop'); }
   @Invoke restart(): Promise<BridgeRuntimeStatus> { return this.invokeApi('restart'); }
+  @Invoke setHubUrl(hubUrl: string): Promise<BridgeHubSync> { return this.invokeApi('setHubUrl', hubUrl); }
   @Invoke pair(payload: BridgePairPayload): Promise<BridgePairResult> { return this.invokeApi('pair', payload); }
   @Invoke finish(): Promise<void> { return this.invokeApi('finish'); }
   @Invoke startUpstreamLogin(provider: string): Promise<UpstreamLoginResult> { return this.invokeApi('startUpstreamLogin', provider); }

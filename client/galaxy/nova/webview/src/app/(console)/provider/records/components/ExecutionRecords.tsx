@@ -4,7 +4,7 @@
  * 「谁在你的机器上跑了什么」。
  *
  * 这里刻意看不到使用者是谁、也看不到请求内容 —— 那是协议对消费者的承诺（C-12）。
- * 主人需要知道的是：跑了什么模型、烧了多少额度、成没成功、给了多少积分。
+ * 主人需要知道的是：哪台机器跑的、跑了什么模型、烧了多少额度、成没成功、给了多少积分。
  *
  * 筛选与分页都在服务端做。前端筛的话，「今日调用 316」和翻页翻出来的行数
  * 会对不上：limit 先生效、过滤后生效，一页能被筛得几乎为空。
@@ -210,6 +210,15 @@ export function ExecutionRecords() {
                   title: t("records.col.unit"),
                   width: "132px",
                   render: (row: ExecutionRecord) => <span className="gx-mono gx-soft">{shorten(row.unitId)}</span>,
+                },
+                {
+                  key: "node",
+                  title: t("records.col.node"),
+                  width: "150px",
+                  // 机器名常是 xxx-MacBook-Pro.local 这种长串，格子里放不下会被截断，悬停看全名和节点 id。
+                  render: (row: ExecutionRecord) => (
+                    <span title={row.nodeName ? `${row.nodeName} · ${row.nodeId}` : row.nodeId}>{row.nodeName || row.nodeId || "-"}</span>
+                  ),
                 },
                 {
                   key: "model",

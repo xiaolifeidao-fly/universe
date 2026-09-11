@@ -1,4 +1,8 @@
 // Run after build:nova and build:orbit. Uses a local mock upstream; no real account changes.
+//
+// 验的是 .desktop/<端>/ 里那份 Next standalone —— 界面从远端加载之后，它就是
+// **要部署到服务器上**的东西，不再进安装包。桌面壳只负责加载它的地址，
+// 所以这条测试仍然是发布前唯一一次「路由、静态资源、业务代理」的整体验证。
 const { spawn } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');

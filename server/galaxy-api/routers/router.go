@@ -14,6 +14,9 @@ import (
 //	/v1/*        消费者：sk- 算力密钥，官方 SDK 兼容，响应体是官方形态
 //	/agent/v1/*  节点：node token，机器协议，按 HTTP 状态码分支
 //	/api/galaxy  控制台：用户令牌，统一信封
+//
+// 例外只有一处：/api/galaxy/portal/* 是门户面，**不带鉴权** —— 它回答的是
+// 「你们卖什么、多少钱」，收口在同一段路径下，方便一眼看出哪些是公开的。
 func New(database *gorm.DB) (*gin.Engine, *Assembly, error) {
 	assembly, err := Build(database)
 	if err != nil {
@@ -52,6 +55,8 @@ func New(database *gorm.DB) (*gin.Engine, *Assembly, error) {
 	api := engine.Group("/api")
 	assembly.Auth.RegisterHandler(api)
 	console := api.Group("/galaxy")
+	// 门户面先挂：它没有鉴权，放在最前面读路由的人第一眼就会看到这件事。
+	assembly.Portal.RegisterHandler(console)
 	assembly.Providers.RegisterHandler(console)
 	assembly.Consumers.RegisterConsole(console)
 	assembly.Admin.RegisterHandler(console)

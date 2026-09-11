@@ -88,7 +88,7 @@ func (a *Adapter) getModel(ginContext *gin.Context) {
 	// not_found_error 是 Anthropic 这条路径的官方错误类型，OpenAI 客户端读的是
 	// error.message，两边都能看懂。
 	ginContext.JSON(http.StatusNotFound,
-		a.ToError(nil, http.StatusNotFound, "not_found_error", "模型不在共享池声明的清单里："+id))
+		a.ToError(nil, http.StatusNotFound, "not_found_error", "模型不在平台提供的清单里："+id))
 }
 
 func (a *Adapter) modelCatalog() []modelEntry {

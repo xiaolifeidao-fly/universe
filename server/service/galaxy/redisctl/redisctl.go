@@ -132,33 +132,85 @@ func (c *ControlPlane) RegisterNode(ctx context.Context, node galaxy.NodeRuntime
 	}
 	pipe := c.client.TxPipeline()
 	pipe.HSet(ctx, c.nodeKey(node.NodeID), values)
-	pipe.Expire(ctx, c.nodeKey(node.NodeID), 24*time.Hour)
+	pipe.Expire(ctx, c.nodeKey(node.NodeID), nodeTTL)
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
-// TouchNode 心跳续期：节点自己的 key 与它名下每个贡献的 key 一起续。
-// 45s 不续就自然过期，等价于「摘除该节点的全部贡献」。
-func (c *ControlPlane) TouchNode(ctx context.Context, nodeID string, beatAt time.Time) error {
+// TouchNode 心跳续期：节点自己的登记项与它名下每个贡献的 key 一起续。
+// 45s 不续贡献就自然过期，等价于「摘除该节点的全部贡献」。
+//
+// 返回值是「这个节点在控制面里还在不在」。不在的时候这里一个字都不写：
+// 登记项是 hello 建的，带着 instance / ownerUserId / bridgeVersion / resources，
+// 而心跳手上只有 lastBeat 和 status —— 拿这两个字段把它 HSET 回来，得到的是一条
+// 缺了大半的登记项，比干脆没有更难查。要补齐得由调用方拿数据库的行重建。
+func (c *ControlPlane) TouchNode(ctx context.Context, nodeID string, beatAt time.Time) (bool, error) {
 	cids, err := c.client.SMembers(ctx, c.nodeContribs(nodeID)).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return err
+		return false, err
 	}
 	pipe := c.client.TxPipeline()
-	pipe.HSet(ctx, c.nodeKey(nodeID), "lastBeat", beatAt.UnixMilli(), "status", "active")
-	pipe.Expire(ctx, c.nodeKey(nodeID), 24*time.Hour)
+	touched := pipe.Eval(ctx, patchIfExistsLua, []string{c.nodeKey(nodeID)},
+		patchArgs(int(nodeTTL.Seconds()), map[string]any{
+			"lastBeat": beatAt.UnixMilli(), "status": "active",
+		})...)
 	for _, cid := range cids {
-		pipe.HSet(ctx, c.contribKey(cid), "lastBeat", beatAt.UnixMilli())
-		pipe.Expire(ctx, c.contribKey(cid), contributionTTL)
-		pipe.Expire(ctx, c.seatsKey(cid), contributionTTL)
+		// 只给还在的贡献续期。已经过期的不能靠一句心跳复活成「只有 lastBeat」的壳 ——
+		// 它没有 kind 也没有 provider，选不上还占着车道，真要回到候选里得走一次 hello，
+		// 而节点断连重连本来就会重发 hello。
+		pipe.Eval(ctx, patchIfExistsLua, []string{c.contribKey(cid), c.seatsKey(cid)},
+			patchArgs(int(contributionTTL.Seconds()), map[string]any{"lastBeat": beatAt.UnixMilli()})...)
 	}
-	pipe.Expire(ctx, c.nodeContribs(nodeID), 24*time.Hour)
-	_, err = pipe.Exec(ctx)
-	return err
+	pipe.Expire(ctx, c.nodeContribs(nodeID), nodeTTL)
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return false, err
+	}
+	found, err := touched.Int64()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return found == 1, nil
 }
 
 // contributionTTL 心跳每 15s 一次，45s 收不到就摘除（设计文档 2.3）。
 const contributionTTL = 45 * time.Second
+
+// nodeTTL 节点登记项比贡献活得久得多：贡献没了只是这台机器不接新单，
+// 登记项没了才是「Hub 眼里这台机器根本不存在」。
+const nodeTTL = 24 * time.Hour
+
+// patchIfExistsLua 只给**已经存在**的 key 打补丁，绝不创建。
+//
+// 控制面里「建一条登记」和「改它的字段」是两件事：节点和贡献都只由 hello 建
+// （RegisterNode / ReplaceContributions），其余写入一律是打补丁。用裸 HSET 打补丁，
+// 碰上刚过期或压根没建过的 key，就会凭空造出一条只有这次所写字段的残缺登记。
+// 这种残缺登记很难发现也很难自愈：字段数不为 0，读的人不会把它当「不存在」跳过，
+// 于是它以一个哪儿都对不上的身份继续参与后面的判断。贡献这边的表现是 Lane() 算出 "|"，
+// 被塞进一条空车道，放置端在正经车道里怎么找都找不到 —— 界面显示共享中、消费者一路 no_capacity。
+//
+// KEYS[1] 要打补丁的 key，KEYS[2] 可选的附属 key（跟着一起续期）。
+// ARGV[1] 续期秒数，<=0 表示不动 TTL；之后是成对的 field / value。
+const patchIfExistsLua = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+local ttl = tonumber(ARGV[1])
+if #ARGV > 1 then redis.call('HSET', KEYS[1], unpack(ARGV, 2)) end
+if ttl > 0 then
+  redis.call('EXPIRE', KEYS[1], ttl)
+  if KEYS[2] ~= nil then redis.call('EXPIRE', KEYS[2], ttl) end
+end
+return 1`
+
+func patchArgs(ttlSeconds int, fields map[string]any) []any {
+	args := make([]any, 0, 1+len(fields)*2)
+	args = append(args, ttlSeconds)
+	for field, value := range fields {
+		args = append(args, field, value)
+	}
+	return args
+}
 
 func (c *ControlPlane) DropNode(ctx context.Context, nodeID string) error {
 	cids, err := c.client.SMembers(ctx, c.nodeContribs(nodeID)).Result()
@@ -224,7 +276,7 @@ func (c *ControlPlane) ReplaceContributions(ctx context.Context, nodeID string, 
 		pipe.SAdd(ctx, c.laneKey(lane), snapshot.CID)
 		pipe.SAdd(ctx, c.nodeContribs(nodeID), snapshot.CID)
 	}
-	pipe.Expire(ctx, c.nodeContribs(nodeID), 24*time.Hour)
+	pipe.Expire(ctx, c.nodeContribs(nodeID), nodeTTL)
 	_, err = pipe.Exec(ctx)
 	return err
 }
@@ -257,7 +309,9 @@ func (c *ControlPlane) SyncQuota(ctx context.Context, cid string, limits contrac
 		fields["used:"+unit] = usedValue
 		fields["left:"+unit] = limits[unit] - usedValue - reservedValue
 	}
-	if err := c.client.HSet(ctx, c.contribKey(cid), fields).Err(); err != nil {
+	// 贡献不在控制面里就只算不写：控制台改额度时那条贡献可能还没 hello 过，
+	// 这里一写就是一个只有 limit/used/left、没有 kind 与 provider 的壳。
+	if err := c.client.Eval(ctx, patchIfExistsLua, []string{c.contribKey(cid)}, patchArgs(0, fields)...).Err(); err != nil {
 		return nil, nil, err
 	}
 	return used, reserved, nil
@@ -278,6 +332,7 @@ func (c *ControlPlane) UpdateLaneRuntime(ctx context.Context, runtimes []galaxy.
 			// 心跳可能晚于 429 收尾到达，空值或旧时间不能清掉较新的冷却。
 			// 用绝对时间判断到期，无需主动写零。
 			pipe.Eval(ctx, `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
 local current = tonumber(redis.call('HGET', KEYS[1], 'throttledUntil') or '0')
 local incoming = tonumber(ARGV[1])
 if incoming > current then redis.call('HSET', KEYS[1], 'throttledUntil', incoming) end
@@ -286,15 +341,25 @@ return 1`, []string{c.contribKey(runtime.CID)}, runtime.ThrottledUntil.UnixMilli
 		if len(runtime.CachedArtifacts) > 0 {
 			values["cachedArtifacts"] = encode(runtime.CachedArtifacts)
 		}
-		pipe.HSet(ctx, c.contribKey(runtime.CID), values)
-		pipe.Expire(ctx, c.contribKey(runtime.CID), contributionTTL)
+		// 节点每 15s 报一次通道状态。贡献不在控制面里（还没 hello、或哈希已过期）时
+		// 这一步必须什么都不做，否则每个心跳都在造一个新的空壳。
+		pipe.Eval(ctx, patchIfExistsLua, []string{c.contribKey(runtime.CID)},
+			patchArgs(int(contributionTTL.Seconds()), values)...)
 	}
 	_, err := pipe.Exec(ctx)
 	return err
 }
 
+// SetDraining 只在贡献已经在控制面里时才写。
+//
+// 裸 HSET 会在一个不存在的 key 上凭空建出「只有 draining 一个字段」的壳：
+// 它没有 kind 也没有 provider，Lane() 算出来是 "|"，而且没有 TTL 所以永远不消失。
+// 之后任何把它当快照读的人都会被带偏 —— SaveContributionLimits 读到它会
+// found=true，接着把这条贡献 SAdd 进 galaxy:lane:| 那个空车道，
+// 放置端在正经车道里怎么找都找不到它。踩过一次，表现是「界面共享中但一直 503」。
 func (c *ControlPlane) SetDraining(ctx context.Context, cid string, draining bool) error {
-	return c.client.HSet(ctx, c.contribKey(cid), "draining", boolToInt(draining)).Err()
+	return c.client.Eval(ctx, patchIfExistsLua, []string{c.contribKey(cid)},
+		patchArgs(0, map[string]any{"draining": boolToInt(draining)})...).Err()
 }
 
 func (c *ControlPlane) ListLaneContributions(ctx context.Context, lane string) ([]galaxy.ContributionSnapshot, error) {
@@ -305,7 +370,29 @@ func (c *ControlPlane) ListLaneContributions(ctx context.Context, lane string) (
 		}
 		return nil, err
 	}
-	return c.loadContributions(ctx, cids)
+	snapshots, missing, err := c.loadContributions(ctx, cids)
+	if err != nil {
+		return nil, err
+	}
+	// 顺手把死成员摘掉。
+	//
+	// lane 集合没有 TTL，而两条正规的 SREM 路径（hello 的全量替换、撤销时的 DropNode）
+	// 都得先从 contrib 哈希里读出 lane 字段才知道该动哪条 —— 那个哈希 45 秒就过期，
+	// 于是节点掉线久一点再撤销，成员就永远留在这里了，只增不减。
+	// 放置本来就要把这条 lane 整个读一遍，在这儿清是零额外开销，而且不挑成因：
+	// 不管什么原因留下的死成员，第一次被读到就消失。
+	//
+	// 被误摘的代价也有限：能走到这里说明哈希已经不在，那条贡献本来就选不上
+	// （Place 的 Lua 第一件事就是 EXISTS contribKey），要回到候选里得靠一次 hello，
+	// 而节点断连重连本来就会重发 hello。
+	if len(missing) > 0 {
+		members := make([]any, 0, len(missing))
+		for _, cid := range missing {
+			members = append(members, cid)
+		}
+		_ = c.client.SRem(ctx, c.laneKey(lane), members...).Err()
+	}
+	return snapshots, nil
 }
 
 func (c *ControlPlane) ListNodeContributions(ctx context.Context, nodeID string) ([]galaxy.ContributionSnapshot, error) {
@@ -316,12 +403,15 @@ func (c *ControlPlane) ListNodeContributions(ctx context.Context, nodeID string)
 		}
 		return nil, err
 	}
-	return c.loadContributions(ctx, cids)
+	snapshots, _, err := c.loadContributions(ctx, cids)
+	return snapshots, err
 }
 
-func (c *ControlPlane) loadContributions(ctx context.Context, cids []string) ([]galaxy.ContributionSnapshot, error) {
+// loadContributions 第二个返回值是「哈希已经不在」的那些 cid。调用方要是手里握着
+// 一份成员表（lane 集合），可以据此把死成员摘掉；节点视角不需要，那张表有 TTL。
+func (c *ControlPlane) loadContributions(ctx context.Context, cids []string) ([]galaxy.ContributionSnapshot, []string, error) {
 	if len(cids) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pipe := c.client.Pipeline()
 	hashes := make([]*redis.MapStringStringCmd, len(cids))
@@ -331,19 +421,22 @@ func (c *ControlPlane) loadContributions(ctx context.Context, cids []string) ([]
 		seats[index] = pipe.ZCount(ctx, c.seatsKey(cid), strconv.FormatInt(time.Now().UnixMilli(), 10), "+inf")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, err
+		return nil, nil, err
 	}
 	snapshots := make([]galaxy.ContributionSnapshot, 0, len(cids))
+	var missing []string
 	for index, cid := range cids {
 		values, err := hashes[index].Result()
 		if err != nil || len(values) == 0 {
-			continue // key 过期即摘除，这是心跳超时的自然结果
+			// key 过期即摘除，这是心跳超时的自然结果。
+			missing = append(missing, cid)
+			continue
 		}
 		snapshot := decodeSnapshot(cid, values)
 		snapshot.SeatsUsed = int(seats[index].Val())
 		snapshots = append(snapshots, snapshot)
 	}
-	return snapshots, nil
+	return snapshots, missing, nil
 }
 
 func (c *ControlPlane) GetContribution(ctx context.Context, cid string) (galaxy.ContributionSnapshot, bool, error) {

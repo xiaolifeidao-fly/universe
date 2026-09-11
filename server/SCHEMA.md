@@ -70,6 +70,8 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_ledger_turn` | 回合摘要。`(sid, seq)` 是幂等键，重复提交不重跑 |
 | `zt_galaxy_ledger_checkpoint` | 节点侧 CLI 的高保真快照，绑 CLI 版本 |
 | `zt_galaxy_dispute` | 争议工单。`(unit_id, attempt)` 唯一，同一次执行只能有一张 |
+| `zt_galaxy_model` | 门户对外的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时门户回落到 `galaxy.models` 声明的清单 |
+| `zt_galaxy_lead` | 门户「联系我们」线索。**全站唯一被未鉴权接口写入的表**，字段一律短、按 IP 限流、`ip`/`user_agent` 不进任何对外视图 |
 
 **建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，
 并顺带写入 `llm.chat` 的默认定价；或者直接执行 `server/galaxy.sql`（只建表，定价表是空的，

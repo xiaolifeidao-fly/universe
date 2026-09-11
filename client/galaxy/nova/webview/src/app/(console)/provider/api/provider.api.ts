@@ -126,6 +126,33 @@ export class NodeView {
 
   lastBeatAt?: string;
 
+  /**
+   * 这台机器怎么接进池子。
+   *
+   * poll：机器自己来领活 —— Nova 客户端只有这一种。
+   * export：独立部署的 ai-bridge 把自己暴露在公网上，由平台主动回连。
+   *
+   * 要露在界面上：两种方式的排障路径完全不同，而主人自己往往说不清
+   * 机房里那台是怎么配的。
+   */
+  accessMode: "poll" | "export" = "poll";
+
+  /** export 机器的公网入口。不含密钥 —— 密钥永远不出服务端。 */
+  endpointUrl = "";
+
+  /**
+   * 最近一次回连探测：ok / unreachable，还没探过是空串。
+   *
+   * 和 status 是两件事：心跳是节点主动出站的，公网入口不通照样能心跳。
+   * 分开显示，主人才看得出「进程活着，但端口没映射对」。
+   */
+  endpointStatus = "";
+
+  /** 回连失败的原因，人话，直接展示。 */
+  endpointError = "";
+
+  endpointCheckedAt?: string;
+
   contributions: ContributionView[] = [];
 }
 
@@ -142,6 +169,61 @@ export class NodeView {
  */
 export function isNodeOnline(node: NodeView): boolean {
   return !node.banned && node.status === "active";
+}
+
+/** 机器在界面上叫什么。主人没起名（刚注册、还没 hello）时退回节点 ID，不显示成空白。 */
+export function nodeDisplayName(node: NodeView): string {
+  return node.displayName || node.nodeId;
+}
+
+/* ---------- 接入密钥（独立部署的 ai-bridge 用） ---------- */
+
+/**
+ * 一把接入密钥。**不含明文** —— 明文只在签发那一次返回。
+ *
+ * 它和配对码的分工：配对码一次性、十分钟有效，给「人同时看着两块屏幕」的
+ * Nova 客户端用；接入密钥长期有效，写进机房里那台机器的配置，重启之后它
+ * 自己就能重新注册。代价是它值钱得多 —— 拿到它的人能以你的名义往池子里加机器。
+ */
+export class ProviderKeyView {
+  keyId = "";
+
+  alias = "";
+
+  /** active / revoked */
+  status = "";
+
+  lastUsedAt?: string;
+
+  /** 最近一次用它注册出来的机器。主人靠它判断「这把密钥还有谁在用」。 */
+  lastNodeId = "";
+
+  expiresAt?: string;
+
+  createdTime = "";
+}
+
+/** 签发结果。secret 是唯一一次能看到明文的地方，界面必须当场让人复制走。 */
+export class IssuedProviderKey extends ProviderKeyView {
+  secret = "";
+}
+
+export async function fetchProviderKeys() {
+  return getDataList(ProviderKeyView, "/galaxy/provider/access-keys");
+}
+
+export async function issueProviderKey(payload: { alias?: string; expiresInDays?: number }) {
+  const response = await instance.post<ApiResponse<IssuedProviderKey>>("/galaxy/provider/access-keys", payload);
+  return unwrapApiResponse(response.data);
+}
+
+/**
+ * 吊销。已经用它注册出来的机器**不受影响** —— 它们手里是各自的节点令牌。
+ * 要停哪一台，去机器列表里解绑那一台。
+ */
+export async function revokeProviderKey(keyId: string) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/provider/access-keys/revoke", { keyId });
+  return unwrapApiResponse(response.data);
 }
 
 export class TermsStatus {
@@ -178,6 +260,11 @@ export class ExecutionRecord {
   startedAt?: string;
 
   finishedAt?: string;
+
+  /** 这一次是哪台机器跑的。nodeName 是主人给机器起的名字，机器解绑了也照样有。 */
+  nodeId = "";
+
+  nodeName = "";
 }
 
 export class CreditBalance {

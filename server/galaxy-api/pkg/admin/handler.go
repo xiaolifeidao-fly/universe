@@ -42,6 +42,58 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// （GET /api/galaxy/consumer/packages）固定只给上架的。
 	api.GET("/packages", h.packages)
 	api.POST("/packages/save", httpx.RequirePlatformAdmin(), h.savePackage)
+	// 门户的模型目录。和商品目录一个脾气：列全部（含下架的），保存是整行覆盖。
+	api.GET("/portal/models", h.portalModels)
+	api.POST("/portal/models/save", httpx.RequirePlatformAdmin(), h.savePortalModel)
+	api.POST("/portal/models/delete", httpx.RequirePlatformAdmin(), h.deletePortalModel)
+	// 门户「联系我们」收到的线索。里面是陌生人留下的联系方式，
+	// 不进只读双用那一档 —— manager-api 的服务凭证没有理由拉这份名单。
+	api.GET("/portal/leads", httpx.RequirePlatformAdmin(), h.portalLeads)
+	api.POST("/portal/leads/handle", httpx.RequirePlatformAdmin(), h.handlePortalLead)
+}
+
+// portalModels 门户模型目录。列全部：下架的那几行仍然要看得见，
+// 否则运营只能靠记忆判断某个模型是不是自己下架的那个。
+func (h *Handler) portalModels(context *gin.Context) {
+	views, err := h.service.ListPortalModels(context.Request.Context(), false)
+	httpx.JSON(context, views, err)
+}
+
+func (h *Handler) savePortalModel(context *gin.Context) {
+	var req dto.SaveModelRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, nil, h.service.SavePortalModel(context.Request.Context(), req))
+}
+
+func (h *Handler) deletePortalModel(context *gin.Context) {
+	var req struct {
+		ModelID string `json:"modelId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, nil, h.service.DeletePortalModel(context.Request.Context(), req.ModelID))
+}
+
+func (h *Handler) portalLeads(context *gin.Context) {
+	offset, _ := strconv.Atoi(context.DefaultQuery("offset", "0"))
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "50"))
+	page, err := h.service.ListLeads(context.Request.Context(), context.Query("status"), offset, limit)
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) handlePortalLead(context *gin.Context) {
+	var req dto.HandleLeadRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.HandledBy = httpx.CallerID(context)
+	httpx.JSON(context, nil, h.service.HandleLead(context.Request.Context(), req))
 }
 
 // packages 商品目录。运营要看得见下架的：一个商品下架之后仍然被历史订单引用，

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ai-bridge 的 LaunchAgent。
+
+    sudo install -m 0755 ai-bridge /usr/local/bin/ai-bridge
+    cp com.galaxy.ai-bridge.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.galaxy.ai-bridge.plist
+    tail -f /tmp/ai-bridge.log
+
+  停用：launchctl bootout gui/$(id -u)/com.galaxy.ai-bridge
+
+  是 LaunchAgent 而不是 LaunchDaemon：Claude 的订阅登录态在当前用户的钥匙串里，
+  只有用户会话里读得到。ProgramArguments 写可执行文件的绝对路径、PATH 显式给出 ——
+  launchd 不继承 shell 的环境，换了安装位置记得同步改这里。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.galaxy.ai-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ai-bridge</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/tmp/ai-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/ai-bridge.log</string>
+</dict>
+</plist>

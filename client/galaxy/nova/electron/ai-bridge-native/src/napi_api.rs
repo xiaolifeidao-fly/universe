@@ -9,7 +9,7 @@ use crate::credentials::CredentialRegistry;
 use crate::pool::client::HubClient;
 use crate::pool::probe::probe;
 use crate::pool::runner::{create_pool_runner, PoolRunner};
-use crate::pool::setup::{login_command, open_terminal, origin_of, write_pool_connection};
+use crate::pool::setup::{hub_needs_rebind, login_command, open_terminal, origin_of, write_pool_connection};
 use crate::pool::token::{read_node_identity, resolve_node_token_file, write_node_identity, NodeIdentity};
 use crate::pool::tools::{tool_statuses, upgrade_tool};
 use napi::bindgen_prelude::*;
@@ -18,6 +18,19 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// 平台地址必须是干净的 HTTP(S) 地址：带用户名密码的 URL 会把凭据写进配置文件。
+fn validate_hub_url(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    let parsed = reqwest::Url::parse(trimmed).map_err(|_| err("平台地址必须是 HTTP(S) 地址"))?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(err("平台地址必须是 HTTP(S) 地址"));
+    }
+    Ok(trimmed.to_string())
+}
 
 fn err(message: impl Into<String>) -> napi::Error {
     napi::Error::from_reason(message.into())
@@ -130,12 +143,20 @@ impl NativeBridge {
         self.status_json().await
     }
 
+    /// 停机永远成功。配置文件被删了、被改坏了，都不该导致「停不下来」——
+    /// 那正是主人最需要它停下来的时候。
     #[napi]
     pub async fn stop(&self) -> Result<String> {
         let mut runtime = self.runtime.lock().await;
         self.stop_locked(&mut runtime).await;
         drop(runtime);
-        self.status_json().await
+        match self.status_json().await {
+            Ok(status) => Ok(status),
+            Err(_) => to_json(&json!({
+                "state": "stopped", "mode": "relay", "paired": false,
+                "hubURL": "", "configPath": self.config_path(),
+            })),
+        }
     }
 
     #[napi]
@@ -199,6 +220,44 @@ impl NativeBridge {
     // ---------- 配对 ----------
 
     /// 用一次性配对码换长期节点令牌，写盘并把配置切到 pool 模式。
+    /// 把本机绑定的平台地址对齐到 `hub_url`。控制台每次打开账户页调一次。
+    ///
+    /// 为什么需要：平台的对外地址是部署方在 galaxy.provider_hub_url 里定的，
+    /// 换了机房或域名之后本机配置不会自己跟上 —— 界面上显示的还是旧地址，
+    /// 而且重新配对会被 pair() 的同源检查拦住（「本机已绑定其他平台」），
+    /// 主人只能去翻 userData 手改 yaml。
+    ///
+    /// 按 **origin** 比，不按字符串比：node-token 里存的 hubURL 和配置是逐字符
+    /// 比对的（见 identity()），为了一个末尾斜杠重写配置，会把一台好好连着的机器
+    /// 直接判成未配对。origin 一致就当它已经是对的，一个字都不动。
+    ///
+    /// 还没绑过平台的机器也不动：write_pool_connection 会顺手把 mode 切成 pool，
+    /// 而一台没配对过的机器切进 pool 模式只会起不来。那种机器的地址由配对流程写。
+    #[napi]
+    pub async fn set_hub_url(&self, hub_url: String) -> Result<String> {
+        let cfg = self.config()?;
+        let target = validate_hub_url(&hub_url)?;
+        let current = cfg.pool.as_ref().map(|p| p.hub_url.clone()).unwrap_or_default();
+        let paired = self.identity(&cfg).await.is_some();
+        if !hub_needs_rebind(&current, &target) {
+            return to_json(&json!({
+                "hubURL": current, "changed": false, "paired": paired,
+            }));
+        }
+
+        // 换平台了。旧的 node token 认的是旧地址，配置一写就不再算数，
+        // 所以先停下来让界面老老实实回到「未配对」，由主人重新配一次 ——
+        // 留一个「连着旧平台、显示着新地址」的中间态更难查。
+        let mut runtime = self.runtime.lock().await;
+        self.stop_locked(&mut runtime).await;
+        let backup = write_pool_connection(&self.config_path, &target).await.map_err(err)?;
+        drop(runtime);
+        to_json(&json!({
+            "hubURL": target, "previous": current, "changed": true,
+            "backup": backup, "paired": false,
+        }))
+    }
+
     #[napi]
     pub async fn pair(
         &self,
@@ -209,13 +268,7 @@ impl NativeBridge {
         let cfg = self.config()?;
         let configured = cfg.pool.as_ref().map(|p| p.hub_url.clone());
         let hub = hub_url.or_else(|| configured.clone()).ok_or_else(|| err("请填写平台地址"))?;
-        let parsed = reqwest::Url::parse(&hub).map_err(|_| err("平台地址必须是 HTTP(S) 地址"))?;
-        if !matches!(parsed.scheme(), "http" | "https")
-            || !parsed.username().is_empty()
-            || parsed.password().is_some()
-        {
-            return Err(err("平台地址必须是 HTTP(S) 地址"));
-        }
+        let hub = validate_hub_url(&hub)?;
         if let Some(existing) = configured.as_deref().filter(|value| !value.is_empty()) {
             if origin_of(&hub) != origin_of(existing) {
                 return Err(err("本机已绑定其他平台，请先修改 Nova 本机配置"));
@@ -433,9 +486,17 @@ impl NativeBridge {
         let identity = self.identity(&cfg).await;
         let runtime = self.runtime.lock().await;
         let queue = runtime.relay.as_ref().map(|bridge| bridge.state.gate.stats());
+        // 接入方式报**事实**：runner 在跑时取它回落之后的那个（配置写了 export
+        // 却没给公网地址会回落成 poll），没在跑才退回配置里声明的值。
+        let access_mode = runtime
+            .pool
+            .as_ref()
+            .map(|pool| pool.access_mode().to_string())
+            .unwrap_or_else(|| cfg.pool.as_ref().map(|p| p.access_mode.label()).unwrap_or("poll").to_string());
         let mut out = json!({
             "state": runtime.state.label(),
             "mode": if cfg.mode == Mode::Pool { "pool" } else { "relay" },
+            "accessMode": access_mode,
             "paired": identity.is_some(),
             "nodeId": identity.as_ref().map(|i| i.node_id.clone()),
             "hubURL": cfg.pool.as_ref().map(|p| p.hub_url.clone()).unwrap_or_default(),

@@ -340,6 +340,73 @@ pub struct PoolContribution {
 fn heartbeat_sec() -> u32 { 15 }
 fn next_wait_sec() -> u32 { 25 }
 
+/// 节点和 Hub 之间是怎么通信的。
+///
+/// poll   节点长轮询领活，只主动出站，Hub 永不主动连它（P-15）。
+///        笔记本、家里的台式机只能走这条 —— 它们没有稳定可达的入口，
+///        也不该要求主人去路由器上开端口。可视化客户端只支持这一种。
+/// export 节点把自己暴露在一个公网地址上，Hub 拿地址 + 密钥主动回连。
+///        代价是主人要自己保证那个地址通；收益是省掉一整条长轮询链路，
+///        派单不再受轮询间隔约束。放在机房里、有固定入口的机器该走这条。
+///
+/// 两种方式**只在「活是怎么到手上的」这一步不同**：hello、心跳、进度、终态
+/// 回报全部照旧主动出站。所以下面 export 段缺失或不合法时回落到 poll 是安全的 ——
+/// 最坏结果是慢一点领到活，而不是这台机器彻底不接活。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccessMode { Poll, Export }
+
+impl AccessMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            AccessMode::Poll => "poll",
+            AccessMode::Export => "export",
+        }
+    }
+}
+
+impl Default for AccessMode {
+    fn default() -> Self { AccessMode::Poll }
+}
+
+fn export_host() -> String { "0.0.0.0".into() }
+fn export_port() -> u16 { 8788 }
+
+/// export 接入的监听与对外声明。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PoolExportConfig {
+    /// 监听地址。默认 0.0.0.0 —— export 的全部意义就是让 Hub 从外面连进来，
+    /// 默认绑 127.0.0.1 会让每个人第一次都配不通。
+    #[serde(default = "export_host")]
+    pub host: String,
+    #[serde(default = "export_port")]
+    pub port: u16,
+    /// Hub 回连要用的公网基地址，形如 https://box.example.com:8788。
+    ///
+    /// **必须自己填**，本机推不出来：0.0.0.0 不是地址，而出口 IP、端口映射、
+    /// 前面有没有反代和 TLS，只有部署的人知道。缺了它就回落成 poll。
+    #[serde(default, rename = "publicURL", skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
+    /// 回连密钥。不填就自动生成一把存到 <runtimeDir>/export-secret，
+    /// 重启后照旧 —— 没人需要背下这串东西，让它默认就是安全的。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+    #[serde(default, rename = "secretFile", skip_serializing_if = "Option::is_none")]
+    pub secret_file: Option<String>,
+    /// 在反向代理后面时打开，取 X-Forwarded-For 作为来源 IP（只影响日志）。
+    #[serde(default, rename = "trustProxy")]
+    pub trust_proxy: bool,
+}
+
+impl Default for PoolExportConfig {
+    fn default() -> Self {
+        Self {
+            host: export_host(), port: export_port(),
+            public_url: None, secret: None, secret_file: None, trust_proxy: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoolConfig {
     #[serde(rename = "hubURL")]
@@ -353,6 +420,19 @@ pub struct PoolConfig {
     /// 契约版本。与 Hub 不一致时 hello 被拒，节点停止重试并提示升级（S-11）。
     #[serde(default = "one")]
     pub contract: u32,
+    /// 接入方式。不写就是 poll。
+    #[serde(default, rename = "accessMode")]
+    pub access_mode: AccessMode,
+    /// export 接入的监听与对外声明。accessMode=poll 时整段忽略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<PoolExportConfig>,
+    /// 提供者接入密钥（gpk-…）。单独部署时用它自助注册，代替配对码。
+    ///
+    /// 落在配置里而不是只作 CLI 参数：无人值守的机器要能自己重新注册，
+    /// 而那时没有人站在旁边把参数敲一遍。它和 tokenFile 一样是本机机密，
+    /// 配置文件的权限就是它的防线。
+    #[serde(default, rename = "accessKey", skip_serializing_if = "Option::is_none")]
+    pub access_key: Option<String>,
     #[serde(default)]
     pub contributions: Vec<PoolContribution>,
 }

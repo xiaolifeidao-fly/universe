@@ -20,9 +20,11 @@ import (
 	"galaxy-api/pkg/agent"
 	authpkg "galaxy-api/pkg/auth"
 	"galaxy-api/pkg/consumers"
+	"galaxy-api/pkg/exportdispatch"
 	"galaxy-api/pkg/local"
 	"galaxy-api/pkg/metrics"
 	"galaxy-api/pkg/payments"
+	"galaxy-api/pkg/portal"
 	"galaxy-api/pkg/providers"
 	"service/galaxy/redisctl"
 
@@ -40,10 +42,15 @@ type Assembly struct {
 	Journal  *corepkg.Journal
 	Control  *redisctl.ControlPlane
 
+	// Export 是 export 接入方式的派单器：Hub 主动把活推到节点的公网地址上。
+	// 它不是路由，是一条后台循环，由 main 起停。
+	Export *exportdispatch.Dispatcher
+
 	Auth      *authpkg.Handler
 	Agent     *agent.Handler
 	Consumers *consumers.Handler
 	Providers *providers.Handler
+	Portal    *portal.Handler
 	Admin     *admin.Handler
 }
 
@@ -89,6 +96,10 @@ func Build(database *gorm.DB) (*Assembly, error) {
 		}
 	})
 	deps.Journal = journal
+	// relay 等节点认领上行 / 探节点心跳的时限。默认值在 core 那边，
+	// 这里只负责把配置切开 —— 需要为慢上游放宽时改配置，不改代码。
+	deps.AttachTimeout = durationProperty("galaxy.attach_timeout_ms", int(corepkg.DefaultAttachTimeout/time.Millisecond))
+	deps.NodeProbeInterval = durationProperty("galaxy.node_probe_interval_ms", int(corepkg.DefaultNodeProbeInterval/time.Millisecond))
 
 	// 启用哪些适配器由配置决定（架构 12：同一二进制可作纯中转站部署）。
 	adapters, err := buildRegistry(deps)
@@ -130,16 +141,24 @@ func Build(database *gorm.DB) (*Assembly, error) {
 	return &Assembly{
 		Galaxy:   service,
 		Metrics:  registry,
+		Export:   exportdispatch.New(service, exchange, registry),
 		Registry: adapters,
 		Exchange: exchange,
 		Journal:  journal,
 		Control:  control,
 		Auth:     authpkg.NewHandler(identityService),
 		Agent: agent.NewHandler(service, exchange, journal,
-			durationProperty("galaxy.stream_idle_timeout_ms", 60_000)),
+			durationProperty("galaxy.stream_idle_timeout_ms", 60_000), registry),
 		Consumers: consumers.NewHandler(service),
 		Providers: providers.NewHandler(service),
-		Admin:     admin.NewHandler(service),
+		// 门户拿的是同一份声明清单：模型目录表为空时，门户上列出来的
+		// 必须和客户端能填的那份一致，否则页面写着有、填进去用不了。
+		Portal: portal.NewHandler(service, portal.Options{
+			Models:       strings.Split(httpx.Property("galaxy.models"), ","),
+			CacheTTL:     durationProperty("galaxy.portal.cache_ttl_ms", 30_000),
+			LeadsPerHour: intProperty("galaxy.portal.leads_per_hour", 60),
+		}),
+		Admin: admin.NewHandler(service),
 	}, nil
 }
 
@@ -194,6 +213,9 @@ func loadConfig() galaxy.Config {
 	config.PayoutRate = intProperty("galaxy.payout_rate", config.PayoutRate)
 	config.PayoutMinCredits = int64(intProperty("galaxy.payout_min_credits", int(config.PayoutMinCredits)))
 	config.PayoutHoldDays = intProperty("galaxy.payout_hold_days", config.PayoutHoldDays)
+	// 门户上那句可用性承诺。不配就是空串 —— 门户少显示一格，
+	// 而不是替部署方许一个他没许的诺。
+	config.PortalAvailability = strings.TrimSpace(httpx.Property("galaxy.portal.availability"))
 	return config
 }
 

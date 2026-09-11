@@ -280,7 +280,10 @@ type SettleCommand struct {
 // 它不承载响应字节与账目（约束 1、2）—— 字节在 Hub 进程内直传，账目在 MySQL。
 type ControlPlane interface {
 	RegisterNode(ctx context.Context, node NodeRuntime) error
-	TouchNode(ctx context.Context, nodeID string, beatAt time.Time) error
+	// TouchNode 心跳续期，返回该节点在控制面里还在不在。
+	// 登记项过期时它不写任何东西 —— 心跳手上凑不出一条完整的登记项，
+	// 重建要由调用方拿数据库的行来做。
+	TouchNode(ctx context.Context, nodeID string, beatAt time.Time) (bool, error)
 	DropNode(ctx context.Context, nodeID string) error
 
 	// ReplaceContributions 是 hello 的语义：全量替换该节点的贡献集合。
@@ -348,9 +351,13 @@ type Metrics interface {
 
 // 指标名（设计文档第 14 节）。
 const (
-	MetricPlaceLatency   = "galaxy_place_latency_ms"
-	MetricPlaceRedisOps  = "galaxy_place_redis_ops"
-	MetricTTFB           = "galaxy_ttfb_ms"
+	MetricPlaceLatency  = "galaxy_place_latency_ms"
+	MetricPlaceRedisOps = "galaxy_place_redis_ops"
+	MetricTTFB          = "galaxy_ttfb_ms"
+	// MetricStreamGap 一次上行里最长的一段静默（毫秒）。
+	// 它是 streamIdleTimeoutMs 该设多少的唯一依据 —— 那个阈值要盖住
+	// 正常请求的静默上限，凭感觉拍一个数字，不是拍太松就是开始误杀慢上游。
+	MetricStreamGap      = "galaxy_stream_gap_ms"
 	MetricUnitTotal      = "galaxy_unit_total"
 	MetricReassignTotal  = "galaxy_reassign_total"
 	MetricSpillTotal     = "galaxy_spill_total"
@@ -360,6 +367,15 @@ const (
 	MetricUsageMismatch  = "galaxy_usage_mismatch_total"
 	MetricWaitQueueDepth = "galaxy_wait_queue_depth"
 	MetricAuditVerdict   = "galaxy_audit_verdict_total"
+
+	// MetricAccessSyncFailed hello 对齐接入方式失败的次数。
+	// 它不阻断 hello，所以没有这条指标就完全是静默的 —— 而它一旦持续发生，
+	// 表现是一台 export 机器悄悄退回长轮询，谁都不知道为什么变慢了。
+	MetricAccessSyncFailed = "galaxy_access_sync_failed_total"
+	// MetricExportDispatch Hub 回连派单的结果计数，按 outcome 分（ok/unreachable/rejected）。
+	MetricExportDispatch = "galaxy_export_dispatch_total"
+	// MetricExportDispatchLatency 一次回连派单从发起到拿到响应头的耗时。
+	MetricExportDispatchLatency = "galaxy_export_dispatch_ms"
 )
 
 // 放置路径。埋点按它分组，才看得出「90% 请求走已绑定路径」这条是不是真的。

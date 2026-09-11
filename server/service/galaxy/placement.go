@@ -118,6 +118,35 @@ func admit(snapshot ContributionSnapshot, plan QuotaPlan, in FilterInput) (int, 
 	return seatsEff, true
 }
 
+// Waitable 候选为空时判断等一等还有没有指望：至少有一条贡献只差「手上的活结算完」就能接这单。
+//
+// 并发占满、额度被在途请求预留着，这两样一结算就还回来，值得排队（C-05）。其余原因 ——
+// 模型没人提供、离线、暂停、排空、上游限流、挂机时段外、额度真的用完、座位都被别的消费者
+// 绑着（空闲满 bindIdleTTL 才释放）—— 在 maxWait 这几秒里都变不了，让消费者干等只是把
+// 一个注定的 503 推迟十秒。
+func Waitable(snapshots []ContributionSnapshot, in FilterInput) bool {
+	for _, snapshot := range snapshots {
+		if _, ok := admit(onceSettled(snapshot), in.Plans[snapshot.CID], in); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// boundAccepts 已绑定路径的放行条件：座位已经占着，只看并发与额度两项。
+func boundAccepts(snapshot ContributionSnapshot, plan QuotaPlan, estimate contract.Metering) bool {
+	accepts, _ := QuotaAccepts(snapshot, plan, estimate)
+	return accepts && snapshot.Inflight < snapshot.Concurrency()
+}
+
+// onceSettled 假设在途的活都已结算：并发归零、预留全部还回去。
+// 座位是粘性绑定，结算并不释放，所以照旧。
+func onceSettled(snapshot ContributionSnapshot) ContributionSnapshot {
+	snapshot.Inflight = 0
+	snapshot.QuotaReserved = contract.Metering{}
+	return snapshot
+}
+
 // ResourcesSatisfy 比对 kind 声明的资源需求与节点探测到的本机资源。
 //
 // 只认数值型的下限（diskFreeGB、netMbps 这类）：资源需求是「至少要有多少」，

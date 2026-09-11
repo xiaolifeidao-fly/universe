@@ -1,9 +1,10 @@
 use ai_bridge_native::business::{inline_json, inline_text, model_match, Primitive, WorkUnit};
-use ai_bridge_native::pool::client::CapabilityReport;
+use ai_bridge_native::pool::client::{CapabilityReport, HeartbeatResult, HelloResult};
 use ai_bridge_native::pool::hub_address::{HubAddressCheck, HubAddressEvent};
 use ai_bridge_native::pool::lane::{Lane, LaneConfig};
 use ai_bridge_native::pool::models::{parse_codex_cache, parse_models};
 use ai_bridge_native::pool::runner::health_signature;
+use ai_bridge_native::pool::setup::hub_needs_rebind;
 use ai_bridge_native::pool::tools::parse_version;
 use base64::Engine;
 use serde_json::json;
@@ -282,4 +283,89 @@ fn lane_config_can_be_swapped_without_losing_the_inflight_count() {
     target.set_config(config);
     assert_eq!(target.capacity(), 4);
     assert_eq!(target.inflight(), 1, "换配置不该丢掉在跑的计数");
+}
+
+/// Hub 的 hello 响应里 `rejected` 为 null 时，enabled 必须照常解出来。
+///
+/// Go 那边 `[]struct` 是 nil 切片，序列化出去就是 `"rejected": null`，
+/// 而 `#[serde(default)]` 只在**字段缺失**时兜底、遇上显式 null 会直接报错 ——
+/// 于是整个 HelloResult 解析失败，`unwrap_or_default()` 把它悄悄换成
+/// enabled: None，节点当成「老版本 Hub，维持现状」，一条通道都不建，
+/// 而且日志里一个字都没有。查了很久才找到的就是这一条。
+#[test]
+fn hello_result_tolerates_null_collections() {
+    let payload = json!({
+        "accepted": ["relay_codex"],
+        "rejected": null,
+        "quotaEffective": {},
+        "enabled": [{
+            "cid": "relay_codex",
+            "kind": "llm.chat",
+            "kindVersion": 1,
+            "provider": "codex_chatgpt",
+            "modelsAllow": null,
+            "modelsDeny": null,
+            "seats": 3,
+            "seatConcurrency": 2,
+            "quota": null,
+            "schedule": null
+        }]
+    });
+    let result: HelloResult = serde_json::from_value(payload).expect("hello 响应应当解得动");
+    let enabled = result.enabled.expect("enabled 不该丢");
+    assert_eq!(enabled.len(), 1);
+    assert_eq!(enabled[0].cid, "relay_codex");
+    assert!(enabled[0].models_allow.is_empty());
+}
+
+/// 心跳同理：cancel / drain 是 nil 切片时也不能把 enabled 一起带走。
+/// 主人在控制台开关一条贡献，靠的就是心跳把新的 enabled 下发下来。
+#[test]
+fn heartbeat_result_tolerates_null_collections() {
+    let payload = json!({
+        "hubUrl": "http://127.0.0.1:10004",
+        "cancel": null,
+        "drain": null,
+        "quotaUpdate": {},
+        "enabled": [{
+            "cid": "relay_codex", "kind": "llm.chat", "kindVersion": 1,
+            "provider": "codex_chatgpt", "seats": 3, "seatConcurrency": 2
+        }]
+    });
+    let result: HeartbeatResult = serde_json::from_value(payload).expect("心跳响应应当解得动");
+    assert!(result.cancel.is_empty());
+    assert_eq!(result.enabled.expect("enabled 不该丢").len(), 1);
+}
+
+/// 账户页每次打开都会拿平台地址来校准本机绑定，所以这条判定必须极其保守。
+///
+/// 两个方向都会出事：
+///   · 该改的不改 —— 平台换了域名，本机还连着旧地址，界面显示得也是旧的；
+///   · 不该改的改了 —— 一个末尾斜杠就重写配置，而 node-token 里的 hubURL
+///     是逐字符比对的，一台正连着的机器会当场变成「未配对」。
+#[test]
+fn hub_rebind_compares_origin_not_string() {
+    // 同一个 Hub 的各种写法：一个字都不该动
+    for (current, target) in [
+        ("http://127.0.0.1:10004", "http://127.0.0.1:10004"),
+        ("http://127.0.0.1:10004", "http://127.0.0.1:10004/"),
+        ("https://hub.example.com", "https://hub.example.com/galaxy"),
+        ("https://HUB.example.com", "https://hub.example.com"),
+    ] {
+        assert!(!hub_needs_rebind(current, target), "{current} → {target} 不该改写");
+    }
+
+    // 真的换了平台：域名、端口、协议，任一不同都要改
+    for (current, target) in [
+        ("http://127.0.0.1:10004", "https://hub.example.com:10005"),
+        ("http://127.0.0.1:10004", "http://127.0.0.1:10005"),
+        ("http://hub.example.com", "https://hub.example.com"),
+    ] {
+        assert!(hub_needs_rebind(current, target), "{current} → {target} 该改写");
+    }
+
+    // 还没绑过平台的机器不碰：写配置会顺手把 mode 切成 pool，
+    // 而没配对过的机器切进 pool 只会起不来。地址由配对流程写。
+    assert!(!hub_needs_rebind("", "https://hub.example.com"));
+    assert!(!hub_needs_rebind("   ", "https://hub.example.com"));
 }

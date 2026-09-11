@@ -42,6 +42,11 @@ export class NativeBridge {
   /** `{ running, resident, paired, nodeId, hubURL, hubMatches? }` */
   ping(hubUrl?: string): Promise<string>;
 
+  /**
+   * 把本机绑定的平台地址对齐到 hubUrl，origin 相同则一个字都不动。
+   * `{ hubURL, changed, paired, previous?, backup? }`
+   */
+  setHubUrl(hubUrl: string): Promise<string>;
   /** `{ nodeId, tokenFile, configPath, backup, restarting }` */
   pair(code: string, displayName?: string, hubUrl?: string): Promise<string>;
   /** `{ command, launched, alreadyAuthorized? }` */

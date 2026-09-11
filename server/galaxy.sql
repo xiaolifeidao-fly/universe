@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
   `token_hash`       varchar(64),                                  -- 节点令牌 sha256
   `bridge_version`   varchar(32),                                  -- ai-bridge 版本
   `contract_version` bigint,                                       -- 节点声明的契约版本
+  `access_mode`      varchar(16) DEFAULT 'poll',                   -- poll=节点长轮询领活；export=Hub 回连节点公网地址
+  `endpoint_url`     varchar(255) DEFAULT '',                      -- export：Hub 回连的公网基地址
+  `endpoint_secret`  varchar(128) DEFAULT '',                      -- export：回连密钥。节点生成、注册时上报，Hub 必须持有明文才能出示
+  `endpoint_status`  varchar(16) DEFAULT '',                       -- export：最近一次回连探测结果 ok/unreachable
+  `endpoint_error`   varchar(255) DEFAULT '',                      -- export：最近一次回连失败的原因，人话，直接展示
+  `endpoint_checked_at` timestamp NULL DEFAULT NULL,               -- export：最近一次回连探测时刻
   `resources_json`   text,                                         -- 探测到的本机资源，仅供放置的资源需求过滤
   `status`           varchar(16),                                  -- active/offline/revoked
   `banned`           boolean DEFAULT false,                        -- 平台封禁
@@ -67,6 +73,31 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_pairing_code` (
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_pairing_code` (`biz_line`,`code`),
   INDEX `idx_gx_pairing_owner` (`biz_line`,`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 提供者接入密钥。单独部署的 rust bridge 用它自助注册节点，代替配对码。
+--
+-- 与配对码的分工：配对码一次性、10 分钟有效，给可视化客户端用（人在两个界面之间搬一个码）；
+-- 接入密钥是长期的，给无人值守的服务器用 —— 那种机器上没人能去点一下「生成配对码」。
+-- 明文只在签发那一刻返回一次，库里存 sha256，与算力密钥同一套做法。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_provider_key` (
+  `id`            bigint AUTO_INCREMENT,
+  `biz_line`      varchar(32),                                  -- 业务线，池内固定 galaxy
+  `key_id`        varchar(64),                                  -- 匿名标识 gpk_…，日志与列表里用它
+  `key_hash`      varchar(64),                                  -- gpk- 明文的 sha256
+  `owner_user_id` varchar(64),                                  -- 归属的提供者：用这把密钥注册的机器算他的
+  `alias`         varchar(64),                                  -- 主人给这把密钥起的名字
+  `terms_version` varchar(32),                                  -- 签发时的条款版本，注册时再校验一次
+  `status`        varchar(16),                                  -- active/revoked
+  `last_used_at`  timestamp NULL DEFAULT NULL,                  -- 最近一次注册成功
+  `last_node_id`  varchar(64),                                  -- 最近一次注册出来的节点
+  `expires_at`    timestamp NULL DEFAULT NULL,                  -- 空表示不过期
+  `created_time`  datetime(3) NULL,
+  `updated_time`  datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_provider_key_id` (`biz_line`,`key_id`),
+  UNIQUE INDEX `uk_gx_provider_key_hash` (`biz_line`,`key_hash`),
+  INDEX `idx_gx_provider_key_owner` (`biz_line`,`owner_user_id`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
@@ -568,4 +599,61 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_dispute` (
   INDEX `idx_gx_dispute_owner` (`biz_line`,`owner_user_id`,`created_time` desc),
   INDEX `idx_gx_dispute_status` (`biz_line`,`status`,`created_time` desc),
   INDEX `idx_gx_dispute_contribution` (`biz_line`,`cid`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- -------------------------------------------------------------------------
+-- 6. 门户：对外的模型目录与「联系我们」线索
+-- 这两张表是全站唯一被**未登录**的接口读写的东西（/api/galaxy/portal/*），
+-- 所以字段刻意都短，且一个用户维度的列都没有。
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_model` (
+  `id`                bigint AUTO_INCREMENT,
+  `biz_line`          varchar(32),
+  `model_id`          varchar(96),                                        -- 对外模型名，与 /v1/models 一致
+  `display_name`      varchar(96),
+  `vendor`            varchar(32),                                        -- anthropic/openai/google/…
+  `family`            varchar(32),                                        -- 门户分栏用的族名
+  `kind`              varchar(64),                                        -- 计价所属 kind，默认 llm.chat
+  `context_tokens`    bigint DEFAULT 0,                                   -- 上下文窗口 token 数，0 表示未声明
+  `max_output_tokens` bigint DEFAULT 0,
+  `input_price`       bigint DEFAULT 0,                                   -- 每百万 input token 微分，0=按 kind 统一价
+  `output_price`      bigint DEFAULT 0,                                   -- 每百万 output token 微分，0=按 kind 统一价
+  `cache_price`       bigint DEFAULT 0,                                   -- 每百万 cache_read token 微分，0=按 kind 统一价
+  `currency`          varchar(8) DEFAULT 'CNY',
+  `tags_json`         varchar(512),                                       -- 能力标签，JSON 数组
+  `summary`           varchar(256),                                       -- 一句话说明，门户卡片上那行
+  `listed`            boolean DEFAULT true,
+  `featured`          boolean DEFAULT false,                              -- 首页精选位
+  `sort_order`        bigint DEFAULT 0,
+  `created_time`      datetime(3) NULL,
+  `updated_time`      datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_model` (`biz_line`,`model_id`),
+  INDEX `idx_gx_model_listed` (`biz_line`,`listed`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_lead` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `lead_id`      varchar(64),
+  `name`         varchar(64),
+  `contact`      varchar(128),                                            -- 邮箱/手机/微信，来访者自己选一种
+  `company`      varchar(128),
+  `topic`        varchar(32),                                             -- enterprise/support/business/other
+  `scale`        varchar(32),                                             -- 预估用量档，来访者自述
+  `message`      varchar(1000),
+  `source`       varchar(32),                                             -- 来源页面，默认 portal
+  `ip`           varchar(64),                                             -- 只为限流与排查，不进任何对外视图
+  `user_agent`   varchar(256),
+  `status`       varchar(16),                                             -- new/handled/closed
+  `handled_by`   varchar(64),
+  `handled_at`   timestamp NULL DEFAULT NULL,
+  `created_time` datetime(3) NULL,
+  `updated_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_lead` (`biz_line`,`lead_id`),
+  INDEX `idx_gx_lead_status` (`biz_line`,`status`,`created_time` desc),
+  INDEX `idx_gx_lead_ip` (`biz_line`,`ip`,`created_time` desc)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

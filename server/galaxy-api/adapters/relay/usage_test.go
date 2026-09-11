@@ -73,9 +73,10 @@ func TestResponsesStreamUsage(t *testing.T) {
 	sniff := &responsesSniffer{}
 	feedStream(t, sniff, "testdata/responses-stream.sse", 13)
 	assertUsage(t, sniff.Usage(), contract.Metering{
-		contract.UnitInputTokens:     2048,
-		contract.UnitOutputTokens:    311,
-		contract.UnitCacheReadTokens: 1024,
+		contract.UnitInputTokens:      2048,
+		contract.UnitOutputTokens:     311,
+		contract.UnitCacheReadTokens:  1024,
+		contract.UnitCacheWriteTokens: 256,
 	})
 	// response id 要被记住：下一次带 previous_response_id 的请求必须回同一个贡献。
 	if sniff.lastResponseID != "resp_abc123" {

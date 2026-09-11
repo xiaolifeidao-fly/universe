@@ -41,7 +41,26 @@ type GalaxyNode struct {
 	TokenHash       string `gorm:"column:token_hash;type:varchar(64);index:idx_gx_node_token,priority:2" description:"节点令牌 sha256"`
 	BridgeVersion   string `gorm:"column:bridge_version;type:varchar(32)" description:"ai-bridge 版本"`
 	ContractVersion int    `gorm:"column:contract_version" description:"节点声明的契约版本"`
-	ResourcesJSON   string `gorm:"column:resources_json;type:text" description:"探测到的本机资源，仅供放置的资源需求过滤"`
+
+	// AccessMode 这台机器和 Hub 之间是怎么通信的：
+	//   poll   节点长轮询领活，Hub 永不主动连它（可视化客户端唯一支持的方式）
+	//   export 节点把自己暴露在公网上，Hub 拿 endpoint + secret 主动回连
+	// 它是**传输层**属性，所以挂在节点上而不是贡献上：一台机器上的所有贡献必然共用同一条通道。
+	AccessMode string `gorm:"column:access_mode;type:varchar(16);default:poll" description:"poll=节点长轮询领活；export=Hub 回连节点公网地址"`
+	// EndpointURL export 模式下 Hub 回连的公网基地址（http(s)://host:port）。
+	EndpointURL string `gorm:"column:endpoint_url;type:varchar(255)" description:"export：Hub 回连的公网基地址"`
+	// EndpointSecret 回连密钥，**明文**。
+	//
+	// 与 TokenHash 存哈希的方向正好相反，因为这里 Hub 是**客户端**：它要把这串东西
+	// 出示给节点，存哈希就永远出示不出来。所以它绝不能出现在任何对外视图、日志或
+	// 错误信息里 —— 视图里给的是掩码，见 dto.NodeView.EndpointMasked。
+	EndpointSecret string `gorm:"column:endpoint_secret;type:varchar(128)" description:"export：回连密钥明文，Hub 出示给节点"`
+	// EndpointStatus 最近一次回连的结果。ok / unreachable，没探过是空串。
+	EndpointStatus    string     `gorm:"column:endpoint_status;type:varchar(16)" description:"export：最近一次回连探测结果"`
+	EndpointError     string     `gorm:"column:endpoint_error;type:varchar(255)" description:"export：最近一次回连失败的原因"`
+	EndpointCheckedAt *time.Time `gorm:"column:endpoint_checked_at;type:timestamp null default null" description:"export：最近一次回连探测时刻"`
+
+	ResourcesJSON string `gorm:"column:resources_json;type:text" description:"探测到的本机资源，仅供放置的资源需求过滤"`
 
 	Status     string     `gorm:"column:status;type:varchar(16);index:idx_gx_node_owner,priority:3" description:"active/offline/revoked"`
 	Banned     bool       `gorm:"column:banned;default:false" description:"平台封禁"`
@@ -73,6 +92,38 @@ type GalaxyPairingCode struct {
 
 func (r *GalaxyPairingCode) TableName() string { return "zt_galaxy_pairing_code" }
 func (r *GalaxyPairingCode) Init()             {}
+
+// GalaxyProviderKey 提供者接入密钥。单独部署的 rust bridge 用它自助注册节点。
+//
+// 为什么不复用配对码：配对码是一次性的、10 分钟有效，前提是「有个人正看着两块屏幕」。
+// 放在机房里的机器没有这个人 —— 它重启一次就得有人值班去点一下「生成配对码」，
+// 那种接入方式对无人值守的部署根本不成立。接入密钥是长期的，写进那台机器的配置里，
+// 它自己起来就能重新注册。
+//
+// 明文只在签发那一刻返回一次，库里存 sha256，与算力密钥同一套做法。
+type GalaxyProviderKey struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_provider_key_id,priority:1;uniqueIndex:uk_gx_provider_key_hash,priority:1;index:idx_gx_provider_key_owner,priority:1"`
+	KeyID   string `gorm:"column:key_id;type:varchar(64);uniqueIndex:uk_gx_provider_key_id,priority:2" description:"匿名标识 gpk_…"`
+	KeyHash string `gorm:"column:key_hash;type:varchar(64);uniqueIndex:uk_gx_provider_key_hash,priority:2" description:"gpk- 明文的 sha256"`
+
+	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_provider_key_owner,priority:2" description:"归属的提供者：用这把密钥注册的机器算他的"`
+	Alias       string `gorm:"column:alias;type:varchar(64)"`
+	// TermsVersion 签发时的条款版本。注册时再校验一次 —— 密钥是长期的，
+	// 条款很可能在它签发之后升过版。
+	TermsVersion string `gorm:"column:terms_version;type:varchar(32)"`
+
+	Status     string     `gorm:"column:status;type:varchar(16);index:idx_gx_provider_key_owner,priority:3" description:"active/revoked"`
+	LastUsedAt *time.Time `gorm:"column:last_used_at;type:timestamp null default null"`
+	LastNodeID string     `gorm:"column:last_node_id;type:varchar(64)"`
+	ExpiresAt  *time.Time `gorm:"column:expires_at;type:timestamp null default null" description:"空表示不过期"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyProviderKey) TableName() string { return "zt_galaxy_provider_key" }
+func (r *GalaxyProviderKey) Init()             {}
 
 // GalaxyContribution 供给的最小单元。座位、额度、队列、绑定、限流全部以它为主键。
 type GalaxyContribution struct {
@@ -695,3 +746,76 @@ type GalaxyDispute struct {
 
 func (r *GalaxyDispute) TableName() string { return "zt_galaxy_dispute" }
 func (r *GalaxyDispute) Init()             {}
+
+// GalaxyModel 门户对外展示的模型目录。
+//
+// 它**不是** relay 的 /v1/models 那份清单：那份是「客户端能填哪些模型名」，由部署方
+// 在 galaxy.models 里声明，抖一下就会让人刚存好的配置失效；这张表是「门户上怎么把
+// 这个模型讲清楚」—— 上下文长度、单价、能力标签、排序。两份东西的更新节奏完全不同，
+// 合成一份的结果是运营改一句文案要重启服务。
+//
+// 表为空时门户回落到声明清单，只显示模型名与统一单价 —— 少写一行文案的代价是
+// 少一点信息，而不是整页空白。
+type GalaxyModel struct {
+	ID          int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_model,priority:1;index:idx_gx_model_listed,priority:1"`
+	ModelID     string `gorm:"column:model_id;type:varchar(96);uniqueIndex:uk_gx_model,priority:2" description:"对外模型名，与 /v1/models 一致"`
+	DisplayName string `gorm:"column:display_name;type:varchar(96)"`
+	Vendor      string `gorm:"column:vendor;type:varchar(32)" description:"anthropic/openai/google/…"`
+	// Family 是门户分栏用的族名（claude/gpt/gemini/other）。派生规则放服务端，
+	// 免得门户和控制台各写一份匹配规则，同一个模型落进不同栏。
+	Family string `gorm:"column:family;type:varchar(32)"`
+	Kind   string `gorm:"column:kind;type:varchar(64)" description:"计价所属 kind，默认 llm.chat"`
+
+	ContextTokens   int64 `gorm:"column:context_tokens;default:0" description:"上下文窗口 token 数，0 表示未声明"`
+	MaxOutputTokens int64 `gorm:"column:max_output_tokens;default:0"`
+
+	// 三个单价都是「每百万 token 的微分」，与 zt_galaxy_price 同口径。
+	// 0 表示这个模型不单独定价，按 kind 的统一价走 —— 不是「免费」。
+	InputPrice  int64  `gorm:"column:input_price;default:0" description:"每百万 input token 微分，0=按 kind 统一价"`
+	OutputPrice int64  `gorm:"column:output_price;default:0" description:"每百万 output token 微分，0=按 kind 统一价"`
+	CachePrice  int64  `gorm:"column:cache_price;default:0" description:"每百万 cache_read token 微分，0=按 kind 统一价"`
+	Currency    string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
+
+	TagsJSON string `gorm:"column:tags_json;type:varchar(512)" description:"能力标签，JSON 数组"`
+	Summary  string `gorm:"column:summary;type:varchar(256)" description:"一句话说明，门户卡片上那行"`
+
+	Listed      bool      `gorm:"column:listed;default:true;index:idx_gx_model_listed,priority:2"`
+	Featured    bool      `gorm:"column:featured;default:false" description:"首页精选位"`
+	SortOrder   int       `gorm:"column:sort_order;default:0"`
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyModel) TableName() string { return "zt_galaxy_model" }
+func (r *GalaxyModel) Init()             {}
+
+// GalaxyLead 门户「联系我们」留下的线索。
+//
+// 这是全站唯一一条**未鉴权就能写库**的路径，所以字段刻意都短：留言 1000 字封顶，
+// 其余全是 varchar(128) 以内。IP 与 UA 只为限流与排查留着，不进任何对外视图。
+type GalaxyLead struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_lead,priority:1;index:idx_gx_lead_status,priority:1;index:idx_gx_lead_ip,priority:1"`
+	LeadID  string `gorm:"column:lead_id;type:varchar(64);uniqueIndex:uk_gx_lead,priority:2"`
+
+	Name    string `gorm:"column:name;type:varchar(64)"`
+	Contact string `gorm:"column:contact;type:varchar(128)" description:"邮箱/手机/微信，来访者自己选一种"`
+	Company string `gorm:"column:company;type:varchar(128)"`
+	Topic   string `gorm:"column:topic;type:varchar(32)" description:"enterprise/support/business/other"`
+	Scale   string `gorm:"column:scale;type:varchar(32)" description:"预估用量档，来访者自述"`
+	Message string `gorm:"column:message;type:varchar(1000)"`
+
+	Source    string `gorm:"column:source;type:varchar(32)" description:"来源页面，默认 portal"`
+	IP        string `gorm:"column:ip;type:varchar(64);index:idx_gx_lead_ip,priority:2"`
+	UserAgent string `gorm:"column:user_agent;type:varchar(256)"`
+
+	Status      string     `gorm:"column:status;type:varchar(16);index:idx_gx_lead_status,priority:2" description:"new/handled/closed"`
+	HandledBy   string     `gorm:"column:handled_by;type:varchar(64)"`
+	HandledAt   *time.Time `gorm:"column:handled_at;type:timestamp null default null"`
+	CreatedTime time.Time  `gorm:"column:created_time;autoCreateTime;index:idx_gx_lead_status,priority:3,sort:desc;index:idx_gx_lead_ip,priority:3,sort:desc"`
+	UpdatedTime time.Time  `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyLead) TableName() string { return "zt_galaxy_lead" }
+func (r *GalaxyLead) Init()             {}

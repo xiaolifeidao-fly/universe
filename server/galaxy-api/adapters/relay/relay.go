@@ -354,6 +354,7 @@ func (a *Adapter) Writer(ginContext *gin.Context, raw corepkg.Input, unit contra
 		writer.sniffer = &anthropicSniffer{}
 	}
 	writer.stripUsage = in.injectedUsage
+	writer.requestedStream = in.stream
 	return writer
 }
 

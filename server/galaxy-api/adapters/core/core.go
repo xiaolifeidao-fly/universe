@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -29,6 +30,13 @@ type Deps struct {
 	// Journal 是 session / job 的事件日志。relay 用不到它。
 	Journal *Journal
 	Log     *slog.Logger
+	// AttachTimeout relay 等节点认领上行的最长时间。节点领走一个单元之后要先去打上游，
+	// 首字节可能几秒到几十秒才回来 —— 这一段正是它重启的窗口，而 Hub 在认领之前
+	// 对它完全无感。给 0 走 DefaultAttachTimeout。
+	AttachTimeout time.Duration
+	// NodeProbeInterval relay 在首字节之前多久探一次节点心跳。给 0 走 DefaultNodeProbeInterval。
+	// 别调太密：这是每个在途请求各自一条的 Redis 查询。
+	NodeProbeInterval time.Duration
 }
 
 // Route 一条消费者侧路由。

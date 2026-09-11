@@ -12,7 +12,7 @@ import { message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconAlert, IconCheck, IconShield } from "@/components/ui/icons";
+import { IconAlert, IconCheck, IconKey, IconShield } from "@/components/ui/icons";
 import { Btn, Card, Field, Loading, Note, Pill } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { isDesktop } from "@/utils/product";
@@ -152,6 +152,7 @@ export function PairWizard() {
             <Step index={3} done={false} title={t("pair.step3")} body={t("pair.step3Desc")} />
 
             <Note icon={<IconShield size={15} />}>{t("pair.privacy")}</Note>
+            <Note icon={<IconKey size={15} />}>{t("pair.cliHint")}</Note>
           </Card>
 
           <Card className="gx-rise gx-rise--1" style={{ padding: "24px 26px", display: "flex", flexDirection: "column", gap: 18 }}>

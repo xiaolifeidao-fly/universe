@@ -1,2 +1,5 @@
 target/
 *.node
+
+# scripts/build-cli.cjs --out dist-cli（CI 用）
+dist-cli/

@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { NativeBridge as NativeBridgeInstance } from '@galaxy/ai-bridge-native';
-import { ScopeSchema } from '../config/schema.js';
+import { ScopeSchema } from './scopes.js';
 import { z } from 'zod';
 
 // 桌面服务：一层薄壳。
@@ -21,6 +21,7 @@ const { NativeBridge } = requireNative('@galaxy/ai-bridge-native') as {
 
 const PairInput = z.object({ hubURL: z.string().url().optional(), code: z.string().trim().min(1).max(512), displayName: z.string().max(256).optional() }).strict();
 const PingInput = z.object({ hubUrl: z.string().url().optional() }).strict();
+const HubUrlInput = z.string().trim().url().max(2048);
 const TokenInput = z.object({ alias: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]+$/), scopes: z.array(ScopeSchema).min(1), concurrency: z.number().int().positive().optional() }).strict();
 const NameInput = z.string().min(1).max(128);
 
@@ -71,6 +72,12 @@ export class DesktopBridgeService {
   start() { return this.mutate(async () => JSON.parse(await this.bridge.start())); }
   stop() { return this.mutate(async () => JSON.parse(await this.bridge.stop())); }
   restart() { return this.mutate(async () => JSON.parse(await this.bridge.restart())); }
+
+  /** 改配置 + 可能停掉 runner，必须和 start / stop / pair 排在同一条队里。 */
+  setHubUrl(input: unknown) {
+    const hubUrl = HubUrlInput.parse(input);
+    return this.mutate(async () => JSON.parse(await this.bridge.setHubUrl(hubUrl)));
+  }
 
   pair(input: unknown) {
     const payload = PairInput.parse(input);

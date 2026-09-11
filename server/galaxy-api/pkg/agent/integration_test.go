@@ -36,8 +36,10 @@ type fakeGalaxy struct {
 	firstByte   chan string
 	hubUsage    chan contract.Metering
 	abandoned   chan string
+	failed      chan *contract.UnitError
 	submitError error
 	reassign    bool
+	alive       bool
 	signature   string
 }
 
@@ -47,6 +49,8 @@ func newFakeGalaxy() *fakeGalaxy {
 		firstByte: make(chan string, 4),
 		hubUsage:  make(chan contract.Metering, 4),
 		abandoned: make(chan string, 4),
+		failed:    make(chan *contract.UnitError, 4),
+		alive:     true,
 	}
 }
 
@@ -101,7 +105,19 @@ func (f *fakeGalaxy) Abandon(_ context.Context, unitID, _ string) error {
 	return nil
 }
 
-func (f *fakeGalaxy) FailUnit(context.Context, string, *contract.UnitError) error { return nil }
+func (f *fakeGalaxy) FailUnit(_ context.Context, _ string, cause *contract.UnitError) error {
+	select {
+	case f.failed <- cause:
+	default:
+	}
+	return nil
+}
+
+func (f *fakeGalaxy) ContributionAlive(context.Context, string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.alive
+}
 
 func (f *fakeGalaxy) Reassignable(context.Context, string) bool {
 	f.mu.Lock()
@@ -120,17 +136,26 @@ func (f *fakeGalaxy) Complete(context.Context, dto.CompleteRequest) (dto.Complet
 }
 
 func newHub(t *testing.T) (*httptest.Server, *fakeGalaxy) {
+	return newHubWith(t, nil)
+}
+
+// newHubWith 让用例调 relay 的等待时限。默认那几个是按真实上游的节奏定的
+// （认领 30 秒、探心跳 10 秒），跑在用例里只会让测试等满。
+func newHubWith(t *testing.T, tune func(*corepkg.Deps)) (*httptest.Server, *fakeGalaxy) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	service := newFakeGalaxy()
 	exchange := corepkg.NewExchange()
 	deps := &corepkg.Deps{Galaxy: service, Exchange: exchange}
+	if tune != nil {
+		tune(deps)
+	}
 	adapter := relay.New(deps, relay.Options{})
 
 	engine := gin.New()
 	consumer := engine.Group("/v1", corepkg.RequireConsumerKey(service))
 	corepkg.Register(consumer, adapter, *deps)
-	agent.NewHandler(service, exchange, corepkg.NewJournal(64, nil), 2*time.Second).RegisterHandler(engine.Group("/agent/v1"))
+	agent.NewHandler(service, exchange, corepkg.NewJournal(64, nil), 2*time.Second, nil).RegisterHandler(engine.Group("/agent/v1"))
 
 	server := httptest.NewServer(engine)
 	// 先断开客户端连接再 Close：这些用例里消费者连接本来就挂着等节点，
@@ -433,5 +458,110 @@ func TestInvalidBodyIsRejectedBeforePlacement(t *testing.T) {
 	case unit := <-service.submitted:
 		t.Fatalf("入参非法不该派单: %s", unit.ID)
 	default:
+	}
+}
+
+// 这两条守的是同一个故障：中转站把活派出去之后，那台机器没了。
+//
+// 现实里最常见的形态是共享者重启 Nova 或者进程被 kill —— 节点已经领走单元、
+// 正在打上游，首字节还没回来。这一段 Hub 完全看不见：没有 stream 的 EOF，
+// 也不会有 complete。少了时限，消费者的 codex 就一直转下去。
+
+func TestConsumerGetsErrorWhenNodeNeverAttaches(t *testing.T) {
+	server, service := newHubWith(t, func(deps *corepkg.Deps) {
+		deps.AttachTimeout = 120 * time.Millisecond
+	})
+
+	done := make(chan *http.Response, 1)
+	go func() {
+		request, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+			strings.NewReader(`{"model":"claude-sonnet-4-5","stream":true,"max_tokens":16,"messages":[]}`))
+		request.Header.Set("Authorization", "Bearer sk-galaxy-test")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Errorf("消费者请求失败: %v", err)
+			close(done)
+			return
+		}
+		done <- response
+	}()
+
+	unit := <-service.submitted
+	// 节点领走了活，然后就没有然后了。
+
+	select {
+	case response := <-done:
+		if response == nil {
+			t.Fatal("消费者没拿到响应")
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusBadGateway {
+			t.Fatalf("节点失联应给 502，实际 %d", response.StatusCode)
+		}
+		body, _ := io.ReadAll(response.Body)
+		if !strings.Contains(string(body), contract.CodeNodeOffline) {
+			t.Fatalf("错误体要说清是节点掉线: %s", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("消费者被挂死了 —— 这正是这条用例要防的")
+	}
+
+	// 预留的额度与并发得还回去。少了这一步，那台机器每失联一次
+	// 就永久少一个并发位，最后谁都派不进去。
+	select {
+	case cause := <-service.failed:
+		if cause == nil || cause.Code != contract.CodeNodeOffline {
+			t.Fatalf("应以节点掉线收口: %+v", cause)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Hub 判定的失败没有 FailUnit，预留没人还")
+	}
+	select {
+	case abandoned := <-service.abandoned:
+		if abandoned != unit.ID {
+			t.Fatalf("cancel 下发错了单元: %s", abandoned)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("节点可能只是慢，cancel 要发出去让它别再烧上游额度")
+	}
+}
+
+func TestConsumerGetsErrorWhenNodeGoesOfflineBeforeFirstByte(t *testing.T) {
+	server, service := newHubWith(t, func(deps *corepkg.Deps) {
+		deps.AttachTimeout = time.Hour // 只测心跳这条路
+		deps.NodeProbeInterval = 30 * time.Millisecond
+	})
+
+	done := make(chan *http.Response, 1)
+	go func() {
+		request, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/messages",
+			strings.NewReader(`{"model":"claude-sonnet-4-5","stream":true,"max_tokens":16,"messages":[]}`))
+		request.Header.Set("Authorization", "Bearer sk-galaxy-test")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Errorf("消费者请求失败: %v", err)
+			close(done)
+			return
+		}
+		done <- response
+	}()
+
+	<-service.submitted
+	// 机器断网：TCP 上没有任何动静，先断的是心跳。
+	service.mu.Lock()
+	service.alive = false
+	service.mu.Unlock()
+
+	select {
+	case response := <-done:
+		if response == nil {
+			t.Fatal("消费者没拿到响应")
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusBadGateway {
+			t.Fatalf("节点失联应给 502，实际 %d", response.StatusCode)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("心跳断了消费者仍被挂死")
 	}
 }

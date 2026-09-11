@@ -218,7 +218,7 @@ export function ConsumerKeys() {
                       .filter(([, value]) => value !== 0)
                       .map(([unit, value]) => (
                         <div key={unit} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", fontSize: 12.5 }}>
-                          <span className="gx-soft">{unitLabel(unit)}</span>
+                          <span className="gx-soft">{unitLabel(unit, t)}</span>
                           <span className="gx-mono" style={{ fontWeight: 500 }}>{formatInt(value)}</span>
                         </div>
                       ))
@@ -311,7 +311,7 @@ function KeyCard({ item, active, onSelect }: { item: ConsumerKeyView; active: bo
           <span className="gx-serif" style={{ fontSize: 30, lineHeight: 1 }}>
             {formatCompact(headline)}
           </span>
-          <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{unitLabel("llm.output_tokens")}</span>
+          <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{unitLabel("llm.output_tokens", t)}</span>
           <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--gx-faint)" }}>
             {t("keys.expiresAt", { value: formatDay(item.expiresAt) })}
           </span>

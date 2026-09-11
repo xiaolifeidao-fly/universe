@@ -44,6 +44,18 @@ pub fn origin_of(value: &str) -> String {
         .unwrap_or_default()
 }
 
+/// 校准平台地址时要不要真的改写配置。
+///
+/// 两条规则，都是踩出来的：
+///   · **origin 一致就不动**。node-token 里存的 hubURL 和配置是逐字符比对的
+///     （napi_api 的 identity()），为了一个末尾斜杠重写配置，会把一台正连着的
+///     机器直接判成未配对。
+///   · **没绑过平台的也不动**。write_pool_connection 会顺手把 mode 切成 pool，
+///     而一台没配对过的机器切进 pool 模式只会起不来；那种机器的地址由配对流程写。
+pub fn hub_needs_rebind(current: &str, target: &str) -> bool {
+    !current.trim().is_empty() && origin_of(current) != origin_of(target)
+}
+
 /// 把顶层的 `<key>:` 整块换成 replacement；原来没有就追加到末尾。
 ///
 /// 一个顶层块从 `^<key>:` 开始，到下一个**行首非空白**的行为止 —— 中间的缩进行
@@ -82,6 +94,29 @@ pub fn replace_top_level(text: &str, key: &str, replacement: &str) -> String {
 /// 不用「读成对象再整份 dump」：那样注释会在一次 round-trip 里全没了，
 /// 用户第一次配置就把说明书弄丢，不是可接受的代价。
 pub async fn write_pool_connection(config_path: &Path, hub_url: &str) -> Result<String, String> {
+    write_pool_access(config_path, &PoolAccessPatch { hub_url, ..Default::default() }).await
+}
+
+/// 要写回配置的接入信息。None 表示「这一项不动」。
+///
+/// 这条规矩是给命令行定的：`ai-bridge register` 没带 --public-url，
+/// 不该把配置文件里早就写好的公网地址抹成空 —— 那台机器会在下一次重启时
+/// 悄悄退回长轮询，而主人什么都没改。
+#[derive(Debug, Default)]
+pub struct PoolAccessPatch<'a> {
+    pub hub_url: &'a str,
+    pub access_mode: Option<&'a str>,
+    pub access_key: Option<&'a str>,
+    /// 把配置里的接入密钥删掉。`--no-save-key` 用它：「不保存」要说到做到，
+    /// 留着上一次存的那把会让人以为密钥不在这台机器上。
+    pub clear_access_key: bool,
+    pub public_url: Option<&'a str>,
+    pub host: Option<&'a str>,
+    pub port: Option<u16>,
+}
+
+/// 把接入信息写回配置：只改 mode 与 pool 两个顶层块，其余原样保留。
+pub async fn write_pool_access(config_path: &Path, patch: &PoolAccessPatch<'_>) -> Result<String, String> {
     let original = tokio::fs::read_to_string(config_path)
         .await
         .map_err(|e| format!("读不到配置文件 {}：{e}", config_path.display()))?;
@@ -92,7 +127,34 @@ pub async fn write_pool_connection(config_path: &Path, hub_url: &str) -> Result<
         .filter(|value| value.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
-    pool["hubURL"] = json!(hub_url);
+    pool["hubURL"] = json!(patch.hub_url);
+    if let Some(mode) = patch.access_mode {
+        pool["accessMode"] = json!(mode);
+    }
+    if patch.clear_access_key {
+        if let Some(map) = pool.as_object_mut() {
+            map.remove("accessKey");
+        }
+    } else if let Some(key) = patch.access_key {
+        pool["accessKey"] = json!(key);
+    }
+    if patch.public_url.is_some() || patch.host.is_some() || patch.port.is_some() {
+        let mut export = pool
+            .get("export")
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if let Some(url) = patch.public_url {
+            export["publicURL"] = json!(url);
+        }
+        if let Some(host) = patch.host {
+            export["host"] = json!(host);
+        }
+        if let Some(port) = patch.port {
+            export["port"] = json!(port);
+        }
+        pool["export"] = export;
+    }
 
     let dumped = serde_yaml::to_string(&json!({ "pool": pool }))
         .map_err(|e| format!("生成 pool 配置失败：{e}"))?;

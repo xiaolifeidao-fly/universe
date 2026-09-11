@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Orbit（使用端） 的外壳：220 宽左栏 + 命令条。
+ * Orbit 控制台的外壳：220 宽左栏 + 命令条。
  *
  * 命令条**不由外壳渲染**。每一页的右上角都不一样（今天那页是共享总开关，
  * 密钥那页是新建按钮），由外壳统一渲染就得开一条 context 把节点传上来，
@@ -152,7 +152,7 @@ export function GalaxyShell({ children }: PropsWithChildren) {
                 {user?.displayName ?? "—"}
               </span>
               <span className="gx-user__meta" style={{ display: "block" }}>
-                {user?.username ?? productConfig.role}
+                {user?.username ?? ""}
               </span>
             </span>
             <IconChevronDown size={14} style={{ color: "var(--gx-faint)", flex: "0 0 auto" }} />

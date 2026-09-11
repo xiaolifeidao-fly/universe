@@ -17,7 +17,6 @@ import { Btn, Card, CardHead, Loading, Note, Pill, Seg } from "@/components/ui/k
 import { useLocale } from "@/i18n/LocaleProvider";
 import { clearAuthToken, getAuthUser, type AuthUser } from "@/utils/auth";
 import { formatCompact } from "@/utils/format";
-import { productConfig } from "@/utils/product";
 import { acceptNotice, fetchDashboard, fetchNotice, type ConsumerDashboard, type NoticeStatus } from "../../api/consumer.api";
 
 export function AccountPanel() {
@@ -61,7 +60,8 @@ export function AccountPanel() {
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               <span style={{ fontSize: 17, fontWeight: 600 }}>{user?.displayName || user?.username || "—"}</span>
               <span className="gx-mono" style={{ fontSize: 12, color: "var(--gx-faint)" }}>
-                {user?.username} · {user?.role || productConfig.role}
+                {user?.username}
+                {user?.role ? ` · ${user.role}` : ""}
               </span>
             </div>
           </div>

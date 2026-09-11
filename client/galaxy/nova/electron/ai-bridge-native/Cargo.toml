@@ -6,6 +6,12 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# 独立部署用的命令行。和 .node 是同一份实现，只是入口不同（见 src/bin/ai-bridge.rs）。
+# 构建：cargo build --release --bin ai-bridge；打包三平台见 scripts/build-cli.cjs。
+[[bin]]
+name = "ai-bridge"
+path = "src/bin/ai-bridge.rs"
+
 [dependencies]
 # node feature 打开时才链 napi：测试二进制没有 Node 宿主提供那些符号。
 napi = { version = "2", default-features = false, features = ["napi6", "async", "serde-json", "tokio_rt"], optional = true }

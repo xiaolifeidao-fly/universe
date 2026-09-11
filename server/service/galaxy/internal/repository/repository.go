@@ -24,7 +24,7 @@ func (r *GalaxyRepository) AutoMigrate() error {
 func models() []any {
 	return []any{
 		// 供给：机器 → 贡献 → 授权 → 座位
-		&GalaxyNode{}, &GalaxyPairingCode{}, &GalaxyContribution{},
+		&GalaxyNode{}, &GalaxyPairingCode{}, &GalaxyProviderKey{}, &GalaxyContribution{},
 		&GalaxyQuotaGrant{}, &GalaxyQuotaWindow{}, &GalaxySeatBinding{},
 		// 执行与计量
 		&GalaxyUnit{}, &GalaxyUnitEvent{}, &GalaxyMeterRecord{}, &GalaxyUsageMismatch{},
@@ -36,6 +36,8 @@ func models() []any {
 		// 结算三本账、抽检与争议
 		&GalaxyCreditAccount{}, &GalaxyConsumerLedger{}, &GalaxyProviderLedger{},
 		&GalaxyPlatformLedger{}, &GalaxyPayout{}, &GalaxyAuditProbe{}, &GalaxyDispute{},
+		// 门户：对外的模型目录与「联系我们」线索
+		&GalaxyModel{}, &GalaxyLead{},
 	}
 }
 

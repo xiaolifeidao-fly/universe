@@ -12,7 +12,7 @@ import { Modal, message } from "antd";
 import { useEffect, useState } from "react";
 import { Btn, Field, Note, Pill } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatCny, formatDateTime, formatInt, formatMillis, providerLabel, unitLabel } from "@/utils/format";
+import { errorLabel, formatCny, formatDateTime, formatInt, formatMillis, providerLabel, unitLabel } from "@/utils/format";
 import { DISPUTE_REASONS, fileDispute, type DisputeReason, type UsageRecord } from "../../api/consumer.api";
 
 export function RecordDetail({
@@ -85,12 +85,12 @@ export function RecordDetail({
             {Object.entries(record.usage ?? {})
               .filter(([, value]) => value > 0)
               .map(([unit, value]) => (
-                <Row key={unit} label={unitLabel(unit)} value={formatInt(value)} mono />
+                <Row key={unit} label={unitLabel(unit, t)} value={formatInt(value)} mono />
               ))}
             <Row label={t("detail.charge")} value={record.cost > 0 ? formatCny(record.cost) : "0"} mono strong />
           </div>
 
-          {record.errorCode ? <Note tone="warn">{record.errorCode}</Note> : null}
+          {record.errorCode ? <Note tone="warn">{errorLabel(record.errorCode, t)}</Note> : null}
 
           {disputing ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingTop: 4, borderTop: "1px solid var(--gx-line)" }}>

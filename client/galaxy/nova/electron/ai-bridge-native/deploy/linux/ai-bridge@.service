@@ -1,0 +1,28 @@
+# ai-bridge 的 systemd 模板单元。实例名就是运行它的用户：
+#
+#   sudo install -m 0755 ai-bridge /usr/local/bin/ai-bridge
+#   sudo cp ai-bridge@.service /etc/systemd/system/
+#   sudo systemctl enable --now ai-bridge@alice
+#   journalctl -u ai-bridge@alice -f
+#
+# 用户必须是登录过 claude / codex、并执行过 `ai-bridge register` 的那一个：
+# 订阅登录态和 ai-bridge 的配置都在他的家目录里（~/.claude、~/.codex、
+# ~/.config/ai-bridge）。换个用户跑，本机能力会全部显示成「不可用」。
+[Unit]
+Description=ai-bridge (Galaxy shared pool node, user %i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/local/bin/ai-bridge run
+Restart=always
+RestartSec=5
+# 停机时 ai-bridge 会把在跑的单元报给平台，让它立刻改派给别的机器 ——
+# 给这一步留足时间，别让 systemd 在它说完之前就 SIGKILL。
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -10,6 +10,7 @@ export class BridgeImpl extends BridgeApi {
   override start() { return this.runtime.call('start'); }
   override stop() { return this.runtime.call('stop'); }
   override restart() { return this.runtime.call('restart'); }
+  override setHubUrl(hubUrl: string) { return this.runtime.call('setHubUrl', hubUrl); }
   override pair(payload: BridgePairPayload) { return this.runtime.call('pair', payload); }
   override finish() { return this.runtime.call('finish'); }
   override startUpstreamLogin(provider: string) { return this.runtime.call('startUpstreamLogin', provider); }

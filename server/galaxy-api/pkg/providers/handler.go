@@ -27,6 +27,10 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/terms/accept", h.acceptTerms)
 	api.GET("/terms", h.currentTerms)
 	api.POST("/pairing-code", h.issuePairingCode)
+	// 接入密钥：给单独部署的 rust bridge 用，代替配对码。
+	api.GET("/access-keys", h.listProviderKeys)
+	api.POST("/access-keys", h.issueProviderKey)
+	api.POST("/access-keys/revoke", h.revokeProviderKey)
 	api.GET("/nodes", h.listNodes)
 	api.POST("/node/revoke", h.revokeNode)
 	api.POST("/contribution/status", h.setContributionStatus)
@@ -113,6 +117,37 @@ func (h *Handler) issuePairingCode(context *gin.Context) {
 		TermsVersion: h.service.Config().ProviderTermsVersion,
 	})
 	httpx.JSON(context, view, err)
+}
+
+// issueProviderKey 签发一把接入密钥。**明文只在这一次响应里出现**，
+// 之后任何接口都取不回来 —— 界面必须当场让主人复制走。
+func (h *Handler) issueProviderKey(context *gin.Context) {
+	var req dto.IssueProviderKeyRequest
+	// 别名和有效期都是可选的，请求体允许为空。绑定失败不当错误处理 ——
+	// 一个不带 body 的 POST 是这个接口最常见的用法。
+	_ = context.ShouldBindJSON(&req)
+	req.OwnerUserID = httpx.CallerID(context)
+	view, err := h.service.IssueProviderKey(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) listProviderKeys(context *gin.Context) {
+	views, err := h.service.ListProviderKeys(context.Request.Context(), httpx.CallerID(context))
+	httpx.JSON(context, views, err)
+}
+
+// revokeProviderKey 吊销。已经用它注册出来的机器不受影响 ——
+// 那些机器手里是各自的 node token，要停哪一台去机器列表里撤销那一台。
+func (h *Handler) revokeProviderKey(context *gin.Context) {
+	var req struct {
+		KeyID string `json:"keyId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	err := h.service.RevokeProviderKey(context.Request.Context(), httpx.CallerID(context), req.KeyID)
+	httpx.JSON(context, req.KeyID, err)
 }
 
 func (h *Handler) listNodes(context *gin.Context) {

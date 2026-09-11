@@ -3,8 +3,11 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/web",
         "run",
@@ -17,8 +20,11 @@
     },
     {
       "name": "web-preview",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/web",
         "run",
@@ -32,8 +38,11 @@
     },
     {
       "name": "app-preview",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/app",
         "run",
@@ -47,8 +56,11 @@
     },
     {
       "name": "manager",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/manager",
         "run",
@@ -61,8 +73,11 @@
     },
     {
       "name": "galaxy-nova",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/galaxy/nova/webview",
         "run",
@@ -75,8 +90,11 @@
     },
     {
       "name": "galaxy-orbit",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/galaxy/orbit/webview",
         "run",
@@ -86,6 +104,20 @@
         "7892"
       ],
       "port": 7892
+    },
+    {
+      "name": "galaxy-portal",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/portal",
+        "run",
+        "dev"
+      ],
+      "port": 17900
     }
   ]
 }

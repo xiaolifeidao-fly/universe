@@ -13,8 +13,8 @@
     ],
     "extraResources": [
       {
-        "from": "../../.desktop/orbit",
-        "to": "next"
+        "from": "desktop.json",
+        "to": "desktop.json"
       }
     ],
     "directories": {
@@ -40,6 +40,7 @@
   },
   "scripts": {
     "dev": "node ../../scripts/desktop.cjs dev orbit",
+    "start": "node ../../scripts/desktop.cjs start orbit",
     "build": "node ../../scripts/desktop.cjs build orbit",
     "package": "node ../../scripts/desktop.cjs package orbit",
     "typecheck": "tsc --noEmit",

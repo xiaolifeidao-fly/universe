@@ -26,15 +26,34 @@ type relayWriter struct {
 	sniffer    sniffer
 	scanner    sseScanner
 	stripUsage bool
+	// requestedStream 是消费者在请求体里写的 stream。上游没带 content-type 时按它先猜一手，
+	// 猜的结果决定要不要给消费者加禁缓冲的响应头 —— 那两个头只能在首字节之前发出去。
+	requestedStream bool
 
 	streaming bool
-	body      bytes.Buffer
-	usage     contract.Metering
-	cid       string
+	// sniffPending 表示上游没明说是事件流，streaming 还要拿首个 chunk 的字节再定一次。
+	sniffPending bool
+	body         bytes.Buffer
+	usage        contract.Metering
+	cid          string
 	// eventNames 是响应里出现过的事件类型。抽检比对结构时用它。
 	// 只记名字，不记次数也不记内容：次数取决于回答长短，是噪声不是信号；
 	// 内容则根本不该留在抽检表里。
 	eventNames map[string]struct{}
+}
+
+// looksLikeSSE 按字节判断这段响应是不是事件流。
+//
+// 只看开头：SSE 的第一行必然是字段行（event / data / id / retry）或注释（以 : 开头），
+// 而两族的非流式响应都是一整个 JSON 对象。够分辨这两者就行，不必真的解析。
+func looksLikeSSE(chunk []byte) bool {
+	head := bytes.TrimLeft(chunk, " \t\r\n\uFEFF")
+	for _, prefix := range [][]byte{[]byte("event:"), []byte("data:"), []byte("id:"), []byte("retry:"), []byte(":")} {
+		if bytes.HasPrefix(head, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // 上游响应里原样带回给消费者的头：限流提示与请求追踪（非功能需求·兼容）。
@@ -57,7 +76,16 @@ func (w *relayWriter) Head(status int, headers map[string]string) {
 	if contentType == "" {
 		contentType = headers["Content-Type"]
 	}
+	// 「是不是事件流」不能只听 content-type：见过的中转站里就有转发 SSE 时把这个头丢掉的，
+	// 而一旦按整段 JSON 收，解析器拿到的是一大段 SSE 文本，usage 永远解不出来 ——
+	// 计费不会报错，只会静静地把每一笔都记成 0 个 token。
+	// 所以只有上游明确说了 text/event-stream 才直接采信；其余情况先按消费者请求里的
+	// stream 猜一手（禁缓冲的响应头只能在首字节之前发），再在首个 chunk 到达时用字节定论。
 	w.streaming = strings.HasPrefix(strings.ToLower(contentType), "text/event-stream")
+	if !w.streaming {
+		w.streaming = contentType == "" && w.requestedStream
+		w.sniffPending = true
+	}
 	if w.streaming {
 		w.context.Header("Cache-Control", "no-cache, no-transform")
 		w.context.Header("X-Accel-Buffering", "no")
@@ -67,6 +95,11 @@ func (w *relayWriter) Head(status int, headers map[string]string) {
 }
 
 func (w *relayWriter) Write(chunk []byte) error {
+	if w.sniffPending {
+		// 只看首个 chunk：这时两条路都还没往缓冲里放过东西，改判是安全的。
+		w.sniffPending = false
+		w.streaming = looksLikeSSE(chunk)
+	}
 	if !w.streaming {
 		// 非流式：写通的同时留一份，End 时整体解析 usage。响应体受 bodyLimit 约束。
 		w.body.Write(chunk)
@@ -108,7 +141,10 @@ func (w *relayWriter) emit(chunk []byte) error {
 
 func (w *relayWriter) End() {
 	if w.streaming {
-		if rest := w.scanner.Rest(); len(rest) > 0 && !w.stripUsage {
+		// 只有剥 usage 的那条路才要补写残尾：它写回的是扫描器交出的完整事件，
+		// 不成事件的尾巴没人写过。逐字节透传那条路每个 chunk 都已经原样写出去了，
+		// 再写一遍等于把尾巴发两次。
+		if rest := w.scanner.Rest(); len(rest) > 0 && w.stripUsage {
 			_ = w.emit(rest)
 		}
 	} else {

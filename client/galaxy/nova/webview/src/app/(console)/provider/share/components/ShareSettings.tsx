@@ -6,20 +6,24 @@
  * 开关、额度、座位、模型范围、挂机时段都在这里改，改完下一次心跳（≤15s）
  * 那台机器就换过来了。主人不需要回到那台机器上做任何事。
  *
+ * 按机器分开看：左边挑一台，右边只摆这一台的能力和设置，默认选中这台电脑。
+ * 主人名下除了这台电脑，还可能有机房里用接入密钥注册的一排服务器 —— 每台都有
+ * 一条同名的 relay_claude，平铺在一张表里分不清改的是哪一台。
+ *
  * 仍然不能在这里**凭空造**一条贡献：能力是节点探测出来上报的，
  * 「这台机器上有没有 Claude」只有那台机器知道。控制台管的是「要不要、给多少」。
  *
  * 两个状态要分开看，处置方式完全不同：
- *   status=disabled  你自己关掉了      → 打开就行
- *   available=false  本机干不了这件事  → 得去那台机器上修（多半是登录态过期）
+ *   status=disabled  你自己关掉了        → 打开就行
+ *   available=false  那台机器干不了这件事 → 得去那台机器上修（多半是登录态过期）
  */
 
-import { message } from "antd";
+import { Modal, message } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HourBar } from "@/components/galaxy/charts";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconAlert, IconGpu, IconPlus, IconSparkle } from "@/components/ui/icons";
+import { IconAlert, IconGpu, IconMonitor, IconPlus, IconSparkle } from "@/components/ui/icons";
 import {
   Btn,
   Card,
@@ -27,6 +31,7 @@ import {
   ChipInput,
   EmptyState,
   Field,
+  LiveDot,
   Loading,
   Note,
   Pill,
@@ -34,20 +39,27 @@ import {
   Switch,
 } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { unitLabel } from "@/utils/format";
+import { formatRelative, unitLabel } from "@/utils/format";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
 import {
   fetchNodes,
+  isNodeOnline,
+  nodeDisplayName,
   saveContributionLimits,
   setContributionStatus,
   visibleContributions,
   type ContributionView,
+  type NodeView,
   type QuotaGrantInput,
 } from "../../api/provider.api";
 import { pingBridge, startUpstreamLogin } from "../../api/bridge.api";
+import { MachineRail } from "./MachineRail";
 
 /** llm.chat 的常用三维。别的 kind 自己加行。 */
 const COMMON_UNITS = ["llm.output_tokens", "llm.input_tokens", "llm.calls", "time.seconds"];
+
+/** 和「今天」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
+const REFRESH_MS = 20_000;
 
 interface Draft {
   modelsAllow: string[];
@@ -64,7 +76,7 @@ function toDraft(row: ContributionView): Draft {
     modelsDeny: [...(row.modelsDeny ?? [])],
     seats: row.seats || 3,
     seatConcurrency: row.seatConcurrency || 2,
-    quota: row.quota.map((item) => ({ unit: item.unit, limit: item.limit, window: item.window || "day" })),
+    quota: (row.quota ?? []).map((item) => ({ unit: item.unit, limit: item.limit, window: item.window || "day" })),
     hours: scheduleToHours(row.schedule),
   };
 }
@@ -82,54 +94,133 @@ function countChanges(draft: Draft, row: ContributionView): number {
   return changes;
 }
 
+/**
+ * 这台电脑钉在第一个，其余按名字排（机房-2 排在机房-10 前面）。
+ *
+ * 刻意不按在线状态排：列表 20 秒刷一次，机器一上下线就挪位置，
+ * 鼠标正要点的那一行会从手底下跑掉。在不在线看状态点。
+ */
+function orderMachines(nodes: NodeView[], localNodeId: string): NodeView[] {
+  return [...nodes].sort((left, right) => {
+    const local = Number(right.nodeId === localNodeId) - Number(left.nodeId === localNodeId);
+    if (local !== 0) return local;
+    return nodeDisplayName(left).localeCompare(nodeDisplayName(right), undefined, { numeric: true });
+  });
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export function ShareSettings() {
   const { t } = useLocale();
   const router = useRouter();
-  const [rows, setRows] = useState<ContributionView[]>([]);
-  const [selected, setSelected] = useState("");
-  const [draft, setDraft] = useState<Draft | null>(null);
+  // 用 hook 版而不是 Modal.confirm：静态方法拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色。
+  const [modal, modalHolder] = Modal.useModal();
+  const [nodes, setNodes] = useState<NodeView[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  // 本机 bridge 的 nodeId。「去授权」只对这台机器的贡献有意义 ——
-  // 贡献可能属于别的机器，浏览器够不到那台的 bridge。
+  const [query, setQuery] = useState("");
+  // 本机 bridge 的 nodeId。决定两件事：默认选中哪台，「去授权」给不给 ——
+  // 浏览器够不到别的机器的 bridge，那边的登录态只能去那台机器上修。
   const [localNodeId, setLocalNodeId] = useState("");
+  // 主人点过的机器与能力。空串是没点过：机器落在这台电脑上，能力落在第一条。
+  const [pickedNode, setPickedNode] = useState("");
+  const [pickedCid, setPickedCid] = useState("");
+  // 草稿记着自己是哪一条贡献的。轮询换掉 nodes 时不能跟着重置，
+  // 否则 20 秒一刷，正在填的数字就被冲掉了。
+  const [draft, setDraft] = useState<{ key: string; value: Draft } | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const nodes = await fetchNodes();
-      const flattened = nodes.flatMap((node) => visibleContributions(node.contributions));
-      setRows(flattened);
-      setSelected((current) => (flattened.some((item) => item.cid === current) ? current : (flattened[0]?.cid ?? "")));
-    } catch (error) {
-      message.error((error as Error).message || t("common.loadFailed"));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    void pingBridge().then((ping) => setLocalNodeId(ping?.nodeId ?? ""));
+  const reload = useCallback(async () => {
+    setNodes(await fetchNodes());
   }, []);
 
-  const current = useMemo(() => rows.find((row) => row.cid === selected) ?? null, [rows, selected]);
-
-  // 切换贡献时把草稿换成那一条的当前值。改到一半切走的编辑就丢了 ——
-  // 留着它更糟：回来时看到的是另一条贡献的数字，按保存会写到错的地方。
   useEffect(() => {
-    setDraft(current ? toDraft(current) : null);
-  }, [current]);
+    let alive = true;
+    const local = pingBridge().then((ping) => ping?.nodeId ?? "");
+    void local.then((nodeId) => {
+      if (alive) setLocalNodeId(nodeId);
+    });
+    // 第一屏等本机 bridge 报出自己是哪台再画：分两步到的话，默认选中会先落在
+    // 别的机器上、再跳回这台电脑。等不过 1.5 秒就先画，IPC 卡住不能把整页挡在加载圈上。
+    void Promise.all([fetchNodes(), Promise.race([local, delay(1500)])])
+      .then(([list]) => {
+        if (alive) setNodes(list);
+      })
+      .catch((error) => message.error((error as Error).message || t("common.loadFailed")))
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    // 别的机器上下线、登录态过期都得看得见。刷新失败不弹：
+    // 断网时每 20 秒冒一条报错，比数据旧 20 秒更扰人。
+    const timer = setInterval(() => void reload().catch(() => undefined), REFRESH_MS);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [reload, t]);
 
-  const changes = current && draft ? countChanges(draft, current) : 0;
+  const machines = useMemo(() => orderMachines(nodes, localNodeId), [nodes, localNodeId]);
+  const machine = machines.find((node) => node.nodeId === pickedNode) ?? machines[0] ?? null;
+  const rows = useMemo(() => visibleContributions(machine?.contributions), [machine]);
+  const current = rows.find((row) => row.cid === pickedCid) ?? rows[0] ?? null;
+  const currentKey = current ? `${current.nodeId}:${current.cid}` : "";
+  const form = useMemo(
+    () => (current ? (draft?.key === currentKey ? draft.value : toDraft(current)) : null),
+    [current, currentKey, draft],
+  );
+  const changes = current && form ? countChanges(form, current) : 0;
+  const isLocal = Boolean(machine && localNodeId && machine.nodeId === localNodeId);
+
+  const edit = (value: Draft) => setDraft({ key: currentKey, value });
+
+  // 一个计量单位只能配一条上限（唯一键是 cid + unit）。让界面自己不产生重复，
+  // 比让主人填完点保存再看一句数据库报错要好。
+  const usedUnits = useMemo(() => new Set((form?.quota ?? []).map((item) => item.unit)), [form]);
+  const freeUnit = COMMON_UNITS.find((unit) => !usedUnits.has(unit));
+
+  /**
+   * 切机器、切能力之前，有没保存的修改就先问一句。
+   *
+   * 草稿只跟着一条贡献走，切走就丢 —— 留着更糟：回来时分不清哪些数字是改过没存的。
+   * 以前只能在两三条能力间切，悄悄丢也就算了；现在左边一排机器点起来很顺手，
+   * 悄悄丢就成了常事。
+   */
+  const leave = (next: () => void) => {
+    const go = () => {
+      setDraft(null);
+      next();
+    };
+    if (changes === 0 || !current || !machine) {
+      go();
+      return;
+    }
+    void modal.confirm({
+      title: t("share.switchTitle"),
+      content: t("share.switchConfirm", { name: nodeDisplayName(machine), cid: current.cid, value: changes }),
+      okText: t("share.switchOk"),
+      okButtonProps: { danger: true },
+      cancelText: t("share.switchCancel"),
+      onOk: go,
+    });
+  };
+
+  const selectMachine = (nodeId: string) => {
+    if (nodeId === machine?.nodeId) return;
+    leave(() => {
+      setPickedNode(nodeId);
+      setPickedCid("");
+    });
+  };
+
+  const selectContribution = (cid: string) => {
+    if (cid === current?.cid) return;
+    leave(() => setPickedCid(cid));
+  };
 
   const toggle = async (row: ContributionView, on: boolean) => {
     setBusy(true);
     try {
       await setContributionStatus(row.nodeId, row.cid, on ? "active" : "disabled");
-      await load();
+      await reload();
     } catch (error) {
       // 「还有人绑在上面」是服务端拒的，原文比任何前端兜底话术都准。
       message.error((error as Error).message || t("common.actionFailed"));
@@ -153,21 +244,24 @@ export function ShareSettings() {
   };
 
   const save = async () => {
-    if (!current || !draft) return;
+    if (!current || !form) return;
     setBusy(true);
     try {
       await saveContributionLimits({
         nodeId: current.nodeId,
         cid: current.cid,
-        modelsAllow: draft.modelsAllow,
-        modelsDeny: draft.modelsDeny,
-        seats: draft.seats,
-        seatConcurrency: draft.seatConcurrency,
-        quota: draft.quota.filter((item) => item.unit && item.limit > 0),
-        schedule: hoursToSchedule(draft.hours, Intl.DateTimeFormat().resolvedOptions().timeZone),
+        modelsAllow: form.modelsAllow,
+        modelsDeny: form.modelsDeny,
+        seats: form.seats,
+        seatConcurrency: form.seatConcurrency,
+        quota: form.quota.filter((item) => item.unit && item.limit > 0),
+        schedule: hoursToSchedule(form.hours, Intl.DateTimeFormat().resolvedOptions().timeZone),
       });
       message.success(t("common.saved"));
-      await load();
+      await reload();
+      // 服务端会规整（limit 为 0 的额度行不存），草稿换成它存下来的样子，
+      // 不然保存成功了底下还挂着「有 1 处未保存」。
+      setDraft(null);
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
     } finally {
@@ -186,7 +280,7 @@ export function ShareSettings() {
     );
   }
 
-  if (rows.length === 0) {
+  if (!machine) {
     return (
       <>
         <PageHeader title={t("share.title")} meta={t("share.subtitle")} />
@@ -207,251 +301,392 @@ export function ShareSettings() {
     );
   }
 
+  const online = isNodeOnline(machine);
+  const endpointText =
+    machine.endpointStatus === "ok"
+      ? t("account.endpointOk")
+      : machine.endpointStatus === "unreachable"
+        ? [t("account.endpointDown"), machine.endpointError].filter(Boolean).join(" — ")
+        : t("account.endpointPending");
+
+  const detail = (
+    <>
+      <Card className="gx-rise gx-rise--1">
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 18px 12px" }}>
+          <span
+            style={{
+              width: 36,
+              height: 36,
+              flex: "0 0 auto",
+              borderRadius: 10,
+              display: "grid",
+              placeItems: "center",
+              background: "var(--gx-muted)",
+              color: "var(--gx-soft)",
+            }}
+          >
+            <IconMonitor size={19} />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <span style={{ fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {nodeDisplayName(machine)}
+              </span>
+              {isLocal ? <Pill>{t("account.thisComputer")}</Pill> : null}
+            </span>
+            <span
+              className="gx-mono"
+              style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={machine.nodeId}
+            >
+              ai-bridge {machine.bridgeVersion || "-"} ·{" "}
+              {machine.lastBeatAt ? t("share.machineBeat", { value: formatRelative(machine.lastBeatAt) }) : t("share.machineNeverSeen")} ·{" "}
+              {machine.nodeId}
+            </span>
+            {machine.accessMode === "export" ? (
+              <span
+                className="gx-mono"
+                style={{
+                  display: "block",
+                  fontSize: 11,
+                  marginTop: 2,
+                  color: machine.endpointStatus === "unreachable" ? "var(--gx-danger)" : "var(--gx-faint)",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {machine.endpointUrl || "-"} · {endpointText}
+              </span>
+            ) : null}
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "0 0 auto" }}>
+            <Pill>{machine.accessMode === "export" ? t("account.accessExport") : t("account.accessPoll")}</Pill>
+            <Pill tone={machine.banned ? "err" : online ? "ok" : "default"}>
+              {machine.banned ? null : <LiveDot on={online} />}
+              {machine.banned ? t("share.machineBanned") : online ? t("share.machineOnline") : t("share.machineOffline")}
+            </Pill>
+          </span>
+        </div>
+
+        {machine.banned || (!online && rows.length > 0) ? (
+          <div style={{ padding: "0 18px 6px" }}>
+            {/* 离线不妨碍改：设置存在平台上，平台是额度与时段的权威，那台机器连回来就照新的来。
+                一条能力都没报过的机器没什么可改，这句就不说了，下面的空状态会讲清楚。 */}
+            <Note tone={machine.banned ? "danger" : "default"}>
+              {machine.banned ? t("share.machineBannedNote") : t("share.machineOfflineNote")}
+            </Note>
+          </div>
+        ) : null}
+
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, padding: "10px 18px 10px" }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.detected")}</span>
+          {rows.length > 0 ? <span className="gx-card__hint">{t("share.syncHint")}</span> : null}
+        </div>
+        <div style={{ padding: "0 18px 16px" }}>
+          {rows.length === 0 ? (
+            <div style={{ borderTop: "1px solid var(--gx-line)" }}>
+              <EmptyState title={t("share.machineEmptyTitle")} hint={t("share.machineEmptyHint")} />
+            </div>
+          ) : (
+            <>
+              {rows.map((row) => (
+                <CapabilityRow
+                  key={row.cid}
+                  row={row}
+                  busy={busy}
+                  local={isLocal}
+                  onToggle={(on) => void toggle(row, on)}
+                  onAuthorize={() => void authorize(row)}
+                />
+              ))}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: "1px solid var(--gx-line)", opacity: 0.55 }}>
+                <span style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center", background: "var(--gx-muted)", color: "var(--gx-faint)" }}>
+                  <IconGpu size={18} />
+                </span>
+                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600 }}>{t("share.gpu")}</span>
+                <Pill>{t("today.soon")}</Pill>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <Note>{t("share.detectedHint")}</Note>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      {current && form ? (
+        <Card className="gx-rise gx-rise--2">
+          <CardHead
+            title={current.cid}
+            // 保存写到哪台，就在表单头上写哪台。几台机器上的 cid 一模一样，只看标题分不出来。
+            hint={t("share.editingOn", { name: nodeDisplayName(machine) })}
+            action={
+              rows.length > 1 ? (
+                <Seg value={current.cid} onChange={selectContribution} options={rows.map((row) => ({ value: row.cid, label: row.cid }))} />
+              ) : null
+            }
+          />
+          <div style={{ padding: "0 22px 20px", display: "flex", flexDirection: "column", gap: 22 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.models")}</span>
+                <span className="gx-card__hint">{t("share.modelsHint")}</span>
+              </div>
+              <span className="gx-label">{t("share.modelsAllow")}</span>
+              <ChipInput
+                values={form.modelsAllow}
+                suggestions={current.availableModels ?? []}
+                placeholder={t("share.modelsPlaceholder")}
+                onChange={(next) => edit({ ...form, modelsAllow: next })}
+              />
+              <span className="gx-label" style={{ marginTop: 6 }}>
+                {t("share.modelsDeny")}
+              </span>
+              <ChipInput
+                values={form.modelsDeny}
+                struck
+                suggestions={current.availableModels ?? []}
+                placeholder="claude-opus-*"
+                onChange={(next) => edit({ ...form, modelsDeny: next })}
+              />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+              <Field label={t("share.seats")} hint={t("share.seatsHint", { value: form.seats })}>
+                <input
+                  className="gx-input gx-input--mono"
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={form.seats}
+                  onChange={(event) => edit({ ...form, seats: Number(event.target.value) || 1 })}
+                />
+              </Field>
+              <Field label={t("share.concurrency")} hint={t("share.concurrencyHint", { value: form.seatConcurrency })}>
+                <input
+                  className="gx-input gx-input--mono"
+                  type="number"
+                  min={1}
+                  max={16}
+                  value={form.seatConcurrency}
+                  onChange={(event) => edit({ ...form, seatConcurrency: Number(event.target.value) || 1 })}
+                />
+              </Field>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.quota")}</span>
+                <span className="gx-card__hint">{t("share.quotaHint")}</span>
+              </div>
+              {form.quota.map((item, index) => (
+                <div key={`${item.unit}-${index}`} style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 90px 36px", gap: 10, alignItems: "center" }}>
+                  <select
+                    className="gx-input"
+                    value={item.unit}
+                    onChange={(event) => {
+                      const quota = [...form.quota];
+                      quota[index] = { ...item, unit: event.target.value };
+                      edit({ ...form, quota });
+                    }}
+                  >
+                    {Array.from(new Set([item.unit, ...COMMON_UNITS])).filter(Boolean).map((unit) => (
+                      // 别的行已经占了的单位在这里是灰的：选中它只会换来一条保存失败。
+                      <option key={unit} value={unit} disabled={unit !== item.unit && usedUnits.has(unit)}>
+                        {unitLabel(unit, t)} · {unit}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="gx-input gx-input--mono"
+                    type="number"
+                    min={1}
+                    value={item.limit}
+                    onChange={(event) => {
+                      const quota = [...form.quota];
+                      quota[index] = { ...item, limit: Number(event.target.value) || 0 };
+                      edit({ ...form, quota });
+                    }}
+                  />
+                  <select
+                    className="gx-input"
+                    value={item.window}
+                    onChange={(event) => {
+                      const quota = [...form.quota];
+                      quota[index] = { ...item, window: event.target.value };
+                      edit({ ...form, quota });
+                    }}
+                  >
+                    {["day", "week", "month", "total"].map((window) => (
+                      <option key={window} value={window}>
+                        {window}
+                      </option>
+                    ))}
+                  </select>
+                  <Btn
+                    tone="ghost"
+                    small
+                    aria-label="remove"
+                    onClick={() => edit({ ...form, quota: form.quota.filter((_, at) => at !== index) })}
+                  >
+                    ×
+                  </Btn>
+                </div>
+              ))}
+              <Btn
+                tone="ghost"
+                small
+                icon={<IconPlus size={14} />}
+                // 新行落在第一个还没被占的单位上。四个单位都配满了就没得加了，
+                // 再加只能是重复的那条。
+                disabled={!freeUnit}
+                title={freeUnit ? undefined : t("share.quotaAllUsed")}
+                onClick={() => {
+                  if (!freeUnit) return;
+                  edit({ ...form, quota: [...form.quota, { unit: freeUnit, limit: 1_000_000, window: "day" }] });
+                }}
+              >
+                {t("share.quotaAdd")}
+              </Btn>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.window")}</span>
+                <span className="gx-card__hint">
+                  {Intl.DateTimeFormat().resolvedOptions().timeZone} · {t("share.windowHint")}
+                </span>
+              </div>
+              <HourBar
+                hours={form.hours}
+                onToggle={(hour) => {
+                  const hours = [...form.hours];
+                  hours[hour] = !hours[hour];
+                  edit({ ...form, hours });
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="gx-row__foot">
+            <span>{changes > 0 ? t("share.dirty", { value: changes }) : ""}</span>
+            <span style={{ display: "flex", gap: 8 }}>
+              <Btn tone="ghost" small disabled={changes === 0 || busy} onClick={() => setDraft(null)}>
+                {t("common.discard")}
+              </Btn>
+              <Btn tone="accent" small loading={busy} disabled={changes === 0} onClick={() => void save()}>
+                {t("share.submit")}
+              </Btn>
+            </span>
+          </div>
+        </Card>
+      ) : null}
+    </>
+  );
+
   return (
     <>
       <PageHeader title={t("share.title")} meta={t("share.subtitle")} />
+      {modalHolder}
       <div className="gx-body">
-        <Card className="gx-rise">
-          <CardHead title={t("share.detected")} hint={t("share.syncHint")} />
-          <div style={{ padding: "0 18px 16px" }}>
-            {rows.map((row) => (
-              <div
-                key={`${row.nodeId}:${row.cid}`}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: "1px solid var(--gx-line)" }}
-              >
-                <span
-                  style={{
-                    width: 34,
-                    height: 34,
-                    borderRadius: 9,
-                    display: "grid",
-                    placeItems: "center",
-                    background: row.status === "active" ? "var(--gx-accent-soft)" : "var(--gx-muted)",
-                    color: row.status === "active" ? "var(--gx-accent)" : "var(--gx-faint)",
-                  }}
-                >
-                  <IconSparkle size={18} />
-                </span>
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{row.cid}</span>
-                  {/* 不可用时副行换成原因。「llm.chat · codex_chatgpt」谁都猜得到，
-                      「登录态过期了，去敲这条命令」才是这一刻要说的话。 */}
-                  <span
-                    className={row.available ? "gx-mono" : undefined}
-                    style={{
-                      display: "block",
-                      fontSize: 11.5,
-                      color: row.available ? "var(--gx-faint)" : "var(--gx-warn-ink)",
-                      marginTop: 2,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {row.available ? `${row.kind} · ${row.provider}` : row.unavailableReason || t("share.unavailable")}
-                  </span>
-                </span>
-                {row.seatsBound > 0 ? <Pill tone="accent">{t("share.bound", { value: row.seatsBound })}</Pill> : null}
-                {row.available ? (
-                  <>
-                    <Pill tone={row.status === "active" ? "ok" : "default"}>
-                      {row.status === "active" ? t("share.on") : t("share.off")}
-                    </Pill>
-                    <Switch
-                      checked={row.status === "active"}
-                      disabled={busy || (row.status === "active" && row.seatsBound > 0)}
-                      label={t("share.enable")}
-                      onChange={(next) => void toggle(row, next)}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <IconAlert size={16} style={{ color: "var(--gx-warn)" }} />
-                    {localNodeId && localNodeId === row.nodeId ? (
-                      <Btn tone="soft" small loading={busy} onClick={() => void authorize(row)}>
-                        {t("share.authorize")}
-                      </Btn>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            ))}
-            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: "1px solid var(--gx-line)", opacity: 0.55 }}>
-              <span style={{ width: 34, height: 34, borderRadius: 9, display: "grid", placeItems: "center", background: "var(--gx-muted)", color: "var(--gx-faint)" }}>
-                <IconGpu size={18} />
-              </span>
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600 }}>{t("today.gpu")}</span>
-              <Pill>{t("today.soon")}</Pill>
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <Note>{t("share.detectedHint")}</Note>
-            </div>
-          </div>
-        </Card>
-
-        {current && draft ? (
-          <Card className="gx-rise gx-rise--1">
-            <CardHead
-              title={current.cid}
-              hint={current.unavailableReason || undefined}
-              action={
-                rows.length > 1 ? (
-                  <Seg
-                    value={selected}
-                    onChange={setSelected}
-                    options={rows.map((row) => ({ value: row.cid, label: row.cid }))}
-                  />
-                ) : null
-              }
+        {/* 只有一台机器时不摆左列：一列里就一行，占掉 260 宽什么也没说。 */}
+        {machines.length > 1 ? (
+          <div className="gx-split">
+            <MachineRail
+              machines={machines}
+              selected={machine.nodeId}
+              localNodeId={localNodeId}
+              query={query}
+              onQuery={setQuery}
+              onSelect={selectMachine}
             />
-            <div style={{ padding: "0 22px 20px", display: "flex", flexDirection: "column", gap: 22 }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.models")}</span>
-                  <span className="gx-card__hint">{t("share.modelsHint")}</span>
-                </div>
-                <span className="gx-label">{t("share.modelsAllow")}</span>
-                <ChipInput
-                  values={draft.modelsAllow}
-                  suggestions={current.availableModels ?? []}
-                  placeholder={t("share.modelsPlaceholder")}
-                  onChange={(next) => setDraft({ ...draft, modelsAllow: next })}
-                />
-                <span className="gx-label" style={{ marginTop: 6 }}>
-                  {t("share.modelsDeny")}
-                </span>
-                <ChipInput
-                  values={draft.modelsDeny}
-                  struck
-                  suggestions={current.availableModels ?? []}
-                  placeholder="claude-opus-*"
-                  onChange={(next) => setDraft({ ...draft, modelsDeny: next })}
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
-                <Field label={t("share.seats")} hint={t("share.seatsHint", { value: draft.seats })}>
-                  <input
-                    className="gx-input gx-input--mono"
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={draft.seats}
-                    onChange={(event) => setDraft({ ...draft, seats: Number(event.target.value) || 1 })}
-                  />
-                </Field>
-                <Field label={t("share.concurrency")} hint={t("share.concurrencyHint", { value: draft.seatConcurrency })}>
-                  <input
-                    className="gx-input gx-input--mono"
-                    type="number"
-                    min={1}
-                    max={16}
-                    value={draft.seatConcurrency}
-                    onChange={(event) => setDraft({ ...draft, seatConcurrency: Number(event.target.value) || 1 })}
-                  />
-                </Field>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.quota")}</span>
-                  <span className="gx-card__hint">{t("share.quotaHint")}</span>
-                </div>
-                {draft.quota.map((item, index) => (
-                  <div key={`${item.unit}-${index}`} style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 90px 36px", gap: 10, alignItems: "center" }}>
-                    <select
-                      className="gx-input"
-                      value={item.unit}
-                      onChange={(event) => {
-                        const quota = [...draft.quota];
-                        quota[index] = { ...item, unit: event.target.value };
-                        setDraft({ ...draft, quota });
-                      }}
-                    >
-                      {Array.from(new Set([item.unit, ...COMMON_UNITS])).filter(Boolean).map((unit) => (
-                        <option key={unit} value={unit}>
-                          {unitLabel(unit)}（{unit}）
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="gx-input gx-input--mono"
-                      type="number"
-                      min={1}
-                      value={item.limit}
-                      onChange={(event) => {
-                        const quota = [...draft.quota];
-                        quota[index] = { ...item, limit: Number(event.target.value) || 0 };
-                        setDraft({ ...draft, quota });
-                      }}
-                    />
-                    <select
-                      className="gx-input"
-                      value={item.window}
-                      onChange={(event) => {
-                        const quota = [...draft.quota];
-                        quota[index] = { ...item, window: event.target.value };
-                        setDraft({ ...draft, quota });
-                      }}
-                    >
-                      {["day", "week", "month", "total"].map((window) => (
-                        <option key={window} value={window}>
-                          {window}
-                        </option>
-                      ))}
-                    </select>
-                    <Btn
-                      tone="ghost"
-                      small
-                      aria-label="remove"
-                      onClick={() => setDraft({ ...draft, quota: draft.quota.filter((_, at) => at !== index) })}
-                    >
-                      ×
-                    </Btn>
-                  </div>
-                ))}
-                <Btn
-                  tone="ghost"
-                  small
-                  icon={<IconPlus size={14} />}
-                  onClick={() => setDraft({ ...draft, quota: [...draft.quota, { unit: COMMON_UNITS[0], limit: 1_000_000, window: "day" }] })}
-                >
-                  {t("share.quotaAdd")}
-                </Btn>
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.window")}</span>
-                  <span className="gx-card__hint">
-                    {Intl.DateTimeFormat().resolvedOptions().timeZone} · {t("share.windowHint")}
-                  </span>
-                </div>
-                <HourBar
-                  hours={draft.hours}
-                  onToggle={(hour) => {
-                    const hours = [...draft.hours];
-                    hours[hour] = !hours[hour];
-                    setDraft({ ...draft, hours });
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="gx-row__foot">
-              <span>{changes > 0 ? t("share.dirty", { value: changes }) : ""}</span>
-              <span style={{ display: "flex", gap: 8 }}>
-                <Btn tone="ghost" small disabled={changes === 0 || busy} onClick={() => setDraft(toDraft(current))}>
-                  {t("common.discard")}
-                </Btn>
-                <Btn tone="accent" small loading={busy} disabled={changes === 0} onClick={() => void save()}>
-                  {t("share.submit")}
-                </Btn>
-              </span>
-            </div>
-          </Card>
-        ) : null}
+            <div className="gx-split__main">{detail}</div>
+          </div>
+        ) : (
+          detail
+        )}
       </div>
     </>
+  );
+}
+
+/**
+ * 一条能力。
+ *
+ * 「你自己关掉了」和「那台机器现在干不了」是两件事：前者给开关，后者把原因原样摆出来。
+ * 修的办法看是哪台 —— 这台电脑给「去授权」，要调本机 bridge 拉起登录流程；
+ * 别的机器浏览器够不到它的 bridge，只能说清楚去哪儿修。
+ */
+function CapabilityRow({
+  row,
+  busy,
+  local,
+  onToggle,
+  onAuthorize,
+}: {
+  row: ContributionView;
+  busy: boolean;
+  local: boolean;
+  onToggle: (on: boolean) => void;
+  onAuthorize: () => void;
+}) {
+  const { t } = useLocale();
+  const on = row.status === "active";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: "1px solid var(--gx-line)" }}>
+      <span
+        style={{
+          width: 34,
+          height: 34,
+          flex: "0 0 auto",
+          borderRadius: 9,
+          display: "grid",
+          placeItems: "center",
+          background: on ? "var(--gx-accent-soft)" : "var(--gx-muted)",
+          color: on ? "var(--gx-accent)" : "var(--gx-faint)",
+        }}
+      >
+        <IconSparkle size={18} />
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{row.cid}</span>
+        {/* 不可用时副行换成原因。「llm.chat · codex_chatgpt」谁都猜得到，
+            「登录态过期了，去敲这条命令」才是这一刻要说的话。 */}
+        <span
+          className={row.available ? "gx-mono" : undefined}
+          title={row.available ? undefined : row.unavailableReason}
+          style={{
+            display: "block",
+            fontSize: 11.5,
+            color: row.available ? "var(--gx-faint)" : "var(--gx-warn-ink)",
+            marginTop: 2,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {row.available ? `${row.kind} · ${row.provider}` : row.unavailableReason || t("share.unavailable")}
+        </span>
+      </span>
+      {row.seatsBound > 0 ? <Pill tone="accent">{t("share.bound", { value: row.seatsBound })}</Pill> : null}
+      {row.available ? (
+        <>
+          <Pill tone={on ? "ok" : "default"}>{on ? t("share.on") : t("share.off")}</Pill>
+          <Switch checked={on} disabled={busy || (on && row.seatsBound > 0)} label={t("share.enable")} onChange={onToggle} />
+        </>
+      ) : (
+        <>
+          <IconAlert size={16} style={{ flex: "0 0 auto", color: "var(--gx-warn)" }} />
+          {local ? (
+            <Btn tone="soft" small loading={busy} onClick={onAuthorize}>
+              {t("share.authorize")}
+            </Btn>
+          ) : (
+            <span className="gx-card__hint" style={{ whiteSpace: "nowrap" }}>
+              {t("share.fixOnMachine")}
+            </span>
+          )}
+        </>
+      )}
+    </div>
   );
 }

@@ -285,6 +285,15 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 	result.Enabled = plan.Enabled
 	result.QuotaEffective = plan.Quota
 
+	// 接入方式跟着 hello 一起对齐：公网地址会变，只在注册时记一次的话，
+	// Hub 会拿着一个早就失效的地址一直回连不上（见 applyNodeAccess 的注释）。
+	// 失败不阻断 hello —— 对不齐最坏是这台机器退回长轮询，而 hello 失败是它彻底不接活。
+	if mode, err := s.applyNodeAccess(ctx, req.NodeID, req.AccessMode, req.Endpoint); err != nil {
+		s.metrics.Count(MetricAccessSyncFailed, map[string]string{"nodeId": req.NodeID}, 1)
+	} else {
+		result.AccessMode = mode
+	}
+
 	if err := s.control.RegisterNode(ctx, NodeRuntime{
 		NodeID:        req.NodeID,
 		OwnerUserID:   req.OwnerUserID,
@@ -306,6 +315,14 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 	}); err != nil {
 		return dto.HelloResult{}, err
 	}
+	// 空切片要发成 []，不能发成 null。
+	//
+	// Go 的 nil 切片序列化出去是 JSON 的 null，而节点侧是 Rust：serde 的 default
+	// 只兜「字段缺失」，遇上显式 null 直接报错，于是**整个响应**解析失败，
+	// 节点拿到一份默认值 —— enabled 成了 None，它当成「老版本 Hub，维持现状」，
+	// 一条通道都不建。一个从来没人看的 rejected 字段，能让整台机器不接活。
+	result.Accepted = orEmpty(result.Accepted)
+	result.Rejected = orEmpty(result.Rejected)
 	return result, nil
 }
 
@@ -450,8 +467,18 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	if err := s.control.UpdateLaneRuntime(ctx, runtimes); err != nil {
 		return dto.HeartbeatResult{}, err
 	}
-	if err := s.control.TouchNode(ctx, req.NodeID, now); err != nil {
+	registered, err := s.control.TouchNode(ctx, req.NodeID, now)
+	if err != nil {
 		return dto.HeartbeatResult{}, err
+	}
+	if !registered {
+		// 登记项过期了（连着 24 小时只有心跳、没有一次 hello）。
+		// 不能让心跳顺手 HSET 把它写回来 —— 那样重建出来的只有 lastBeat 和 status，
+		// instance / ownerUserId / bridgeVersion / resources 全缺。数据库那一行是权威，
+		// 照它整条重建，这台机器不用等到下一次 hello 才重新被 Hub 认出来。
+		if err := s.registerNodeFromRow(ctx, req.NodeID, now); err != nil {
+			return dto.HeartbeatResult{}, err
+		}
 	}
 	_ = s.repository.TouchNode(ctx, bizLine, req.NodeID, now)
 
@@ -513,6 +540,9 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 		return dto.HeartbeatResult{}, err
 	}
 	result.Enabled = plan.Enabled
+	// 同 Hello：空切片发 []，不发 null，否则节点连这次心跳一起丢掉。
+	result.Cancel = orEmpty(result.Cancel)
+	result.Drain = orEmpty(result.Drain)
 	return result, nil
 }
 
@@ -554,7 +584,14 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 		view := dto.NodeView{
 			NodeID: node.NodeID, DisplayName: node.DisplayName, BridgeVersion: node.BridgeVersion,
 			Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
-			Contributions: make([]dto.ContributionView, 0, len(rows)),
+			// 接入方式要露出来：两种方式的排障路径完全不同，而主人自己
+			// 往往说不清机房里那台是怎么配的。**密钥不出服务端**，只给地址。
+			AccessMode:        dto.NormalizeAccessMode(node.AccessMode),
+			EndpointURL:       node.EndpointURL,
+			EndpointStatus:    node.EndpointStatus,
+			EndpointError:     node.EndpointError,
+			EndpointCheckedAt: node.EndpointCheckedAt,
+			Contributions:     make([]dto.ContributionView, 0, len(rows)),
 		}
 		grants, err := s.loadGrants(ctx, cidsOf(rows))
 		if err != nil {
@@ -657,15 +694,54 @@ func (s *service) ListExecutionRecords(ctx context.Context, ownerUserID, cid str
 	if err != nil {
 		return nil, err
 	}
+	nodeOf := nodeOfContribution(rows)
 	for _, unit := range kept {
 		records = append(records, dto.ExecutionRecord{
 			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, State: unit.State,
 			ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Credits:   credits[unit.UnitID],
+			NodeID:    nodeOf[unit.CID],
 			StartedAt: unit.StartedAt, FinishedAt: unit.FinishedAt,
 		})
 	}
+	if err := s.nameRecordNodes(ctx, ownerUserID, records); err != nil {
+		return nil, err
+	}
 	return records, nil
+}
+
+// nodeOfContribution cid → 跑它的那台机器。
+//
+// unit 上只记了 cid，是哪台机器以贡献表为准：贡献行解绑之后也不删，老记录照样对得上。
+func nodeOfContribution(rows []*repository.GalaxyContribution) map[string]string {
+	nodes := make(map[string]string, len(rows))
+	for _, row := range rows {
+		nodes[row.CID] = row.NodeID
+	}
+	return nodes
+}
+
+// nameRecordNodes 给标好 NodeID 的执行记录补上机器名。
+//
+// 只有主人自己看得到：两条调用路径都只列主人名下贡献上的 unit，消费者的用量记录
+// 不走这个 DTO。匿名是双向的 —— 消费者不该知道自己的请求落在了谁的哪台机器上。
+func (s *service) nameRecordNodes(ctx context.Context, ownerUserID string, records []dto.ExecutionRecord) error {
+	ids := make([]string, 0, 4)
+	seen := map[string]bool{}
+	for _, record := range records {
+		if record.NodeID != "" && !seen[record.NodeID] {
+			seen[record.NodeID] = true
+			ids = append(ids, record.NodeID)
+		}
+	}
+	names, err := s.repository.NodeNames(ctx, bizLine, ownerUserID, ids)
+	if err != nil {
+		return err
+	}
+	for index := range records {
+		records[index].NodeName = names[records[index].NodeID]
+	}
+	return nil
 }
 
 // SetContributionStatus 主人暂停 / 恢复 / 停掉一条贡献（P-08、P-09）。
@@ -700,7 +776,57 @@ func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, nodeID
 	if err := s.repository.SetContributionStatus(ctx, bizLine, row.CID, status); err != nil {
 		return err
 	}
+	// 立刻写控制面，不等下一次 hello。
+	//
+	// 放置只看控制面，而 hello 只在节点启动/重连或本机能力指纹变化时才发 ——
+	// 主人在控制台点开一条贡献并不会让那台机器重新 hello。只改数据库的话，
+	// 心跳会把「你已启用」下发给节点、节点也把通道建起来、界面显示共享中，
+	// 可放置端的车道里根本没有这台机器，消费者拿到的一律是 no_capacity。
+	if err := s.syncNodeToControlPlane(ctx, row.NodeID); err != nil {
+		return err
+	}
 	return s.control.SetDraining(ctx, row.CID, status != statusActive)
+}
+
+// registerNodeFromRow 按数据库里那一行把节点的控制面登记项整条重建。
+//
+// instance 用**本实例**的地址而不是行里存的：登记项记的是「这台机器现在归谁管」，
+// 而现在接着它心跳的就是我。
+func (s *service) registerNodeFromRow(ctx context.Context, nodeID string, now time.Time) error {
+	row, err := s.repository.FindNode(ctx, bizLine, nodeID)
+	if err != nil {
+		return err
+	}
+	return s.control.RegisterNode(ctx, NodeRuntime{
+		NodeID:        row.NodeID,
+		OwnerUserID:   row.OwnerUserID,
+		BridgeVersion: row.BridgeVersion,
+		Contract:      row.ContractVersion,
+		Resources:     decodeResources(row.ResourcesJSON),
+		Instance:      s.config.Instance,
+		LastBeatAt:    now,
+	})
+}
+
+// syncNodeToControlPlane 按数据库里此刻的生效集合，重写这个节点在控制面里的贡献。
+//
+// 心跳时间取节点行里的真值而不是 now：机器关着的时候在控制台开关一下，
+// 不该让它在池子里凭空「在线」一个心跳超时那么久。
+func (s *service) syncNodeToControlPlane(ctx context.Context, nodeID string) error {
+	node, err := s.repository.FindNode(ctx, bizLine, nodeID)
+	if err != nil {
+		return err
+	}
+	var beat time.Time
+	if node.LastBeatAt != nil {
+		beat = *node.LastBeatAt
+	}
+	plan, err := s.effectiveContributions(ctx, nodeID, decodeResources(node.ResourcesJSON), beat)
+	if err != nil {
+		return err
+	}
+	// 额度窗口要按真正的此刻算，跟心跳时间是两回事。
+	return s.pushToControlPlane(ctx, nodeID, plan, time.Now())
 }
 
 // findOwnedContribution 按 (nodeID, cid) 定位主人自己的一条贡献。
@@ -860,12 +986,35 @@ func decodeStrings(raw string) []string {
 	return out
 }
 
-func decodeMetering(raw string) contract.Metering {
+// decodeResources 把节点上报的本机资源读回来。资源只参与放置的资源需求过滤，
+// 解不出来就当没报 —— ResourcesSatisfy 对缺项是放行的。
+func decodeResources(raw string) map[string]any {
 	if strings.TrimSpace(raw) == "" {
 		return nil
 	}
-	var out contract.Metering
+	var out map[string]any
 	_ = json.Unmarshal([]byte(raw), &out)
+	return out
+}
+
+// decodeMetering 空串解出空表，不是 nil —— 理由和 orEmpty 一模一样，
+// 只是那边是切片、这边是 map。
+//
+// nil map 序列化出去是 JSON 的 null，而控制台用 class-transformer 建实例：
+// 拿到 null 会把类字段的默认 {} 覆盖掉，下一步 usage["llm.input_tokens"] 就是
+// 「Cannot read properties of null」，整页白屏。
+// 而 usage 为空恰恰是最常见的情形 —— 一次没派出去、没跑成的请求，
+// 用量本来就该是空的，那也正是主人最想点开看看到底怎么了的那一条。
+func decodeMetering(raw string) contract.Metering {
+	var out contract.Metering
+	if strings.TrimSpace(raw) != "" {
+		// 存的要真是 "null" 这四个字母，Unmarshal 会把 map 重新置回 nil，
+		// 所以判空放在解析之后，不能只在解析之前挡一道。
+		_ = json.Unmarshal([]byte(raw), &out)
+	}
+	if out == nil {
+		out = contract.Metering{}
+	}
 	return out
 }
 
@@ -924,6 +1073,7 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 	}
 
 	grants := make([]QuotaGrant, 0, len(req.Quota))
+	seen := make(map[contract.MeterUnit]bool, len(req.Quota))
 	for _, quota := range req.Quota {
 		if quota.Limit <= 0 {
 			continue
@@ -931,6 +1081,12 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 		if !spec.AllowsUnit(quota.Unit) {
 			return fmt.Errorf("计量单位 %s 不属于 %s", quota.Unit, spec.Kind)
 		}
+		// 一个单位只能有一条上限：唯一键就是 (biz_line, cid, unit)。
+		// 不在这里拦，撞的就是数据库的 1062，一条主人看不懂的 SQL 报错会原样甩到界面上。
+		if seen[quota.Unit] {
+			return fmt.Errorf("计量单位 %s 配了不止一条额度，每个单位只能留一条", quota.Unit)
+		}
+		seen[quota.Unit] = true
 		grants = append(grants, QuotaGrant{Unit: quota.Unit, Limit: quota.Limit, Window: quota.Window, ResetAt: quota.ResetAt})
 	}
 	if len(grants) == 0 {
@@ -951,24 +1107,17 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 		return err
 	}
 
-	// 写回控制面。贡献可能此刻不在线（节点关着），那时快照不存在，
-	// SyncQuota 会建出一个没有心跳的壳 —— 放置的在线判定照样会把它挡掉，
-	// 等节点回来 hello 时再被完整覆盖。
-	now := time.Now()
-	plan := BuildQuotaPlan(grants, now)
-	if snapshot, found, err := s.control.GetContribution(ctx, row.CID); err == nil && found {
-		snapshot.Seats = seats
-		snapshot.SeatConcurrency = defaultInt(req.SeatConcurrency, row.SeatConcurrency)
-		snapshot.ModelsAllow = req.ModelsAllow
-		snapshot.ModelsDeny = req.ModelsDeny
-		snapshot.Schedule = toScheduleWindows(req.Schedule)
-		snapshot.QuotaLimit = plan.Limits
-		if err := s.control.ReplaceContributions(ctx, row.NodeID, []ContributionSnapshot{snapshot}); err != nil {
-			return err
-		}
-	}
-	_, _, err = s.control.SyncQuota(ctx, row.CID, plan.Limits, plan.Windows)
-	return err
+	// 写回控制面，不等节点下一次 hello —— 主人按下「把额度调小」通常是因为
+	// 现在就想少跑一点，让它等 15 秒心跳都算慢。
+	//
+	// 整台机器一起推，不能只推被改的这一条：ReplaceContributions 是**全量替换**语义，
+	// 只塞一条进去，同一台机器上别的贡献会被当成「不再申报」而从控制面摘掉。
+	// 踩过一次 —— 改完 Claude 那条的额度，Codex 那条就从池子里消失了，
+	// 而界面上两条都还显示共享中。
+	//
+	// 顺带也不再拿控制面里的旧快照当底稿：那份快照可能本身就是残缺的，
+	// 按数据库的行重新算一遍才是权威。
+	return s.syncNodeToControlPlane(ctx, row.NodeID)
 }
 
 func toQuotaRows(cid string, grants []QuotaGrant) []*repository.GalaxyQuotaGrant {
@@ -980,12 +1129,4 @@ func toQuotaRows(cid string, grants []QuotaGrant) []*repository.GalaxyQuotaGrant
 		})
 	}
 	return rows
-}
-
-func toScheduleWindows(windows []dto.ScheduleInput) []ScheduleWindow {
-	out := make([]ScheduleWindow, 0, len(windows))
-	for _, window := range windows {
-		out = append(out, ScheduleWindow{From: window.From, To: window.To, TZ: window.TZ})
-	}
-	return out
 }

@@ -159,6 +159,9 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 		if maxAttempts <= 0 {
 			maxAttempts = 1
 		}
+		// 总时限只算一次。改派是 Hub 自己的补救动作，
+		// 不该让消费者为每一次补救各等一个 maxRunSec。
+		deadline := relayDeadline(spec)
 
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			unit.Attempt = attempt
@@ -178,7 +181,15 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 				placed.Placed(placement.CID)
 			}
 
-			waitErr := session.Wait(context.Request.Context())
+			// 等待带时限。放置成功只说明「有台在线机器接下了」，不说明它还活着 ——
+			// 节点被 kill、断网、Nova 重启都不会有 stream 的 EOF，也不会有 complete，
+			// 没有这几道限，消费者的 SDK 会一直转下去。
+			waitErr := session.Wait(context.Request.Context(), WaitOptions{
+				AttachTimeout: attachTimeout(deps),
+				Deadline:      deadline,
+				Alive:         func() bool { return deps.Galaxy.ContributionAlive(context.Request.Context(), placement.CID) },
+				AliveInterval: nodeProbeInterval(deps),
+			})
 			deps.Exchange.Close(unit.ID)
 
 			if waitErr == nil {
@@ -193,6 +204,17 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 				_ = deps.Galaxy.Abandon(detached, unit.ID, "consumer_disconnected")
 				return
 			}
+			// Hub 自己判定的失败要在这里收口。节点报上来的那些（上行中断、complete
+			// 报错）在节点通道那边已经 FailUnit 过了，这一类不会有人来 ——
+			// 不还预留，那台机器的并发位就永久少一个；不改派前先还，理由同 requeue。
+			if HubJudged(waitErr) {
+				var cause *contract.UnitError
+				errors.As(waitErr, &cause)
+				_ = deps.Galaxy.FailUnit(context.Request.Context(), unit.ID, cause)
+				// 节点也可能只是慢而不是死了。cancel 搭在续租的响应里回去，
+				// 它还活着就能立刻停手，不再烧主人的上游额度。
+				_ = deps.Galaxy.Abandon(context.Request.Context(), unit.ID, "node_unresponsive")
+			}
 			// 首字节之后不改派：已经流出去的字节没法收回，直接 502。
 			if session.Started() || attempt >= maxAttempts || !deps.Galaxy.Reassignable(context.Request.Context(), unit.ID) {
 				writeError(context, adapter, in, waitErr)
@@ -203,6 +225,46 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 			}
 		}
 	}
+}
+
+const (
+	// DefaultAttachTimeout 节点认领上行的默认时限。
+	//
+	// 取值要盖住「领活 → 打上游 → 首字节」这一段：上游冷启动、长 prompt 的
+	// prefill 都在里面，压到十几秒会把正常的慢请求误杀成节点故障。
+	// 30 秒之后仍然没有任何人来认领，那台机器基本可以判定是没了。
+	DefaultAttachTimeout = 30 * time.Second
+	// DefaultNodeProbeInterval 首字节之前探节点心跳的间隔。
+	//
+	// 心跳本身 15 秒一次、45 秒判离线，探得比这更密没有额外信息，
+	// 只是把每个在途请求都变成一条定时 Redis 查询。
+	DefaultNodeProbeInterval = 10 * time.Second
+)
+
+func attachTimeout(deps Deps) time.Duration {
+	if deps.AttachTimeout > 0 {
+		return deps.AttachTimeout
+	}
+	return DefaultAttachTimeout
+}
+
+func nodeProbeInterval(deps Deps) time.Duration {
+	if deps.NodeProbeInterval > 0 {
+		return deps.NodeProbeInterval
+	}
+	return DefaultNodeProbeInterval
+}
+
+// relayDeadline 一次 relay 请求的总时限，与 Submit 写进单元发给节点的那个同源
+// （kind 的 lease.maxRunSec），否则「这活最多跑 600 秒」就成了一句只对节点生效的话。
+//
+// 为什么在这里自己算，而不是读 unit.Deadline：Submit 收的是值，它在自己那份
+// 拷贝上补的字段回不到通道层 —— 读出来恒为 0，这道限会静默失效。
+func relayDeadline(spec contract.KindSpec) time.Time {
+	if spec.Lease.MaxRunSec <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(time.Duration(spec.Lease.MaxRunSec) * time.Second)
 }
 
 // submitDetached 是 session / job 的提交路径：开好交汇点、放置，然后立刻回执。

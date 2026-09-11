@@ -21,6 +21,12 @@ func main() {
 	}
 	defer func() { _ = assembly.Control.Close() }()
 
+	// export 接入的派单器：Hub 主动把活推到那些声明了公网地址的机器上。
+	// 长轮询那条路不需要它 —— 那些机器自己会来领。
+	dispatch, stopDispatch := context.WithCancel(context.Background())
+	defer stopDispatch()
+	assembly.Export.Start(dispatch)
+
 	// 巡检：密钥到期转冻结、掉线节点摘除、额度计数器快照回 MySQL。
 	// 定时跑而不是靠请求触发 —— 一把长期不用的密钥也必须按时失效。
 	sweep := time.NewTicker(time.Minute)

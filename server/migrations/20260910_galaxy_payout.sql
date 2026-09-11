@@ -1,11 +1,13 @@
 -- 提现与「本轮连续在线」。
 --
 -- 新环境直接跑 server/galaxy.sql 就够了，这份只给已经建过库的环境。
--- 两条语句都可以重复执行（MySQL 8.0.19+ 支持 IF NOT EXISTS；更早的版本
--- 执行到已存在的那条会报 1060/1050，忽略即可）。
+--
+-- ADD COLUMN 上不能写 IF NOT EXISTS —— 那是 MariaDB 的扩展，MySQL 至今不认，
+-- 8.0.36 上会直接 1064 语法错误，整份脚本卡在第一条。重复执行时它报 1060
+-- （列已存在），忽略即可；建表那条有 IF NOT EXISTS，本来就可以重复跑。
 
 ALTER TABLE `zt_galaxy_node`
-  ADD COLUMN IF NOT EXISTS `online_since` timestamp NULL DEFAULT NULL AFTER `last_beat_at`;
+  ADD COLUMN `online_since` timestamp NULL DEFAULT NULL AFTER `last_beat_at`;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_payout` (
   `id`            bigint AUTO_INCREMENT,

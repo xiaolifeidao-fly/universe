@@ -229,7 +229,7 @@ export function StoreBoard() {
         />
       ) : (
         <div className="gx-body">
-          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 300px", gap: 14, alignItems: "start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "200px minmax(0, 1fr) 340px", gap: 14, alignItems: "start" }}>
             <Card className="gx-rise">
               <CardHead title={t("store.category")} />
               <div style={{ padding: "0 10px 14px", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -329,7 +329,7 @@ export function StoreBoard() {
                             key={item.code}
                             style={{
                               display: "flex",
-                              alignItems: "center",
+                              alignItems: "flex-start",
                               gap: 10,
                               padding: "10px 12px",
                               borderRadius: 10,
@@ -343,12 +343,24 @@ export function StoreBoard() {
                               name="channel"
                               checked={item.code === channel}
                               onChange={() => setChannel(item.code)}
-                              style={{ accentColor: "var(--gx-accent)" }}
+                              style={{ accentColor: "var(--gx-accent)", marginTop: 3 }}
                             />
-                            <span style={{ flex: 1 }}>{item.title}</span>
-                            {/* 沙箱一律带标记。一个「点一下就到账」的渠道混在真渠道里
-                                而不标出来，运营看着订单变成已到账，会以为钱进来了。 */}
-                            {item.sandbox ? <Pill tone="warn">{t("store.channelSandbox")}</Pill> : null}
+                            {/*
+                              渠道名和沙箱标记上下排，不并排。
+                              并排时标记的宽度由文案长度决定（英文「Sandbox · no real money」
+                              比中文长一截），会把 flex:1 的渠道名挤到只剩几个像素宽 ——
+                              中文能逐字换行，于是「支付宝（沙箱）」竖着掉下来。
+                            */}
+                            <span style={{ display: "flex", flexDirection: "column", gap: 6, minWidth: 0, flex: 1 }}>
+                              <span>{item.title}</span>
+                              {/* 沙箱一律带标记。一个「点一下就到账」的渠道混在真渠道里
+                                  而不标出来，运营看着订单变成已到账，会以为钱进来了。 */}
+                              {item.sandbox ? (
+                                <span>
+                                  <Pill tone="warn">{t("store.channelSandbox")}</Pill>
+                                </span>
+                              ) : null}
+                            </span>
                           </label>
                         ))
                       )}
@@ -360,7 +372,7 @@ export function StoreBoard() {
                         <Line
                           label={t("store.getsUnits")}
                           value={Object.entries(chosen.units ?? {})
-                            .map(([unit, value]) => `${formatCompact(value)} ${unitLabel(unit)}`)
+                            .map(([unit, value]) => `${formatCompact(value)} ${unitLabel(unit, t)}`)
                             .join(" · ")}
                         />
                         <div style={{ height: 1, background: "var(--gx-line)", margin: "4px 0" }} />
@@ -501,11 +513,19 @@ function PendingPayment({
   );
 }
 
+/**
+ * 明细里的一行。
+ *
+ * 标签固定宽度不换行、值靠右换行 —— 两边都可伸缩的话，值一长（「1.00M 输入
+ * token · 1.00M 输出 token」）就会把标签也挤散，「You get」被折成两行。
+ */
 function Line({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--gx-soft)" }}>
-      <span>{label}</span>
-      <span className="gx-mono">{value}</span>
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12.5, color: "var(--gx-soft)" }}>
+      <span style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{label}</span>
+      <span className="gx-mono" style={{ minWidth: 0, textAlign: "right" }}>
+        {value}
+      </span>
     </div>
   );
 }

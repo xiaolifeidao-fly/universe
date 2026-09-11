@@ -70,6 +70,8 @@ server/galaxy-api/configs/application.properties
 /client/galaxy/.next-*/
 /client/galaxy/.desktop/
 /client/galaxy/release/
+# 打包时生成：这个安装包默认连哪个控制台
+/client/galaxy/*/electron/desktop.json
 /client/galaxy/nova/common/
 /client/galaxy/orbit/common/
 /client/galaxy/*/node_modules/
@@ -77,6 +79,9 @@ server/galaxy-api/configs/application.properties
 /client/galaxy/*/electron/node_modules/
 /client/galaxy/*/webview/node_modules/
 /client/galaxy/*/webview/.next/
+# 门户站（client/galaxy/portal）没有 webview 这一层，构建产物直接在包根下。
+/client/galaxy/portal/.next/
+/client/galaxy/portal/tsconfig.tsbuildinfo
 /client/galaxy/*/webview/tsconfig.tsbuildinfo
 /client/galaxy/*/webview/package/
 /client/galaxy/*/webview/logs/

@@ -82,7 +82,7 @@ export function DisputeList() {
                 if (entries.length === 0) return <span className="gx-muted">-</span>;
                 return (
                   <span className="gx-mono gx-soft" style={{ fontSize: 12 }}>
-                    {entries.map(([unit, value]) => `${unitLabel(unit)} ${formatInt(value)}`).join(" · ")}
+                    {entries.map(([unit, value]) => `${unitLabel(unit, t)} ${formatInt(value)}`).join(" · ")}
                   </span>
                 );
               },

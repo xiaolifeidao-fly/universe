@@ -6,12 +6,14 @@
   "scripts": {
     "postinstall": "node scripts/link-shared.js",
     "dev": "npm run dev:nova",
-    "build": "npm run build:nova && npm run build:orbit",
-    "start": "node scripts/desktop.cjs start nova",
-    "lint": "npm run lint --workspace @galaxy/nova-webview && npm run lint --workspace @galaxy/orbit-webview",
-    "typecheck": "npm run typecheck --workspace @galaxy/nova-webview && npm run typecheck --workspace @galaxy/orbit-webview && npm run typecheck --workspace @galaxy/nova-electron && npm run typecheck --workspace @galaxy/orbit-electron && npm run typecheck --workspace ai-bridge && npm run typecheck --workspace @galaxy/ai-bridge-native",
+    "build": "npm run build:nova && npm run build:orbit && npm run build:portal",
+    "start": "npm run start:nova",
+    "lint": "npm run lint --workspace @galaxy/nova-webview && npm run lint --workspace @galaxy/orbit-webview && npm run lint --workspace @galaxy/portal",
+    "typecheck": "npm run typecheck --workspace @galaxy/nova-webview && npm run typecheck --workspace @galaxy/orbit-webview && npm run typecheck --workspace @galaxy/nova-electron && npm run typecheck --workspace @galaxy/orbit-electron && npm run typecheck --workspace @galaxy/ai-bridge-native && npm run typecheck --workspace ai-bridge && npm run typecheck --workspace @galaxy/portal",
     "dev:nova": "node scripts/desktop.cjs dev nova",
     "dev:orbit": "node scripts/desktop.cjs dev orbit",
+    "start:nova": "node scripts/desktop.cjs start nova",
+    "start:orbit": "node scripts/desktop.cjs start orbit",
     "build:nova": "node scripts/desktop.cjs build nova",
     "build:orbit": "node scripts/desktop.cjs build orbit",
     "package:nova": "node scripts/desktop.cjs package nova",
@@ -20,7 +22,11 @@
     "test:standalone": "node scripts/smoke-desktop.cjs",
     "build:electron": "node scripts/build-electron.cjs nova && node scripts/build-electron.cjs orbit",
     "test:bridge": "npm run test --workspace @galaxy/ai-bridge-native && npm run test --workspace ai-bridge",
-    "build:bridge-native": "npm run build --workspace @galaxy/ai-bridge-native"
+    "build:bridge-native": "npm run build --workspace @galaxy/ai-bridge-native",
+    "verify:bridge": "node scripts/verify-bridge-packaging.cjs",
+    "dev:portal": "node scripts/portal.cjs dev",
+    "start:portal": "node scripts/portal.cjs start",
+    "build:portal": "node scripts/portal.cjs build"
   },
   "devDependencies": {
     "electron-builder": "^26.0.12",
@@ -35,7 +41,8 @@
     "orbit/electron",
     "orbit/webview",
     "nova/electron/ai-bridge-native",
-    "nova/electron/ai-bridge"
+    "nova/electron/ai-bridge",
+    "portal"
   ],
   "engines": {
     "node": ">=22.12.0"

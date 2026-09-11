@@ -38,6 +38,20 @@ export interface BridgeState {
   nodeId?: string;
 }
 
+/** 把本机绑定的平台地址对齐到控制台所连的那台的结果。 */
+export interface BridgeHubSync {
+  /** 校准之后本机绑的地址。changed 为 false 时就是原来那个。 */
+  hubURL: string;
+  /** 是否真的改写了配置。origin 一致、或者本机还没绑过平台时都是 false。 */
+  changed: boolean;
+  /** 校准之后还算不算已配对。换了平台就是 false —— 旧令牌只对旧地址有效。 */
+  paired: boolean;
+  /** 改写前的地址，只有 changed 为 true 时有。 */
+  previous?: string;
+  /** 改写前的配置备份路径。 */
+  backup?: string;
+}
+
 export interface BridgePairPayload {
   /** 省略时使用本机配置的平台地址；已有平台配置时必须匹配。 */
   hubURL?: string;
@@ -79,6 +93,11 @@ export interface BridgePingOptions { hubUrl?: string }
 export interface BridgeRuntimeStatus {
   state: 'stopped' | 'starting' | 'running' | 'error';
   mode: 'relay' | 'pool';
+  /**
+   * 接入方式。Nova 内置的 bridge 只走 poll；export 是独立部署的 ai-bridge 才有的。
+   * runner 在跑时报的是回落之后的事实，没在跑时是配置里声明的值。
+   */
+  accessMode?: 'poll' | 'export';
   paired: boolean;
   nodeId?: string;
   hubURL: string;

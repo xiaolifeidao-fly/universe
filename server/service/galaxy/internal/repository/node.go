@@ -104,6 +104,32 @@ func (r *GalaxyRepository) ListNodesByOwner(ctx context.Context, bizLine, ownerU
 	return rows, err
 }
 
+// NodeNames 按 id 取主人名下机器的名字，**撤销掉的也要**。
+//
+// 给执行记录标「哪台机器跑的」用，和 ListNodesByOwner 正好相反：跑活的那台可能早就解绑了，
+// 「我的机器」里不该再有它，账上却还有它跑出来的积分，翻记录时得认得出是哪台。
+// 只取两列：这张表上存着回连密钥的明文，用不着的列别往内存里捞。
+func (r *GalaxyRepository) NodeNames(ctx context.Context, bizLine, ownerUserID string, nodeIDs []string) (map[string]string, error) {
+	names := map[string]string{}
+	if len(nodeIDs) == 0 {
+		return names, nil
+	}
+	var rows []struct {
+		NodeID      string
+		DisplayName string
+	}
+	err := r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Where("biz_line = ?", bizLine).Where("owner_user_id = ?", ownerUserID).Where("node_id IN ?", nodeIDs).
+		Select("node_id, display_name").Scan(&rows).Error
+	if err != nil {
+		return names, err
+	}
+	for _, row := range rows {
+		names[row.NodeID] = row.DisplayName
+	}
+	return names, nil
+}
+
 func (r *GalaxyRepository) TouchNode(ctx context.Context, bizLine, nodeID string, at time.Time) error {
 	if err := r.markOnlineSince(ctx, bizLine, nodeID, at); err != nil {
 		return err
@@ -207,4 +233,73 @@ func (r *GalaxyRepository) SetNodeBanned(ctx context.Context, bizLine, nodeID st
 	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
 		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
 		Update("banned", banned).Error
+}
+
+// ---------- 接入方式（poll / export） ----------
+
+// SaveNodeAccess 更新一台机器的接入方式与回连地址。
+//
+// 单独一条语句，不塞进 SaveNode 的 DoUpdates：那份白名单是给 hello 用的，
+// 而 hello 的请求体里这几个字段可能是零值（poll 的机器根本不带）——
+// 列进去就会在每次 hello 把一台 export 机器的公网地址抹成空串，
+// Hub 从此再也回连不上它，而节点侧一切正常、日志里一个字都没有。
+//
+// 空 endpoint 是合法输入：一台机器从 export 改回 poll 时正需要把它清掉。
+// 所以这里用显式的字段表而不是「非空才更新」。
+func (r *GalaxyRepository) SaveNodeAccess(ctx context.Context, bizLine, nodeID, accessMode, endpointURL, endpointSecret string) error {
+	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
+		Updates(map[string]any{
+			"access_mode":     accessMode,
+			"endpoint_url":    endpointURL,
+			"endpoint_secret": endpointSecret,
+		}).Error
+}
+
+// SaveEndpointHealth 记一次回连探测的结果。
+//
+// 只记结果、不改 status：一台回连不通的 export 机器仍然可能心跳正常
+// （心跳是它主动出站的，不经过公网入口）。两件事分开显示，主人才看得出
+// 「进程活着，但你的端口映射没配对」——这是 export 部署最常见的一种失败。
+func (r *GalaxyRepository) SaveEndpointHealth(ctx context.Context, bizLine, nodeID, status, detail string, at time.Time) error {
+	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
+		Updates(map[string]any{
+			"endpoint_status":     status,
+			"endpoint_error":      detail,
+			"endpoint_checked_at": at,
+		}).Error
+}
+
+// ListExportNodes 全部 export 接入、且还没被撤销/封禁的机器。
+// Hub 的回连派单器启动时靠它把已有的机器恢复回来 —— 光靠 hello 是不够的，
+// Hub 重启时那些机器可能几十秒内都不会再 hello 一次。
+func (r *GalaxyRepository) ListExportNodes(ctx context.Context, bizLine string) ([]*GalaxyNode, error) {
+	var rows []*GalaxyNode
+	err := r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).
+		Where("access_mode = ?", "export").
+		Where("status <> ?", "revoked").
+		Where("banned = ?", false).
+		Find(&rows).Error
+	return rows, err
+}
+
+// RotateNodeToken 换一把新令牌，顺带更新机器名。
+//
+// 为什么不能靠 SaveNode：那个方法的 DoUpdates 白名单**刻意**不含 token_hash 与
+// display_name（见它上面的注释：hello 会拿零值把它们抹掉）。于是复用同一条节点
+// 记录重新注册时，upsert 走的是 UPDATE 分支，新令牌根本没写进去 ——
+// 节点拿着一把 Hub 不认的令牌，下一个请求就是 401，而注册接口刚刚回了它成功。
+//
+// 同时把 status 拉回 active：重新注册的机器往往上一轮是 offline 收场的，
+// 留着那个状态会让它在控制台上显示成「刚注册就离线」。
+func (r *GalaxyRepository) RotateNodeToken(ctx context.Context, bizLine, nodeID, tokenHash, displayName string) error {
+	fields := map[string]any{"token_hash": tokenHash, "status": "active"}
+	if displayName != "" {
+		fields["display_name"] = displayName
+	}
+	return r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Where("biz_line = ?", bizLine).Where("node_id = ?", nodeID).
+		Updates(fields).Error
 }

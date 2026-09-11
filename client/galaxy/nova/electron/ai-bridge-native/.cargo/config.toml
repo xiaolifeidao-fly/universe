@@ -1,0 +1,10 @@
+# 构建产物不能留在包目录里。
+#
+# 这里是一个 npm workspace 包，node_modules 里有它的软链；任何会遍历 node_modules
+# 的工具（electron-builder 收集生产依赖、npm、IDE 索引）都会一头扎进 cargo 的
+# target —— 三万多个文件、3.6 GB。实测 electron-builder 会把它整个打进 App，
+# 而 build.files 里的排除项对「从 workspace root 收上来的依赖」不生效。
+#
+# 放到 client/galaxy/.cargo-target 下：不在任何 node_modules 里，谁也扫不到。
+[build]
+target-dir = "../../../.cargo-target/ai-bridge-native"

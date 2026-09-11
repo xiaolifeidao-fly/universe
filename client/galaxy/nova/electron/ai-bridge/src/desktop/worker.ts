@@ -1,5 +1,5 @@
 import { DesktopBridgeService } from './service.js';
-import { defaultConfigPath } from '../core/paths.js';
+import { defaultConfigPath } from './paths.js';
 
 // Electron UtilityProcess private channel. Never listen on a public management HTTP port.
 const parent = (process as typeof process & { parentPort?: {
@@ -11,6 +11,7 @@ const service = new DesktopBridgeService(defaultConfigPath());
 const methods: Record<string, (...args: unknown[]) => unknown> = {
   ping: input => service.ping(input), getState: () => service.getState(), getStatus: () => service.getStatus(),
   start: () => service.start(), stop: () => service.stop(), restart: () => service.restart(),
+  setHubUrl: hubUrl => service.setHubUrl(hubUrl),
   pair: input => service.pair(input), finish: () => service.finish(),
   startUpstreamLogin: name => service.startUpstreamLogin(name), getTools: () => service.getTools(),
   upgradeTool: name => service.upgradeTool(name), listTokens: () => service.listTokens(),

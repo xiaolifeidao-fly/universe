@@ -41,6 +41,15 @@ import {
   type ProviderDashboard,
 } from "../../api/provider.api";
 
+/**
+ * 额度条的列宽。
+ *
+ * auto-fit 而不是写死三列：三条并排时每格只剩 130px 上下，英文的
+ * 「Output tokens  1.21M / 2.0M」放不下。放不下就折成两行，比挤在一行里
+ * 互相盖住强 —— 后者在中文下看不出来，只有切到英文才暴露。
+ */
+const QUOTA_COLUMNS = "repeat(auto-fit, minmax(170px, 1fr))";
+
 /** 服务端一律用微分存钱，这里只做展示折算。 */
 const CREDIT_RATE = 100;
 
@@ -178,7 +187,7 @@ export function TodayBoard() {
               <Pill tone={sharing ? "ok" : "default"}>
                 <LiveDot on={sharing} />
                 {sharing
-                  ? `${t("today.sharing")} · ${describeProviders(active)}`
+                  ? `${t("today.sharing")} · ${describeProviders(active, t)}`
                   : online
                     ? t("today.paused")
                     : t("today.offline")}
@@ -259,11 +268,11 @@ export function TodayBoard() {
                 <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("today.quotaHint")}</span>
               </div>
               {primary && primary.quota.length > 0 ? (
-                <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(3, primary.quota.length)}, minmax(0, 1fr))`, gap: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: QUOTA_COLUMNS, gap: "14px 20px" }}>
                   {primary.quota.slice(0, 3).map((item) => (
                     <div className="gx-quota" key={item.unit}>
                       <div className="gx-quota__label">
-                        <span>{unitLabel(item.unit)}</span>
+                        <span>{unitLabel(item.unit, t)}</span>
                         <span className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>
                           {formatUnitValue(item.unit, item.used)}{" "}
                           <span style={{ color: "var(--gx-faint)", fontWeight: 400 }}>
@@ -409,7 +418,7 @@ function CapabilityRow({
         <IconSparkle size={18} />
       </span>
       <span style={{ flex: 1, minWidth: 0 }}>
-        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{providerTitle(contribution.provider)}</span>
+        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{providerTitle(contribution.provider, t)}</span>
         <span className="gx-mono" style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {!contribution.available
             ? contribution.unavailableReason || t("share.unavailable")
@@ -419,7 +428,7 @@ function CapabilityRow({
         </span>
       </span>
       {contribution.available ? (
-        <Switch checked={on} disabled={busy} label={providerTitle(contribution.provider)} onChange={onToggle} />
+        <Switch checked={on} disabled={busy} label={providerTitle(contribution.provider, t)} onChange={onToggle} />
       ) : (
         <IconAlert size={16} style={{ color: "var(--gx-warn)" }} />
       )}
@@ -427,18 +436,18 @@ function CapabilityRow({
   );
 }
 
-const PROVIDER_TITLES: Record<string, string> = {
-  claude_oauth: "Claude 订阅",
-  codex_chatgpt: "Codex 订阅",
-  codex_oauth: "Codex 订阅",
-};
-
-function providerTitle(provider: string): string {
-  return PROVIDER_TITLES[provider] ?? provider;
+/**
+ * 上游能力的人话名。字典里没有的原样显示 provider id ——
+ * 新接一个上游只是还没有译名，不该在界面上变成空白。
+ */
+function providerTitle(provider: string, t: (key: string) => string): string {
+  const key = `capability.${provider}`;
+  const label = t(key);
+  return label === key ? provider : label;
 }
 
-function describeProviders(rows: ContributionView[]): string {
-  const names = Array.from(new Set(rows.map((row) => providerTitle(row.provider))));
+function describeProviders(rows: ContributionView[], t: (key: string) => string): string {
+  const names = Array.from(new Set(rows.map((row) => providerTitle(row.provider, t))));
   return names.join(" · ");
 }
 

@@ -22,7 +22,8 @@ import (
 //  1. 硬钉（Responses 链式 / session 硬亲和）—— 不重选，贡献不在就直接失败；
 //  2. 已有绑定且贡献健康 —— 90% 的请求走这条，2~3 次 Redis 操作（非功能需求·延迟）；
 //  3. 硬过滤 + 打分选一个；
-//  4. 都没有 → 等待至多 maxWaitMs，超时 503 且不计费（C-05）。
+//  4. 都没有 → 有贡献只是忙（并发满、额度被在途请求预留）才等待至多 maxWaitMs，
+//     超时 503 且不计费（C-05）；池里根本没有接得了的贡献就立刻 503。
 func (s *service) Submit(ctx context.Context, unit contract.WorkUnit) (Placement, error) {
 	spec, ok := s.kinds.Lookup(unit.Kind, unit.KindVersion)
 	if !ok {
@@ -91,8 +92,8 @@ func (s *service) Submit(ctx context.Context, unit contract.WorkUnit) (Placement
 		if !retryable || !time.Now().Before(deadline) {
 			break
 		}
-		// 无候选：等心跳把座位或额度还回来。P0 单实例，等待就发生在持有消费者
-		// 连接的这个进程里，不需要把 rid 放进 Redis 再被别的实例唤醒。
+		// 无候选但有贡献忙：等在途的活结算，把并发或额度还回来。
+		// P0 单实例，等待就发生在持有消费者连接的这个进程里，不需要把 rid 放进 Redis 再被别的实例唤醒。
 		waited = true
 		select {
 		case <-ctx.Done():
@@ -149,6 +150,9 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 	if route.AffinityKey != "" {
 		affinity = route.AffinityKey
 	}
+	// waitBound 绑定的贡献此刻忙，但手上的活结算完就能接：这一单值得排队等它。
+	// 第 3 步看不出这一点 —— 那台机器的座位里有一个就是这个消费者自己的，按座位算它是满的。
+	waitBound := false
 	if spec.Placement.Affinity != contract.AffinityNone {
 		trace.redisOps++
 		if cid, found, err := s.control.LookupBinding(ctx, affinity, lane); err != nil {
@@ -165,7 +169,7 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 					return nil, false, err
 				}
 				plan := BuildQuotaPlan(grants[cid], now)
-				if accepts, _ := QuotaAccepts(snapshot, plan, unit.Metering.Estimate); accepts && snapshot.Inflight < snapshot.Concurrency() {
+				if boundAccepts(snapshot, plan, unit.Metering.Estimate) {
 					trace.path = PlacePathBound
 					trace.redisOps++
 					placement, err := s.commit(ctx, unit, snapshot, plan, lane, true, now)
@@ -176,9 +180,10 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 						return placement, false, nil
 					}
 				}
+				waitBound = boundAccepts(onceSettled(snapshot), plan, unit.Metering.Estimate)
 				// 硬亲和忙时排队不溢出；软亲和这次溢出到别的贡献，但不改绑定。
 				if spec.Placement.Affinity == contract.AffinityHard {
-					return nil, true, nil
+					return nil, waitBound, nil
 				}
 				s.metrics.Count(MetricSpillTotal, map[string]string{"kind": unit.Kind}, 1)
 			} else {
@@ -195,7 +200,8 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 		return nil, false, err
 	}
 	if len(snapshots) == 0 {
-		return nil, true, nil
+		// 车道里一个贡献都没有：没人共享这个 provider，等多久也等不来。
+		return nil, waitBound, nil
 	}
 	cids := make([]string, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -216,7 +222,7 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 	}
 	candidates := Rank(Filter(snapshots, input), input)
 	if len(candidates) == 0 {
-		return nil, true, nil
+		return nil, waitBound || Waitable(snapshots, input), nil
 	}
 
 	// 4 依次尝试：被别的请求抢走座位就换下一个，最多 maxPlaceAttempts 次。
@@ -815,6 +821,25 @@ func (s *service) Reassignable(ctx context.Context, unitID string) bool {
 		return false
 	}
 	return runtime.Attempt < spec.Retry.MaxAttempts
+}
+
+// ContributionAlive 探一次贡献所在机器的心跳。
+//
+// 探测失败不算证据。Redis 抖一下就把正在正常服务的请求判死，比晚几十秒
+// 发现节点掉线糟得多 —— 前者是把好请求杀了，后者只是多等一会儿。
+// 所以只有「明确读到了快照，而快照说心跳已经过期」才判它不在。
+func (s *service) ContributionAlive(ctx context.Context, cid string) bool {
+	if cid == "" {
+		return true
+	}
+	snapshot, found, err := s.control.GetContribution(ctx, cid)
+	if err != nil {
+		return true
+	}
+	if !found {
+		return false
+	}
+	return Online(snapshot, time.Now(), s.config.HeartbeatTimeout)
 }
 
 func (s *service) RememberResponse(ctx context.Context, responseID, cid string) error {

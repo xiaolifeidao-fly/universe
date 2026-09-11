@@ -259,14 +259,19 @@ func (s *service) ProviderRecords(ctx context.Context, query dto.ProviderRecordQ
 	if err != nil {
 		return dto.ProviderRecordPage{}, err
 	}
+	nodeOf := nodeOfContribution(rows)
 	page := dto.ProviderRecordPage{Total: total, Records: make([]dto.ExecutionRecord, 0, len(units))}
 	for _, unit := range units {
 		page.Records = append(page.Records, dto.ExecutionRecord{
 			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, State: unit.State,
 			ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Credits:   perUnit[unit.UnitID],
+			NodeID:    nodeOf[unit.CID],
 			StartedAt: unit.StartedAt, FinishedAt: unit.FinishedAt,
 		})
+	}
+	if err := s.nameRecordNodes(ctx, query.OwnerUserID, page.Records); err != nil {
+		return dto.ProviderRecordPage{}, err
 	}
 
 	summary, err := s.repository.SummariseUnits(ctx, unitQuery)

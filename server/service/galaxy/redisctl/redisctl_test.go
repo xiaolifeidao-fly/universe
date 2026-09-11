@@ -30,6 +30,7 @@ func newTestPlane(t *testing.T) (*ControlPlane, *miniredis.Miniredis) {
 func TestHeartbeatDoesNotClearUpstreamThrottle(t *testing.T) {
 	plane, server := newTestPlane(t)
 	ctx := context.Background()
+	seedContribution(t, plane, "c1", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
 	until := time.Now().Add(5 * time.Minute)
 	for _, deadline := range []time.Time{until, {}, until.Add(-time.Minute)} {
 		if err := plane.UpdateLaneRuntime(ctx, []galaxy.LaneRuntime{{CID: "c1", UpstreamOK: true, ThrottledUntil: deadline}}); err != nil {
@@ -38,6 +39,80 @@ func TestHeartbeatDoesNotClearUpstreamThrottle(t *testing.T) {
 		if got := server.HGet(plane.contribKey("c1"), "throttledUntil"); got != fmt.Sprint(until.UnixMilli()) {
 			t.Fatalf("heartbeat shortened cooldown: %s", got)
 		}
+	}
+}
+
+// 心跳报上来一条控制面里没有的通道时，什么都不该写。
+//
+// 从前这里是裸 HSET，于是每 15 秒就凭空造一个「只有 upstreamOK / paused / queued」的
+// 贡献壳：没有 kind 也没有 provider，选不上却一直占着车道，而且下一次心跳又造一个。
+// 贡献要回到控制面里只有一条路 —— hello 的全量替换。
+func TestHeartbeatDoesNotResurrectUnknownContribution(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	until := time.Now().Add(5 * time.Minute)
+	if err := plane.UpdateLaneRuntime(ctx, []galaxy.LaneRuntime{
+		{CID: "c_ghost", UpstreamOK: true, ThrottledUntil: until},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if server.Exists(plane.contribKey("c_ghost")) {
+		t.Fatal("心跳给一个不在控制面里的通道建出了壳")
+	}
+}
+
+// 同理，续期不等于复活：哈希已经过期的贡献，心跳不该把它写回来。
+func TestTouchNodeDoesNotResurrectExpiredContribution(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	registerTestNode(t, plane, "n_1")
+	seedContribution(t, plane, "c1", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
+	// 心跳超时：贡献哈希没了，但 node:<id>:contribs 还在（它是 24h TTL）。
+	server.Del(plane.contribKey("c1"))
+
+	registered, err := plane.TouchNode(ctx, "n_1", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !registered {
+		t.Fatal("节点登记项还在，TouchNode 却说它不在")
+	}
+	if server.Exists(plane.contribKey("c1")) {
+		t.Fatal("续期把一条已经过期的贡献复活成了空壳")
+	}
+	if !server.Exists(plane.nodeKey("n_1")) {
+		t.Fatal("节点自己的登记项不该被牵连")
+	}
+}
+
+// 节点登记项自己过期时（连着 24 小时只有心跳没有 hello），心跳同样不能把它写回来。
+//
+// 心跳手上只有 lastBeat 和 status，裸 HSET 重建出来的登记项缺 instance、
+// ownerUserId、bridgeVersion、resources —— 一条哪儿都对不上的记录比没有更难查。
+// 这里只负责如实报告「它不在了」，重建交给上层拿数据库的行来做。
+func TestTouchNodeReportsMissingRegistration(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+
+	registered, err := plane.TouchNode(ctx, "n_ghost", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registered {
+		t.Fatal("节点根本没登记过，TouchNode 却说它还在")
+	}
+	if server.Exists(plane.nodeKey("n_ghost")) {
+		t.Fatal("心跳凭空建出了一条残缺的节点登记项")
+	}
+}
+
+func registerTestNode(t *testing.T, plane *ControlPlane, nodeID string) {
+	t.Helper()
+	if err := plane.RegisterNode(context.Background(), galaxy.NodeRuntime{
+		NodeID: nodeID, OwnerUserID: "u_1", BridgeVersion: "0.1.0", Contract: 1,
+		Instance: "http://127.0.0.1:10004", LastBeatAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("登记节点失败: %v", err)
 	}
 }
 
@@ -395,5 +470,62 @@ func TestResponseAffinityIsRemembered(t *testing.T) {
 	}
 	if _, found, _ := plane.LookupResponse(ctx, "resp_missing"); found {
 		t.Fatal("没记过的 id 不该查到")
+	}
+}
+
+// SetDraining 撞上一个不在控制面里的 cid 时必须什么都不做。
+//
+// 从前它是一句裸 HSET，会凭空建出「只有 draining 一个字段」的贡献壳：没有 kind、
+// 没有 provider、没有 TTL。控制台改额度时读到这个壳会认为贡献存在，把它写进
+// lane "|"，于是那条贡献在正经车道里永远排不上，消费者一路 no_capacity。
+func TestSetDrainingSkipsUnknownContribution(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+
+	if err := plane.SetDraining(ctx, "c_ghost", true); err != nil {
+		t.Fatalf("对未知贡献置排空报错: %v", err)
+	}
+	if server.Exists(plane.contribKey("c_ghost")) {
+		t.Fatal("SetDraining 给一个不存在的贡献建出了壳")
+	}
+
+	seedContribution(t, plane, "c1", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
+	for _, draining := range []bool{true, false} {
+		if err := plane.SetDraining(ctx, "c1", draining); err != nil {
+			t.Fatalf("置排空失败: %v", err)
+		}
+		if got, want := server.HGet(plane.contribKey("c1"), "draining"), fmt.Sprint(boolToInt(draining)); got != want {
+			t.Fatalf("draining = %s, 期望 %s", got, want)
+		}
+	}
+}
+
+// 放置读一条 lane 的时候，顺手把哈希已经不在的死成员从集合里摘掉。
+//
+// lane 集合没有 TTL，正规的两条 SREM 路径又都要先从 contrib 哈希读 lane 字段
+// 才知道该动哪条，而那个哈希 45 秒就过期 —— 节点掉线久一点再撤销，成员就会
+// 永远留在集合里。线上攒了三个这样的死 cid，每次放置都要为它们多发一次 HGETALL。
+func TestListLaneContributionsEvictsDeadMembers(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	live := seedContribution(t, plane, "c_live", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
+	lane := live.Lane()
+
+	// 死成员：只在 lane 集合里留了名字，哈希早就没了。
+	server.SAdd(plane.laneKey(lane), "c_dead")
+
+	snapshots, err := plane.ListLaneContributions(ctx, lane)
+	if err != nil {
+		t.Fatalf("读车道失败: %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].CID != "c_live" {
+		t.Fatalf("快照 = %+v，期望只剩 c_live", snapshots)
+	}
+	members, err := server.Members(plane.laneKey(lane))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members) != 1 || members[0] != "c_live" {
+		t.Fatalf("死成员没被摘掉，集合里还是 %v", members)
 	}
 }

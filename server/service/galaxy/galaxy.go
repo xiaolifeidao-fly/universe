@@ -81,6 +81,12 @@ type Config struct {
 	PayoutMinCredits int64
 	// PayoutHoldDays 争议期。这段时间内结算的积分算「待结算」，提不出来。
 	PayoutHoldDays int
+
+	// PortalAvailability 门户上那句可用性承诺（例如 "99.9%"）。
+	//
+	// 它是**部署方的承诺**，不是算出来的指标 —— 所以没配就是空串，门户那一格
+	// 直接不显示。默认给一个好看的数字等于替部署方许了一个他没许的诺。
+	PortalAvailability string
 }
 
 func DefaultConfig() Config {
@@ -223,6 +229,9 @@ type Service interface {
 	HasConsent(ctx context.Context, subjectType, userID, termsVersion string) (bool, error)
 	IssuePairingCode(ctx context.Context, req dto.IssuePairingCodeRequest) (dto.PairingCodeView, error)
 	Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult, error)
+	// RegisterNodeByKey 用提供者接入密钥自助注册一台机器（poll 或 export）。
+	// 给单独部署、无人值守的 rust bridge 用 —— 那种机器上没人能去点「生成配对码」。
+	RegisterNodeByKey(ctx context.Context, req dto.RegisterRequest) (dto.RegisterResult, error)
 	AuthenticateNode(ctx context.Context, token string) (NodeIdentity, error)
 	Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloResult, error)
 	Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.HeartbeatResult, error)
@@ -242,6 +251,21 @@ type Service interface {
 	SaveContributionLimits(ctx context.Context, req dto.SaveContributionLimitsRequest) error
 	RevokeNode(ctx context.Context, ownerUserID, nodeID string) error
 	CreditBalance(ctx context.Context, ownerUserID string) (int64, error)
+
+	// ---------- 提供者：接入密钥与回连 ----------
+	IssueProviderKey(ctx context.Context, req dto.IssueProviderKeyRequest) (dto.IssuedProviderKey, error)
+	ListProviderKeys(ctx context.Context, ownerUserID string) ([]dto.ProviderKeyView, error)
+	// RevokeProviderKey 吊销一把接入密钥。已经用它注册出来的机器不受影响 ——
+	// 那些机器手里是各自的 node token，要停哪一台去机器列表里撤销那一台。
+	RevokeProviderKey(ctx context.Context, ownerUserID, keyID string) error
+	// NodeLanes 一台机器此刻还有空位的通道。export 派单器拿它代替节点自报的那份。
+	NodeLanes(ctx context.Context, nodeID string) ([]dto.NextLane, error)
+	// ExportTargetOf 取一台机器的回连信息。第二个返回值为假表示它不走回连。
+	ExportTargetOf(ctx context.Context, nodeID string) (ExportTarget, bool)
+	// ListExportTargets 全部还在用的 export 机器，供派单器在 Hub 启动时恢复。
+	ListExportTargets(ctx context.Context) ([]ExportTarget, error)
+	// RecordEndpointHealth 记一次回连探测结果，主人在控制台上看到的就是这句话。
+	RecordEndpointHealth(ctx context.Context, nodeID, status, detail string) error
 
 	// ---------- 提供者：今天与收益 ----------
 	// ProviderDashboard 「今天」那一页要的全部数字，一次查完 ——
@@ -284,6 +308,19 @@ type Service interface {
 	ListOrders(ctx context.Context, userID string, limit int) ([]dto.OrderView, error)
 	CancelOrder(ctx context.Context, userID, orderID string) error
 
+	// ---------- 门户（未登录可见的那一面） ----------
+	// PortalCatalog 门户整站要展示的东西：模型目录、额度包、单价表与统计。
+	// fallbackModels 是部署方声明的模型清单，目录表为空时用它兜底。
+	// 一律不带用户维度 —— 这几条路由是公开的。
+	PortalCatalog(ctx context.Context, fallbackModels []string) (dto.PortalOverview, error)
+	// SubmitLead 门户「联系我们」。蜜罐 + 按 IP 限流 + 字段截断都在服务端。
+	SubmitLead(ctx context.Context, req dto.SubmitLeadRequest) (dto.LeadView, error)
+	ListLeads(ctx context.Context, status string, offset, limit int) (dto.LeadPage, error)
+	HandleLead(ctx context.Context, req dto.HandleLeadRequest) error
+	ListPortalModels(ctx context.Context, listedOnly bool) ([]dto.PortalModelView, error)
+	SavePortalModel(ctx context.Context, req dto.SaveModelRequest) error
+	DeletePortalModel(ctx context.Context, modelID string) error
+
 	// ---------- 通道 ----------
 	// Submit 放置一个工作单元。返回后单元已入队，节点随时可能领走。
 	Submit(ctx context.Context, unit contract.WorkUnit) (Placement, error)
@@ -295,6 +332,9 @@ type Service interface {
 	FailUnit(ctx context.Context, unitID string, cause *contract.UnitError) error
 	// Reassignable 报告某个单元现在还能不能改派（首字节前 + kind 幂等 + 未超次数）。
 	Reassignable(ctx context.Context, unitID string) bool
+	// ContributionAlive 报告承接某次请求的那台机器还在不在线。
+	// relay 在首字节之前拿它兜底：节点领走单元之后失联，不会有任何人来收尾。
+	ContributionAlive(ctx context.Context, cid string) bool
 	// RecordHubResult 由适配器的写回器在流结束时调用，交出 Hub 自己解析到的用量
 	// 与响应的结构签名。签名只在这次请求被抽中时才用得上。
 	RecordHubResult(ctx context.Context, unitID string, usage contract.Metering, signature string) error

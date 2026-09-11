@@ -138,7 +138,7 @@ func (s *service) requeue(ctx context.Context, row *repository.GalaxyUnit) bool 
 	if err != nil || !found || len(runtime.Envelope) == 0 {
 		// 信封已经过期（24h）：这个任务没法自动重放了，落成失败让用户看见。
 		_ = s.markUnitFailed(ctx, row.UnitID, contract.NewUnitError(
-			contract.ErrorClassNode, contract.CodeLeaseExpired, false, "节点失联且原始请求已过期，请重新提交"))
+			contract.ErrorClassNode, contract.CodeLeaseExpired, false, "执行中断且原始请求已过期，请重新提交"))
 		return false
 	}
 	spec, ok := s.kinds.Lookup(runtime.Kind, runtime.KindVersion)
@@ -173,7 +173,7 @@ func (s *service) requeue(ctx context.Context, row *repository.GalaxyUnit) bool 
 	unit.State = contract.UnitQueued
 	_ = s.repository.AppendUnitEvent(ctx, &repository.GalaxyUnitEvent{
 		BizLine: bizLine, UnitID: unit.ID, Kind: "requeued",
-		Message:  "节点失联，换一台机器重跑",
+		Message:  "执行中断，已重新排队",
 		DataJSON: encodeJSON(map[string]any{"previousCid": runtime.CID, "attempt": unit.Attempt}),
 	})
 	if _, err := s.Submit(ctx, unit); err != nil {

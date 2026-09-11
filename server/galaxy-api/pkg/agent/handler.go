@@ -1,4 +1,5 @@
-// Package agent 是节点通道的传输层：三个端点，节点主动出站，Hub 永不主动连节点（T-01）。
+// Package agent 是节点通道的传输层：这里的每个端点都由节点主动出站来调。
+// export 接入时 Hub 会反过来连节点送活（见 pkg/exportdispatch），但出站这一侧不变。
 //
 // 这里的响应刻意不走 httpx.JSON 的统一信封。节点通道是机器协议，节点要按 HTTP 状态码
 // 分支（409 租约失效、410 已取消、426 契约不匹配），把失败也返成 200 会让这套语义消失。
@@ -36,18 +37,27 @@ type Handler struct {
 	journal *corepkg.Journal
 	// streamIdleTimeout 上行多久没有字节就判 node_fault（设计文档 2.5）。
 	streamIdleTimeout time.Duration
+	// metrics 观测上行的静默分布，用来回答 streamIdleTimeout 该设多少。可以为 nil。
+	metrics galaxy.Metrics
 }
 
-func NewHandler(service galaxy.Service, exchange *corepkg.Exchange, journal *corepkg.Journal, streamIdleTimeout time.Duration) *Handler {
+func NewHandler(service galaxy.Service, exchange *corepkg.Exchange, journal *corepkg.Journal,
+	streamIdleTimeout time.Duration, metrics galaxy.Metrics) *Handler {
 	if streamIdleTimeout <= 0 {
 		streamIdleTimeout = 60 * time.Second
 	}
-	return &Handler{service: service, exchange: exchange, journal: journal, streamIdleTimeout: streamIdleTimeout}
+	return &Handler{
+		service: service, exchange: exchange, journal: journal,
+		streamIdleTimeout: streamIdleTimeout, metrics: metrics,
+	}
 }
 
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
-	// 配对不带节点令牌 —— 它就是用来换令牌的。
+	// 配对与自助注册都不带节点令牌 —— 它们就是用来换令牌的。
 	group.POST("/pair", h.pair)
+	// register 是配对码之外的第二条接入路径：拿提供者接入密钥换令牌。
+	// 给单独部署、无人值守的 rust bridge 用 —— 那种机器上没人能去点「生成配对码」。
+	group.POST("/register", h.register)
 
 	authenticated := group.Group("", h.requireNode())
 	authenticated.POST("/hello", h.hello)
@@ -98,6 +108,36 @@ func (h *Handler) pair(context *gin.Context) {
 			return
 		}
 		fail(context, http.StatusBadRequest, contract.ErrorClassInput, contract.CodeInvalidBody, err.Error())
+		return
+	}
+	context.JSON(http.StatusOK, result)
+}
+
+// register 用提供者接入密钥自助注册一台机器（poll 或 export）。
+//
+// 失败一律说人话：这个接口的调用方是一台服务器上的 CLI，报错会原样打进它的日志，
+// 而看那份日志的人手边没有源码。「接入密钥已吊销，请在控制台重新签发一把」
+// 比一个 401 有用得多。
+func (h *Handler) register(context *gin.Context) {
+	var req dto.RegisterRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		fail(context, http.StatusBadRequest, contract.ErrorClassInput, contract.CodeInvalidBody, err.Error())
+		return
+	}
+	result, err := h.service.RegisterNodeByKey(context.Request.Context(), req)
+	if err != nil {
+		var unitError *contract.UnitError
+		if errors.As(err, &unitError) {
+			fail(context, unitError.HTTPStatus(), unitError.Class, unitError.Code, unitError.Message)
+			return
+		}
+		if errors.Is(err, contract.ErrConsentRequired) {
+			fail(context, http.StatusForbidden, contract.ErrorClassProtocol, contract.CodeConsentRequired, err.Error())
+			return
+		}
+		// 密钥不对是 401 而不是 400：CLI 要靠状态码分辨「重试没用，去换一把密钥」
+		// 和「参数填错了，改一下再试」。
+		fail(context, http.StatusUnauthorized, contract.ErrorClassProtocol, "provider_key_rejected", err.Error())
 		return
 	}
 	context.JSON(http.StatusOK, result)
@@ -211,9 +251,26 @@ func (h *Handler) stream(context *gin.Context) {
 	buffer := make([]byte, streamChunkSize)
 	var received int64
 	headSent := false
+	// 这一次上行里最长的一段静默。看门狗的阈值必须盖住它，
+	// 所以要量的正是它的分布，而不是平均值 —— 平均值永远好看。
+	var longestGap time.Duration
+	lastChunkAt := time.Now()
+	defer func() {
+		// 一个字节都没等到的那种是故障，不该混进正常分布里把 p99 拉平。
+		if h.metrics != nil && headSent {
+			h.metrics.Observe(galaxy.MetricStreamGap, nil, float64(longestGap.Milliseconds()))
+		}
+	}()
 	for {
 		count, readErr := body.Read(buffer)
 		if count > 0 {
+			now := time.Now()
+			// 第一段算的是「上游给了响应头之后，隔多久才吐出第一个字节」。
+			// 它同样受看门狗约束（计时从认领上行就开始），所以要一起量。
+			if gap := now.Sub(lastChunkAt); gap > longestGap {
+				longestGap = gap
+			}
+			lastChunkAt = now
 			idle.Reset(h.streamIdleTimeout)
 			if !headSent {
 				// 首个 chunk 到达即视为首字节：状态码与白名单头这时才写给消费者。

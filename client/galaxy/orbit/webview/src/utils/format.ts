@@ -2,23 +2,19 @@
 
 /** 展示层的格式化。业务口径一律在服务端算好，这里只负责好不好看。 */
 
-const UNIT_LABELS: Record<string, string> = {
-  "llm.input_tokens": "输入 token",
-  "llm.output_tokens": "输出 token",
-  "llm.cache_read_tokens": "缓存读取 token",
-  "llm.cache_write_tokens": "缓存写入 token",
-  "llm.calls": "请求次数",
-  "time.seconds": "占用时长",
-  "video.output_seconds": "输出时长",
-  "video.input_seconds": "输入时长",
-  "cpu.seconds": "CPU 秒",
-  "gpu.seconds": "GPU 秒",
-  "storage.bytes": "存储",
-  "egress.bytes": "出网流量",
-};
-
-export function unitLabel(unit: string): string {
-  return UNIT_LABELS[unit] ?? unit;
+/**
+ * 计量单位的人话名。
+ *
+ * 名字要跟界面语言走，所以 t 必须传进来 —— 之前这里硬编码中文，英文界面上
+ * 就会冒出「1.00M 输入 token」这种半句中文，而且只有切到英文才看得见。
+ *
+ * 字典里没有的单位原样显示 unit id：新接一个上游只是还没有译名，
+ * 不该在账单里变成空白。
+ */
+export function unitLabel(unit: string, t: (key: string) => string): string {
+  const key = `unit.${unit}`;
+  const label = t(key);
+  return label === key ? unit : label;
 }
 
 /**
@@ -207,4 +203,17 @@ function parseDate(value?: string): Date | null {
 
 function pad(value: number): string {
   return String(value).padStart(2, "0");
+}
+
+/**
+ * 失败原因的人话名。
+ *
+ * 错误码是给排障用的内部口径（node_offline、no_capacity 这些），原样摆给用户
+ * 既看不懂，也会把平台内部怎么调度的暴露出来。认不出来的一律写「请求失败」——
+ * 排障靠同一页上的请求号，不靠这串码。
+ */
+export function errorLabel(code: string, t: (key: string) => string): string {
+  const key = `error.${code}`;
+  const label = t(key);
+  return label === key ? t("error.unknown") : label;
 }

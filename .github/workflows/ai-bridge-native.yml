@@ -1,0 +1,127 @@
+# ai-bridge 的原生模块（Rust → .node）。
+#
+# 为什么要 CI：Nova 的 electron-builder 声明了 mac / win / linux 三个目标，而
+# 原生产物是按 平台-架构 挑的 —— 本机只能编出 macOS 那两片（arm64 交叉到 x64
+# 开箱即用），Windows 与 Linux 的 ring/rustls 要各自的 C 工具链，只能在对应
+# runner 上出。缺哪一片，那个平台的包装出来桥接就起不来。
+name: ai-bridge-native
+
+on:
+  push:
+    paths:
+      - 'client/galaxy/nova/electron/ai-bridge-native/**'
+      - '.github/workflows/ai-bridge-native.yml'
+  pull_request:
+    paths:
+      - 'client/galaxy/nova/electron/ai-bridge-native/**'
+      - '.github/workflows/ai-bridge-native.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: client/galaxy/nova/electron/ai-bridge-native
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一片编不过不该把别的几片也一起取消：要一次看全哪些平台坏了。
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,     target: aarch64-apple-darwin,     platform: darwin-arm64, host: true }
+          - { os: macos-14,     target: x86_64-apple-darwin,      platform: darwin-x64,   host: false }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc,   platform: win32-x64,    host: true }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, platform: linux-x64,    host: true }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/galaxy/nova/electron/ai-bridge-native
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+
+      # 交叉出来的产物这台 runner 执行不了，只有本机架构那几片能跑测试。
+      - name: cargo test
+        if: matrix.host
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: build .node
+        run: node scripts/build.cjs --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-bridge-native-${{ matrix.platform }}
+          path: client/galaxy/nova/electron/ai-bridge-native/*.node
+          if-no-files-found: error
+          retention-days: 14
+
+  # 桥接的 TS 侧只是一层薄壳，但它和原生模块之间那条边界（IPC 形状、打包后的
+  # 模块解析）恰恰是最容易安静坏掉的地方，所以跟着一起跑。
+  desktop:
+    name: desktop (macos)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/galaxy/nova/electron/ai-bridge-native
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+      - name: build .node
+        run: node scripts/build.cjs
+      - name: npm ci
+        working-directory: client/galaxy
+        run: npm ci
+      - name: typecheck
+        working-directory: client/galaxy
+        run: npm run typecheck
+      - name: ai-bridge tests
+        working-directory: client/galaxy
+        run: npm run test --workspace ai-bridge
+      - name: 打包形态验证
+        working-directory: client/galaxy
+        run: |
+          npm run build:electron
+          npm run verify:bridge
+
+  # 独立部署用的 ai-bridge 命令行。和上面的 .node 是同一份实现，入口不同 ——
+  # 这里出的是服务器上直接跑的可执行文件，连同部署说明和服务模板打成一个包。
+  cli:
+    name: cli ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,         target: aarch64-apple-darwin,      platform: darwin-arm64 }
+          - { os: macos-14,         target: x86_64-apple-darwin,       platform: darwin-x64 }
+          - { os: windows-2022,     target: x86_64-pc-windows-msvc,    platform: windows-x64 }
+          - { os: ubuntu-22.04,     target: x86_64-unknown-linux-gnu,  platform: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, platform: linux-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/galaxy/nova/electron/ai-bridge-native
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+      - name: build ai-bridge
+        run: node scripts/build-cli.cjs --target ${{ matrix.target }} --out dist-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-bridge-cli-${{ matrix.platform }}
+          path: client/galaxy/nova/electron/ai-bridge-native/dist-cli/*
+          if-no-files-found: error
+          retention-days: 30

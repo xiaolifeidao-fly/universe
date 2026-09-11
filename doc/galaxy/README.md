@@ -65,14 +65,79 @@ go run ./cmd/galaxyinit && go run .
 **不存在**时才编译，改完代码直接 start 会把上一版产物再跑一遍 —— 进程时间变了、
 二进制没变，看着像重启过了。同样的三件套 app-api / manager-api / web-api 都有。
 
-节点侧：
+节点侧：桥接已经整体迁到 Rust（`client/galaxy/nova/electron/ai-bridge-native`），
+那棵 TypeScript 实现删除了。同一份 Rust 有两个入口：
+
+| 入口 | 给谁 | 身份 | 接入方式 |
+|---|---|---|---|
+| **Nova 桌面端**（`.node`，Electron 私有通道驱动） | 普通用户，自己的电脑 | 一次性配对码 | 只有 poll |
+| **`ai-bridge` 命令行**（`src/bin/ai-bridge.rs`） | 专业用户，服务器上无人值守 | 长期接入密钥 `gpk-…` | poll 或 export |
 
 ```bash
-cd galaxy/ai-bridge && npm run build
-node dist/main.js pool probe          # 看本机有什么能力（只列出，不申报）
-node dist/main.js pool pair <配对码>  # 换取长期节点令牌
-node dist/main.js start               # mode=pool 时加入共享池，不监听任何端口
+cd client/galaxy && npm run build:electron   # 出 .node 并编 Electron
+npm run package:nova                          # 打包；也可以 npm run dev:nova 直接跑
+
+cd client/galaxy/nova/electron/ai-bridge-native
+node scripts/build-cli.cjs                    # 本机的 ai-bridge 发布包 → client/galaxy/release/ai-bridge
 ```
+
+「共享哪几种能力、给多少额度」无论哪个入口都在 Galaxy 控制台里定：Hub 每次
+hello / 心跳下发生效配置，节点照着建通道。命令行的部署说明见
+`ai-bridge-native/deploy/README.md`，两种接入方式的设计见下一节。
+
+## 节点接入方式：poll 与 export（2026-09-11）
+
+在节点长轮询（poll）之外加了第二种接入方式：节点把自己暴露在一个公网地址上，
+Hub 主动回连（export）。
+
+**两者只在「活是怎么到节点手上的」这一步不同。** hello、心跳、进度、终态回报、
+产物上传全部照旧由节点主动出站；放置、租约、计量、失败语义、结算一行没改。
+
+```
+poll    节点 ── POST /agent/v1/next（长轮询）────────▶ Hub     领活
+        节点 ── POST /agent/v1/units/{id}/stream ────▶ Hub     回流
+export  Hub  ── POST {endpoint}/node/v1/execute ────▶ 节点    送活，字节在同一条响应里回来
+             （exportdispatch 替节点调 service.Next 领活，领完送上门）
+共用    节点 ── hello / heartbeat / progress / complete ▶ Hub
+```
+
+| 部件 | 落点 |
+|---|---|
+| 接入方式与回连信息 | `zt_galaxy_node.{access_mode, endpoint_url, endpoint_secret, endpoint_status, endpoint_error, endpoint_checked_at}`，迁移 `server/migrations/20260911_galaxy_node_access_mode.sql` |
+| 接入密钥 | `zt_galaxy_provider_key`、`service/galaxy/providerkey.go`；控制台 `GET/POST /api/galaxy/provider/access-keys`、`POST …/access-keys/revoke` |
+| 自助注册 | `POST /agent/v1/register` → `service/galaxy/access.go` 的 `RegisterNodeByKey` |
+| Hub 回连派单器 | `galaxy-api/pkg/exportdispatch`：每台 export 机器一个领活循环，外加每分钟一次回连探测 |
+| 节点 export 服务 | `ai-bridge-native/src/pool/export.rs`：`/node/v1/{health, execute, cancel}` |
+| 命令行 | `ai-bridge-native/src/bin/ai-bridge.rs`：`init / register / run / status`；发布包 `scripts/build-cli.cjs`，CI 的 `cli` 任务出五个平台 |
+| 控制台 | Nova「账户」页：机器列表显示接入方式与回连状态；「接入密钥」卡片签发 / 吊销并给出命令 |
+
+几条要记住的规则：
+
+- **接入密钥 vs 配对码。** 配对码一次性、10 分钟有效，前提是有人同时看着两块屏幕；
+  接入密钥长期有效，写进服务器配置，`ai-bridge run` 每次启动都先用它重新注册 ——
+  令牌被撤、库重建、公网地址变了，重启一次就自己回来。明文只在签发时返回一次，
+  库里存 sha256；签发和注册都要求当前条款版本的同意记录。
+- **注册沿用同一条节点记录。** 带上本机上一次的 nodeId，Hub 校验属于同一主人后只换令牌、
+  不新建。控制台**解绑过**的 nodeId 拒绝注册 —— 否则解绑会被下一次自动重启悄悄抵消；
+  确实要重新接入得在那台机器上执行 `ai-bridge register --fresh`。封禁的直接拒。
+- **接入密钥这条路不受「名下只能一台在线」限制。** 那条是为配对码存在的防僵尸规则，
+  专业用户部署一排机器正是这条路存在的理由。
+- **回连密钥由节点生成**，注册与每次 hello 时上报（公网地址会变，只报一次会让 Hub
+  拿着失效地址一直回连不上）。Hub 存明文 —— 它是客户端，要出示。它不进任何视图与日志，
+  控制台只看得到回连地址。
+- **SSRF 的闸是 `X-Galaxy-Node`。** 回连地址是提供者自己填的：节点的每一条响应（含错误响应）
+  都必须带自证头，对不上的响应一个字节都不转发给消费者。链路本地地址（169.254/16、fe80::/10）
+  两端都直接拒绝；私网地址放行 —— 自建部署里 Hub 与节点同在内网是常态。
+- **回落优先于拒绝。** export 声明不成立（缺 publicURL、地址不合法、密钥太短）时按 poll 接入；
+  Hub 在 hello 响应里回 `accessMode`，节点据此同时去长轮询，活不会掉在地上。
+  例外是端口被占用：那会造成「地址通但没人应答」的假象，节点直接启动失败。
+- **回连健康和在线是两件事。** 心跳是节点主动出站的，端口没映射照样心跳正常；控制台分开显示，
+  「在线但回连失败」就是去查防火墙。派单成功时结论不变不写库，探测每分钟刷新一次时间。
+- **派不出去立刻收交汇点。** 连不上、自证头不对、节点拒单，都先 `FailUnit` 再收掉交汇点，
+  消费者那边马上走改派，而不是干等 30 秒 attach 时限。节点回 409 / 5xx 可改派，其余 4xx 不改派。
+- **只支持单实例 Hub。** 回流的字节只能交给持有消费者连接的进程，而队列跨实例共享。
+  派单器领到一个消费者连在别处的单元时判可改派的失败交还通道层；刻意不让节点按请求里
+  给的地址反连推流 —— 那等于让拿到回连密钥的人指挥节点把自己的令牌发往任意地址。
 
 三种原语的消费者接口：
 
@@ -200,6 +265,7 @@ session 的异步提交与断开幸存、抽检签名的抗噪声、指标注册
 | 需求 S-09 后台 | 未说明运营用哪种身份 | **新增 `httpx.RequirePlatformAdmin()`**，galaxy 的处置动作（封禁、裁决、发密钥、人工确认到账）改用它。原有的 `RequireAdmin()` 除管理员外还要求 `product_research` 身份 —— 那是交付工作台的门，共享池的运营不在那个身份体系里，沿用它等于把唯一能处置的人挡在门外 |
 | 设计 13 节 requestId | 「消费者 ← Hub ← 节点三段同一值」 | **实现补了 `X-Galaxy-Request-Id` 响应头**。原先消费者侧根本拿不到这个值，也就无从申诉、无从追问某一次调用 |
 | 设计 4.2 步骤 4 `q:wait` | Redis ZSET 等待队列 | **进程内等待**。P0 单实例，等待发生在持有消费者连接的那个进程里；放进 Redis 也没有第二个实例去唤醒它。队列深度仍作为指标暴露 |
+| 需求 C-05 / 设计 4.2 步骤 4 | 候选为空一律排队至多 `maxWaitMs` | **只在「有贡献忙完就能接」时排队**：并发占满、额度被在途请求预留着（含已绑定的那台忙着）。车道里没人、模型没人提供、离线 / 暂停 / 排空 / 限流 / 时段外、额度真用完、座位都被别人绑着，这些在十秒里变不了，立刻 `503 no_capacity`。原先照样挂满 10 秒才回同一个 503（`Waitable`） |
 | 设计 10.1 `ExtractUsage` | Adapter 上的独立方法 | **并入 `EventWriter.Usage()`**。流式响应的用量是边对拷边解析出来的，没有一个「事件都收齐了」的时刻可以事后调用 |
 | 设计 10.1 `Writer(ctx, unit)` | 只给工作单元 | **同时给已解析的 Input**。Parse 阶段的决定（例如 Hub 是否注入过 `stream_options.include_usage`）要一直影响到写回 |
 | 设计 1.1 WorkUnit.inputs | relay 只有 `body` | **加一个 `headers` 载荷**，装白名单内的客户端协议头（`anthropic-version`、`x-stainless-*` 等）。丢掉它们上游行为就与直连不一致，验收里的逐字节比对过不了 |
@@ -210,6 +276,8 @@ session 的异步提交与断开幸存、抽检签名的抗噪声、指标注册
 | 设计 13 抽检签名 | 「结构相似度」 | **只比事件类型集合与 JSON 键路径，不比出现次数**。次数取决于回答长短，把它算进去会让一个短回答和一个长回答看起来结构不同 —— 抽检的错杀代价是摘掉一台诚实的机器 |
 | 设计 3.2 会话事件 | 未说明断线重连 | **事件带 seq，支持 `Last-Event-ID` / `fromSeq` 续读**。回合跑几分钟，消费者中途断开是常态；先回放数据库再接实时流，不重不漏 |
 | 设计 2.9 turn 幂等 | 「节点返回已有结果不重跑」 | **幂等在 Hub 做，不在节点**。`(sid, seq)` 上的唯一键在派单之前就占住，节点根本不会收到第二份 —— 交给节点意味着并发的两次提交真的会跑两遍 |
+| 架构 T-01 / 需求 P-15 | 节点只主动出站，Hub 永不主动连节点；pool 模式不监听端口 | **新增 export 接入方式：Hub 主动回连节点的公网地址，节点为此监听一个端口**。poll 仍是默认、也是 Nova 客户端唯一的方式。差异只在「领活」一步（见「节点接入方式」），出站链路与全部失败语义不变 |
+| 需求 P-16 配对 | 配对码是唯一的接入凭证 | **加一条长期接入密钥（`gpk-…`）自助注册的路**，给无人值守的服务器。签发与注册同样要求当前条款版本的同意记录；这条路不受「名下只能一台在线」限制，但解绑过的机器不会被自动接回 |
 
 ## 尚未实现
 
@@ -226,7 +294,12 @@ session 的异步提交与断开幸存、抽检签名的抗噪声、指标注册
   （stdin 收 JSON、stdout 吐 NDJSON），delivery-task-planner 那边还没有对应的
   `--stdio` 入口；`ffmpeg-local` 只做了 concat + 缩放/帧率，特效与字幕没接。
 - **多实例**：`streamURL` 已经按实例地址下发，但等待队列还在进程内（见下表），
-  跨实例的 rid 路由没做。
+  跨实例的 rid 路由没做。export 回连同样只支持单实例（见「节点接入方式」）：
+  要么让派单器只领本实例的单元，要么在实例之间转发回流字节。
+- **ai-bridge 命令行的服务化**：Windows 上用的是登录时启动的计划任务，不是真正的
+  Windows 服务（那要实现 SCM 应答）；CI 的 Linux 包在 Ubuntu 22.04 上编，依赖
+  glibc ≥ 2.35（在 macOS 上用 `build-cli.cjs --zig` 交叉编译可以降到 2.17），
+  没有出 musl 静态版本。
 - **P3 老命令通道迁移**：`zt_delivery_command` 原地运行，没有迁到 session / job。
 - **`client/` 的 npm workspaces**：`client/shared` 靠一个符号链接解析裸导入，第三个
   app 一来就会拿到别人的 antd 实例。galaxy 眼下的绕法是自己写一份 i18n Provider，

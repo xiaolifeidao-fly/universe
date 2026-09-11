@@ -116,10 +116,11 @@ func (s *anthropicSniffer) Usage() contract.Metering {
 // ---------- OpenAI Responses ----------
 
 type responsesSniffer struct {
-	input     int64
-	output    int64
-	cacheRead int64
-	seen      bool
+	input      int64
+	output     int64
+	cacheRead  int64
+	cacheWrite int64
+	seen       bool
 	// LastResponseID 供硬钉使用：下一次带 previous_response_id 的请求必须回同一个贡献。
 	lastResponseID string
 }
@@ -128,7 +129,8 @@ type responsesUsage struct {
 	InputTokens        *int64 `json:"input_tokens"`
 	OutputTokens       *int64 `json:"output_tokens"`
 	InputTokensDetails *struct {
-		CachedTokens *int64 `json:"cached_tokens"`
+		CachedTokens     *int64 `json:"cached_tokens"`
+		CacheWriteTokens *int64 `json:"cache_write_tokens"`
 	} `json:"input_tokens_details"`
 }
 
@@ -141,8 +143,13 @@ func (s *responsesSniffer) apply(usage responsesUsage) {
 		s.output = *usage.OutputTokens
 		s.seen = true
 	}
-	if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens != nil {
-		s.cacheRead = *usage.InputTokensDetails.CachedTokens
+	if usage.InputTokensDetails != nil {
+		if usage.InputTokensDetails.CachedTokens != nil {
+			s.cacheRead = *usage.InputTokensDetails.CachedTokens
+		}
+		if usage.InputTokensDetails.CacheWriteTokens != nil {
+			s.cacheWrite = *usage.InputTokensDetails.CacheWriteTokens
+		}
 	}
 }
 
@@ -198,6 +205,9 @@ func (s *responsesSniffer) Usage() contract.Metering {
 	}
 	if s.cacheRead > 0 {
 		usage[contract.UnitCacheReadTokens] = s.cacheRead
+	}
+	if s.cacheWrite > 0 {
+		usage[contract.UnitCacheWriteTokens] = s.cacheWrite
 	}
 	return usage
 }

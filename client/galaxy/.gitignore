@@ -1,0 +1,5 @@
+
+
+# ai-bridge-native 的 cargo 产物。刻意放在包外：
+# 留在 npm 包里会被 electron-builder 之类遍历 node_modules 的工具整个卷进产物。
+.cargo-target/

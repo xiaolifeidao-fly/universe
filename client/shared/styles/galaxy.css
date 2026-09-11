@@ -408,6 +408,9 @@
   font-weight: 500;
   background: var(--gx-hover);
   color: var(--gx-soft);
+  /* 高度写死 24px，里面的字一换行就会溢出圆角。放不下时宁可让它撑宽父容器，
+     也不要在胶囊里折行 —— 后者是一眼可见的坏渲染，前者只是挤一点。 */
+  white-space: nowrap;
 }
 
 .gx-pill--ok {
@@ -428,6 +431,14 @@
 .gx-pill--accent {
   background: var(--gx-accent-soft);
   color: var(--gx-accent-ink);
+}
+
+/* 塞进列表行里的小号胶囊，和 13px 的行文字同高。 */
+.gx-pill--sm {
+  height: 18px;
+  gap: 4px;
+  padding: 0 7px;
+  font-size: 10.5px;
 }
 
 .gx-dot {
@@ -738,6 +749,168 @@ textarea.gx-input {
   content: "";
 }
 
+/* ─── 主从布局 ─── */
+/*
+ * 左边一列挑对象，右边改它。共享设置里挑的是机器。
+ *
+ * 左列 sticky：右边的表单一屏放不下，滚到「共享时段」时也得看得见改的是哪一台。
+ * max-height 扣掉的是命令条 64 + .gx-body 上下内边距 34。
+ * 窗口窄到右边塞不下表单时（Nova 最小宽 960），左列折到上面，机器改成横着排。
+ */
+.gx-split {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.gx-split__aside {
+  position: sticky;
+  top: 0;
+  display: flex;
+  max-height: calc(100dvh - 98px);
+  flex-direction: column;
+}
+
+.gx-split__main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gx-picks {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+}
+
+.gx-pick {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.gx-pick:hover {
+  background: var(--gx-hover);
+}
+
+/* 选中态用墨色系：铜色只留给「在赚钱」和「已开启」。 */
+.gx-pick.is-active {
+  background: var(--gx-muted);
+  box-shadow: inset 0 0 0 1px var(--gx-line);
+}
+
+.gx-pick__body {
+  min-width: 0;
+  flex: 1;
+}
+
+.gx-pick__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gx-ink);
+}
+
+.gx-pick.is-active .gx-pick__name {
+  font-weight: 600;
+}
+
+.gx-pick__name > b {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-pick__meta {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--gx-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gx-pick__meta.is-warn {
+  color: var(--gx-warn-ink);
+}
+
+.gx-pick__meta.is-danger {
+  color: var(--gx-danger);
+}
+
+.gx-pick__empty {
+  padding: 18px 10px;
+  font-size: 12px;
+  color: var(--gx-faint);
+  text-align: center;
+}
+
+/* 机器状态点。和 .gx-dot 不同，不做呼吸：一列十几台一起闪太吵。 */
+.gx-state {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--gx-faint);
+  opacity: 0.6;
+}
+
+.gx-state.is-on {
+  background: var(--gx-ok);
+  box-shadow: 0 0 0 3px var(--gx-ok-soft);
+  opacity: 1;
+}
+
+.gx-state.is-err {
+  background: var(--gx-danger);
+  opacity: 1;
+}
+
+@media (max-width: 1080px) {
+  .gx-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gx-split__aside {
+    position: static;
+    max-height: none;
+  }
+
+  .gx-picks {
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  /* 故意让最后一张露半截：一眼看得出这一条还能往右划。 */
+  .gx-pick {
+    width: 236px;
+    flex: 0 0 auto;
+  }
+}
+
 /* ─── 数据可视 ─── */
 
 .gx-meter {
@@ -776,6 +949,20 @@ textarea.gx-input {
   font-size: 12px;
   color: var(--gx-soft);
   white-space: nowrap;
+  /* 名字和数字都不换行，两个加起来超宽时必须在自己格子里截断 ——
+     不 clip 的话它会画到隔壁那一列上，看起来就是两行字叠在一起。
+     被截的是名字，数字永远完整：这一行真正要读的是「用了多少 / 上限多少」。 */
+  overflow: hidden;
+}
+
+.gx-quota__label > :first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gx-quota__label > :last-child {
+  flex: 0 0 auto;
 }
 
 /* 24 小时时段条。每格一个小时，选中的格子用暖色渐变填满。 */

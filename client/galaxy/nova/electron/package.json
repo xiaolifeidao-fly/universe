@@ -13,8 +13,8 @@
     ],
     "extraResources": [
       {
-        "from": "../../.desktop/nova",
-        "to": "next"
+        "from": "desktop.json",
+        "to": "desktop.json"
       }
     ],
     "directories": {
@@ -40,12 +40,12 @@
     "asarUnpack": [
       "node_modules/@galaxy/ai-bridge-native/**",
       "node_modules/ai-bridge/**",
-      "node_modules/@anthropic-ai/**",
-      "node_modules/@openai/**"
+      "node_modules/zod/**"
     ]
   },
   "scripts": {
     "dev": "node ../../scripts/desktop.cjs dev nova",
+    "start": "node ../../scripts/desktop.cjs start nova",
     "build": "node ../../scripts/desktop.cjs build nova",
     "package": "node ../../scripts/desktop.cjs package nova",
     "typecheck": "tsc --noEmit",

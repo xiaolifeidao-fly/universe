@@ -76,7 +76,7 @@ export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
               width: "1fr",
               render: (row: UsageLine) => (
                 <span>
-                  {unitLabel(row.unit)} <span className="gx-mono gx-muted">{row.unit}</span>
+                  {unitLabel(row.unit, t)} <span className="gx-mono gx-muted">{row.unit}</span>
                 </span>
               ),
             },

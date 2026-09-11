@@ -20,7 +20,9 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { clearAuthToken, getAuthUser, type AuthUser } from "@/utils/auth";
 import { formatRelative } from "@/utils/format";
 import { isDesktop, productConfig } from "@/utils/product";
+import { pingBridge } from "../../api/bridge.api";
 import { fetchNodes, isNodeOnline, revokeNode, type NodeView } from "../../api/provider.api";
+import { AccessKeyPanel } from "./AccessKeyPanel";
 import { LocalServicePanel } from "./LocalServicePanel";
 
 export function AccountPanel() {
@@ -30,6 +32,9 @@ export function AccountPanel() {
   const [nodes, setNodes] = useState<NodeView[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // 列表里哪一台是这台电脑。其余的可能是服务器上独立部署的 ai-bridge，
+  // 下面「这台电脑」那块只管这一台，不标出来两边对不上号。
+  const [localNodeId, setLocalNodeId] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +50,10 @@ export function AccountPanel() {
     setUser(getAuthUser());
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void pingBridge().then((ping) => setLocalNodeId(ping?.nodeId ?? ""));
+  }, []);
 
   const unbind = (node: NodeView) => {
     Modal.confirm({
@@ -66,6 +75,20 @@ export function AccountPanel() {
         }
       },
     });
+  };
+
+  /**
+   * export 机器的回连状态。只对 export 有意义：poll 的机器 Hub 从不主动连它。
+   *
+   * 和在线绿标是两件事 —— 心跳是节点主动出站的，公网入口不通照样能心跳。
+   * 分开显示，主人才看得出「进程活着，但端口没映射对」。
+   */
+  const endpointText = (node: NodeView) => {
+    if (node.endpointStatus === "ok") return t("account.endpointOk");
+    if (node.endpointStatus === "unreachable") {
+      return node.endpointError ? `${t("account.endpointDown")} — ${node.endpointError}` : t("account.endpointDown");
+    }
+    return t("account.endpointPending");
   };
 
   return (
@@ -109,11 +132,31 @@ export function AccountPanel() {
                   >
                     <IconMonitor size={18} style={{ color: "var(--gx-faint)" }} />
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{node.displayName || node.nodeId}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13.5, fontWeight: 600 }}>
+                        {node.displayName || node.nodeId}
+                        {localNodeId && node.nodeId === localNodeId ? <Pill>{t("account.thisComputer")}</Pill> : null}
+                      </span>
                       <span className="gx-mono" style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 2 }}>
                         ai-bridge {node.bridgeVersion || "-"} · {formatRelative(node.lastBeatAt)}
                       </span>
+                      {node.accessMode === "export" ? (
+                        <span
+                          className="gx-mono"
+                          style={{
+                            display: "block",
+                            fontSize: 11,
+                            marginTop: 2,
+                            color: node.endpointStatus === "unreachable" ? "var(--gx-danger, #c2410c)" : "var(--gx-faint)",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {node.endpointUrl || "-"} · {endpointText(node)}
+                        </span>
+                      ) : null}
                     </span>
+                    <Pill tone={node.accessMode === "export" ? "accent" : "default"}>
+                      {node.accessMode === "export" ? t("account.accessExport") : t("account.accessPoll")}
+                    </Pill>
                     <Pill tone={node.banned ? "err" : isNodeOnline(node) ? "ok" : "default"}>
                       {node.banned ? t("share.off") : isNodeOnline(node) ? t("today.sharing") : t("today.offline")}
                     </Pill>
@@ -129,6 +172,8 @@ export function AccountPanel() {
             </div>
           )}
         </Card>
+
+        <AccessKeyPanel />
 
         <LocalServicePanel />
 

@@ -1,7 +1,8 @@
-# Galaxy Nova / Orbit
+# Galaxy Nova / Orbit / Portal
 
 Galaxy 是 npm workspace。Nova（共享端）与 Orbit（使用端）各自拥有 Electron 和 Webview，
 页面与 UI 交互都归属于对应端，不再共用根目录的 Next.js 应用。
+Portal（门户站）是第三个成员，没有桌面壳 —— 它就是一个网站。
 
 ```text
 client/galaxy/
@@ -53,6 +54,15 @@ client/galaxy/
 │       ├── src/pages/api/
 │       ├── next.config.mjs
 │       └── package.json
+├── portal/                         门户站：未登录也能看的那一面（无 Electron）
+│   ├── src/app/(site)/
+│   │   ├── page.tsx                首页
+│   │   ├── models/                 模型：全部模型 + 单价 + 能力标签
+│   │   ├── pricing/                定价：计费口径 + 额度包 + 单价表
+│   │   └── contact/                联系我们：留资表单（全站唯一未鉴权写接口）
+│   ├── src/components/{site,home,models,pricing,contact}/
+│   ├── src/app/globals.css         门户自己的设计系统（.gp-*）
+│   └── README.md                   ← 门户的取数、视觉与限制都在这份
 ├── common/                         @galaxy/common
 │   ├── eleapi/base.ts              ElectronApi、@Invoke 元数据
 │   ├── eleapi/register.ts          按端选择的 API 契约注册表
@@ -71,9 +81,22 @@ client/galaxy/
 Nova 不包含 consumer 路由，Orbit 不包含 provider 路由，访问另一端的页面返回 404。
 通用 HTTP/auth 工具和基础设计 token 继续复用项目原有的 `client/shared`。
 
+## 三个成员的分工
+
+| | 是什么 | 谁看 | 端口 |
+| --- | --- | --- | --- |
+| Nova | 共享端控制台 + 桌面壳 | 出算力的人 | 17898 |
+| Orbit | 使用端控制台 + 桌面壳 | 花钱买额度的人 | 17899 |
+| Portal | 门户站，纯网页 | **还没注册的陌生人** | 17900 |
+
+门户不接管控制台的任何功能：它回答「你们卖什么、多少钱、怎么接」，
+顶栏那个「控制台」按钮把人送去 Orbit（地址由 `NEXT_PUBLIC_CONSOLE_URL` 配）。
+门户只打服务端的一组公开路由 `/api/galaxy/portal/*`，不带鉴权、不碰用户维度的数据。
+
 ## 视觉与交互
 
 两个端共用一套骨架，只差一组颜色：Nova 暖铜（发光与收益），Orbit 青绿（冷静地花钱）。
+门户是第三套 —— 它和控制台是同一个牌子的两副面孔，不是同一套组件（见 `portal/README.md`）。
 
 | 位置 | 内容 |
 |---|---|
@@ -90,7 +113,8 @@ macOS 上窗口用 `titleBarStyle: 'hiddenInset'`，左栏顶部空出 34px 给�
 
 ## 通信边界
 
-- 业务请求：本端 React 页面 → 本端 axios 封装 → 本端 Next.js `/api/*` → Galaxy Go API。
+- 界面：桌面壳只 `loadURL` 一个**远端**地址，安装包里不带 Next 服务、不监听端口。
+- 业务请求：本端 React 页面 → 本端 axios 封装 → 部署在远端的 Next.js `/api/*` → Galaxy Go API。
 - Nova 本机能力：Nova Webview 的 BridgeApi → preload 自动代理 → IPC → BridgeImpl → UtilityProcess 私有通道 → 内置 ai-bridge。
 - Orbit 不暴露 bridge，也不注册 bridge IPC。
 - common 不负责页面、不接管业务 HTTP、不持有平台登录 token。
@@ -107,6 +131,37 @@ Nova 启动时创建独立 UtilityProcess，退出时停止任务并回收子进
 凭据适配器、业务模块及测试一并保留。Claude/Codex CLI 的登录态继续从本机读取，
 相关 CLI/ffmpeg 仍按所用能力自行安装；bridge 自身随 Nova 更新，不提供 git 自升级按钮。
 
+## 界面部署与桌面壳
+
+界面（`<端>/webview`）部署在**远端服务器**上，桌面壳只负责加载它的地址：
+
+```
+npm run build:nova      →  .desktop/nova/          要部署到服务器的 Next standalone 包
+                           nova/electron/desktop.json  这个安装包默认连哪个地址
+npm run package:nova    →  release/nova/           安装包，不含 Next 服务
+```
+
+地址的来源，从高到低：
+
+| 来源 | 用途 |
+|---|---|
+| `GALAXY_NOVA_APP_ORIGIN` / `GALAXY_ORBIT_APP_ORIGIN` | 单端覆盖，运维换域名不用重新打包 |
+| `GALAXY_APP_ORIGIN` | 两端共用的覆盖 |
+| 安装包里的 `resources/desktop.json` | 打包时由 `APP_ORIGIN` 冻结进去的默认值 |
+| `http://127.0.0.1:<端口>` | **只在未打包的开发态**回落到本机 `next dev` |
+
+**非本机地址必须是 https，证书错误一律拒绝，界面里不提供改地址的入口。** 这不是洁癖：
+Nova 把 `BridgeApi` 整个暴露给渲染进程（`pair` 能把节点绑到任意 Hub、
+`startUpstreamLogin` 会在本机拉起命令、`createToken` 会签发能花你订阅的凭据），
+页面来自网络之后，能控制那台服务器或能改包的人就能驱动这台机器的 bridge。
+Orbit 没这个问题 —— 它的 IPC 注册表是空的（`registerApi` 只给 nova 返回 `[BridgeApi]`）。
+
+启动时壳会先探一次 `<origin>/api/desktop-health` 并核对 `product`，确认这个地址上
+跑的确实是这个端的控制台（防的是配错地址，不是防攻击 —— 挡攻击的是上面那三条）；
+连不上给「重试 / 退出」，不直接闪退。
+
+`bash start.sh nova|orbit` 就是「用装好的壳打开已部署的控制台」，本机不起任何服务。
+
 ## 安装与开发
 
 要求 Node.js 22.12+，在 `client/galaxy` 安装一次依赖，npm workspaces 自动共享依赖安装目录。
@@ -116,10 +171,13 @@ Nova 启动时创建独立 UtilityProcess，退出时停止任务并回收子进
 npm install
 cp nova/webview/.env.example nova/webview/.env
 cp orbit/webview/.env.example orbit/webview/.env
+cp portal/.env.example portal/.env
 # 分别配置 SERVER_TARGET 与 APP_URL_PREFIX
 npm run dev:nova
 # 另一个终端
 npm run dev:orbit
+# 门户站（没有桌面壳，只起 Next）
+npm run dev:portal
 ```
 
 迁移已把原本地 `.env` 复制到两个 webview；已有文件时不需要再复制模板。
@@ -154,23 +212,27 @@ npm run package:nova
 npm run package:orbit
 ```
 
-`npm run build` 按顺序构建两端，每个 webview 自己也可以 `npm run build`。
+`npm run build` 按顺序构建两端和门户，每个 webview 自己也可以 `npm run build`。
+门户走 `scripts/portal.cjs`，不碰 Electron：`npm run build:portal` 产出
+`.desktop/portal`，同样是「要部署到远端服务器」的 Next standalone 包。
 Electron 源码全部是 TypeScript，`tsc --noEmit` 检查后由 esbuild 分别捆绑 main / preload
 到各端 `electron/dist/*.js`。preload 只保留 Electron 内置模块为外部依赖，支持 sandbox。
 `npm run build:electron` 单独编译两端 Electron。开发启动会先编译 Electron；修改 Electron
 源码后重启该端，Webview 的 UI 修改由 Next.js 自动热更新。
-工作区 `build:<端>` 额外将 standalone 和静态资源整理到 `.desktop/<端>`，供 Electron 打包。
-`package:<端>` 生成当前平台安装包至 `release/<端>`。
+工作区 `build:<端>` 额外将 standalone 和静态资源整理到 `.desktop/<端>` —— 那是
+**要部署到远端服务器**的包，不再进安装包（目录名是历史遗留，没改是因为可能已经
+有部署脚本指着它）。`package:<端>` 生成当前平台安装包至 `release/<端>`，
+里面只有 Electron 壳和一份 `desktop.json`。
 
 `bash start.sh nova|orbit` 启动已有构建的桌面应用；`bash stop.sh nova|orbit` 只停止受脚本管理的启动器。
 `bash package.sh nova|orbit` 等价于对应的桌面打包命令。原 `unpack-release.sh` 仅兼容历史 Web tar 包。
 
-安装包内 Electron 用 utilityProcess 启动本端 Next standalone，不依赖用户另装 Node.js，
-退出时关闭子进程。构建时不打入原始 `.env`，仅提取公开的 `SERVER_TARGET` 和
-`APP_URL_PREFIX` 到 runtime.json；启动环境同名变量可覆盖它们。
+安装包内不含 Next 服务：Electron 直接 `loadURL` 远端地址。部署到服务器的那份
+standalone 同样不打入原始 `.env`，仅提取公开的 `SERVER_TARGET` 与 `APP_URL_PREFIX`
+到 `.desktop/<端>/runtime.json`，启动环境同名变量可覆盖。
 
 测试包括本机 bridge 白名单/凭据/错误处理，以及两端 standalone 页面、静态资源、
-路由分离、Next.js 业务代理的本机模拟验证，不操作真实账户。
+路由分离、Next.js 业务代理的本机模拟验证（验的就是要部署上去的那份包），不操作真实账户。
 macOS arm64 可构建未签名 `.app`；Windows/Linux 安装包与真实账户业务流程需在目标环境验收。
 发布签名、证书及自动更新服务尚未配置。
 

@@ -49,6 +49,103 @@ type PairResult struct {
 	HubInstanceHint string `json:"hubInstanceHint,omitempty"`
 }
 
+// ---------- 接入方式 ----------
+
+const (
+	// AccessModePoll 节点长轮询领活，Hub 永不主动连它。可视化客户端只支持这一种。
+	AccessModePoll = "poll"
+	// AccessModeExport 节点把自己暴露在公网上，Hub 拿 endpoint + secret 主动回连。
+	// 只有单独部署的 rust bridge 走这条 —— 它要求一个稳定可达的入口，
+	// 那是笔记本上的桌面客户端给不了的。
+	AccessModeExport = "export"
+)
+
+// NormalizeAccessMode 只认这两个值，其余一律当 poll。
+//
+// 不认识就报错是更严的做法，但接入方式是**节点自己声明**的：一个拼错的字段
+// 不该让一台机器完全连不上来。回落到 poll 是安全的那一侧 —— 最坏结果是
+// 它比预期慢一点领到活，而不是根本不在池子里。
+func NormalizeAccessMode(value string) string {
+	if value == AccessModeExport {
+		return AccessModeExport
+	}
+	return AccessModePoll
+}
+
+// ExportEndpointInput 是 export 节点声明的回连信息。
+//
+// 密钥由**节点**生成、注册时交给 Hub，不是 Hub 发给节点的：这串东西是
+// 「访问我的钥匙」，该由被访问的一方来定。Hub 必须原样保存明文才能出示，
+// 所以它绝不进任何对外视图与日志。
+type ExportEndpointInput struct {
+	// URL 公网基地址，形如 https://box.example.com:8788。Hub 在它后面接
+	// /node/v1/execute 这类路径。必须是 http(s)，不接受带用户名密码的形式。
+	URL string `json:"url"`
+	// Secret 回连密钥。Hub 以 Bearer 出示，节点逐字节比对。
+	Secret string `json:"secret"`
+}
+
+// RegisterRequest 用提供者接入密钥自助注册一台机器。
+//
+// 与 PairRequest 的分工：配对码给「人看着两块屏幕」的可视化客户端；
+// 接入密钥给放在机房里、没人值守的机器 —— 它重启之后要能自己回来。
+type RegisterRequest struct {
+	// Key 是 gpk- 开头的接入密钥明文。
+	Key           string `json:"key" binding:"required"`
+	DisplayName   string `json:"displayName"`
+	BridgeVersion string `json:"bridgeVersion"`
+	Contract      int    `json:"contract"`
+	// AccessMode poll / export。不填按 poll。
+	AccessMode string `json:"accessMode"`
+	// Endpoint 只有 AccessMode=export 时有意义，其余情况忽略。
+	Endpoint *ExportEndpointInput `json:"endpoint"`
+	// NodeID 是这台机器上一次注册拿到的 nodeId（从本地令牌文件里读）。
+	//
+	// 带了就**沿用同一条节点记录**、只换一把新令牌，不像配对那样每次新建 ——
+	// 一台服务器可能每天重启几次，每次多一个僵尸节点是不可接受的。
+	// Hub 会校验它属于同一个主人，不属于就当没传，退回新建。
+	NodeID string `json:"nodeId"`
+}
+
+type RegisterResult struct {
+	NodeID string `json:"nodeId"`
+	// Token 明文只在这一次返回，Hub 只存 sha256。
+	Token string `json:"token"`
+	// AccessMode Hub 最终认定的接入方式。节点要以它为准 ——
+	// export 声明不合法时 Hub 会回落成 poll，节点得知道自己该去长轮询。
+	AccessMode string `json:"accessMode"`
+	// HubURL 平台公布的节点接入地址，供节点核对自己连的是不是同一个地方。
+	HubURL string `json:"hubUrl,omitempty"`
+	// Notice 回落或降级时的一句人话，节点原样打进日志。
+	Notice string `json:"notice,omitempty"`
+}
+
+// ---------- 提供者接入密钥 ----------
+
+type IssueProviderKeyRequest struct {
+	OwnerUserID string `json:"-"`
+	Alias       string `json:"alias"`
+	// ExpiresInDays 0 表示不过期。
+	ExpiresInDays int `json:"expiresInDays"`
+}
+
+// ProviderKeyView 列表里的一把密钥。**不含明文**，明文只在签发那一次返回。
+type ProviderKeyView struct {
+	KeyID       string     `json:"keyId"`
+	Alias       string     `json:"alias"`
+	Status      string     `json:"status"`
+	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
+	LastNodeID  string     `json:"lastNodeId,omitempty"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+	CreatedTime time.Time  `json:"createdTime"`
+}
+
+// IssuedProviderKey 签发结果。Secret 是唯一一次能看到明文的地方。
+type IssuedProviderKey struct {
+	ProviderKeyView
+	Secret string `json:"secret"`
+}
+
 // ContributionInput 是 hello 里申报的一条贡献。
 type ContributionInput struct {
 	CID         string `json:"cid" binding:"required"`
@@ -114,6 +211,15 @@ type HelloRequest struct {
 	Resources     map[string]any      `json:"resources"`
 	Contributions []ContributionInput `json:"contributions"`
 	Instance      string              `json:"-"`
+	// AccessMode / Endpoint 每次 hello 都带，不只在注册时给一次。
+	//
+	// 公网地址会变：家宽的 IP 每天换、容器换一次宿主端口就换。只在注册时记一次，
+	// Hub 会拿着一个早就失效的地址一直回连不上，而节点侧一切正常 ——
+	// 这种「两边都觉得自己没错」的状态是最难查的。让 hello 顺手把它对齐掉。
+	//
+	// 空字符串表示「这一版节点不声明」，Hub 维持现状；要清空得显式改成 poll。
+	AccessMode string               `json:"accessMode"`
+	Endpoint   *ExportEndpointInput `json:"endpoint"`
 }
 
 type HelloResult struct {
@@ -128,6 +234,11 @@ type HelloResult struct {
 	// Enabled 是节点这一刻该跑的全部通道。空数组表示一条都不该跑（全被关了或全不可用），
 	// 这和「字段缺失」必须分得开 —— 后者是老版本 Hub，节点应当维持现状而不是全停。
 	Enabled []EnabledContribution `json:"enabled"`
+	// AccessMode Hub 最终认定的接入方式。
+	//
+	// 节点声明了 export、但回连信息在 Hub 这边不成立时会被回落成 poll。
+	// 不把结论告诉节点，它就只开着一扇 Hub 永远不会来敲的门，一条活都收不到。
+	AccessMode string `json:"accessMode,omitempty"`
 }
 
 // HeartbeatRequest 每 15s 一次。节点自报负载，Hub 回下发取消与额度更新。
@@ -356,13 +467,26 @@ type QuotaStatusView struct {
 }
 
 type NodeView struct {
-	NodeID        string             `json:"nodeId"`
-	DisplayName   string             `json:"displayName"`
-	BridgeVersion string             `json:"bridgeVersion"`
-	Status        string             `json:"status"`
-	Banned        bool               `json:"banned"`
-	LastBeatAt    *time.Time         `json:"lastBeatAt,omitempty"`
-	Contributions []ContributionView `json:"contributions"`
+	NodeID        string     `json:"nodeId"`
+	DisplayName   string     `json:"displayName"`
+	BridgeVersion string     `json:"bridgeVersion"`
+	Status        string     `json:"status"`
+	Banned        bool       `json:"banned"`
+	LastBeatAt    *time.Time `json:"lastBeatAt,omitempty"`
+	// AccessMode 这台机器怎么接进来的：poll 长轮询 / export Hub 回连。
+	// 界面上要显示出来 —— 两种接入方式的排障路径完全不同，
+	// 而主人自己往往说不清机房里那台是怎么配的。
+	AccessMode string `json:"accessMode"`
+	// EndpointURL export 机器的公网入口。**不含密钥**。
+	EndpointURL string `json:"endpointUrl,omitempty"`
+	// EndpointStatus 最近一次回连探测：ok / unreachable，没探过是空串。
+	//
+	// 它和 Status 是两件事：心跳是节点主动出站的，公网入口不通照样能心跳。
+	// 分开显示，主人才看得出「进程活着，但你的端口没映射对」。
+	EndpointStatus    string             `json:"endpointStatus,omitempty"`
+	EndpointError     string             `json:"endpointError,omitempty"`
+	EndpointCheckedAt *time.Time         `json:"endpointCheckedAt,omitempty"`
+	Contributions     []ContributionView `json:"contributions"`
 }
 
 // ExecutionRecord 是「我的机器上跑过什么」的匿名化日志（P-14）：
@@ -379,6 +503,10 @@ type ExecutionRecord struct {
 	Credits    int64      `json:"credits"`
 	StartedAt  *time.Time `json:"startedAt,omitempty"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	// NodeID / NodeName 这一次是主人的哪台机器跑的，NodeName 是主人给机器起的名字。
+	// 机器解绑了也照样给，老记录不会变成一串 id。只回给主人自己，消费者的记录里没有。
+	NodeID   string `json:"nodeId,omitempty"`
+	NodeName string `json:"nodeName,omitempty"`
 }
 
 // ---------- 池水位 ----------
@@ -929,4 +1057,163 @@ type UsageRecord struct {
 type UsageRecordPage struct {
 	Total   int64         `json:"total"`
 	Records []UsageRecord `json:"records"`
+}
+
+// ---------- 门户（未登录可见的那一面） ----------
+
+// PortalOverview 门户一次取回整站要展示的东西。
+//
+// 拆成四条接口没有意义：这四份数据都很小、都随运营改动一起变、都不带用户维度，
+// 而门户的首页本来就要同时用到它们（价格滚动条要模型，CTA 要额度包）。
+// 一次取回还顺带让「模型数」这类统计和列表天然一致 —— 分两条接口取，
+// 中间被改一次目录就会出现「写着 12 个模型，列出来 11 个」。
+type PortalOverview struct {
+	// Endpoint 是消费者要填进 base_url 的那个地址，服务端给，门户不再配一遍。
+	Endpoint  string             `json:"endpoint"`
+	Stats     PortalStats        `json:"stats"`
+	Families  []PortalFamilyView `json:"families"`
+	Models    []PortalModelView  `json:"models"`
+	Packages  []PackageView      `json:"packages"`
+	Prices    []PortalPriceLine  `json:"prices"`
+	UpdatedAt time.Time          `json:"updatedAt"`
+}
+
+// PortalStats 首页那排数字。
+//
+// 每一项都必须是库里真有的事实。像「5000+ 开发者」这种没有出处的数字不放进来 ——
+// 门户上第一眼看到的数字如果是编的，后面写什么都不作数了。
+type PortalStats struct {
+	Models   int `json:"models"`
+	Vendors  int `json:"vendors"`
+	Families int `json:"families"`
+	Packages int `json:"packages"`
+	// MinTopup 上架额度包里最便宜的那个（微分）。0 表示一个包都没上架。
+	MinTopup   int64  `json:"minTopup"`
+	Currency   string `json:"currency"`
+	MaxContext int64  `json:"maxContext"`
+	// KeyTTLDays / FreezeDays 是密钥的默认有效期与到期后的冻结期，来自部署配置。
+	KeyTTLDays  int `json:"keyTtlDays"`
+	FreezeDays  int `json:"freezeDays"`
+	Concurrency int `json:"concurrency"`
+	RPM         int `json:"rpm"`
+	// Availability 是部署方声明的可用性承诺（galaxy.portal.availability）。
+	// 没配就是空串，门户少显示一格，不编一个。
+	Availability string `json:"availability,omitempty"`
+}
+
+// PortalFamilyView 模型页的分栏。计数与最低价都由服务端算好 ——
+// 门户算一遍、控制台再算一遍，迟早对不上。
+type PortalFamilyView struct {
+	Family   string `json:"family"`
+	Vendor   string `json:"vendor,omitempty"`
+	Count    int    `json:"count"`
+	MinInput int64  `json:"minInput"`
+	Currency string `json:"currency"`
+}
+
+// PortalModelView 门户上的一个模型。价格是「每百万 token 的微分」，与账单同口径。
+type PortalModelView struct {
+	ModelID         string   `json:"modelId"`
+	DisplayName     string   `json:"displayName"`
+	Vendor          string   `json:"vendor,omitempty"`
+	Family          string   `json:"family"`
+	Kind            string   `json:"kind"`
+	ContextTokens   int64    `json:"contextTokens,omitempty"`
+	MaxOutputTokens int64    `json:"maxOutputTokens,omitempty"`
+	InputPrice      int64    `json:"inputPrice"`
+	OutputPrice     int64    `json:"outputPrice"`
+	CachePrice      int64    `json:"cachePrice"`
+	Currency        string   `json:"currency"`
+	Tags            []string `json:"tags,omitempty"`
+	Summary         string   `json:"summary,omitempty"`
+	Featured        bool     `json:"featured"`
+	// Priced 说明这三个单价是这个模型自己的，还是回落到了 kind 的统一价。
+	// 门户据此决定要不要在卡片上标「统一价」—— 不标的话，回落期间
+	// 所有模型显示同一个价，看起来像是页面坏了。
+	Priced    bool `json:"priced"`
+	SortOrder int  `json:"sortOrder"`
+}
+
+// PortalPriceLine kind × 单位的当前单价，定价页那张表直接渲染它。
+// 分成比例不在这里 —— 那是平台与提供者之间的事，消费者面不需要知道。
+type PortalPriceLine struct {
+	Kind     string `json:"kind"`
+	Unit     string `json:"unit"`
+	Price    int64  `json:"price"`
+	Currency string `json:"currency"`
+}
+
+// SubmitLeadRequest 门户「联系我们」。这是全站唯一未鉴权就能写库的入口，
+// 所以每个字段都在服务端再截一次长度，前端的 maxlength 只算提示。
+type SubmitLeadRequest struct {
+	Name    string `json:"name"`
+	Contact string `json:"contact" binding:"required"`
+	Company string `json:"company"`
+	Topic   string `json:"topic"`
+	Scale   string `json:"scale"`
+	Message string `json:"message"`
+	Source  string `json:"source"`
+	// Website 是蜜罐字段：真人看不见它，脚本会顺手填。非空直接当成功打发走，
+	// 不写库也不报错 —— 报错等于告诉对方哪里被拦了。
+	Website string `json:"website"`
+
+	IP        string `json:"-"`
+	UserAgent string `json:"-"`
+}
+
+// LeadView 提交成功后回给来访者的东西。只有一个单号 ——
+// 库里那条记录的其余字段跟来访者无关。
+type LeadView struct {
+	LeadID    string    `json:"leadId"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// SaveModelRequest 运营维护门户模型目录。整行覆盖，和 SavePackage 一个脾气：
+// 只想改一个字段也要把其余字段原样带回来，不带回来就是清零。
+type SaveModelRequest struct {
+	ModelID         string   `json:"modelId" binding:"required"`
+	DisplayName     string   `json:"displayName"`
+	Vendor          string   `json:"vendor"`
+	Family          string   `json:"family"`
+	Kind            string   `json:"kind"`
+	ContextTokens   int64    `json:"contextTokens"`
+	MaxOutputTokens int64    `json:"maxOutputTokens"`
+	InputPrice      int64    `json:"inputPrice"`
+	OutputPrice     int64    `json:"outputPrice"`
+	CachePrice      int64    `json:"cachePrice"`
+	Currency        string   `json:"currency"`
+	Tags            []string `json:"tags"`
+	Summary         string   `json:"summary"`
+	Listed          *bool    `json:"listed"`
+	Featured        bool     `json:"featured"`
+	SortOrder       int      `json:"sortOrder"`
+}
+
+// LeadRecord 运营看到的线索。比 LeadView 多的是联系方式与正文 ——
+// 那是这条记录存在的理由。IP 与 UA 只留在库里，不进这个视图。
+type LeadRecord struct {
+	LeadID      string     `json:"leadId"`
+	Name        string     `json:"name,omitempty"`
+	Contact     string     `json:"contact"`
+	Company     string     `json:"company,omitempty"`
+	Topic       string     `json:"topic,omitempty"`
+	Scale       string     `json:"scale,omitempty"`
+	Message     string     `json:"message,omitempty"`
+	Source      string     `json:"source,omitempty"`
+	Status      string     `json:"status"`
+	HandledBy   string     `json:"handledBy,omitempty"`
+	HandledAt   *time.Time `json:"handledAt,omitempty"`
+	CreatedTime time.Time  `json:"createdTime"`
+}
+
+type LeadPage struct {
+	Total int64        `json:"total"`
+	Leads []LeadRecord `json:"leads"`
+}
+
+// HandleLeadRequest 运营把一条线索标成已处理 / 已关闭。
+type HandleLeadRequest struct {
+	LeadID    string `json:"leadId" binding:"required"`
+	Status    string `json:"status" binding:"required"`
+	HandledBy string `json:"-"`
 }
