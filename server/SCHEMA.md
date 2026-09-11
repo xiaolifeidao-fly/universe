@@ -43,8 +43,16 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 **供给单元是贡献，不是节点**——座位、额度、队列、绑定、限流全部以 `cid` 为主键。
 一台机器（节点）可以有多个贡献，同机两个贡献的额度互相独立。
 
+**账号是 Galaxy 自己的，和下面 `zt_identity_*`（任务宇宙）无关。** 共享端（提供者，Nova）
+和使用端（消费者，Orbit）是两批人，各注册各的，令牌互不通用；池内表里所有
+`owner_user_id` / `user_id` / `provider_user_id` 存的都是 `zt_galaxy_user.user_id`
+（共享端 `pu_…`，使用端 `cu_…`，从任务宇宙迁过来的是 `pu_legacy_<原 id>` / `cu_legacy_<原 id>`）。
+运营不在这套账号里：共享池的运营接口全在 manager-api，认的是 `zt_manager_*`。
+
 | 表 | 作用 |
 |---|---|
+| `zt_galaxy_user` | Galaxy 账号。`side` 分共享端 / 使用端，用户名按端唯一；`token_version` 签进令牌，改密码、重置、停用都加一 |
+| `zt_galaxy_provider` | 共享端账号的身份：散户 / 工作室。没有行就是散户，只有运营能设成工作室 |
 | `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
 | `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
 | `zt_galaxy_contribution` | 贡献：kind + provider + 模型白名单 + 座位 + 挂机时段 + 信誉 |
@@ -84,7 +92,8 @@ AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，�
 表清单的唯一出处是 `repository.models()`，`TestGalaxySQLCoversEveryTable` 守着两者不漂。
 
 已经建过库的环境走增量：`server/migrations/20260907_galaxy_dispute.sql`、
-`server/migrations/20260910_galaxy_payout.sql`。
+`server/migrations/20260910_galaxy_payout.sql`，以及 `server/migrations/` 下其余 `*_galaxy_*.sql`。
+`20260911_galaxy_user.sql` 建账号表并把老数据从任务宇宙账号迁过来，**要在发新版 galaxy-api 和 manager-api 之前跑**。
 
 **抽检表的隐私取舍：** `zt_galaxy_audit_probe` 会**短期保留**被抽中那次请求的原文
 （比例上限 1%/贡献/日），因为不留原文就无法重放比对；但节点的响应只保留**结构签名**

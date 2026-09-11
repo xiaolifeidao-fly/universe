@@ -16,7 +16,6 @@ import (
 	"galaxy-api/adapters/delivery"
 	"galaxy-api/adapters/relay"
 	"galaxy-api/adapters/videofarm"
-	"galaxy-api/pkg/admin"
 	"galaxy-api/pkg/agent"
 	authpkg "galaxy-api/pkg/auth"
 	"galaxy-api/pkg/consumers"
@@ -30,7 +29,7 @@ import (
 
 	"contract"
 	"service/galaxy"
-	"service/identity"
+	"service/galaxy/account"
 )
 
 // Assembly 是 Hub 的装配结果。main.go 拿它挂路由与后台巡检。
@@ -51,7 +50,6 @@ type Assembly struct {
 	Consumers *consumers.Handler
 	Providers *providers.Handler
 	Portal    *portal.Handler
-	Admin     *admin.Handler
 }
 
 // Build 是 galaxy-api 唯一的装配点。
@@ -134,9 +132,11 @@ func Build(database *gorm.DB) (*Assembly, error) {
 	}, kinds, loadConfig())
 	deps.Galaxy = service
 
-	identityService := identity.New(database, local.NoProgramScope{},
-		httpx.Property("auth.token_secret"), tokenTTL())
-	httpx.SetUserAuthenticator(identityService)
+	// 控制台账号是 Galaxy 自己的，和任务宇宙的 service/identity 无关。这里刻意不调
+	// httpx.SetUserAuthenticator：httpx.RequireUser() 在这个进程里调不通，
+	// 谁要是顺手给新路由挂了它，第一次请求就会报「认证服务尚未初始化」，而不是悄悄认了别的账号。
+	accounts := account.New(database, account.Options{TokenSecret: tokenSecret(), TokenTTL: tokenTTL()})
+	gate := authpkg.NewGate(accounts)
 
 	return &Assembly{
 		Galaxy:   service,
@@ -146,11 +146,11 @@ func Build(database *gorm.DB) (*Assembly, error) {
 		Exchange: exchange,
 		Journal:  journal,
 		Control:  control,
-		Auth:     authpkg.NewHandler(identityService),
+		Auth:     authpkg.NewHandler(accounts, gate),
 		Agent: agent.NewHandler(service, exchange, journal,
 			durationProperty("galaxy.stream_idle_timeout_ms", 60_000), registry),
-		Consumers: consumers.NewHandler(service),
-		Providers: providers.NewHandler(service),
+		Consumers: consumers.NewHandler(service, gate),
+		Providers: providers.NewHandler(service, gate),
 		// 门户拿的是同一份声明清单：模型目录表为空时，门户上列出来的
 		// 必须和客户端能填的那份一致，否则页面写着有、填进去用不了。
 		Portal: portal.NewHandler(service, portal.Options{
@@ -158,7 +158,6 @@ func Build(database *gorm.DB) (*Assembly, error) {
 			CacheTTL:     durationProperty("galaxy.portal.cache_ttl_ms", 30_000),
 			LeadsPerHour: intProperty("galaxy.portal.leads_per_hour", 60),
 		}),
-		Admin: admin.NewHandler(service),
 	}, nil
 }
 
@@ -345,8 +344,27 @@ func defaultProperty(key, fallback string) string {
 	return fallback
 }
 
+// tokenSecret Galaxy 账号令牌的签名密钥。
+//
+// 优先读 galaxy.auth.token_secret；没配就退回这个进程自己的 auth.token_secret，
+// 老部署不改配置也能起来。两个名字读的都是 galaxy-api 自己的配置文件，
+// 和 web-api 那边配的是不是同一个值，不影响令牌串不串用（见 service/galaxy/account/token.go）；
+// 但各配各的仍然是该做的事，退回时在日志里提一句。
+func tokenSecret() string {
+	if secret := strings.TrimSpace(httpx.Property("galaxy.auth.token_secret")); secret != "" {
+		return secret
+	}
+	secret := strings.TrimSpace(httpx.Property("auth.token_secret"))
+	if secret != "" {
+		log.Print("galaxy.auth.token_secret 未配置，Galaxy 账号令牌暂用 auth.token_secret 签名；建议单独配一个")
+	} else {
+		log.Print("galaxy.auth.token_secret 未配置，Galaxy 账号无法登录与注册")
+	}
+	return secret
+}
+
 func tokenTTL() time.Duration {
-	seconds, _ := strconv.Atoi(httpx.Property("auth.token_ttl_seconds"))
+	seconds, _ := strconv.Atoi(defaultString(httpx.Property("galaxy.auth.token_ttl_seconds"), httpx.Property("auth.token_ttl_seconds")))
 	if seconds <= 0 {
 		seconds = 604800
 	}

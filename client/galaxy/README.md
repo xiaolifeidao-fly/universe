@@ -79,6 +79,12 @@ client/galaxy/
 `webview` 是目录名称，表示 Next.js 渲染应用，不是 Electron `<webview>` 标签。
 每端的页面、登录、导航、状态、i18n、样式均在自己的 `webview` 下维护。
 Nova 不包含 consumer 路由，Orbit 不包含 provider 路由，访问另一端的页面返回 404。
+
+账号也按端分开，而且和任务宇宙（web 控制台）的账号无关：Nova 的登录、注册、改密码打
+`/api/galaxy/provider/auth/*`，Orbit 打 `/api/galaxy/consumer/auth/*`，登录态分别存在
+`galaxy_provider_auth_*` / `galaxy_consumer_auth_*`。两端是两批人，同一个用户名在两端可以各是一个账号，
+一端的令牌调另一端的接口是 `not login`。共享端注册出来一律是散户，工作室只能由运营在管理端设。
+设计见 `doc/galaxy/README.md` 的「账号体系」。
 通用 HTTP/auth 工具和基础设计 token 继续复用项目原有的 `client/shared`。
 
 ## 三个成员的分工

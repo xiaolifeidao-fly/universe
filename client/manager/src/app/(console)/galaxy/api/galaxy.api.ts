@@ -3,8 +3,11 @@
 import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
 
 /**
- * 共享算力池的运营接口。请求路径都在 /galaxy/admin 下，
- * 由代理按前缀分流到 galaxy-api（见 src/pages/api/[...all].ts）。
+ * 共享算力池的运营接口。请求路径都在 /galaxy/admin 下，全部由 manager-api 自己出
+ * （manager-api/pkg/galaxy），代理不按前缀分流（见 src/pages/api/[...all].ts）。
+ *
+ * galaxy-api 上原来那组 /api/galaxy/admin/* 已经删掉了：它认的是任务宇宙的管理员，
+ * 而 Galaxy 有了自己的账号体系之后，那边只剩共享端和使用端的人，没有运营这种身份。
  */
 
 export class LaneStatus {
@@ -85,6 +88,9 @@ export class AdminNodeView {
   banned = false;
 
   ownerUserId = "";
+
+  /** 主人的共享端账号「昵称（用户名）」。账号查不到（比如迁移前的老数据）时是空串，界面退回显示 ownerUserId。 */
+  ownerName = "";
 
   /**
    * 主人的身份。注册默认是散户，只有管理端能设成工作室。
@@ -177,6 +183,83 @@ export async function setProviderType(ownerUserId: string, providerType: Provide
     ownerUserId,
     providerType,
   });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- Galaxy 账号 ---------- */
+
+/** 共享端出算力（Nova），使用端花钱买额度（Orbit）。两端是两批人：各注册各的，同一个用户名在两端可以是两个人。 */
+export type GalaxySide = "provider" | "consumer";
+
+export type GalaxyAccountStatus = "active" | "disabled";
+
+/**
+ * Galaxy 自己的账号，和「用户管理」里的业务用户、管理端账号都不是一套。
+ * id 是 pu_… / cu_…，就是池内表里 owner 存的那个值；迁移过来的老账号是 pu_legacy_<原 id> / cu_legacy_<原 id>。
+ */
+export class GalaxyAccountView {
+  id = "";
+
+  side: GalaxySide = "provider";
+
+  username = "";
+
+  displayName = "";
+
+  status: GalaxyAccountStatus = "active";
+
+  /** 运营重置过密码、本人还没改。改掉之前除了看本人信息和改密码，什么接口都调不动。 */
+  mustChangePassword = false;
+
+  /** 只有共享端有。 */
+  providerType?: ProviderType;
+
+  lastLoginAt?: string;
+
+  createdAt = "";
+}
+
+export class GalaxyAccountPage {
+  list: GalaxyAccountView[] = [];
+
+  total = 0;
+}
+
+export interface GalaxyAccountQuery {
+  side: GalaxySide;
+  /** 模糊匹配用户名 / 昵称，或者精确匹配账号 id。 */
+  keyword?: string;
+  status?: GalaxyAccountStatus | "";
+  /** 只对共享端生效。 */
+  providerType?: ProviderType | "";
+  offset?: number;
+  /** 服务端默认 20，上限 200。 */
+  limit?: number;
+}
+
+export async function listGalaxyUsers(query: GalaxyAccountQuery) {
+  return getData(GalaxyAccountPage, "/galaxy/admin/users", {
+    side: query.side,
+    keyword: query.keyword?.trim() || undefined,
+    status: query.status || undefined,
+    providerType: query.side === "provider" ? query.providerType || undefined : undefined,
+    offset: query.offset,
+    limit: query.limit,
+  });
+}
+
+/**
+ * 停用 / 启用。停用当场生效，这个账号发出去的登录令牌一起作废；再启用也不会让它们复活。
+ * 停用只挡登录控制台 —— 名下在跑的机器、发出去的算力密钥不跟着停，它们各有各的开关（封禁机器、吊销密钥）。
+ */
+export async function setGalaxyUserStatus(userId: string, status: GalaxyAccountStatus) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/users/status", { userId, status });
+  return unwrapApiResponse(response.data);
+}
+
+/** 替忘了密码的人设临时密码（8 个字符起，不超过 72 个字节）。现有令牌作废，本人下次登录必须先改掉它。 */
+export async function resetGalaxyUserPassword(userId: string, password: string) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/users/password", { userId, password });
   return unwrapApiResponse(response.data);
 }
 

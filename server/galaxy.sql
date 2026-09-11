@@ -26,6 +26,37 @@
 
 
 -- -------------------------------------------------------------------------
+-- 0. 账号
+-- Galaxy 自己的账号体系，和任务宇宙的 zt_identity_user 没有任何关系，令牌也互不通用。
+-- 共享端（provider，Nova）和使用端（consumer，Orbit）是两批人，各注册各的：
+-- 用户名按端唯一，user_id 带端的前缀（pu_ / cu_）。池内表里所有 owner_user_id /
+-- user_id / provider_user_id 存的都是这个 user_id。
+-- 从任务宇宙账号迁过来的老数据见 server/migrations/20260911_galaxy_user.sql。
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_user` (
+  `id`                   bigint AUTO_INCREMENT,
+  `biz_line`             varchar(32),                             -- 业务线，池内固定 galaxy
+  `user_id`              varchar(40),                             -- 账号业务键：共享端 pu_…，使用端 cu_…
+  `side`                 varchar(16),                             -- provider=共享端；consumer=使用端
+  `username`             varchar(64),                             -- 登录名，小写，按端唯一
+  `display_name`         varchar(128),
+  `password_hash`        varchar(255),                            -- bcrypt
+  `status`               varchar(16),                             -- active/disabled
+  `must_change_password` boolean DEFAULT false,                   -- 运营重置过密码：改掉之前只能调 me 和改密码
+  `token_version`        bigint DEFAULT 1,                        -- 签进令牌；改密码、重置、停用都加一，旧令牌作废
+  `last_login_at`        timestamp null default null,
+  `updated_by`           varchar(64),                             -- 最近一次处置这个账号（停用、启用、重置密码）的管理端账号
+  `created_time`         datetime(3) NULL,
+  `updated_time`         datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_user_id` (`biz_line`,`user_id`),
+  UNIQUE INDEX `uk_gx_user_name` (`biz_line`,`side`,`username`),
+  INDEX `idx_gx_user_side` (`biz_line`,`side`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- -------------------------------------------------------------------------
 -- 1. 供给：机器 → 贡献 → 授权 → 座位
 -- 贡献 = 一台机器上的一种能力（kind + provider）。额度以 Hub 为权威：
 -- 节点本地申报的只是展示副本，真正生效的是 quota_grant 这几行。
@@ -67,7 +98,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
 CREATE TABLE IF NOT EXISTS `zt_galaxy_provider` (
   `id`            bigint AUTO_INCREMENT,
   `biz_line`      varchar(32),
-  `owner_user_id` varchar(64),                                  -- 提供者用户标识
+  `owner_user_id` varchar(64),                                  -- 共享端账号 zt_galaxy_user.user_id（pu_…）
   `provider_type` varchar(16),                                  -- individual=散户，信誉跟着账号；studio=工作室，信誉跟着设备
   `updated_by`    varchar(64),                                  -- 最近一次改身份的管理端账号
   `created_time`  datetime(3) NULL,

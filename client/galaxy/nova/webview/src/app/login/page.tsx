@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * 登录。左边是「为什么要用它」，右边是账号密码。
+ * 登录。骨架（左边卖点、右边表单）在 LoginShell，注册、改密码两页共用。
  *
- * 桌面应用的登录页只会被看到几次，但每一次都是第一印象 —— 所以左边那半屏
- * 不是装饰：三条卖点回答的是新用户此刻真正在犹豫的事。
+ * 运营重置过密码的人拿临时密码登进来，服务端除了「看自己」和「改密码」什么都不放行，
+ * 所以这种账号登录后直接去改密码页，不进控制台。
  */
 
 import { message } from "antd";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { IconArrowRight, IconCheck } from "@/components/ui/icons";
+import { LoginShell } from "@/components/shell/LoginShell";
+import { IconArrowRight } from "@/components/ui/icons";
 import { Btn, Field } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { isAuthenticated, setAuthToken, setAuthUser, setPasswordChangeRequired } from "@/utils/auth";
@@ -47,8 +48,12 @@ export default function LoginPage() {
       setAuthToken(result.token, remember);
       setAuthUser(result.user, remember);
       setPasswordChangeRequired(Boolean(result.user?.mustChangePassword));
-      if (result.user?.mustChangePassword) message.warning(t("login.mustChangePassword"));
-      else message.success(t("login.success"));
+      if (result.user?.mustChangePassword) {
+        message.warning(t("login.mustChangePassword"));
+        router.replace("/password");
+        return;
+      }
+      message.success(t("login.success"));
       router.replace(productConfig.home);
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
@@ -58,110 +63,62 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="gx-login">
-      <section className="gx-login__hero">
-        <div className="gx-login__tagline">
-          {t("login.tagline1")}
-          <br />
-          {t("login.tagline2")}
-        </div>
-        <div className="gx-login__points">
-          {["1", "2", "3"].map((index) => (
-            <div className="gx-login__point" key={index}>
-              <span
-                style={{
-                  width: 22,
-                  height: 22,
-                  flex: "0 0 auto",
-                  borderRadius: "50%",
-                  display: "grid",
-                  placeItems: "center",
-                  background: "var(--gx-accent-soft)",
-                  color: "var(--gx-accent)",
-                }}
-              >
-                <IconCheck size={13} />
-              </span>
-              <span>
-                <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{t(`login.point${index}.title`)}</span>
-                <span style={{ display: "block", fontSize: 12.5, lineHeight: 1.65, color: "var(--gx-faint)", marginTop: 2 }}>
-                  {t(`login.point${index}.desc`)}
-                </span>
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+    <LoginShell subtitle={t("login.welcome")} foot={t("login.foot")} onSubmit={submit}>
+      <Field label={t("login.account")}>
+        <input
+          className="gx-input"
+          autoComplete="username"
+          placeholder={t("login.accountPlaceholder")}
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+      </Field>
+      <Field label={t("login.password")}>
+        <input
+          className="gx-input"
+          type="password"
+          autoComplete="current-password"
+          placeholder={t("login.passwordPlaceholder")}
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </Field>
 
-      <section className="gx-login__form">
-        <form className="gx-login__panel" onSubmit={submit}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-            <span className="gx-serif" style={{ fontSize: 24 }}>
-              {productConfig.name}
-            </span>
-            <span className="gx-mono" style={{ fontSize: 10.5, letterSpacing: "0.14em", color: "var(--gx-faint)" }}>
-              {t("brand.subtitle")}
-            </span>
-          </div>
-          <div style={{ fontSize: 13, color: "var(--gx-faint)", marginBottom: 22 }}>{t("login.welcome")}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12.5 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--gx-soft)", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(event) => setRemember(event.target.checked)}
+            style={{ accentColor: "var(--gx-accent)" }}
+          />
+          {t("login.remember")}
+        </label>
+        {/* 没有自助找回，重置只能由平台运营在管理端做。点了告诉人该找谁，比一个点不动的字强。 */}
+        <button type="button" className="gx-link" onClick={() => message.info(t("login.forgotHint"))}>
+          {t("login.forgot")}
+        </button>
+      </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Field label={t("login.account")}>
-              <input
-                className="gx-input"
-                autoComplete="username"
-                placeholder={t("login.accountPlaceholder")}
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-              />
-            </Field>
-            <Field label={t("login.password")}>
-              <input
-                className="gx-input"
-                type="password"
-                autoComplete="current-password"
-                placeholder={t("login.passwordPlaceholder")}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </Field>
+      <Btn tone="accent" type="submit" loading={busy} icon={<IconArrowRight size={16} />}>
+        {t("login.submit")}
+      </Btn>
 
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 12.5 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--gx-soft)", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={remember}
-                  onChange={(event) => setRemember(event.target.checked)}
-                  style={{ accentColor: "var(--gx-accent)" }}
-                />
-                {t("login.remember")}
-              </label>
-              <span className="gx-muted">{t("login.forgot")}</span>
-            </div>
-
-            <Btn tone="accent" type="submit" loading={busy} icon={<IconArrowRight size={16} />}>
-              {t("login.submit")}
-            </Btn>
-
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--gx-faint)" }}>
-              <span>
-                {t("login.noAccount")} <span style={{ color: "var(--gx-accent-ink)" }}>{t("login.register")}</span>
-              </span>
-              <button
-                type="button"
-                className="gx-link"
-                onClick={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
-              >
-                {t(locale === "zh-CN" ? "locale.en-US" : "locale.zh-CN")}
-              </button>
-            </div>
-          </div>
-
-          <p style={{ marginTop: 26, marginBottom: 0, fontSize: 11.5, lineHeight: 1.7, color: "var(--gx-faint)" }}>
-            {t("login.foot")}
-          </p>
-        </form>
-      </section>
-    </main>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--gx-faint)" }}>
+        <span>
+          {t("login.noAccount")}{" "}
+          <button type="button" className="gx-link" onClick={() => router.push("/register")}>
+            {t("login.register")}
+          </button>
+        </span>
+        <button
+          type="button"
+          className="gx-link"
+          onClick={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
+        >
+          {t(locale === "zh-CN" ? "locale.en-US" : "locale.zh-CN")}
+        </button>
+      </div>
+    </LoginShell>
   );
 }

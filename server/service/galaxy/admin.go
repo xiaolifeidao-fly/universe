@@ -6,6 +6,7 @@ import (
 
 	"contract"
 	"service/galaxy/dto"
+	"service/galaxy/internal/repository"
 )
 
 // 平台运营视角。这些接口只读或只做处置动作，不参与请求路径 ——
@@ -23,6 +24,10 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 	if err != nil {
 		return nil, err
 	}
+	ownerNames, err := s.ownerNames(ctx, nodes)
+	if err != nil {
+		return nil, err
+	}
 	for _, node := range nodes {
 		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
 		if err != nil {
@@ -36,6 +41,7 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 				Contributions: make([]dto.ContributionView, 0, len(rows)),
 			},
 			OwnerUserID:  node.OwnerUserID,
+			OwnerName:    ownerNames[node.OwnerUserID],
 			ProviderType: providerTypes[node.OwnerUserID],
 		}
 		grants, err := s.loadGrants(ctx, cidsOf(rows))
@@ -48,6 +54,31 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 		views = append(views, view)
 	}
 	return views, nil
+}
+
+// ownerNames 这些机器的主人叫什么，按 ownerUserId 索引。批量查一次账号表，
+// 查不到的（账号被删、迁移前的老数据）不在结果里。
+func (s *service) ownerNames(ctx context.Context, nodes []*repository.GalaxyNode) (map[string]string, error) {
+	owners := make([]string, 0, len(nodes))
+	seen := map[string]bool{}
+	for _, node := range nodes {
+		if node.OwnerUserID != "" && !seen[node.OwnerUserID] {
+			seen[node.OwnerUserID] = true
+			owners = append(owners, node.OwnerUserID)
+		}
+	}
+	rows, err := s.repository.ListUsersByIDs(ctx, bizLine, owners)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		names[row.UserID] = row.Username
+		if row.DisplayName != "" && row.DisplayName != row.Username {
+			names[row.UserID] = row.DisplayName + "（" + row.Username + "）"
+		}
+	}
+	return names, nil
 }
 
 // AdminProbes 最近的抽检结果。只返回签名与判定，请求原文在比对完成时就已清掉。

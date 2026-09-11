@@ -9,6 +9,7 @@ import (
 	"service/bizline"
 	"service/delivery"
 	galaxysvc "service/galaxy"
+	galaxyaccount "service/galaxy/account"
 	"service/identity"
 	"service/manager"
 
@@ -37,6 +38,7 @@ func New(
 	bizLineService bizline.Service,
 	deliveryService delivery.Service,
 	galaxyService galaxysvc.Service,
+	galaxyAccounts galaxyaccount.Service,
 ) (*gin.Engine, error) {
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery())
@@ -50,7 +52,7 @@ func New(
 	})
 
 	api := engine.Group("/api", managerauth.Middleware(managerService))
-	for _, handler := range registerHandlers(managerService, identityService, bizLineService, deliveryService, galaxyService) {
+	for _, handler := range registerHandlers(managerService, identityService, bizLineService, deliveryService, galaxyService, galaxyAccounts) {
 		handler.RegisterHandler(api)
 	}
 	return engine, nil
@@ -65,13 +67,14 @@ func registerHandlers(
 	bizLineService bizline.Service,
 	deliveryService delivery.Service,
 	galaxyService galaxysvc.Service,
+	galaxyAccounts galaxyaccount.Service,
 ) []commonrouters.Handler {
 	return []commonrouters.Handler{
 		consolepkg.NewHandler(managerService),
 		userspkg.NewHandler(identityService),
 		bizlinespkg.NewHandler(bizLineService, identityService),
 		programspkg.NewHandler(deliveryService),
-		galaxypkg.NewHandler(galaxyService),
+		galaxypkg.NewHandler(galaxyService, galaxyAccounts),
 	}
 }
 

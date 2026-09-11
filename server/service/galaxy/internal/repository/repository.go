@@ -23,6 +23,8 @@ func (r *GalaxyRepository) AutoMigrate() error {
 // 两处各写一份的话，新表迟早只进其中一处，另一处要等到线上报「表不存在」才发现。
 func models() []any {
 	return []any{
+		// 账号：共享端与使用端各一批，和任务宇宙的账号体系无关
+		&GalaxyUser{},
 		// 供给：机器 → 贡献 → 授权 → 座位
 		&GalaxyNode{}, &GalaxyProvider{}, &GalaxyReputation{}, &GalaxyMachineBan{}, &GalaxyPairingCode{}, &GalaxyProviderKey{}, &GalaxyContribution{},
 		&GalaxyQuotaGrant{}, &GalaxyQuotaWindow{}, &GalaxySeatBinding{},

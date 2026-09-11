@@ -11,12 +11,16 @@ import (
 
 // New 构造 Hub 的路由树。三段链路各有各的鉴权与响应形态：
 //
-//	/v1/*        消费者：sk- 算力密钥，官方 SDK 兼容，响应体是官方形态
-//	/agent/v1/*  节点：node token，机器协议，按 HTTP 状态码分支
-//	/api/galaxy  控制台：用户令牌，统一信封
+//	/v1/*                  消费者：sk- 算力密钥，官方 SDK 兼容，响应体是官方形态
+//	/agent/v1/*            节点：node token，机器协议，按 HTTP 状态码分支
+//	/api/galaxy/provider/* 共享端控制台（Nova）：共享端账号令牌，统一信封
+//	/api/galaxy/consumer/* 使用端控制台（Orbit）：使用端账号令牌，统一信封
 //
-// 例外只有一处：/api/galaxy/portal/* 是门户面，**不带鉴权** —— 它回答的是
-// 「你们卖什么、多少钱」，收口在同一段路径下，方便一眼看出哪些是公开的。
+// 控制台账号是 Galaxy 自己的（service/galaxy/account），和任务宇宙那套无关；
+// 两端各一批人，一端的令牌调不了另一端。运营接口不在这个进程里，在 manager-api。
+//
+// 不带鉴权的有两处：/api/galaxy/portal/* 是门户面，回答「你们卖什么、多少钱」；
+// /api/galaxy/{provider,consumer}/auth/{login,register} 是两端的登录注册。
 func New(database *gorm.DB) (*gin.Engine, *Assembly, error) {
 	assembly, err := Build(database)
 	if err != nil {
@@ -50,16 +54,13 @@ func New(database *gorm.DB) (*gin.Engine, *Assembly, error) {
 	// 节点面。
 	assembly.Agent.RegisterHandler(engine.Group("/agent/v1"))
 
-	// 控制台面。登录挂在 /api 上（账号体系与 web/app/manager 共用同一套，
-	// 路径也保持一致），共享池自己的业务接口才在 /api/galaxy 下。
-	api := engine.Group("/api")
-	assembly.Auth.RegisterHandler(api)
-	console := api.Group("/galaxy")
-	// 门户面先挂：它没有鉴权，放在最前面读路由的人第一眼就会看到这件事。
+	// 控制台面。门户面和两端的登录注册先挂：它们没有鉴权，放在最前面，
+	// 读路由的人第一眼就会看到这件事。
+	console := engine.Group("/api/galaxy")
 	assembly.Portal.RegisterHandler(console)
+	assembly.Auth.RegisterHandler(console)
 	assembly.Providers.RegisterHandler(console)
 	assembly.Consumers.RegisterConsole(console)
-	assembly.Admin.RegisterHandler(console)
 
 	return engine, assembly, nil
 }

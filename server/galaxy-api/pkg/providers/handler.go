@@ -1,5 +1,5 @@
 // Package providers 是提供者控制台：同意条款、拿配对码、看贡献与用量、随时停。
-// 全部走控制台用户令牌，返回统一信封。
+// 全部走共享端账号的令牌（auth.Gate.Provider），返回统一信封。
 package providers
 
 import (
@@ -10,20 +10,24 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"common/middleware/httpx"
+	"galaxy-api/pkg/auth"
 	"service/galaxy"
 	"service/galaxy/dto"
 )
 
 type Handler struct {
 	service galaxy.Service
+	gate    *auth.Gate
 }
 
-func NewHandler(service galaxy.Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service galaxy.Service, gate *auth.Gate) *Handler {
+	return &Handler{service: service, gate: gate}
 }
 
+// RegisterHandler 整组只认共享端账号：使用端的令牌打进来是 not login。
+// 登录、注册那几条不在这里，在 auth 包 —— 它们要在门外面。
 func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
-	api := group.Group("/provider", httpx.RequireUser())
+	api := group.Group("/provider", h.gate.Provider())
 	api.POST("/terms/accept", h.acceptTerms)
 	api.GET("/terms", h.currentTerms)
 	api.POST("/pairing-code", h.issuePairingCode)
@@ -32,6 +36,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/access-keys", h.issueProviderKey)
 	api.POST("/access-keys/revoke", h.revokeProviderKey)
 	api.GET("/nodes", h.listNodes)
+	// 解绑掉的机器单独一个接口：/nodes 的调用方（今天、共享设置）都靠它不含解绑的行。
+	api.GET("/nodes/retired", h.listRetiredNodes)
 	api.POST("/node/revoke", h.revokeNode)
 	api.POST("/contribution/status", h.setContributionStatus)
 	api.POST("/contribution/limits", h.saveContributionLimits)
@@ -47,7 +53,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 
 // dashboard 「今天」那一页的全部数字。
 func (h *Handler) dashboard(context *gin.Context) {
-	view, err := h.service.ProviderDashboard(context.Request.Context(), httpx.CallerID(context))
+	view, err := h.service.ProviderDashboard(context.Request.Context(), auth.UserID(context))
 	httpx.JSON(context, view, err)
 }
 
@@ -56,7 +62,7 @@ func (h *Handler) ledger(context *gin.Context) {
 	offset, _ := strconv.Atoi(context.Query("offset"))
 	limit, _ := strconv.Atoi(context.Query("limit"))
 	page, err := h.service.ProviderLedger(context.Request.Context(), dto.LedgerQuery{
-		OwnerUserID: httpx.CallerID(context), Type: context.Query("type"),
+		OwnerUserID: auth.UserID(context), Type: context.Query("type"),
 		Offset: offset, Limit: limit,
 	})
 	httpx.JSON(context, page, err)
@@ -64,7 +70,7 @@ func (h *Handler) ledger(context *gin.Context) {
 
 func (h *Handler) listPayouts(context *gin.Context) {
 	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
-	views, err := h.service.ListPayouts(context.Request.Context(), httpx.CallerID(context), limit)
+	views, err := h.service.ListPayouts(context.Request.Context(), auth.UserID(context), limit)
 	httpx.JSON(context, views, err)
 }
 
@@ -76,7 +82,7 @@ func (h *Handler) createPayout(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	req.OwnerUserID = httpx.CallerID(context)
+	req.OwnerUserID = auth.UserID(context)
 	view, err := h.service.CreatePayout(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
@@ -97,7 +103,7 @@ func (h *Handler) acceptTerms(context *gin.Context) {
 	version := h.service.Config().ProviderTermsVersion
 	err := h.service.AcceptTerms(context.Request.Context(), dto.AcceptTermsRequest{
 		SubjectType:  "provider",
-		UserID:       httpx.CallerID(context),
+		UserID:       auth.UserID(context),
 		TermsVersion: version,
 		IP:           context.ClientIP(),
 		UserAgent:    context.GetHeader("User-Agent"),
@@ -107,13 +113,13 @@ func (h *Handler) acceptTerms(context *gin.Context) {
 
 func (h *Handler) currentTerms(context *gin.Context) {
 	version := h.service.Config().ProviderTermsVersion
-	accepted, err := h.service.HasConsent(context.Request.Context(), "provider", httpx.CallerID(context), version)
+	accepted, err := h.service.HasConsent(context.Request.Context(), "provider", auth.UserID(context), version)
 	httpx.JSON(context, gin.H{"version": version, "accepted": accepted}, err)
 }
 
 func (h *Handler) issuePairingCode(context *gin.Context) {
 	view, err := h.service.IssuePairingCode(context.Request.Context(), dto.IssuePairingCodeRequest{
-		OwnerUserID:  httpx.CallerID(context),
+		OwnerUserID:  auth.UserID(context),
 		TermsVersion: h.service.Config().ProviderTermsVersion,
 	})
 	httpx.JSON(context, view, err)
@@ -126,13 +132,13 @@ func (h *Handler) issueProviderKey(context *gin.Context) {
 	// 别名和有效期都是可选的，请求体允许为空。绑定失败不当错误处理 ——
 	// 一个不带 body 的 POST 是这个接口最常见的用法。
 	_ = context.ShouldBindJSON(&req)
-	req.OwnerUserID = httpx.CallerID(context)
+	req.OwnerUserID = auth.UserID(context)
 	view, err := h.service.IssueProviderKey(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) listProviderKeys(context *gin.Context) {
-	views, err := h.service.ListProviderKeys(context.Request.Context(), httpx.CallerID(context))
+	views, err := h.service.ListProviderKeys(context.Request.Context(), auth.UserID(context))
 	httpx.JSON(context, views, err)
 }
 
@@ -146,12 +152,17 @@ func (h *Handler) revokeProviderKey(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	err := h.service.RevokeProviderKey(context.Request.Context(), httpx.CallerID(context), req.KeyID)
+	err := h.service.RevokeProviderKey(context.Request.Context(), auth.UserID(context), req.KeyID)
 	httpx.JSON(context, req.KeyID, err)
 }
 
 func (h *Handler) listNodes(context *gin.Context) {
-	views, err := h.service.ListNodes(context.Request.Context(), httpx.CallerID(context))
+	views, err := h.service.ListNodes(context.Request.Context(), auth.UserID(context))
+	httpx.JSON(context, views, err)
+}
+
+func (h *Handler) listRetiredNodes(context *gin.Context) {
+	views, err := h.service.ListRetiredNodes(context.Request.Context(), auth.UserID(context))
 	httpx.JSON(context, views, err)
 }
 
@@ -163,7 +174,7 @@ func (h *Handler) revokeNode(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	err := h.service.RevokeNode(context.Request.Context(), httpx.CallerID(context), req.NodeID)
+	err := h.service.RevokeNode(context.Request.Context(), auth.UserID(context), req.NodeID)
 	httpx.JSON(context, req.NodeID, err)
 }
 
@@ -182,7 +193,7 @@ func (h *Handler) setContributionStatus(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	err := h.service.SetContributionStatus(context.Request.Context(), httpx.CallerID(context), req.NodeID, req.CID, req.Status)
+	err := h.service.SetContributionStatus(context.Request.Context(), auth.UserID(context), req.NodeID, req.CID, req.Status)
 	httpx.JSON(context, req.Status, err)
 }
 
@@ -193,7 +204,7 @@ func (h *Handler) saveContributionLimits(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	req.OwnerUserID = httpx.CallerID(context)
+	req.OwnerUserID = auth.UserID(context)
 	err := h.service.SaveContributionLimits(context.Request.Context(), req)
 	httpx.JSON(context, req.CID, err)
 }
@@ -207,14 +218,14 @@ func (h *Handler) listRecords(context *gin.Context) {
 		context.Query("state") != "" || context.Query("day") != "" || context.Query("paged") == "1"
 	if !paged {
 		limit, _ := strconv.Atoi(context.DefaultQuery("limit", "100"))
-		records, err := h.service.ListExecutionRecords(context.Request.Context(), httpx.CallerID(context), context.Query("cid"), limit)
+		records, err := h.service.ListExecutionRecords(context.Request.Context(), auth.UserID(context), context.Query("cid"), limit)
 		httpx.JSON(context, records, err)
 		return
 	}
 	offset, _ := strconv.Atoi(context.Query("offset"))
 	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
 	query := dto.ProviderRecordQuery{
-		OwnerUserID: httpx.CallerID(context), CID: context.Query("cid"),
+		OwnerUserID: auth.UserID(context), CID: context.Query("cid"),
 		Model: context.Query("model"), State: context.Query("state"),
 		Offset: offset, Limit: limit,
 	}
@@ -250,6 +261,6 @@ func dayRange(day string) (time.Time, time.Time) {
 }
 
 func (h *Handler) credits(context *gin.Context) {
-	balance, err := h.service.CreditBalance(context.Request.Context(), httpx.CallerID(context))
+	balance, err := h.service.CreditBalance(context.Request.Context(), auth.UserID(context))
 	httpx.JSON(context, gin.H{"balance": balance}, err)
 }

@@ -104,6 +104,25 @@ func (r *GalaxyRepository) ListNodesByOwner(ctx context.Context, bizLine, ownerU
 	return rows, err
 }
 
+// ListRevokedNodesByOwner 主人解绑掉的机器，账户页「已解绑」那一栏用。和 ListNodesByOwner 正好互补。
+//
+// 分两个列表而不是给那边加个开关：「我的机器」里混进解绑的行，就回到了上面说的
+// 「撤销了看着像没撤」。解绑是终态（见 MarkNodeOffline），这些行只留着对得上账 ——
+// 执行记录和积分里还有它们跑出来的那几笔。
+//
+// 最近解绑的在前：updated_time 在撤销那一刻被刷新，之后心跳、hello 都进不来（令牌已置空）。
+// 只取展示要的列：这张表上存着回连密钥的明文，用不着的列别往内存里捞（同 NodeNames）。
+func (r *GalaxyRepository) ListRevokedNodesByOwner(ctx context.Context, bizLine, ownerUserID string, limit int) ([]*GalaxyNode, error) {
+	var rows []*GalaxyNode
+	err := r.Db.WithContext(ctx).
+		Select("node_id, display_name, bridge_version, access_mode, endpoint_url, status, banned, last_beat_at, created_time, updated_time").
+		Where("biz_line = ?", bizLine).
+		Where("owner_user_id = ?", ownerUserID).
+		Where("status = ?", "revoked").
+		Order("updated_time desc").Limit(limit).Find(&rows).Error
+	return rows, err
+}
+
 // NodeNames 按 id 取主人名下机器的名字，**撤销掉的也要**。
 //
 // 给执行记录标「哪台机器跑的」用，和 ListNodesByOwner 正好相反：跑活的那台可能早就解绑了，

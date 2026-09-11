@@ -1,0 +1,52 @@
+package galaxy
+
+import (
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+// TestAdminRoutesRegisterWithoutConflict 共享池的运营接口全在这一组：galaxy-api 那边已经没有了。
+//
+// 路由冲突在 gin 里是注册期 panic。另外这张路由表就是接口资源表的来源 ——
+// 少注册一条，那条接口就不会出现在 server/manager_galaxy_resources.sql 能登记的范围里。
+func TestAdminRoutesRegisterWithoutConflict(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("路由注册不该 panic：%v", recovered)
+		}
+	}()
+	NewHandler(nil, nil).RegisterHandler(engine.Group("/api"))
+
+	want := []string{
+		"GET /api/galaxy/admin/pool",
+		"GET /api/galaxy/admin/nodes",
+		"POST /api/galaxy/admin/provider/type",
+		"GET /api/galaxy/admin/disputes",
+		"POST /api/galaxy/admin/disputes/resolve",
+		"GET /api/galaxy/admin/packages",
+		"POST /api/galaxy/admin/packages/save",
+		"GET /api/galaxy/admin/users",
+		"POST /api/galaxy/admin/users/status",
+		"POST /api/galaxy/admin/users/password",
+		"POST /api/galaxy/admin/keys/issue",
+		"POST /api/galaxy/admin/orders/pay",
+		"GET /api/galaxy/admin/portal/models",
+		"POST /api/galaxy/admin/portal/models/save",
+		"POST /api/galaxy/admin/portal/models/delete",
+		"GET /api/galaxy/admin/portal/leads",
+		"POST /api/galaxy/admin/portal/leads/handle",
+	}
+	registered := map[string]bool{}
+	for _, route := range engine.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	for _, route := range want {
+		if !registered[route] {
+			t.Errorf("缺少路由 %s", route)
+		}
+	}
+}

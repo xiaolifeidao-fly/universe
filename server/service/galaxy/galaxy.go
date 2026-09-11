@@ -251,6 +251,8 @@ type Service interface {
 	Complete(ctx context.Context, req dto.CompleteRequest) (dto.CompleteResult, error)
 
 	ListNodes(ctx context.Context, ownerUserID string) ([]dto.NodeView, error)
+	// ListRetiredNodes 主人解绑掉的机器。ListNodes 不含它们，两边互补。
+	ListRetiredNodes(ctx context.Context, ownerUserID string) ([]dto.NodeView, error)
 	ListExecutionRecords(ctx context.Context, ownerUserID, cid string, limit int) ([]dto.ExecutionRecord, error)
 	SetContributionStatus(ctx context.Context, ownerUserID, nodeID, cid, status string) error
 	// SaveContributionLimits 控制台改授权。额度以 Hub 为权威：改完节点下一次 hello

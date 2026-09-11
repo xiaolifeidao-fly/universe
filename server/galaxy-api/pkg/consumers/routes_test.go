@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"galaxy-api/pkg/auth"
 )
 
 // TestConsoleRoutesRegisterWithoutConflict 路由冲突在 gin 里是**注册期 panic**，
@@ -14,7 +16,7 @@ import (
 func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	handler := NewHandler(nil)
+	handler := NewHandler(nil, auth.NewGate(nil))
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -36,13 +38,16 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 		"POST /api/galaxy/consumer/disputes",
 		"POST /api/galaxy/consumer/disputes/:disputeId/withdraw",
 		"GET /api/galaxy/consumer/payments/channels",
-		// 静态的 /orders/pay/sandbox 和管理员那条 /orders/pay 同层，注册期不能打架。
-		"POST /api/galaxy/consumer/orders/pay",
 		"POST /api/galaxy/consumer/orders/pay/sandbox",
 	}
-	// 商品目录已经挪去 /api/galaxy/admin/*。留在这儿的话，一个运营动作会
-	// 继续挂在消费者路由组上，只靠一个中间件把门。
-	gone := []string{"POST /api/galaxy/consumer/packages/save"}
+	// 运营动作一律不挂在使用端路由组上：商品目录、给人发密钥、人工确认到账都在
+	// manager-api 的 /api/galaxy/admin/* 下，认的是管理端账号。留在这儿的话，
+	// 它们只能靠一个中间件把门，而 Galaxy 的账号体系里根本没有运营这种人。
+	gone := []string{
+		"POST /api/galaxy/consumer/packages/save",
+		"POST /api/galaxy/consumer/keys/issue",
+		"POST /api/galaxy/consumer/orders/pay",
+	}
 	registered := map[string]bool{}
 	for _, route := range engine.Routes() {
 		registered[route.Method+" "+route.Path] = true
@@ -54,7 +59,7 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 	}
 	for _, route := range gone {
 		if registered[route] {
-			t.Errorf("%s 应当已经挪去 /api/galaxy/admin", route)
+			t.Errorf("%s 是运营动作，应当在 manager-api 的 /api/galaxy/admin 下", route)
 		}
 	}
 }
@@ -64,7 +69,7 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 func TestPaymentCallbackNotRegisteredWithoutVerifier(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	NewHandler(paymentDisabled{}).RegisterCallbacks(engine.Group("/galaxy"))
+	NewHandler(paymentDisabled{}, auth.NewGate(nil)).RegisterCallbacks(engine.Group("/galaxy"))
 
 	for _, route := range engine.Routes() {
 		if strings.Contains(route.Path, "/payments/") {
@@ -76,7 +81,7 @@ func TestPaymentCallbackNotRegisteredWithoutVerifier(t *testing.T) {
 func TestPaymentCallbackRegisteredWhenEnabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	NewHandler(paymentEnabled{}).RegisterCallbacks(engine.Group("/galaxy"))
+	NewHandler(paymentEnabled{}, auth.NewGate(nil)).RegisterCallbacks(engine.Group("/galaxy"))
 
 	found := false
 	for _, route := range engine.Routes() {

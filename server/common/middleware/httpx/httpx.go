@@ -150,32 +150,6 @@ func RequireAdmin() gin.HandlerFunc {
 	}
 }
 
-// RequirePlatformAdmin gates actions that only a platform administrator may
-// take, without the product-research persona check RequireAdmin also applies.
-//
-// The persona gate exists because the delivery workbench is persona-scoped: a
-// business user must not reach product/research data. The shared compute pool
-// is a different surface — its operators ban nodes, resolve disputes and move
-// credits between ledgers, and they are not necessarily product-research
-// people. Reusing RequireAdmin there would lock the pool's own operators out
-// of the only console that can act on it.
-func RequirePlatformAdmin() gin.HandlerFunc {
-	return func(ginContext *gin.Context) {
-		if !authenticateUser(ginContext) {
-			return
-		}
-		if !requireChangedPassword(ginContext) {
-			return
-		}
-		if !IsAdmin(ginContext) {
-			Fail(ginContext, "无权执行平台管理操作")
-			ginContext.Abort()
-			return
-		}
-		ginContext.Next()
-	}
-}
-
 func RequireService() gin.HandlerFunc {
 	return func(ginContext *gin.Context) {
 		if !authenticateService(ginContext) {

@@ -660,6 +660,32 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 	return views, nil
 }
 
+// retiredNodeLimit 「已解绑」一栏最多列多少台。那是一份对账用的历史，不是要逐台管理的列表。
+const retiredNodeLimit = 200
+
+// ListRetiredNodes 主人解绑掉的机器，账户页「已解绑」一栏用；在用的机器仍然只走 ListNodes。
+//
+// 不带贡献：解绑时贡献行已经一并关掉、控制面也摘了（见 RevokeNode），再去算额度和信誉
+// 只会得到一堆零。回连探测的结果也不给 —— 解绑之后没人再去探它，留着的是解绑前的旧话。
+func (s *service) ListRetiredNodes(ctx context.Context, ownerUserID string) ([]dto.NodeView, error) {
+	nodes, err := s.repository.ListRevokedNodesByOwner(ctx, bizLine, ownerUserID, retiredNodeLimit)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]dto.NodeView, 0, len(nodes))
+	for _, node := range nodes {
+		views = append(views, dto.NodeView{
+			NodeID: node.NodeID, DisplayName: node.DisplayName, BridgeVersion: node.BridgeVersion,
+			Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
+			AccessMode:  dto.NormalizeAccessMode(node.AccessMode),
+			EndpointURL: node.EndpointURL,
+			// 同 ListNodes：nil 切片会序列化成 null，前端的 .map() 会崩。
+			Contributions: []dto.ContributionView{},
+		})
+	}
+	return views, nil
+}
+
 // contributionView 的 reputation 是这条贡献所在机器的信誉：信誉挂在机器上，同一台机器的每条贡献都一样。
 func (s *service) contributionView(ctx context.Context, row *repository.GalaxyContribution, grants []QuotaGrant, now time.Time, reputation float64) dto.ContributionView {
 	snapshot, found, _ := s.control.GetContribution(ctx, row.CID)

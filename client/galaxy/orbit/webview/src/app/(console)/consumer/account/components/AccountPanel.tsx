@@ -3,21 +3,22 @@
 /**
  * 账户。
  *
- * 原型上还画了改密码、发票抬头、设备列表 —— 那三样都要 identity 那边先有接口。
- * 这一版只做已经有真实数据支撑的部分：资料只读、密钥概况、数据告知、界面语言、
- * 退出登录。摆一个改了没反应的密码框，比暂时不摆更糟。
+ * 资料只读、密钥概况、数据告知、界面语言、改密码、退出登录。改密码是单独一页（/password）：
+ * 运营重置过密码的人登进来也被挡到那一页，两种人共用一套表单。
+ * 原型上还画了发票抬头、设备列表 —— 这一版只做已经有真实数据支撑的部分。
  */
 
 import { message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconKey, IconLogout, IconShield } from "@/components/ui/icons";
+import { IconKey, IconLock, IconLogout, IconShield } from "@/components/ui/icons";
 import { Btn, Card, CardHead, Loading, Note, Pill, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { clearAuthToken, getAuthUser, type AuthUser } from "@/utils/auth";
+import { clearAuthToken, getAuthUser, isAuthTokenRemembered, setAuthUser, type AuthUser } from "@/utils/auth";
 import { formatCompact } from "@/utils/format";
 import { acceptNotice, fetchDashboard, fetchNotice, type ConsumerDashboard, type NoticeStatus } from "../../api/consumer.api";
+import { fetchCurrentAccount } from "../api/account.api";
 
 export function AccountPanel() {
   const { t, locale, setLocale } = useLocale();
@@ -40,8 +41,20 @@ export function AccountPanel() {
   }, [t]);
 
   useEffect(() => {
+    let alive = true;
     setUser(getAuthUser());
+    // 本地那份是登录那一刻的快照，现取一次把昵称这些对齐。取不到就先用快照，不弹报错。
+    void fetchCurrentAccount()
+      .then((fresh) => {
+        if (!alive) return;
+        setUser(fresh);
+        setAuthUser(fresh, isAuthTokenRemembered());
+      })
+      .catch(() => undefined);
     void load();
+    return () => {
+      alive = false;
+    };
   }, [load]);
 
   // 同密钥卡片：只看输出 token，那才是计费口径。
@@ -61,7 +74,6 @@ export function AccountPanel() {
               <span style={{ fontSize: 17, fontWeight: 600 }}>{user?.displayName || user?.username || "—"}</span>
               <span className="gx-mono" style={{ fontSize: 12, color: "var(--gx-faint)" }}>
                 {user?.username}
-                {user?.role ? ` · ${user.role}` : ""}
               </span>
             </div>
           </div>
@@ -126,6 +138,9 @@ export function AccountPanel() {
               ]}
             />
             <span style={{ flex: 1 }} />
+            <Btn tone="ghost" icon={<IconLock size={16} />} onClick={() => router.push("/password")}>
+              {t("account.changePassword")}
+            </Btn>
             <Btn
               tone="ghost"
               icon={<IconLogout size={16} />}

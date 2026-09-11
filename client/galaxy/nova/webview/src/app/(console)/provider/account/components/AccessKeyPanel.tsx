@@ -11,72 +11,83 @@
  * 它比配对码值钱得多：拿到它的人能以你的名义往池子里加机器，别人跑在那台机器上
  * 产生的积分会记在你头上。所以这一块只做三件事 —— 签发（明文只显示一次）、
  * 看它最近被谁用过、随时吊销。
+ *
+ * 列表分「有效」「已吊销」两栏：吊销是终态，混在一起时，有效的那几把得在一排作废的里面找。
+ * 签发收进弹窗；部署命令默认收起 —— 真正拿去用的那份在签发弹窗里，带着刚签出来的密钥，
+ * 页面上这份只是占位符版本的说明，摊开就是两大块没人复制的代码。
  */
 
 import { Modal, message } from "antd";
-import { useCallback, useEffect, useState } from "react";
-import { IconKey, IconPlus } from "@/components/ui/icons";
-import { Btn, Card, CardHead, CopyBtn, Field, Loading, Note, Pill } from "@/components/ui/kit";
+import { useState } from "react";
+import { IconChevronDown, IconKey, IconPlus } from "@/components/ui/icons";
+import { Btn, Card, CardHead, CopyBtn, Field, Note } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { formatRelative } from "@/utils/format";
 import {
   acceptTerms,
-  fetchProviderEndpoint,
-  fetchProviderKeys,
-  fetchTerms,
   issueProviderKey,
   revokeProviderKey,
   type IssuedProviderKey,
   type ProviderKeyView,
   type TermsStatus,
 } from "../../api/provider.api";
+import { Blank, RowList, TabStrip } from "./parts";
 
-export function AccessKeyPanel() {
+const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
+
+export function AccessKeyPanel({
+  keys,
+  terms,
+  hubUrl,
+  nodeNames,
+  issueOpen,
+  onIssueOpenChange,
+  onChanged,
+}: {
+  keys: ProviderKeyView[];
+  terms: TermsStatus | null;
+  /** 平台地址由服务端给，前端不自己拼（见 ProviderEndpoint 的注释）。 */
+  hubUrl: string;
+  /** 节点 ID → 机器名，在用的和解绑的都在。「最近注册」后面报机器名，比一串 n_… 认得出。 */
+  nodeNames: Record<string, string>;
+  /** 签发弹窗开没开。「其他机器」那一块的「接入服务器」也打开它，所以由页面管。 */
+  issueOpen: boolean;
+  onIssueOpenChange: (open: boolean) => void;
+  /** 签发、吊销之后让页面重新拉密钥列表。 */
+  onChanged: () => Promise<void>;
+}) {
   const { t } = useLocale();
   // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
   const [modal, modalHolder] = Modal.useModal();
-  const [keys, setKeys] = useState<ProviderKeyView[]>([]);
-  const [terms, setTerms] = useState<TermsStatus | null>(null);
-  const [hubUrl, setHubUrl] = useState("");
+  const [tab, setTab] = useState<"active" | "revoked">("active");
+  const [showCli, setShowCli] = useState(false);
   const [alias, setAlias] = useState("");
-  const [agreed, setAgreed] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [issued, setIssued] = useState<IssuedProviderKey | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [list, termsStatus, endpoint] = await Promise.all([
-        fetchProviderKeys(),
-        fetchTerms(),
-        fetchProviderEndpoint(),
-      ]);
-      setKeys(list);
-      setTerms(termsStatus);
-      setAgreed(termsStatus.accepted);
-      setHubUrl(endpoint.hubUrl);
-    } catch (error) {
-      message.error((error as Error).message || t("common.loadFailed"));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // 已经同意过当前版本的条款就不再摆勾选框。
+  const agreed = Boolean(terms?.accepted) || checked;
+  const active = keys.filter((key) => key.status === "active");
+  const revoked = keys.filter((key) => key.status !== "active");
+  const rows = tab === "active" ? active : revoked;
+  const hub = hubUrl || "https://hub.example.com";
 
   const issue = async () => {
+    if (busy || !agreed) return;
     setBusy(true);
     try {
       // 和配对码同一道闸：没有当前条款版本的同意记录，服务端不签发（P-16）。
       if (!terms?.accepted) await acceptTerms();
       const key = await issueProviderKey({ alias: alias.trim() || undefined });
       setSecretCopied(false);
+      // 同一个弹窗接着显示密钥：先摆出 issued 再关表单，弹窗不会闪一下。
       setIssued(key);
+      onIssueOpenChange(false);
       setAlias("");
-      await load();
+      setTab("active");
+      await onChanged();
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
     } finally {
@@ -95,7 +106,7 @@ export function AccessKeyPanel() {
         try {
           await revokeProviderKey(key.keyId);
           message.success(t("account.keyRevoked"));
-          await load();
+          await onChanged();
         } catch (error) {
           message.error((error as Error).message || t("common.actionFailed"));
         }
@@ -120,103 +131,85 @@ export function AccessKeyPanel() {
     });
   };
 
-  // 平台地址由服务端给，前端不自己拼（见 ProviderEndpoint 的注释）。
-  const hub = hubUrl || "https://hub.example.com";
+  const openIssue = () => onIssueOpenChange(true);
 
   return (
     <Card className="gx-rise gx-rise--2">
-      <CardHead title={t("account.keys")} hint={t("account.keysHint")} />
-      {loading ? (
-        <Loading />
-      ) : (
-        <div style={{ padding: "0 22px 18px" }}>
-          {keys.length === 0 ? (
-            <div style={{ padding: "14px 0", borderTop: "1px solid var(--gx-line)", fontSize: 13.5, color: "var(--gx-faint)" }}>
-              {t("account.keysNone")}
-            </div>
+      <CardHead
+        title={t("account.keys")}
+        hint={t("account.keysHint")}
+        action={
+          <Btn tone="ghost" small icon={<IconPlus size={14} />} onClick={openIssue}>
+            {t("account.keyIssueAction")}
+          </Btn>
+        }
+      />
+      <TabStrip
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "active" as const, label: t("account.keyActive"), count: active.length },
+          { value: "revoked" as const, label: t("account.keyRevoked"), count: revoked.length },
+        ]}
+      />
+      <RowList>
+        {rows.length === 0 ? (
+          tab === "active" ? (
+            <Blank title={t("account.keysActiveEmpty")} hint={t("account.keysActiveEmptyHint")} />
           ) : (
-            keys.map((key) => (
-              <div
-                key={key.keyId}
-                style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 0", borderTop: "1px solid var(--gx-line)" }}
-              >
-                <IconKey size={18} style={{ color: "var(--gx-faint)" }} />
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{key.alias || key.keyId}</span>
-                  {/*
-                    ID 前面必须带标注：它和密钥本身只差一个字符（gpk_ 对 gpk-），
-                    不标出来，人会照着界面把它当成密钥复制走 —— 这件事真的发生过。
-                  */}
-                  <span style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 2 }}>
-                    {t("account.keyIdLabel")} <span className="gx-mono">{key.keyId}</span> ·{" "}
-                    {key.lastUsedAt
-                      ? t("account.keyLastUsed", { time: formatRelative(key.lastUsedAt), node: key.lastNodeId || "-" })
-                      : t("account.keyNeverUsed")}
-                  </span>
-                </span>
-                <Pill tone={key.status === "active" ? "ok" : "default"}>
-                  {key.status === "active" ? t("account.keyActive") : t("account.keyRevoked")}
-                </Pill>
-                {key.status === "active" ? (
-                  <Btn tone="danger" small onClick={() => revoke(key)}>
-                    {t("account.keyRevoke")}
-                  </Btn>
-                ) : null}
-              </div>
-            ))
-          )}
-          {keys.length > 0 ? (
-            <div className="gx-card__hint" style={{ padding: "0 0 12px 30px" }}>
-              {t("account.keyIdHint")}
-            </div>
-          ) : null}
+            <Blank title={t("account.keysRevokedEmpty")} />
+          )
+        ) : (
+          rows.map((key, index) => (
+            <KeyRow
+              key={key.keyId}
+              item={key}
+              nodeName={nodeNames[key.lastNodeId] ?? ""}
+              first={index === 0}
+              onRevoke={tab === "active" ? () => revoke(key) : undefined}
+            />
+          ))
+        )}
+      </RowList>
 
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, paddingTop: 14, borderTop: "1px solid var(--gx-line)" }}>
-            <div style={{ flex: 1 }}>
-              <Field label={t("account.keyAlias")}>
-                <input
-                  className="gx-input"
-                  value={alias}
-                  maxLength={64}
-                  placeholder={t("account.keyAliasPlaceholder")}
-                  onChange={(event) => setAlias(event.target.value)}
-                />
-              </Field>
-            </div>
-            <Btn tone="accent" icon={<IconPlus size={15} />} loading={busy} disabled={!agreed} onClick={() => void issue()}>
-              {t("account.keyIssue")}
-            </Btn>
-          </div>
-          {!terms?.accepted ? (
-            <label
-              style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12.5, color: "var(--gx-soft)", cursor: "pointer", marginTop: 10 }}
-            >
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={(event) => setAgreed(event.target.checked)}
-                style={{ marginTop: 2, accentColor: "var(--gx-accent)" }}
-              />
-              <span>{t("pair.terms", { version: terms?.version ?? "" })}</span>
-            </label>
-          ) : null}
-
-          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            <span className="gx-label">{t("account.cliTitle")}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 18px 16px", borderTop: "1px solid var(--gx-line)" }}>
+        {/*
+          ID 前面必须带标注：它和密钥本身只差一个字符（gpk_ 对 gpk-），
+          不标出来，人会照着界面把它当成密钥复制走 —— 这件事真的发生过。
+        */}
+        {keys.length > 0 ? (
+          <span className="gx-card__hint" style={{ lineHeight: 1.6 }}>
+            {t("account.keyIdHint")}
+          </span>
+        ) : null}
+        <button
+          type="button"
+          className="gx-link"
+          aria-expanded={showCli}
+          style={{ alignSelf: "flex-start" }}
+          onClick={() => setShowCli((open) => !open)}
+        >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            {t("account.cliTitle")}
+            <IconChevronDown size={13} style={{ transition: "transform .15s ease", transform: showCli ? "rotate(180deg)" : undefined }} />
+          </span>
+        </button>
+        {showCli ? (
+          <>
             <CommandBlock title={t("account.cliPoll")} command={pollCommand(hub, "gpk-…")} />
             <CommandBlock title={t("account.cliExport")} command={exportCommand(hub, "gpk-…")} />
             <Note>{t("account.cliHint")}</Note>
-          </div>
-        </div>
-      )}
+          </>
+        ) : null}
+      </div>
 
       <Modal
-        open={Boolean(issued)}
-        title={t("account.keyIssued")}
+        open={issueOpen || Boolean(issued)}
+        title={issued ? t("account.keyIssued") : t("account.keyIssueTitle")}
         footer={null}
-        width={640}
+        width={issued ? 640 : 480}
         maskClosable={false}
-        onCancel={closeIssued}
+        onCancel={issued ? closeIssued : () => onIssueOpenChange(false)}
       >
         {issued ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -243,27 +236,115 @@ export function AccessKeyPanel() {
                 onCopied={() => setSecretCopied(true)}
               />
             </div>
-            <CommandBlock
-              title={t("account.cliPoll")}
-              command={pollCommand(hub, issued.secret)}
-              onCopied={() => setSecretCopied(true)}
-            />
-            <CommandBlock
-              title={t("account.cliExport")}
-              command={exportCommand(hub, issued.secret)}
-              onCopied={() => setSecretCopied(true)}
-            />
+            <CommandBlock title={t("account.cliPoll")} command={pollCommand(hub, issued.secret)} onCopied={() => setSecretCopied(true)} />
+            <CommandBlock title={t("account.cliExport")} command={exportCommand(hub, issued.secret)} onCopied={() => setSecretCopied(true)} />
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <Btn tone="accent" onClick={() => setIssued(null)}>
                 {t("account.keySaved")}
               </Btn>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <span style={{ fontSize: 12.5, lineHeight: 1.7, color: "var(--gx-soft)" }}>{t("account.keyIssueIntro")}</span>
+            <Field label={t("account.keyAlias")}>
+              <input
+                className="gx-input"
+                value={alias}
+                maxLength={64}
+                placeholder={t("account.keyAliasPlaceholder")}
+                onChange={(event) => setAlias(event.target.value)}
+                onKeyDown={(event) => {
+                  // 拼音输入法选词那一下回车是在上屏，不是在提交。
+                  if (event.key === "Enter" && !event.nativeEvent.isComposing) void issue();
+                }}
+              />
+            </Field>
+            {!terms?.accepted ? (
+              <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 12.5, color: "var(--gx-soft)", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(event) => setChecked(event.target.checked)}
+                  style={{ marginTop: 2, accentColor: "var(--gx-accent)" }}
+                />
+                <span>{t("pair.terms", { version: terms?.version ?? "" })}</span>
+              </label>
+            ) : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn tone="ghost" onClick={() => onIssueOpenChange(false)}>
+                {t("common.cancel")}
+              </Btn>
+              <Btn tone="accent" icon={<IconPlus size={15} />} loading={busy} disabled={!agreed} onClick={() => void issue()}>
+                {t("account.keyIssue")}
+              </Btn>
+            </div>
+          </div>
+        )}
       </Modal>
       {/* 放在上面那个弹窗外面：关弹窗的确认一点「确定」就把 issued 清空，放里面会跟着内容一起被卸载。 */}
       {modalHolder}
     </Card>
+  );
+}
+
+function KeyRow({
+  item,
+  nodeName,
+  first,
+  onRevoke,
+}: {
+  item: ProviderKeyView;
+  nodeName: string;
+  first: boolean;
+  /** 只有有效的密钥才有。 */
+  onRevoke?: () => void;
+}) {
+  const { t } = useLocale();
+  const used = item.lastUsedAt
+    ? t("account.keyLastUsed", { time: formatRelative(item.lastUsedAt), node: nodeName || item.lastNodeId || "-" })
+    : t("account.keyNeverUsed");
+  return (
+    <div
+      className="gx-row"
+      style={{
+        gridTemplateColumns: onRevoke ? "30px minmax(0, 1fr) auto" : "30px minmax(0, 1fr)",
+        padding: "11px 18px",
+        borderTop: first ? 0 : undefined,
+      }}
+    >
+      <span
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 8,
+          display: "grid",
+          placeItems: "center",
+          background: "var(--gx-muted)",
+          color: "var(--gx-faint)",
+        }}
+      >
+        <IconKey size={16} />
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 13.5, fontWeight: 600, color: onRevoke ? "var(--gx-ink)" : "var(--gx-soft)", ...ellipsis }}>
+          {item.alias || item.keyId}
+        </span>
+        <span
+          // 窄窗口下这一行会被截，悬停给全文；行里用机器名替掉了节点 ID，悬停时把 ID 补回来。
+          title={[item.keyId, used, nodeName ? item.lastNodeId : ""].filter(Boolean).join(" · ")}
+          style={{ display: "block", marginTop: 2, fontSize: 11.5, color: "var(--gx-faint)", ...ellipsis }}
+        >
+          {t("account.keyIdLabel")} <span className="gx-mono">{item.keyId}</span> · {used}
+        </span>
+      </span>
+      {/* 一列有效密钥各挂一个红按钮太吵：入口用中性色，确认框才是红的。 */}
+      {onRevoke ? (
+        <Btn tone="ghost" small onClick={onRevoke}>
+          {t("account.keyRevoke")}
+        </Btn>
+      ) : null}
+    </div>
   );
 }
 

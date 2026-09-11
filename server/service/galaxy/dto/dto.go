@@ -824,6 +824,8 @@ const (
 type AdminNodeView struct {
 	NodeView
 	OwnerUserID string `json:"ownerUserId"`
+	// OwnerName 主人的共享端账号「昵称（用户名）」。账号查不到（比如迁移前的老数据）时是空串，界面退回显示 id。
+	OwnerName string `json:"ownerName"`
 	// ProviderType 主人的身份，individual / studio。这台机器贡献上的信誉按它读账号或设备那一份。
 	ProviderType string `json:"providerType"`
 }

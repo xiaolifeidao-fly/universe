@@ -1,13 +1,33 @@
 "use client";
 
-import { createAuthStore, type BaseAuthUser } from "@shared/auth/createAuthStore";
+import { createAuthStore } from "@shared/auth/createAuthStore";
 
 /**
  * 控制台登录态。存的是**用户令牌**，不是 `sk-` 算力密钥 ——
  * 后者是给 SDK 用的，它带着余额、能直接花钱，不该进浏览器 localStorage。
  * 密钥明文只在签发那一刻显示一次，之后控制台也只看得到匿名标识与余额。
+ *
+ * 账号是 Galaxy 自己的，分共享端（Nova）和使用端（Orbit）两批人：各注册各的，
+ * 同一个用户名在两端是两个账号，一端的令牌打到另一端就是 not login。
+ * 所以存储键带上端名：两端哪天同源部署也读不到对方的令牌；以前任务宇宙账号留在
+ * galaxy_auth_* 下的登录态也跟着作废 —— 那张令牌这边本来就不认，形状也对不上
+ * （数字 id、没有端），与其读出来再被踢回登录页，不如直接当没登录。
  */
-export type AuthUser = BaseAuthUser;
+export interface AuthUser {
+  /** 业务键 pu_…。机器、密钥、积分记在谁名下，存的就是它。 */
+  id: string;
+  side: "provider";
+  /** 服务端统一存小写。 */
+  username: string;
+  displayName: string;
+  status: "active" | "disabled";
+  /** 运营重置过密码、本人还没改。为真时服务端只放行「看自己」和「改密码」两个接口。 */
+  mustChangePassword: boolean;
+  /** 散户 / 工作室。注册出来一律是散户，只有平台运营能改。 */
+  providerType?: "individual" | "studio";
+  lastLoginAt?: string;
+  createdAt: string;
+}
 
 export const {
   getAuthToken,
@@ -21,7 +41,25 @@ export const {
   setPasswordChangeRequired,
   isPasswordChangeRequired,
 } = createAuthStore<AuthUser>({
-  token: "galaxy_auth_token",
-  passwordChangeRequired: "galaxy_password_change_required",
-  user: "galaxy_auth_user",
+  token: "galaxy_provider_auth_token",
+  passwordChangeRequired: "galaxy_provider_password_change_required",
+  user: "galaxy_provider_auth_user",
 });
+
+/* ---------- 账号规则 ---------- */
+
+// 和服务端 service/galaxy/account 同一套。注册、改密码两页先在前端拦一道，
+// 只为少跑一趟、提示来得快；说了算的是服务端。
+
+/** 用户名：字母或数字开头，允许 _ . @ + -，手机号、邮箱都能直接用。不分大小写。 */
+export function usernameIssue(username: string): "pattern" | "length" | null {
+  if (!/^[a-z0-9][a-z0-9_.@+-]*$/i.test(username)) return "pattern";
+  return username.length < 2 || username.length > 64 ? "length" : null;
+}
+
+/** 密码按**字节**数算，8 到 72：bcrypt 只看前 72 个字节，再长的部分改了也登得进去，服务端宁可当场拒掉。 */
+export function passwordIssue(password: string): "short" | "long" | null {
+  const bytes = new TextEncoder().encode(password).length;
+  if (bytes < 8) return "short";
+  return bytes > 72 ? "long" : null;
+}

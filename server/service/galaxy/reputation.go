@@ -160,6 +160,9 @@ func (s *service) adjustReputation(ctx context.Context, cid string, delta float6
 }
 
 // SetProviderType 管理端改账号身份。立刻生效在库里；派单读到的分数随下一次心跳（15 秒内）换过去。
+//
+// 只认存在的共享端账号：身份表没有外键，不查的话一个打错的 id、一个使用端的 id
+// 都能写进去一行，看起来设成功了，却永远不会有哪台机器按它读分。
 func (s *service) SetProviderType(ctx context.Context, req dto.SetProviderTypeRequest) error {
 	owner := strings.TrimSpace(req.OwnerUserID)
 	if owner == "" {
@@ -169,6 +172,16 @@ func (s *service) SetProviderType(ctx context.Context, req dto.SetProviderTypeRe
 	case dto.ProviderIndividual, dto.ProviderStudio:
 	default:
 		return fmt.Errorf("非法的提供者身份: %s", req.ProviderType)
+	}
+	account, err := s.repository.FindUser(ctx, bizLine, owner)
+	if repository.IsNotFound(err) {
+		return fmt.Errorf("账号不存在: %s", owner)
+	}
+	if err != nil {
+		return err
+	}
+	if account.Side != dto.SideProvider {
+		return fmt.Errorf("只有共享端账号才分散户和工作室")
 	}
 	return s.repository.SaveProviderType(ctx, &repository.GalaxyProvider{
 		BizLine: bizLine, OwnerUserID: owner, ProviderType: req.ProviderType, UpdatedBy: truncate(req.UpdatedBy, 64),

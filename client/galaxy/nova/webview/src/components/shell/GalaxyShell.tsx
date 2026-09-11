@@ -152,7 +152,7 @@ export function GalaxyShell({ children }: PropsWithChildren) {
                 {user?.displayName ?? "—"}
               </span>
               <span className="gx-user__meta" style={{ display: "block" }}>
-                {user?.username ?? productConfig.role}
+                {user?.username ?? ""}
               </span>
             </span>
             <IconChevronDown size={14} style={{ color: "var(--gx-faint)", flex: "0 0 auto" }} />

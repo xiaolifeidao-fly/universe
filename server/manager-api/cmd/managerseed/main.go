@@ -67,7 +67,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	// 服务实例全传 nil：注册路由只把接口存进 handler，不会调用它们。
-	engine, err := routers.New(nil, nil, nil, nil, nil)
+	engine, err := routers.New(nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "装配路由失败: %v\n", err)
 		os.Exit(1)

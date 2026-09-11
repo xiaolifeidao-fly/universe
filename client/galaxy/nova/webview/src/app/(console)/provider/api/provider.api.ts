@@ -338,6 +338,15 @@ export async function fetchNodes() {
   return getDataList(NodeView, "/galaxy/provider/nodes");
 }
 
+/**
+ * 解绑掉的机器，账户页「已解绑」那一栏用。最近解绑的在前，不带能力（解绑时已经关掉了）。
+ *
+ * 和 fetchNodes 是两个接口而不是一个开关：今天、共享设置都靠 fetchNodes 不含解绑的行。
+ */
+export async function fetchRetiredNodes() {
+  return getDataList(NodeView, "/galaxy/provider/nodes/retired");
+}
+
 export async function revokeNode(nodeId: string) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/provider/node/revoke", { nodeId });
   return unwrapApiResponse(response.data);

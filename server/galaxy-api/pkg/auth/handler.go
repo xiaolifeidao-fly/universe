@@ -1,81 +1,91 @@
-// Package auth 是 galaxy-api 的控制台登录入口。
+// Package auth 是 Galaxy 控制台的登录入口与门禁。
 //
-// 它没有自己的 service/repository/dto：账号体系（凭据、令牌、用户记录）
-// 已经在 service/identity 里，web-api、app-api、manager-api 共用同一套。
-// 共享池控制台再造一份会把 user 表劈成两套互不认识的账号，
-// 而设计里写明的是「复用现有用户体系」——这里只把 HTTP 绑上去。
+// 账号是 Galaxy 自己的（service/galaxy/account），和任务宇宙的 service/identity 无关。
+// 这个进程里没有 identity，也不调 httpx.SetUserAuthenticator —— httpx.RequireUser()
+// 在这里调不通，控制台路由一律挂本包的 Gate。
 //
-// 令牌与另外三个服务互通，前提是各自 configs 里的 auth.token_secret 一致。
+// 登录按端分两组，端写在路径里，和各端业务接口同一个前缀：
+//
+//	/api/galaxy/provider/auth/*   共享端（Nova）
+//	/api/galaxy/consumer/auth/*   使用端（Orbit）
+//
+// 两端是两批人：同一个用户名在两端可以各是一个账号，一端的令牌调不了另一端。
 package auth
 
 import (
-	"strconv"
-
 	"github.com/gin-gonic/gin"
 
 	"common/middleware/httpx"
 	"common/middleware/routers"
-	"service/identity"
-	identitydto "service/identity/dto"
+	"service/galaxy/account"
+	"service/galaxy/dto"
 )
 
 type Handler struct {
-	identities identity.Service
+	accounts account.Service
+	gate     *Gate
 }
 
-func NewHandler(identityService identity.Service) *Handler {
-	return &Handler{identities: identityService}
+func NewHandler(accounts account.Service, gate *Gate) *Handler {
+	return &Handler{accounts: accounts, gate: gate}
 }
 
-// 路径必须是 /api/auth/login、/api/auth/me、/api/auth/password，一个字都不能改：
-// common/middleware/httpx 的 requireChangedPassword 把后两条完整路径硬编码成
-// 「没改初始密码也放行」的例外，其余接口一律拦到密码改掉为止。
-// 少了 /auth/password，mustChangePassword=true 的账号会被自己的初始密码锁死——
-// 改不了密码，也进不去任何控制台接口。
+// RegisterHandler 挂在 /api/galaxy 上。
 //
-// 注意这组路由挂在 /api 上，不是 /api/galaxy：控制台业务面才在 /api/galaxy 下，
-// 登录是跨服务共用的账号入口，路径与另外三个服务保持一致。
-func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
-	group.POST("/auth/login", h.login)
-	authorized := group.Group("/auth", httpx.RequireUser())
-	authorized.GET("/me", h.me)
-	authorized.POST("/password", h.changeOwnPassword)
-}
+// me 和 password 两条的路径不能随手改：Gate 认它们是「必须改密码的人也走得通」的例外，
+// 挪了位置，被运营重置过密码的账号就会被自己的临时密码锁死 —— 改不了，也进不去。
+func (h *Handler) RegisterHandler(console *gin.RouterGroup) {
+	for _, side := range []string{dto.SideProvider, dto.SideConsumer} {
+		public := console.Group("/" + side + "/auth")
+		public.POST("/register", h.register(side))
+		public.POST("/login", h.login(side))
 
-func (h *Handler) login(context *gin.Context) {
-	var request identitydto.LoginRequest
-	if err := context.ShouldBindJSON(&request); err != nil {
-		httpx.Fail(context, err.Error())
-		return
+		self := console.Group("/"+side+"/auth", h.gate.Require(side))
+		self.GET("/me", h.me)
+		self.POST("/password", h.changePassword)
 	}
-	result, err := h.identities.Login(context.Request.Context(), request)
-	httpx.JSON(context, result, err)
 }
 
+func (h *Handler) register(side string) gin.HandlerFunc {
+	return func(context *gin.Context) {
+		var req dto.RegisterAccountRequest
+		if err := context.ShouldBindJSON(&req); err != nil {
+			httpx.Fail(context, "请求格式不对")
+			return
+		}
+		req.Side = side
+		result, err := h.accounts.Register(context.Request.Context(), req)
+		httpx.JSON(context, result, err)
+	}
+}
+
+func (h *Handler) login(side string) gin.HandlerFunc {
+	return func(context *gin.Context) {
+		var req dto.LoginAccountRequest
+		if err := context.ShouldBindJSON(&req); err != nil {
+			httpx.Fail(context, "请求格式不对")
+			return
+		}
+		req.Side = side
+		result, err := h.accounts.Login(context.Request.Context(), req)
+		httpx.JSON(context, result, err)
+	}
+}
+
+// me 每次都从库里读：运营把人改成工作室、停用、重置密码，控制台要看得到最新的样子，
+// 而登录时存在浏览器里的那份是登录那一刻的快照。
 func (h *Handler) me(context *gin.Context) {
-	principal, _ := httpx.CurrentUser(context)
-	id, err := strconv.ParseInt(principal.ID, 10, 64)
-	if err != nil {
-		httpx.Fail(context, "用户标识无效")
-		return
-	}
-	view, err := h.identities.CurrentUser(context.Request.Context(), id)
+	view, err := h.accounts.Current(context.Request.Context(), UserID(context))
 	httpx.JSON(context, view, err)
 }
 
-func (h *Handler) changeOwnPassword(context *gin.Context) {
-	principal, _ := httpx.CurrentUser(context)
-	id, err := strconv.ParseInt(principal.ID, 10, 64)
-	if err != nil {
-		httpx.Fail(context, "用户标识无效")
+func (h *Handler) changePassword(context *gin.Context) {
+	var req dto.ChangeAccountPasswordRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, "请求格式不对")
 		return
 	}
-	var request identitydto.ChangeOwnPasswordRequest
-	if err := context.ShouldBindJSON(&request); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	result, err := h.identities.ChangeOwnPassword(context.Request.Context(), id, request)
+	result, err := h.accounts.ChangeOwnPassword(context.Request.Context(), UserID(context), req)
 	httpx.JSON(context, result, err)
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { ReloadOutlined, StopOutlined, TeamOutlined } from "@ant-design/icons";
-import { Button, Popconfirm, Space, Table, Tabs, Tag, Tooltip, message } from "antd";
+import { Button, Popconfirm, Space, Table, Tabs, Tag, Tooltip, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -22,10 +22,11 @@ import {
   type UsageReport,
 } from "../api/galaxy.api";
 import { DisputeQueue } from "./DisputeQueue";
+import { GalaxyAccounts } from "./GalaxyAccounts";
 import { PackageCatalog } from "./PackageCatalog";
 
 /**
- * 共享算力池的运营视图：池水位、节点与贡献、抽检、结算汇总、争议工单。
+ * 共享算力池的运营视图：池水位、节点与贡献、账号、抽检、争议工单、额度包、结算汇总。
  *
  * 这里是**平台**视角，和 client/galaxy 那个终端用户控制台不是一回事：
  * 那边一个人只看得到自己的机器和自己的密钥，这边看得到全池，还能封禁。
@@ -38,6 +39,8 @@ export function GalaxyOperations() {
   const [probes, setProbes] = useState<AuditProbeView[]>([]);
   const [usage, setUsage] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(true);
+  // 机器行上改了身份，账号页签跟着重拉。
+  const [accountsRefreshKey, setAccountsRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +84,7 @@ export function GalaxyOperations() {
       await setProviderType(ownerUserId, providerType);
       message.success(t("galaxy.provider.saved"));
       void load();
+      setAccountsRefreshKey((value) => value + 1);
     } catch (error) {
       message.error((error as Error).message || t("galaxy.loadFailed"));
     }
@@ -144,15 +148,23 @@ export function GalaxyOperations() {
     {
       title: t("galaxy.node.owner"),
       dataIndex: "ownerUserId",
-      width: 180,
+      width: 220,
+      // 账号查不到（迁移前的老数据）时 ownerName 是空串，退回显示 id。
       render: (ownerUserId: string, row) => (
-        <Space size={6} wrap>
-          <span>{ownerUserId}</span>
-          {row.providerType === "studio" ? (
-            <Tag color="geekblue">{t("galaxy.provider.studio")}</Tag>
-          ) : (
-            <Tag>{t("galaxy.provider.individual")}</Tag>
-          )}
+        <Space direction="vertical" size={0}>
+          <Space size={6} wrap>
+            {row.ownerName ? <span>{row.ownerName}</span> : <span className="manager-mono">{ownerUserId}</span>}
+            {row.providerType === "studio" ? (
+              <Tag color="geekblue">{t("galaxy.provider.studio")}</Tag>
+            ) : (
+              <Tag>{t("galaxy.provider.individual")}</Tag>
+            )}
+          </Space>
+          {row.ownerName ? (
+            <Typography.Text type="secondary" className="manager-mono" style={{ fontSize: 12 }}>
+              {ownerUserId}
+            </Typography.Text>
+          ) : null}
         </Space>
       ),
     },
@@ -200,21 +212,24 @@ export function GalaxyOperations() {
         const toStudio = row.providerType !== "studio";
         return (
           <Space size={6}>
-            <Popconfirm
-              title={toStudio ? t("galaxy.provider.toStudio") : t("galaxy.provider.toIndividual")}
-              description={
-                <div style={{ maxWidth: 300 }}>
-                  {toStudio ? t("galaxy.provider.toStudioHint") : t("galaxy.provider.toIndividualHint")}
-                </div>
-              }
-              okText={t("galaxy.confirm")}
-              cancelText={t("galaxy.cancel")}
-              onConfirm={() => void changeProviderType(row.ownerUserId, toStudio ? "studio" : "individual")}
-            >
-              <Button size="small" icon={<TeamOutlined />}>
-                {toStudio ? t("galaxy.provider.toStudio") : t("galaxy.provider.toIndividual")}
-              </Button>
-            </Popconfirm>
+            {/* 主人账号查不到就改不了身份：服务端只认存在的共享端账号，按钮留着也是点了报错。 */}
+            {row.ownerName ? (
+              <Popconfirm
+                title={toStudio ? t("galaxy.provider.toStudio") : t("galaxy.provider.toIndividual")}
+                description={
+                  <div style={{ maxWidth: 300 }}>
+                    {toStudio ? t("galaxy.provider.toStudioHint") : t("galaxy.provider.toIndividualHint")}
+                  </div>
+                }
+                okText={t("galaxy.confirm")}
+                cancelText={t("galaxy.cancel")}
+                onConfirm={() => void changeProviderType(row.ownerUserId, toStudio ? "studio" : "individual")}
+              >
+                <Button size="small" icon={<TeamOutlined />}>
+                  {toStudio ? t("galaxy.provider.toStudio") : t("galaxy.provider.toIndividual")}
+                </Button>
+              </Popconfirm>
+            ) : null}
             <Popconfirm
               title={row.banned ? t("galaxy.node.unban") : t("galaxy.node.ban")}
               description={t("galaxy.node.banHint")}
@@ -314,6 +329,14 @@ export function GalaxyOperations() {
                 scroll={{ x: 1100 }}
               />
             ),
+          },
+          {
+            key: "accounts",
+            label: t("galaxy.tab.accounts"),
+            // 账号自己拉数据：它按端、筛选和页码去服务端翻页，和上面几块一次拉全量的视图不是一个节奏，
+            // 挂进统一的 load() 会在每次刷新时把运营正在翻的那一页冲掉。
+            // 身份在机器行上、账号行上都能改，任一边改完另一边跟着重拉，免得切过去看到的还是旧标签。
+            children: <GalaxyAccounts refreshKey={accountsRefreshKey} onProviderTypeChange={() => void load()} />,
           },
           {
             key: "probes",

@@ -17,16 +17,18 @@ import (
 
 	"common/middleware/httpx"
 	corepkg "galaxy-api/adapters/core"
+	"galaxy-api/pkg/auth"
 	"service/galaxy"
 	"service/galaxy/dto"
 )
 
 type Handler struct {
 	service galaxy.Service
+	gate    *auth.Gate
 }
 
-func NewHandler(service galaxy.Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service galaxy.Service, gate *auth.Gate) *Handler {
+	return &Handler{service: service, gate: gate}
 }
 
 // RegisterNative 挂在根路由下，与 relay 的 /v1/messages 同一鉴权。
@@ -40,9 +42,9 @@ func (h *Handler) RegisterNative(group *gin.RouterGroup) {
 	group.POST("/keys/:keyId/renew", h.renewKeyWithKey)
 }
 
-// RegisterConsole 挂在 /api/galaxy 下，用控制台用户令牌鉴权。
+// RegisterConsole 挂在 /api/galaxy 下，整组只认使用端账号：共享端的令牌打进来是 not login。
 func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
-	console := group.Group("/consumer", httpx.RequireUser())
+	console := group.Group("/consumer", h.gate.Consumer())
 	// SDK 接入要的两样东西之一（另一样是密钥）。地址由服务端给，
 	// 前端不该再配一遍 —— 配两处迟早对不上。
 	console.GET("/endpoint", h.consumerEndpoint)
@@ -77,13 +79,9 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	// 沙箱支付。它不是「管理员确认到账」的简写：认的是本人，且只对配置里
 	// 显式标成沙箱的渠道生效，没配沙箱的部署调进来只会拿到错误。
 	console.POST("/orders/pay/sandbox", h.paySandbox)
-	// 签发是后台动作：P0 内测密钥由管理员发（C-10）。
-	console.POST("/keys/issue", httpx.RequirePlatformAdmin(), h.issueKey)
-	// 人工确认到账。渠道回调走 RegisterCallbacks 那条验签的路，这条是它的兜底：
-	// 线下转账、渠道回调丢了要补单，都得有个人能按下去。所以它只认管理员。
-	console.POST("/orders/pay", httpx.RequirePlatformAdmin(), h.payOrder)
-	// 商品目录的维护挪去了 /api/galaxy/admin/packages*：它是运营动作，
-	// 和池水位、封禁、裁决在同一组，不该挂在消费者路由组里靠一个中间件把门。
+	// 给人发内测密钥（C-10）和人工确认到账不在这里，在 manager-api 的 /api/galaxy/admin/*：
+	// 它们原来靠 httpx.RequirePlatformAdmin 认任务宇宙的管理员，而 Galaxy 的账号体系里
+	// 只有共享端和使用端的人，没有运营。运营身份在管理端（zt_manager_*）。
 }
 
 // RegisterCallbacks 挂支付渠道回调。
@@ -145,14 +143,14 @@ func (h *Handler) createOrder(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	req.UserID = httpx.CallerID(context)
+	req.UserID = auth.UserID(context)
 	view, err := h.service.CreateOrder(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) listOrders(context *gin.Context) {
 	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "50"))
-	views, err := h.service.ListOrders(context.Request.Context(), httpx.CallerID(context), limit)
+	views, err := h.service.ListOrders(context.Request.Context(), auth.UserID(context), limit)
 	httpx.JSON(context, views, err)
 }
 
@@ -164,7 +162,7 @@ func (h *Handler) cancelOrder(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	httpx.JSON(context, req.OrderID, h.service.CancelOrder(context.Request.Context(), httpx.CallerID(context), req.OrderID))
+	httpx.JSON(context, req.OrderID, h.service.CancelOrder(context.Request.Context(), auth.UserID(context), req.OrderID))
 }
 
 // paymentChannels 收银台上能选哪几个渠道。沙箱渠道也在这个列表里，
@@ -187,18 +185,8 @@ func (h *Handler) paySandbox(context *gin.Context) {
 		return
 	}
 	// 归属校验的依据只能是令牌里的人。请求体里的 UserID 有 json:"-"，绑不进来。
-	req.UserID = httpx.CallerID(context)
+	req.UserID = auth.UserID(context)
 	view, err := h.service.PaySandbox(context.Request.Context(), req)
-	httpx.JSON(context, view, err)
-}
-
-func (h *Handler) payOrder(context *gin.Context) {
-	var req dto.PayOrderRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	view, err := h.service.PayOrder(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 
@@ -208,7 +196,7 @@ func (h *Handler) renewKey(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	req.OwnerUserID = httpx.CallerID(context)
+	req.OwnerUserID = auth.UserID(context)
 	view, err := h.service.RenewKey(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
@@ -323,14 +311,14 @@ func (h *Handler) consumerEndpoint(context *gin.Context) {
 
 func (h *Handler) currentNotice(context *gin.Context) {
 	version := h.service.Config().ConsumerNoticeVersion
-	accepted, err := h.service.HasConsent(context.Request.Context(), "consumer", httpx.CallerID(context), version)
+	accepted, err := h.service.HasConsent(context.Request.Context(), "consumer", auth.UserID(context), version)
 	httpx.JSON(context, gin.H{"version": version, "accepted": accepted}, err)
 }
 
 func (h *Handler) acceptNotice(context *gin.Context) {
 	err := h.service.AcceptTerms(context.Request.Context(), dto.AcceptTermsRequest{
 		SubjectType:  "consumer",
-		UserID:       httpx.CallerID(context),
+		UserID:       auth.UserID(context),
 		TermsVersion: h.service.Config().ConsumerNoticeVersion,
 		IP:           context.ClientIP(),
 		UserAgent:    context.GetHeader("User-Agent"),
@@ -338,21 +326,8 @@ func (h *Handler) acceptNotice(context *gin.Context) {
 	httpx.JSON(context, h.service.Config().ConsumerNoticeVersion, err)
 }
 
-func (h *Handler) issueKey(context *gin.Context) {
-	var req dto.IssueKeyRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	if req.NoticeVersion == "" {
-		req.NoticeVersion = h.service.Config().ConsumerNoticeVersion
-	}
-	view, err := h.service.IssueKey(context.Request.Context(), req)
-	httpx.JSON(context, view, err)
-}
-
 func (h *Handler) listKeys(context *gin.Context) {
-	views, err := h.service.ListKeys(context.Request.Context(), httpx.CallerID(context))
+	views, err := h.service.ListKeys(context.Request.Context(), auth.UserID(context))
 	httpx.JSON(context, views, err)
 }
 
@@ -364,14 +339,14 @@ func (h *Handler) revokeKey(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	err := h.service.RevokeKey(context.Request.Context(), httpx.CallerID(context), req.KeyID)
+	err := h.service.RevokeKey(context.Request.Context(), auth.UserID(context), req.KeyID)
 	httpx.JSON(context, req.KeyID, err)
 }
 
 // consoleUsage 走 OwnedUsage 而不是 Usage：请求里的 keyId 只能在「令牌名下的密钥」
 // 里收窄，不能拿来指定别人的密钥，留空也不会变成全站合计。
 func (h *Handler) consoleUsage(context *gin.Context) {
-	report, err := h.service.OwnedUsage(context.Request.Context(), httpx.CallerID(context), dto.UsageQuery{
+	report, err := h.service.OwnedUsage(context.Request.Context(), auth.UserID(context), dto.UsageQuery{
 		ConsumerKey: context.Query("keyId"), Kind: context.Query("kind"),
 		From: parseTime(context.Query("from")), To: parseTime(context.Query("to")),
 	})
@@ -383,7 +358,7 @@ func (h *Handler) consoleUsageRecords(context *gin.Context) {
 	offset, _ := strconv.Atoi(context.Query("offset"))
 	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
 	query := dto.UsageRecordQuery{
-		OwnerUserID: httpx.CallerID(context), KeyID: context.Query("keyId"),
+		OwnerUserID: auth.UserID(context), KeyID: context.Query("keyId"),
 		Kind: context.Query("kind"), State: context.Query("state"),
 		Offset: offset, Limit: limit,
 	}
@@ -402,7 +377,7 @@ func (h *Handler) consoleUsageRecords(context *gin.Context) {
 // consoleDashboard 密钥页与使用记录页共用的那排数字。
 func (h *Handler) consoleDashboard(context *gin.Context) {
 	days, _ := strconv.Atoi(context.DefaultQuery("days", "10"))
-	view, err := h.service.ConsumerDashboard(context.Request.Context(), httpx.CallerID(context), days)
+	view, err := h.service.ConsumerDashboard(context.Request.Context(), auth.UserID(context), days)
 	httpx.JSON(context, view, err)
 }
 
@@ -436,7 +411,7 @@ func dayRange(day string) (time.Time, time.Time) {
 
 func (h *Handler) workloadQuery(context *gin.Context) dto.WorkloadQuery {
 	return dto.WorkloadQuery{
-		OwnerUserID: httpx.CallerID(context),
+		OwnerUserID: auth.UserID(context),
 		KeyID:       context.Query("keyId"),
 		Kind:        context.Query("kind"),
 		State:       context.Query("state"),
@@ -451,13 +426,13 @@ func (h *Handler) consoleSessions(context *gin.Context) {
 
 func (h *Handler) consoleSessionContext(context *gin.Context) {
 	view, err := h.service.OwnedSessionContext(context.Request.Context(),
-		httpx.CallerID(context), context.Param("sid"), atoiOr(context.Query("fromSeq"), 0))
+		auth.UserID(context), context.Param("sid"), atoiOr(context.Query("fromSeq"), 0))
 	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) consoleCloseSession(context *gin.Context) {
 	sid := context.Param("sid")
-	err := h.service.OwnedCloseSession(context.Request.Context(), httpx.CallerID(context), sid, context.Query("reason"))
+	err := h.service.OwnedCloseSession(context.Request.Context(), auth.UserID(context), sid, context.Query("reason"))
 	httpx.JSON(context, sid, err)
 }
 
@@ -467,19 +442,19 @@ func (h *Handler) consoleJobs(context *gin.Context) {
 }
 
 func (h *Handler) consoleJob(context *gin.Context) {
-	view, err := h.service.OwnedJob(context.Request.Context(), httpx.CallerID(context), context.Param("jobId"))
+	view, err := h.service.OwnedJob(context.Request.Context(), auth.UserID(context), context.Param("jobId"))
 	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) consoleJobEvents(context *gin.Context) {
 	views, err := h.service.OwnedUnitEvents(context.Request.Context(),
-		httpx.CallerID(context), context.Param("jobId"), atoiOr(context.Query("fromSeq"), 0))
+		auth.UserID(context), context.Param("jobId"), atoiOr(context.Query("fromSeq"), 0))
 	httpx.JSON(context, views, err)
 }
 
 func (h *Handler) consoleCancelJob(context *gin.Context) {
 	jobID := context.Param("jobId")
-	err := h.service.OwnedCancelJob(context.Request.Context(), httpx.CallerID(context), jobID)
+	err := h.service.OwnedCancelJob(context.Request.Context(), auth.UserID(context), jobID)
 	httpx.JSON(context, jobID, err)
 }
 
@@ -487,7 +462,7 @@ func (h *Handler) consoleCancelJob(context *gin.Context) {
 
 func (h *Handler) consoleDisputes(context *gin.Context) {
 	views, err := h.service.OwnedDisputes(context.Request.Context(),
-		httpx.CallerID(context), atoiOr(context.Query("limit"), 50))
+		auth.UserID(context), atoiOr(context.Query("limit"), 50))
 	httpx.JSON(context, views, err)
 }
 
@@ -497,14 +472,14 @@ func (h *Handler) consoleFileDispute(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	req.OwnerUserID = httpx.CallerID(context)
+	req.OwnerUserID = auth.UserID(context)
 	view, err := h.service.FileDispute(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) consoleWithdrawDispute(context *gin.Context) {
 	disputeID := context.Param("disputeId")
-	err := h.service.WithdrawDispute(context.Request.Context(), httpx.CallerID(context), disputeID)
+	err := h.service.WithdrawDispute(context.Request.Context(), auth.UserID(context), disputeID)
 	httpx.JSON(context, disputeID, err)
 }
 

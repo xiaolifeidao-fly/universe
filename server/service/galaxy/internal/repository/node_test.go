@@ -129,3 +129,23 @@ func TestNodeNamesSkipsEmptyIDs(t *testing.T) {
 		t.Fatalf("没有 id 不该查库：names=%v err=%v statements=%v", names, err, pool.statements)
 	}
 }
+
+// TestListRevokedNodesByOwnerOnlyRevokedAndOwn 账户页「已解绑」那一栏。
+//
+// 状态条件写反成 <>，这一栏就把在用的机器又列一遍；owner 条件一丢，看到的是全平台解绑过的机器。
+// 回连密钥和令牌哈希都在这张表上，一列都不能跟着捞出来。
+func TestListRevokedNodesByOwnerOnlyRevokedAndOwn(t *testing.T) {
+	repository, pool := queryRecordingRepository(t)
+	_, _ = repository.ListRevokedNodesByOwner(context.Background(), "galaxy", "u_owner", 50)
+	statement := lastStatement(t, &pool.recordingPool)
+	for _, want := range []string{"biz_line = ?", "owner_user_id = ?", "u_owner", "status = ?", "revoked", "LIMIT"} {
+		if !strings.Contains(statement, want) {
+			t.Fatalf("语句里缺了 %s：%s", want, statement)
+		}
+	}
+	for _, leaked := range []string{"SELECT *", "endpoint_secret", "token_hash"} {
+		if strings.Contains(statement, leaked) {
+			t.Fatalf("不该出现 %s：%s", leaked, statement)
+		}
+	}
+}

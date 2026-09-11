@@ -14,6 +14,12 @@
 `zt_identity_user`，只是操作它的人换成了管理端账号。同样地，业务线与项目管理
 背后还是 `service/bizline` / `service/delivery`。
 
+共享算力池（Galaxy）是第三套账号：共享端 / 使用端的用户在 `zt_galaxy_user`
+（`service/galaxy/account`），和前两套都不通。管理端通过 `/api/galaxy/admin/users*`
+翻账号、停用、重置密码，通过 `/api/galaxy/admin/provider/type` 把共享端账号设成工作室。
+**共享池的运营接口只在这里**：galaxy-api 上原来那组认任务宇宙管理员的 `/api/galaxy/admin/*`
+已经删掉，发内测密钥、人工确认到账、门户模型目录与线索一并挪了过来。
+
 ## 技术选型（对齐 universe 现有 server，不是照抄 shennong）
 
 `server/` 已经是 Gin + GORM + MySQL + `go.work` 多模块的约定（`web-api`、`app-api` 都是这么写的），shennong 的 `server/manager-api` 用的是它自己那份更早期的 `common`（`vipper` 配置、`GinRouter`、`service/manager_auth`），和 universe 现在的 `common`/`service` 模块形状不兼容，没有照搬。这个模块的分层、启动方式、配置格式、CORS、健康检查全部照 `app-api` 抄（它是仓库里最新的一个独立部署服务范例）。

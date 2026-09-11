@@ -14,6 +14,7 @@ import (
 	"service/bizline"
 	"service/delivery"
 	galaxysvc "service/galaxy"
+	galaxyaccount "service/galaxy/account"
 	"service/galaxy/redisctl"
 	"service/identity"
 	"service/manager"
@@ -66,13 +67,16 @@ func main() {
 		time.Duration(tokenTTL)*time.Second)
 
 	// 共享算力池的运营接口直接复用 service/galaxy，不经过 galaxy-api ——
-	// 管理端令牌和 galaxy-api 认的业务 JWT 是两套，浏览器直连过去每一个请求
+	// 管理端令牌和 galaxy-api 认的 Galaxy 账号令牌是两套，浏览器直连过去每一个请求
 	// 都会被判成 not login，前端拦截器随即清 token 跳登录页。
 	// 账在同一个 MySQL、控制面在同一个 Redis，manager-api 两样都连得到。
 	galaxyService, closeGalaxy := buildGalaxyService(database)
 	defer closeGalaxy()
+	// Galaxy 账号（共享端、使用端两批人）只要数据库。管理端不签发、不校验它们的令牌，
+	// 所以不给签名密钥 —— 那把密钥只该在 galaxy-api 上。
+	galaxyAccounts := galaxyaccount.New(database, galaxyaccount.Options{})
 
-	engine, err := routers.New(managerService, identityService, bizLineService, deliveryService, galaxyService)
+	engine, err := routers.New(managerService, identityService, bizLineService, deliveryService, galaxyService, galaxyAccounts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -98,7 +102,7 @@ func main() {
 // 连接池给小值 —— 那个 600 的默认值是给 galaxy-api 的 BLPOP 长轮询准备的，
 // 管理端只做零星的读，照抄过来等于白占几百条连接。
 //
-// 返回 nil 表示没配 Redis：这时 /api/galaxy/admin 整组不注册。
+// 返回 nil 表示没配 Redis：路由照样注册（资源表按路由表生成），调到依赖池子的接口时报「未启用」。
 func buildGalaxyService(database *gorm.DB) (galaxysvc.Service, func()) {
 	control := redisctl.New(redisctl.Options{
 		Addresses: httpx.Property("redis.addr"),

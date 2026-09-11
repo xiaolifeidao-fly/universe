@@ -158,7 +158,7 @@ job       POST /v1/videofarm/jobs               提交任务 → 202
 消费者拿它订阅事件、排障、提申诉 —— 三段（消费者 / Hub / 节点）看到的是同一个串。
 
 控制台另有一组**按人**过滤的只读接口（`/api/galaxy/consumer/{sessions,jobs,disputes}`）。
-它们和上面那套按 `sk-` 密钥授权的接口是两条路：控制台拿的是用户令牌，而一个人
+它们和上面那套按 `sk-` 密钥授权的接口是两条路：控制台拿的是使用端账号的令牌，而一个人
 名下通常有好几把密钥，范围由令牌解析出的密钥集合决定，请求里的 `keyId` 只能在
 这个集合内收窄。
 
@@ -172,7 +172,7 @@ A 哪天泄露 B 跟着失守。一个已验签渠道都没配时这条路由整
 
 | 路径 | 认谁 | 用途 |
 |---|---|---|
-| `POST /api/galaxy/consumer/orders/pay` | 平台管理员 | 线下转账、渠道回调丢了要补单 |
+| `POST /api/galaxy/admin/orders/pay`（manager-api） | 管理端运营账号 | 线下转账、渠道回调丢了要补单 |
 | `POST /api/galaxy/consumer/orders/pay/sandbox` | 订单本人 | 内测期把购买链路跑通 |
 
 沙箱那条的安全边界靠三件事撑着，缺一件它就是个免费发额度的接口：渠道必须在
@@ -198,16 +198,16 @@ A 哪天泄露 B 跟着失守。一个已验签渠道都没配时这条路由整
 
 ## 界面
 
-三类角色落在两个应用，不是三个：
-
-| 角色 | 落点 | 页面 |
+| 角色 | 落点 | 账号 |
 |---|---|---|
-| 提供者、消费者 | **`client/galaxy`**（新建，:7898） | `/provider/{overview,contributions,records}`、`/consumer/{keys,billing,usage,workloads}` |
-| 平台运营 | `client/manager` 的 `/galaxy` | 池水位 / 节点与贡献 / 抽检 / 争议工单 / 额度包 / 结算汇总 六个页签 |
+| 提供者（共享端） | **Nova**，`client/galaxy/nova`（:17898） | Galaxy 共享端账号 `pu_…` |
+| 消费者（使用端） | **Orbit**，`client/galaxy/orbit`（:17899） | Galaxy 使用端账号 `cu_…` |
+| 还没注册的访客 | Portal，`client/galaxy/portal`（:17900） | 不登录 |
+| 平台运营 | `client/manager` 的 `/galaxy` | 管理端账号 `mu_…` |
 
-**为什么提供者与消费者合成一个应用**：它们常常是同一个人的两副面孔（我贡献算力 /
-我买算力用）。侧栏分「我贡献的」「我使用的」两组，不做角色切换开关 —— 强行二选一
-只会让人为了看另一半反复退出登录。
+最早提供者和消费者合在一个应用里（理由是「同一个人的两副面孔」），后来拆成了 Nova / Orbit
+两个桌面端，2026-09-11 起账号也按端分开（见下一节「账号体系」）：两端的用户群、要做的事、
+能动的钱都不一样，一个人两边都用就各注册一个。
 
 **为什么不并进 `client/web`**：web 是内部产研的交付控制台（身份锁在
 `product_research` persona，delivery-api 里三十多处 `RequireProductResearch()`），
@@ -220,17 +220,20 @@ A 哪天泄露 B 跟着失守。一个已验签渠道都没配时这条路由整
 
 一度是在代理层按 `/api/galaxy/*` 前缀分流到 `GALAXY_TARGET` 的，但那条路在鉴权上
 走不通：管理端有自己的一套身份（`zt_manager_*` + Redis 会话里的不透明随机串），
-而 galaxy-api 认的是 `service/identity` 签的 JWT —— 这是 manager-api 刻意不挂
+而 galaxy-api 认的是另一套令牌 —— 这是 manager-api 刻意不挂
 `httpx.SetUserAuthenticator` 的结果，不是配漏了。浏览器拿管理端令牌直连过去，
 每个请求都被判成 `not login`，前端拦截器一看到这四个字就清 token 跳登录页，
 症状是「点进共享算力池就被踢出来」。
 
 换成「代理层换票」或「manager-api 拿服务凭证转发」也能通，但那是在两个进程之间
 搬一份本来就同库同表的数据：账在同一个 MySQL、控制面在同一个 Redis，manager-api
-两样都连得到，中间那一跳不承载任何东西。所以 `galaxy-api/pkg/admin` 和
-`manager-api/pkg/galaxy` 是同一个领域服务的两个装配方 —— 前者给业务身份的控制台
-管理员，后者给管理端的角色体系（权限判定统一在 `manager-api/auth` 那道中间件上，
-写方法还要再过一次角色的 writable 开关）。前端 api 文件的路径两边一致，没有变。
+两样都连得到，中间那一跳不承载任何东西。
+
+galaxy-api 上原来也有一组 `/api/galaxy/admin/*`（`galaxy-api/pkg/admin`），给任务宇宙的
+管理员（`service/identity` 的 `role=admin`）用。账号体系独立之后那边只剩共享端和使用端的人，
+没有运营这种身份，**那组接口已经删掉**，门户模型目录与线索、发内测密钥、人工确认到账
+一并挪到了 `manager-api/pkg/galaxy`。共享池的运营现在只有这一个入口，权限判定统一在
+`manager-api/auth` 那道中间件上，写方法还要再过一次角色的 writable 开关。
 
 `galaxy.ControlPlane` 的 Redis 实现因此从 `galaxy-api/pkg/redisctl` 挪到了
 `service/galaxy/redisctl`：两个装配方都要用它，谁都不该去 import 对方那个可执行
@@ -251,6 +254,53 @@ cd client/manager && npm run dev                 # :7895，/galaxy 是运营页
 两族 usage golden、消费者与节点之间的字节对拷与失败语义、事件日志的不重不漏、
 session 的异步提交与断开幸存、抽检签名的抗噪声、指标注册表的并发与格式。
 
+## 账号体系（2026-09-11）
+
+Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录走的是任务宇宙的
+`POST /api/auth/login`（`service/identity`、`zt_identity_user`），令牌和 web-api 通用，
+池内表里的 owner 存的是那边的数字主键。现在 Galaxy 有自己的账号：
+
+| | 共享端 | 使用端 |
+|---|---|---|
+| 谁 | 出算力的人，用 Nova | 花钱买额度的人，用 Orbit |
+| id | `pu_<ULID>` | `cu_<ULID>` |
+| 登录注册 | `POST /api/galaxy/provider/auth/{register,login}` | `POST /api/galaxy/consumer/auth/{register,login}` |
+| 本人 | `GET …/provider/auth/me`、`POST …/provider/auth/password` | `GET …/consumer/auth/me`、`POST …/consumer/auth/password` |
+| 身份 | 散户（默认）/ 工作室 | — |
+
+| 部件 | 落点 |
+|---|---|
+| 账号表 | `zt_galaxy_user`（`side` + 按端唯一的用户名），迁移 `server/migrations/20260911_galaxy_user.sql` |
+| 领域服务 | `service/galaxy/account`：注册、登录、令牌、改密码；运营的列表、停用、重置密码 |
+| 登录路由与门禁 | `galaxy-api/pkg/auth`：`Gate.Provider()` / `Gate.Consumer()`，控制台路由一律挂它 |
+| 运营 | `manager-api/pkg/galaxy`：`/api/galaxy/admin/users*`、`/api/galaxy/admin/provider/type` |
+
+几条要记住的规则：
+
+- **两端是两批人。** 同一个用户名在两端可以各是一个账号，互不相通。一个人既挂机又买额度，
+  就在 Nova 和 Orbit 各注册一次。一端的令牌调另一端的接口是 `not login` ——
+  以前「Nova 只打 provider/*、Orbit 只打 consumer/*」只在前端页面上成立，接口层谁的令牌都认。
+- **令牌不和任务宇宙串用，靠的不是密钥。** HS256，`iss=galaxy`、`aud=<端>`、`sub` 是字符串 id；
+  任务宇宙的令牌 `sub` 是数字，按这个形状解析直接失败。所以就算两边配成了同一个签名密钥也串不了，
+  但仍然该各配各的：`galaxy.auth.token_secret`，没配时退回 galaxy-api 自己的 `auth.token_secret`。
+- **账号状态每次请求查一次库。** 令牌里签着 `token_version`，改密码、运营重置、停用都让它加一，
+  发出去的令牌当场作废。门禁只在「凭证本身有问题」时回 `not login`（客户端据此清令牌），
+  查库失败回「认证服务暂不可用」—— 数据库抖一下不该把所有人踢回登录页。
+- **工作室只能运营设。** 注册出来一律是散户，没有「申请工作室」的入口：工作室的信誉按设备指纹记，
+  指纹是客户端自报的，自选就等于让人自己挑一个更宽松的扣分口径。运营在管理端「节点与贡献」
+  的机器行上，或者「账号」页签里改；`SetProviderType` 只认存在的共享端账号。
+- **运营不在这套账号里。** 共享池的运营接口全在 manager-api，认管理端账号。停用 Galaxy 账号只挡
+  登录控制台，名下在跑的机器和已经发出去的算力密钥各有各的开关（封禁机器、吊销密钥）。
+- **忘了密码找运营。** 没有自助找回（没有手机 / 邮箱验证）。运营重置出来的是临时密码，
+  本人下次登录必须先改掉，改掉之前除了 `me` 和改密码什么接口都调不动。
+- **老数据迁过来，id 带 `legacy`。** 名下有 Galaxy 数据的任务宇宙账号，在用到的那一端各建一个
+  同名账号、沿用原密码，id 是 `pu_legacy_<原 id>` / `cu_legacy_<原 id>`，池内表的 owner 跟着改。
+  **先跑迁移，再发新版 galaxy-api、manager-api 和两个桌面端**：两个服务都要读账号表，缺表时 galaxy-api
+  登录注册全挂、manager-api 的「节点与贡献」整页报错；而且新注册入口一开，老用户名可能被人抢注，
+  迁移只好给老账号加后缀（名下数据不会跟着同名的新账号走，那等于谁先抢到用户名谁拿走别人的积分）。
+
+没做的：登录失败次数限制（和改之前一样没有）、注册的人机校验、自助找回密码。
+
 ## 实现中对设计的修正
 
 写代码时发现下面这些地方按文档原样做会出问题，实现取了另一种做法。**以本节为准**，
@@ -264,7 +314,9 @@ session 的异步提交与断开幸存、抽检签名的抗噪声、指标注册
 | 设计 8 节 `contrib:{cid}.quotaLeft` | 一个 JSON 字段 | **按单位展开成 `limit:`/`used:`/`left:` 三组 hash 字段**。放置与结算都要在 Lua 里改单个维度，HINCRBY 一个字段是原子的，读改写一个 JSON 串不是 |
 | 设计 6.2 「抽检判定伪造 → 追回」 | 只说了追回 | **追回不抹原始流水，而是在三本账上各记一笔反向的**（`refund` / `clawback` / `baddebt`，幂等键加 `:dispute` 后缀）。抹掉原始记录对不出「这笔钱进来过又出去了」，事后没法审 |
 | 设计 S-09 争议工单 | 未说明受理期限与粒度 | **工单钉在 `(unitId, attempt)` 上，且只受理 7 天内的执行**。结算幂等键就是这两个，重跑过的单元每次尝试各自结算，只钉 unitId 会让一次退款退掉两次的钱；不设期限则提供者的积分永远处在「随时可能被追回」的状态，提现结不了账 |
-| 需求 S-09 后台 | 未说明运营用哪种身份 | **新增 `httpx.RequirePlatformAdmin()`**，galaxy 的处置动作（封禁、裁决、发密钥、人工确认到账）改用它。原有的 `RequireAdmin()` 除管理员外还要求 `product_research` 身份 —— 那是交付工作台的门，共享池的运营不在那个身份体系里，沿用它等于把唯一能处置的人挡在门外 |
+| 需求 S-09 后台 | 未说明运营用哪种身份 | **运营用管理端账号（`zt_manager_*`），接口全在 manager-api。** 中间有过一版：galaxy-api 自带一组 `/api/galaxy/admin/*`，用新增的 `httpx.RequirePlatformAdmin()` 认任务宇宙的管理员（`RequireAdmin()` 还要求 `product_research` 身份，那是交付工作台的门）。2026-09-11 账号体系独立后那组接口删掉了，见「账号体系」 |
+| 架构 13 安全架构 / 架构 14 `service/identity` | 控制台用「现有用户 token」；提供者与购买密钥的用户挂在现有用户体系 | **Galaxy 自己的账号体系**（`service/galaxy/account`、`zt_galaxy_user`），共享端与使用端两批人，令牌互不通用，也不和任务宇宙通用。galaxy-api 进程里不再装配 `service/identity` |
+| 设计 3.3 控制台接口 | 「Nova 只打 provider/*，Orbit 只打 consumer/*，访问另一端的路由返回 404」 | **前端页面是 404，接口层按端鉴权**：令牌的 `aud` 是端，另一端的令牌打进来是 `not login`。改之前接口层只认「登录了」，同一张令牌两组路由都能调 |
 | 设计 13 节 requestId | 「消费者 ← Hub ← 节点三段同一值」 | **实现补了 `X-Galaxy-Request-Id` 响应头**。原先消费者侧根本拿不到这个值，也就无从申诉、无从追问某一次调用 |
 | 设计 4.2 步骤 4 `q:wait` | Redis ZSET 等待队列 | **进程内等待**。P0 单实例，等待发生在持有消费者连接的那个进程里；放进 Redis 也没有第二个实例去唤醒它。队列深度仍作为指标暴露 |
 | 需求 C-05 / 设计 4.2 步骤 4 | 候选为空一律排队至多 `maxWaitMs` | **只在「有贡献忙完就能接」时排队**：并发占满、额度被在途请求预留着（含已绑定的那台忙着）。车道里没人、模型没人提供、离线 / 暂停 / 排空 / 限流 / 时段外、额度真用完、座位都被别人绑着，这些在十秒里变不了，立刻 `503 no_capacity`。原先照样挂满 10 秒才回同一个 503（`Waitable`） |

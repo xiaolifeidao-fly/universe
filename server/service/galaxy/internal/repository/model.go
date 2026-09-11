@@ -81,7 +81,41 @@ type GalaxyNode struct {
 func (r *GalaxyNode) TableName() string { return "zt_galaxy_node" }
 func (r *GalaxyNode) Init()             {}
 
-// GalaxyProvider 提供者账号的身份：散户 / 工作室。
+// GalaxyUser Galaxy 自己的账号。和任务宇宙的 zt_identity_user 没有任何关系：
+// 不同的表、不同的令牌，谁也不认识谁。
+//
+// 共享端（提供者，用 Nova）和使用端（消费者，用 Orbit）是两批人，各注册各的 ——
+// 同一个用户名在两端可以各有一个账号，互不相通。UserID 带着端的前缀（pu_ / cu_），
+// 池内表里所有的 owner_user_id 存的就是它：看一眼就知道是哪一端的人，
+// 一个使用端的 id 出现在机器表里也能当场认出来。
+//
+// 散户 / 工作室不在这张表上，在 GalaxyProvider：那是只有共享端才有、只由运营改的属性。
+type GalaxyUser struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_user_id,priority:1;uniqueIndex:uk_gx_user_name,priority:1;index:idx_gx_user_side,priority:1"`
+	UserID  string `gorm:"column:user_id;type:varchar(40);uniqueIndex:uk_gx_user_id,priority:2" description:"账号业务键，共享端 pu_…，使用端 cu_…"`
+	Side    string `gorm:"column:side;type:varchar(16);uniqueIndex:uk_gx_user_name,priority:2;index:idx_gx_user_side,priority:2" description:"provider=共享端；consumer=使用端"`
+	// Username 存小写。唯一性按端算：两端是两批人，同名不冲突。
+	Username     string `gorm:"column:username;type:varchar(64);uniqueIndex:uk_gx_user_name,priority:3" description:"登录名，小写，按端唯一"`
+	DisplayName  string `gorm:"column:display_name;type:varchar(128)"`
+	PasswordHash string `gorm:"column:password_hash;type:varchar(255)" description:"bcrypt"`
+	Status       string `gorm:"column:status;type:varchar(16);index:idx_gx_user_side,priority:3" description:"active/disabled"`
+	// MustChangePassword 运营重置过密码的账号为真：改掉之前只能调 me 和改密码。
+	MustChangePassword bool `gorm:"column:must_change_password;default:false"`
+	// TokenVersion 签进令牌里。改密码、重置、停用都加一，已经发出去的令牌当场作废。
+	TokenVersion int        `gorm:"column:token_version;default:1"`
+	LastLoginAt  *time.Time `gorm:"column:last_login_at;type:timestamp null default null"`
+	// UpdatedBy 最近一次由运营处置（停用、启用、重置密码）的管理端账号。本人改密码不写。
+	UpdatedBy string `gorm:"column:updated_by;type:varchar(64)" description:"最近一次处置这个账号的管理端账号"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyUser) TableName() string { return "zt_galaxy_user" }
+func (r *GalaxyUser) Init()             {}
+
+// GalaxyProvider 共享端账号的身份：散户 / 工作室。OwnerUserID 是 GalaxyUser.UserID（pu_…）。
 //
 // 没有行就是散户 —— 注册出来默认是散户，不必预先插一条。只有管理端把账号设成工作室
 // （或者再改回散户）时才有行。

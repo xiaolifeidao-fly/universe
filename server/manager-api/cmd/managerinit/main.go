@@ -137,6 +137,12 @@ func main() {
 	}
 }
 
+// viewerWithheld 只读角色也不给的读接口。门户线索里是陌生人留下的手机、邮箱，
+// 只读角色没有理由拉这份名单。
+var viewerWithheld = map[string]bool{
+	"/api/galaxy/admin/portal/leads": true,
+}
+
 // grantRoles 给 operator 与 viewer 铺一份可用的初始授权。
 // 超级管理员不需要授权 —— 它绕过资源过滤。
 func grantRoles(ctx context.Context, service manager.Service, engine *gin.Engine) error {
@@ -152,7 +158,7 @@ func grantRoles(ctx context.Context, service manager.Service, engine *gin.Engine
 		codes = append(codes, code)
 		// viewer 只拿读接口。给它写接口再靠 writable 拦，虽然拦得住，
 		// 但后台上看到的授权范围会和实际能力不一致，配起来容易误判。
-		if route.Method == "GET" {
+		if route.Method == "GET" && !viewerWithheld[route.Path] {
 			viewerCodes = append(viewerCodes, code)
 		}
 	}
@@ -168,5 +174,5 @@ func buildEngine(database *gorm.DB, managerService manager.Service) (*gin.Engine
 	bizLineService := bizline.New(database, deliveryService)
 	identityService := identity.New(database, deliveryService, httpx.Property("auth.token_secret"), time.Hour)
 	// galaxyService 传 nil：这里只要路由表，不调用任何服务方法。
-	return routers.New(managerService, identityService, bizLineService, deliveryService, nil)
+	return routers.New(managerService, identityService, bizLineService, deliveryService, nil, nil)
 }

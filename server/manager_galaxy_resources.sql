@@ -1,5 +1,5 @@
 -- =========================================================================
--- 管理端权限资源：共享算力池运营接口（10 条）
+-- 管理端权限资源：共享算力池运营接口（20 条）
 --
 -- 首选做法**不是**跑这份 SQL，而是：
 --
@@ -11,6 +11,10 @@
 --
 -- 页面资源不用动：galaxy（/galaxy，GlobalOutlined，sort=50）已经在 managerinit
 -- 的 pages 清单里，菜单能显示出来就是证据。这次新增的全是接口。
+--
+-- 后 10 条是 Galaxy 账号体系独立出来时加的（2026-09-11）：Galaxy 账号的列表 / 停用 /
+-- 重置密码，以及原来挂在 galaxy-api、认任务宇宙管理员的那几条运营接口
+-- （发内测密钥、人工确认到账、门户模型目录、门户线索）。galaxy-api 上已经没有运营接口了。
 --
 -- 全部幂等，反复执行不出错、不改已有行。
 -- 库：manager-api 的 application.properties 里 sqlconn 指向的那个
@@ -86,6 +90,62 @@ INSERT INTO zt_manager_resource
 SELECT 0, 'api.post.api.galaxy.admin.packages.save', 'POST /api/galaxy/admin/packages/save', 'api', 'POST', '/api/galaxy/admin/packages/save', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.packages.save');
 
+-- Galaxy 账号列表：共享端、使用端两批人，按端翻。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.users', 'GET /api/galaxy/admin/users', 'api', 'GET', '/api/galaxy/admin/users', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.users');
+
+-- 停用 / 启用。停用当场让这个账号的令牌作废。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.users.status', 'POST /api/galaxy/admin/users/status', 'api', 'POST', '/api/galaxy/admin/users/status', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.users.status');
+
+-- 重置密码。本人下次登录必须先改掉。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.users.password', 'POST /api/galaxy/admin/users/password', 'api', 'POST', '/api/galaxy/admin/users/password', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.users.password');
+
+-- 给使用端账号发内测密钥。响应里有 sk- 明文。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.keys.issue', 'POST /api/galaxy/admin/keys/issue', 'api', 'POST', '/api/galaxy/admin/keys/issue', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.keys.issue');
+
+-- 人工确认到账。等于发额度，只给运营。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.orders.pay', 'POST /api/galaxy/admin/orders/pay', 'api', 'POST', '/api/galaxy/admin/orders/pay', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.orders.pay');
+
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.portal.models', 'GET /api/galaxy/admin/portal/models', 'api', 'GET', '/api/galaxy/admin/portal/models', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.portal.models');
+
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.portal.models.save', 'POST /api/galaxy/admin/portal/models/save', 'api', 'POST', '/api/galaxy/admin/portal/models/save', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.portal.models.save');
+
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.portal.models.delete', 'POST /api/galaxy/admin/portal/models/delete', 'api', 'POST', '/api/galaxy/admin/portal/models/delete', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.portal.models.delete');
+
+-- 门户线索：陌生人留下的联系方式。只读角色不给，见 2.3。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.portal.leads', 'GET /api/galaxy/admin/portal/leads', 'api', 'GET', '/api/galaxy/admin/portal/leads', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.portal.leads');
+
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.portal.leads.handle', 'POST /api/galaxy/admin/portal/leads/handle', 'api', 'POST', '/api/galaxy/admin/portal/leads/handle', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.portal.leads.handle');
+
 
 -- -------------------------------------------------------------------------
 -- 2. 角色授权
@@ -114,7 +174,17 @@ WHERE r.status = 'active'
     'api.post.api.galaxy.admin.node.ban',
     'api.post.api.galaxy.admin.provider.type',
     'api.post.api.galaxy.admin.disputes.resolve',
-    'api.post.api.galaxy.admin.packages.save'
+    'api.post.api.galaxy.admin.packages.save',
+    'api.get.api.galaxy.admin.users',
+    'api.post.api.galaxy.admin.users.status',
+    'api.post.api.galaxy.admin.users.password',
+    'api.post.api.galaxy.admin.keys.issue',
+    'api.post.api.galaxy.admin.orders.pay',
+    'api.get.api.galaxy.admin.portal.models',
+    'api.post.api.galaxy.admin.portal.models.save',
+    'api.post.api.galaxy.admin.portal.models.delete',
+    'api.get.api.galaxy.admin.portal.leads',
+    'api.post.api.galaxy.admin.portal.leads.handle'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
@@ -138,7 +208,17 @@ WHERE r.status = 'active'
     'api.post.api.galaxy.admin.node.ban',
     'api.post.api.galaxy.admin.provider.type',
     'api.post.api.galaxy.admin.disputes.resolve',
-    'api.post.api.galaxy.admin.packages.save'
+    'api.post.api.galaxy.admin.packages.save',
+    'api.get.api.galaxy.admin.users',
+    'api.post.api.galaxy.admin.users.status',
+    'api.post.api.galaxy.admin.users.password',
+    'api.post.api.galaxy.admin.keys.issue',
+    'api.post.api.galaxy.admin.orders.pay',
+    'api.get.api.galaxy.admin.portal.models',
+    'api.post.api.galaxy.admin.portal.models.save',
+    'api.post.api.galaxy.admin.portal.models.delete',
+    'api.get.api.galaxy.admin.portal.leads',
+    'api.post.api.galaxy.admin.portal.leads.handle'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
@@ -146,9 +226,10 @@ WHERE r.status = 'active'
       AND rr.resource_id = r.id
   );
 
--- 2.3 viewer（只读）：**只给 GET**。
+-- 2.3 viewer（只读）：**只给 GET**，门户线索（portal/leads）除外。
 -- 写接口有角色的 writable 开关兜底拦得住，但后台上看到的授权范围会和实际能力
 -- 不一致，配起来容易误判 —— 这也是 managerinit 的口径。
+-- 线索里是陌生人留下的手机、邮箱，只读角色没有理由拉这份名单（managerinit 的 viewerWithheld）。
 INSERT INTO zt_manager_role_resource (role_id, resource_id, created_time)
 SELECT (SELECT id FROM zt_manager_role WHERE code = 'viewer' AND status = 'active'), r.id, NOW(3)
 FROM zt_manager_resource r
@@ -160,7 +241,9 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.probes',
     'api.get.api.galaxy.admin.usage',
     'api.get.api.galaxy.admin.disputes',
-    'api.get.api.galaxy.admin.packages'
+    'api.get.api.galaxy.admin.packages',
+    'api.get.api.galaxy.admin.users',
+    'api.get.api.galaxy.admin.portal.models'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
