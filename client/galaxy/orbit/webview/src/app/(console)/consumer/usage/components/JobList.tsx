@@ -13,6 +13,8 @@ const RUNNING = new Set(["queued", "placed", "running", "streaming"]);
 
 export function JobList({ keys }: { keys: ConsumerKeyView[] }) {
   const { t } = useLocale();
+  // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
+  const [modal, modalHolder] = Modal.useModal();
   const [rows, setRows] = useState<JobView[]>([]);
   const [loading, setLoading] = useState(true);
   const alias = new Map(keys.map((key) => [key.keyId, key.alias || key.keyId]));
@@ -33,7 +35,7 @@ export function JobList({ keys }: { keys: ConsumerKeyView[] }) {
   }, [load]);
 
   const cancel = (row: JobView) => {
-    Modal.confirm({
+    void modal.confirm({
       title: t("jobs.cancel"),
       okText: t("common.confirm"),
       cancelText: t("common.cancel"),
@@ -51,6 +53,8 @@ export function JobList({ keys }: { keys: ConsumerKeyView[] }) {
 
   return (
     <Card className="gx-rise gx-rise--2" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      {/* 放在 loading 分支外面：onOk 里 await load() 会把表格换成加载圈，放里面确认框会被一起卸载。 */}
+      {modalHolder}
       {loading ? (
         <Loading />
       ) : (

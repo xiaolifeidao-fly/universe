@@ -152,9 +152,9 @@ func (s *service) runProbe(ctx context.Context, row *repository.GalaxyAuditProbe
 	s.metrics.Count(MetricAuditVerdict, map[string]string{"cid": row.CID, "verdict": verdict}, 1)
 	switch verdict {
 	case verdictSuspect:
-		_ = s.repository.AdjustReputation(ctx, bizLine, row.CID, -0.1)
+		_ = s.adjustReputation(ctx, row.CID, -0.1)
 	case verdictForged:
-		_ = s.repository.AdjustReputation(ctx, bizLine, row.CID, -0.5)
+		_ = s.adjustReputation(ctx, row.CID, -0.5)
 		forged, err := s.repository.CountVerdicts(ctx, bizLine, row.CID, verdictForged, now.AddDate(0, 0, -30))
 		if err == nil && forged >= forgedThreshold {
 			// 累计两次就摘除：一次可能是上游抖动，两次就是这台机器在编。

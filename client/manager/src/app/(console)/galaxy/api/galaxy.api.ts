@@ -86,10 +86,18 @@ export class AdminNodeView {
 
   ownerUserId = "";
 
+  /**
+   * 主人的身份。注册默认是散户，只有管理端能设成工作室。
+   * 散户的信誉跟着账号走（名下机器共用一份），工作室的跟着设备走（每台机器各算各的）。
+   */
+  providerType: ProviderType = "individual";
+
   lastBeatAt?: string;
 
   contributions: ContributionView[] = [];
 }
+
+export type ProviderType = "individual" | "studio";
 
 export class AuditProbeView {
   probeId = "";
@@ -160,6 +168,15 @@ export async function fetchAdminUsage(params: { from?: string; to?: string; kind
 
 export async function banNode(nodeId: string, banned: boolean, reason = "") {
   const response = await instance.post<ApiResponse<string>>("/galaxy/admin/node/ban", { nodeId, banned, reason });
+  return unwrapApiResponse(response.data);
+}
+
+/** 把账号设成工作室 / 改回散户。改的是账号，名下所有机器一起变。 */
+export async function setProviderType(ownerUserId: string, providerType: ProviderType) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/provider/type", {
+    ownerUserId,
+    providerType,
+  });
   return unwrapApiResponse(response.data);
 }
 

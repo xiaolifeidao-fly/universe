@@ -28,8 +28,13 @@ import { LocalServicePanel } from "./LocalServicePanel";
 export function AccountPanel() {
   const { t, locale, setLocale } = useLocale();
   const router = useRouter();
+  // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
+  const [modal, modalHolder] = Modal.useModal();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [nodes, setNodes] = useState<NodeView[]>([]);
+  // 列表真拿到过才算数：下面「这台电脑」要拿它判断自己还在不在名下，
+  // 加载失败时的空列表会让它误报「已解绑」。
+  const [nodesLoaded, setNodesLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   // 列表里哪一台是这台电脑。其余的可能是服务器上独立部署的 ai-bridge，
@@ -39,6 +44,7 @@ export function AccountPanel() {
   const load = useCallback(async () => {
     try {
       setNodes(await fetchNodes());
+      setNodesLoaded(true);
     } catch (error) {
       message.error((error as Error).message || t("common.loadFailed"));
     } finally {
@@ -56,7 +62,7 @@ export function AccountPanel() {
   }, []);
 
   const unbind = (node: NodeView) => {
-    Modal.confirm({
+    void modal.confirm({
       title: t("account.unbindAction"),
       content: t("account.unbindConfirm"),
       okText: t("common.confirm"),
@@ -94,6 +100,7 @@ export function AccountPanel() {
   return (
     <>
       <PageHeader title={t("account.title")} meta={t("account.subtitle")} />
+      {modalHolder}
       <div className="gx-body">
         <Card className="gx-rise">
           <CardHead title={t("account.profile")} />
@@ -175,7 +182,7 @@ export function AccountPanel() {
 
         <AccessKeyPanel />
 
-        <LocalServicePanel />
+        <LocalServicePanel nodeIds={nodesLoaded ? nodes.map((node) => node.nodeId) : null} />
 
         <Card className="gx-rise gx-rise--3">
           <CardHead title={t("account.security")} hint={t("account.securityHint")} />

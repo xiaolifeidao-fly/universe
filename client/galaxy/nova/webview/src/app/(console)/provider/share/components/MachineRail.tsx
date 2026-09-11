@@ -52,27 +52,37 @@ export function MachineRail({
   machines,
   selected,
   localNodeId,
+  localGap,
+  localSelected,
   query,
   onQuery,
   onSelect,
+  onSelectLocal,
 }: {
   machines: NodeView[];
   selected: string;
   localNodeId: string;
+  /** 这台电脑不在名下机器里的原因；在名下时是 null，它就是 machines 里的第一台。 */
+  localGap: "unpaired" | "detached" | null;
+  localSelected: boolean;
   query: string;
   onQuery: (next: string) => void;
   onSelect: (nodeId: string) => void;
+  onSelectLocal: () => void;
 }) {
   const { t } = useLocale();
   const listRef = useRef<HTMLDivElement>(null);
   const visible = machines.filter((node) => matches(node, query));
   const online = machines.filter(isNodeOnline).length;
+  // 补上的「这台电脑」只有名字可搜：它还没接进来，没有节点 ID，也没有能力。
+  const localLabel = t("account.thisComputer");
+  const showLocal = Boolean(localGap) && (!query.trim() || localLabel.toLowerCase().includes(query.trim().toLowerCase()));
 
   // 选中的那台可能在列表视野外（窄窗口下是横着排的）：搜索回车切过去之后、
   // 或者清掉搜索词列表重新铺满之后，都把它滚进来。
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>(".gx-pick.is-active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [selected, query]);
+  }, [selected, localSelected, query]);
 
   return (
     <Card className="gx-split__aside gx-rise">
@@ -99,13 +109,35 @@ export function MachineRail({
               // 回车直接切到第一个匹配：搜索在这里是「快速切换」，不只是筛选。
               // 拼音输入法选词那一下回车不算 —— 那是在上屏，不是在确认。
               if (event.nativeEvent.isComposing) return;
-              if (event.key === "Enter" && visible[0]) onSelect(visible[0].nodeId);
+              if (event.key === "Enter") {
+                if (showLocal) onSelectLocal();
+                else if (visible[0]) onSelect(visible[0].nodeId);
+              }
               if (event.key === "Escape") onQuery("");
             }}
           />
         </span>
       </div>
       <div ref={listRef} className="gx-picks gx-scroll" role="listbox" aria-label={t("share.machines")}>
+        {showLocal ? (
+          <button
+            type="button"
+            role="option"
+            aria-selected={localSelected}
+            className={`gx-pick${localSelected ? " is-active" : ""}`}
+            onClick={onSelectLocal}
+          >
+            <span className="gx-state" />
+            <span className="gx-pick__body">
+              <span className="gx-pick__name">
+                <b>{localLabel}</b>
+              </span>
+              <span className={`gx-pick__meta${localGap === "detached" ? " is-warn" : ""}`}>
+                {localGap === "detached" ? t("share.localDetachedMeta") : t("share.localUnpairedMeta")}
+              </span>
+            </span>
+          </button>
+        ) : null}
         {visible.map((node) => {
           const summary = summarize(node, t);
           const active = node.nodeId === selected;
@@ -135,7 +167,7 @@ export function MachineRail({
             </button>
           );
         })}
-        {visible.length === 0 ? <div className="gx-pick__empty">{t("share.machineNoMatch")}</div> : null}
+        {visible.length === 0 && !showLocal ? <div className="gx-pick__empty">{t("share.machineNoMatch")}</div> : null}
       </div>
     </Card>
   );

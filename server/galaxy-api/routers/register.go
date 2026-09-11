@@ -213,6 +213,11 @@ func loadConfig() galaxy.Config {
 	config.PayoutRate = intProperty("galaxy.payout_rate", config.PayoutRate)
 	config.PayoutMinCredits = int64(intProperty("galaxy.payout_min_credits", int(config.PayoutMinCredits)))
 	config.PayoutHoldDays = intProperty("galaxy.payout_hold_days", config.PayoutHoldDays)
+	if raw := strings.TrimSpace(httpx.Property("galaxy.reputation_recovery_per_day")); raw != "" {
+		if value, err := strconv.ParseFloat(raw, 64); err == nil && value > 0 {
+			config.ReputationRecoveryPerDay = value
+		}
+	}
 	// 门户上那句可用性承诺。不配就是空串 —— 门户少显示一格，
 	// 而不是替部署方许一个他没许的诺。
 	config.PortalAvailability = strings.TrimSpace(httpx.Property("galaxy.portal.availability"))

@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { formatRelative, unitLabel } from "@/utils/format";
+import { isDesktop } from "@/utils/product";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
 import {
   fetchNodes,
@@ -110,6 +111,12 @@ function orderMachines(nodes: NodeView[], localNodeId: string): NodeView[] {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** 列表里补上的「这台电脑」那一项的选中键。节点 id 都是 n_ 开头，撞不上。 */
+const THIS_COMPUTER = "this-computer";
+
+/** 这台电脑为什么不在名下机器里：还没配过，或者配过但已解绑（本机还拿着平台不认的旧令牌）。 */
+type LocalGap = "unpaired" | "detached";
+
 export function ShareSettings() {
   const { t } = useLocale();
   const router = useRouter();
@@ -119,9 +126,10 @@ export function ShareSettings() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
-  // 本机 bridge 的 nodeId。决定两件事：默认选中哪台，「去授权」给不给 ——
-  // 浏览器够不到别的机器的 bridge，那边的登录态只能去那台机器上修。
-  const [localNodeId, setLocalNodeId] = useState("");
+  // 本机 bridge 报的自己：配没配过、配出来的是哪个节点。决定默认选中哪台、
+  // 「去授权」给不给（浏览器够不到别的机器的 bridge），以及要不要在列表顶上补一项「这台电脑」。
+  // 纯浏览器里是 null：浏览器不是任何一台机器。
+  const [local, setLocal] = useState<{ paired: boolean; nodeId: string } | null>(null);
   // 主人点过的机器与能力。空串是没点过：机器落在这台电脑上，能力落在第一条。
   const [pickedNode, setPickedNode] = useState("");
   const [pickedCid, setPickedCid] = useState("");
@@ -135,13 +143,17 @@ export function ShareSettings() {
 
   useEffect(() => {
     let alive = true;
-    const local = pingBridge().then((ping) => ping?.nodeId ?? "");
-    void local.then((nodeId) => {
-      if (alive) setLocalNodeId(nodeId);
+    // 桌面里 ping 失败（bridge 进程没起来）也算「这台电脑还没接进来」：入口照样给，
+    // 点进配对页，第一步会把 bridge 的真实错误摆出来。
+    const self = isDesktop()
+      ? pingBridge().then((ping) => ({ paired: Boolean(ping?.paired && ping.nodeId), nodeId: ping?.nodeId ?? "" }))
+      : Promise.resolve(null);
+    void self.then((value) => {
+      if (alive) setLocal(value);
     });
     // 第一屏等本机 bridge 报出自己是哪台再画：分两步到的话，默认选中会先落在
     // 别的机器上、再跳回这台电脑。等不过 1.5 秒就先画，IPC 卡住不能把整页挡在加载圈上。
-    void Promise.all([fetchNodes(), Promise.race([local, delay(1500)])])
+    void Promise.all([fetchNodes(), Promise.race([self, delay(1500)])])
       .then(([list]) => {
         if (alive) setNodes(list);
       })
@@ -158,8 +170,26 @@ export function ShareSettings() {
     };
   }, [reload, t]);
 
+  const localNodeId = local?.nodeId ?? "";
   const machines = useMemo(() => orderMachines(nodes, localNodeId), [nodes, localNodeId]);
-  const machine = machines.find((node) => node.nodeId === pickedNode) ?? machines[0] ?? null;
+  // 这台电脑不在名下机器里（还没配过，或者在控制台解绑过）时，列表顶上补一项「这台电脑」。
+  //
+  // 不补的话它在控制台里连个入口都没有：解绑过的电脑本机还拿着旧令牌，自认为配着，
+  // 账户页不会提示去配对；名下只要还有别的机器，各处的「去配对」空状态也都不出现。
+  const localGap: LocalGap | null = local && !nodes.some((node) => node.nodeId === local.nodeId)
+    ? local.paired ? "detached" : "unpaired"
+    : null;
+  // 当前选中的是哪一项。点过的那台没了（被解绑、重新配对换了 nodeId）就回到默认：这台电脑 ——
+  // 它在名下就是它自己（orderMachines 钉在第一个），不在名下就是补的那一项。
+  const selectedKey =
+    pickedNode === THIS_COMPUTER && localGap
+      ? THIS_COMPUTER
+      : machines.some((node) => node.nodeId === pickedNode)
+        ? pickedNode
+        : localGap
+          ? THIS_COMPUTER
+          : (machines[0]?.nodeId ?? "");
+  const machine = machines.find((node) => node.nodeId === selectedKey) ?? null;
   const rows = useMemo(() => visibleContributions(machine?.contributions), [machine]);
   const current = rows.find((row) => row.cid === pickedCid) ?? rows[0] ?? null;
   const currentKey = current ? `${current.nodeId}:${current.cid}` : "";
@@ -203,10 +233,10 @@ export function ShareSettings() {
     });
   };
 
-  const selectMachine = (nodeId: string) => {
-    if (nodeId === machine?.nodeId) return;
+  const selectMachine = (key: string) => {
+    if (key === selectedKey) return;
     leave(() => {
-      setPickedNode(nodeId);
+      setPickedNode(key);
       setPickedCid("");
     });
   };
@@ -280,7 +310,8 @@ export function ShareSettings() {
     );
   }
 
-  if (!machine) {
+  // 名下一台都没有、又不在 Nova 桌面里（没有「这台电脑」可补）才是真的空。
+  if (!machine && !localGap) {
     return (
       <>
         <PageHeader title={t("share.title")} meta={t("share.subtitle")} />
@@ -301,15 +332,17 @@ export function ShareSettings() {
     );
   }
 
-  const online = isNodeOnline(machine);
+  const online = machine ? isNodeOnline(machine) : false;
   const endpointText =
-    machine.endpointStatus === "ok"
+    machine?.endpointStatus === "ok"
       ? t("account.endpointOk")
-      : machine.endpointStatus === "unreachable"
+      : machine?.endpointStatus === "unreachable"
         ? [t("account.endpointDown"), machine.endpointError].filter(Boolean).join(" — ")
         : t("account.endpointPending");
 
-  const detail = (
+  const detail = !machine ? (
+    <ThisComputerCard gap={localGap ?? "unpaired"} nodeId={localNodeId} />
+  ) : (
     <>
       <Card className="gx-rise gx-rise--1">
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 18px 12px" }}>
@@ -588,16 +621,19 @@ export function ShareSettings() {
       <PageHeader title={t("share.title")} meta={t("share.subtitle")} />
       {modalHolder}
       <div className="gx-body">
-        {/* 只有一台机器时不摆左列：一列里就一行，占掉 260 宽什么也没说。 */}
-        {machines.length > 1 ? (
+        {/* 只有一项时不摆左列：一列里就一行，占掉 260 宽什么也没说。补上的「这台电脑」也算一项。 */}
+        {machines.length + (localGap ? 1 : 0) > 1 ? (
           <div className="gx-split">
             <MachineRail
               machines={machines}
-              selected={machine.nodeId}
+              selected={selectedKey}
               localNodeId={localNodeId}
+              localGap={localGap}
+              localSelected={selectedKey === THIS_COMPUTER}
               query={query}
               onQuery={setQuery}
               onSelect={selectMachine}
+              onSelectLocal={() => selectMachine(THIS_COMPUTER)}
             />
             <div className="gx-split__main">{detail}</div>
           </div>
@@ -606,6 +642,66 @@ export function ShareSettings() {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * 这台电脑不在名下机器里时，右边摆的那一块：说清楚为什么不在、从哪儿接回来。
+ *
+ * 两种情形分开说。解绑过的那种本机还拿着旧令牌、自认为配着，主人在别处看到的
+ * 只是「正在连接平台」—— 不点破「平台已经不认它了」，他会一直等下去。
+ * 重新配对是作为新机器接入：能力默认关着，之前的额度和时段不会跟过来，这也得提前说。
+ */
+function ThisComputerCard({ gap, nodeId }: { gap: LocalGap; nodeId: string }) {
+  const { t } = useLocale();
+  const router = useRouter();
+  const detached = gap === "detached";
+  return (
+    <Card className="gx-rise gx-rise--1">
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "16px 18px 12px" }}>
+        <span
+          style={{
+            width: 36,
+            height: 36,
+            flex: "0 0 auto",
+            borderRadius: 10,
+            display: "grid",
+            placeItems: "center",
+            background: "var(--gx-muted)",
+            color: "var(--gx-soft)",
+          }}
+        >
+          <IconMonitor size={19} />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: 15, fontWeight: 600 }}>{t("account.thisComputer")}</span>
+          {/* 解绑过的把旧节点报出来：对得上账户页、执行记录里那台，排查时不用去翻本机文件。 */}
+          {detached && nodeId ? (
+            <span className="gx-mono" style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 4 }}>
+              {t("share.localDetachedNode", { node: nodeId })}
+            </span>
+          ) : null}
+        </span>
+        <Pill tone={detached ? "warn" : "default"}>{t("share.localOutOfPool")}</Pill>
+      </div>
+      <div style={{ padding: "0 18px 16px" }}>
+        <div style={{ borderTop: "1px solid var(--gx-line)" }}>
+          <EmptyState
+            title={detached ? t("share.localDetachedTitle") : t("share.localUnpairedTitle")}
+            hint={
+              <span style={{ display: "inline-block", maxWidth: 520, lineHeight: 1.7 }}>
+                {detached ? t("share.localDetachedHint") : t("share.localUnpairedHint")}
+              </span>
+            }
+            action={
+              <Btn tone="accent" onClick={() => router.push("/provider/pair")}>
+                {detached ? t("share.localRepair") : t("share.localPair")}
+              </Btn>
+            }
+          />
+        </div>
+      </div>
+    </Card>
   );
 }
 

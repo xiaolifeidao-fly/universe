@@ -170,12 +170,6 @@ func (r *GalaxyRepository) DisableContributionsByNode(ctx context.Context, bizLi
 		Update("status", "disabled").Error
 }
 
-func (r *GalaxyRepository) AdjustReputation(ctx context.Context, bizLine, cid string, delta float64) error {
-	return r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
-		Where("biz_line = ?", bizLine).Where("cid = ?", cid).
-		Update("reputation", clause.Expr{SQL: "GREATEST(0, LEAST(1, reputation + ?))", Vars: []any{delta}}).Error
-}
-
 func (r *GalaxyRepository) ListQuotaGrants(ctx context.Context, bizLine string, cids []string) ([]*GalaxyQuotaGrant, error) {
 	if len(cids) == 0 {
 		return nil, nil

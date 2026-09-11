@@ -652,7 +652,7 @@ func (s *service) reconcileUsage(ctx context.Context, runtime UnitRuntime, spec 
 							BizLine: bizLine, UnitID: runtime.RID, CID: runtime.CID, Unit: unit,
 							HubValue: value, NodeValue: nodeValue, Ratio: ratio,
 						})
-						_ = s.repository.AdjustReputation(ctx, bizLine, runtime.CID, -0.02)
+						_ = s.adjustReputation(ctx, runtime.CID, -0.02)
 						s.metrics.Count(MetricUsageMismatch, map[string]string{"cid": runtime.CID, "unit": unit}, 1)
 					}
 				}
@@ -791,7 +791,7 @@ func (s *service) FailUnit(ctx context.Context, unitID string, cause *contract.U
 	}
 	spec, _ := s.kinds.Lookup(runtime.Kind, runtime.KindVersion)
 	if cause != nil && cause.Class == contract.ErrorClassNode {
-		_ = s.repository.AdjustReputation(ctx, bizLine, runtime.CID, -0.05)
+		_ = s.adjustReputation(ctx, runtime.CID, -0.05)
 	}
 	s.failTurn(ctx, runtime, cause)
 	return s.settle(ctx, runtime, spec, contract.Metering{}, contract.UnitFailed, false, cause)

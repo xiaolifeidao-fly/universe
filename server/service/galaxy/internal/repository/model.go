@@ -32,7 +32,7 @@ import "time"
 // GalaxyNode 一台提供者机器。token 只存 sha256，明文在配对那一刻返回一次。
 type GalaxyNode struct {
 	ID      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_node_id,priority:1;index:idx_gx_node_owner,priority:1;index:idx_gx_node_token,priority:1" description:"业务线，池内固定 galaxy"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_node_id,priority:1;index:idx_gx_node_owner,priority:1;index:idx_gx_node_token,priority:1;index:idx_gx_node_fingerprint,priority:1" description:"业务线，池内固定 galaxy"`
 	NodeID  string `gorm:"column:node_id;type:varchar(64);uniqueIndex:uk_gx_node_id,priority:2" description:"节点业务键"`
 
 	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_node_owner,priority:2" description:"提供者用户标识"`
@@ -62,6 +62,11 @@ type GalaxyNode struct {
 
 	ResourcesJSON string `gorm:"column:resources_json;type:text" description:"探测到的本机资源，仅供放置的资源需求过滤"`
 
+	// MachineFingerprint 节点侧算的设备指纹（sha256 十六进制），Hub 看不到原始硬件 id。
+	// 工作室的信誉按它记（见 GalaxyReputation）。老版本节点不报，空着；只补不改，见 FillNodeFingerprint。
+	// 平台封禁也按它记（见 GalaxyMachineBan），索引是给封禁时按设备改节点行用的。
+	MachineFingerprint string `gorm:"column:machine_fingerprint;type:varchar(64);index:idx_gx_node_fingerprint,priority:2" description:"设备指纹 sha256，工作室的信誉跟着它走"`
+
 	Status     string     `gorm:"column:status;type:varchar(16);index:idx_gx_node_owner,priority:3" description:"active/offline/revoked"`
 	Banned     bool       `gorm:"column:banned;default:false" description:"平台封禁"`
 	LastBeatAt *time.Time `gorm:"column:last_beat_at;type:timestamp null default null" description:"最近一次心跳"`
@@ -75,6 +80,79 @@ type GalaxyNode struct {
 
 func (r *GalaxyNode) TableName() string { return "zt_galaxy_node" }
 func (r *GalaxyNode) Init()             {}
+
+// GalaxyProvider 提供者账号的身份：散户 / 工作室。
+//
+// 没有行就是散户 —— 注册出来默认是散户，不必预先插一条。只有管理端把账号设成工作室
+// （或者再改回散户）时才有行。
+type GalaxyProvider struct {
+	ID          int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_provider_owner,priority:1"`
+	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);uniqueIndex:uk_gx_provider_owner,priority:2" description:"提供者用户标识"`
+	// ProviderType individual=散户（信誉跟着账号走）；studio=工作室（信誉跟着设备走）。
+	ProviderType string `gorm:"column:provider_type;type:varchar(16)" description:"individual=散户，信誉跟着账号；studio=工作室，信誉跟着设备"`
+	// UpdatedBy 最近一次改身份的管理端账号，取自凭证。
+	UpdatedBy string `gorm:"column:updated_by;type:varchar(64)" description:"最近一次改身份的管理端账号"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyProvider) TableName() string { return "zt_galaxy_provider" }
+func (r *GalaxyProvider) Init()             {}
+
+// GalaxyReputation 一份信誉记录。主体有三种：
+//
+//	account:<ownerUserId>  账号 —— 散户读这一份
+//	device:<设备指纹>       设备 —— 工作室读这一份
+//	node:<nodeId>          没报指纹的老节点，当设备用
+//
+// 扣分同时记在账号和设备上，读哪一份看账号当下的身份。所以管理端改身份不会让分数清零：
+// 另一份一直在记。
+//
+// 行只在第一次扣分时建：没有行就是满分。
+type GalaxyReputation struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_reputation_subject,priority:1"`
+	Subject string `gorm:"column:subject;type:varchar(96);uniqueIndex:uk_gx_reputation_subject,priority:2" description:"account:<账号> / device:<设备指纹> / node:<nodeId>"`
+
+	// Reputation 是 ReputationAt 那一刻的分数，此刻的分数按回升速率现算（galaxy.EffectiveReputation）。
+	// **不要加 default 标签**：扣到 0 时 GORM 会把这一列从 INSERT 里省掉，数据库默认值把它写回满分。
+	Reputation   float64   `gorm:"column:reputation" description:"信誉分 0..1，截至 reputation_at；此后按天回升"`
+	ReputationAt time.Time `gorm:"column:reputation_at;type:timestamp null default null" description:"reputation 的结算时刻"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyReputation) TableName() string { return "zt_galaxy_reputation" }
+func (r *GalaxyReputation) Init()             {}
+
+// GalaxyMachineBan 平台对一台设备的封禁，按设备指纹记，和提供者是散户还是工作室无关。
+//
+// 不能只记在节点记录上：每配一次对就是一个新 nodeId，被封的机器解绑重配、换个账号去配，
+// 回来的就是一条干净的记录。请求路径看的仍然是 GalaxyNode.Banned —— 封禁 / 解封时把带这个指纹的
+// 节点一起改（SetMachineBanned），新配出来的记录在 hello 报上指纹时补标（BanNodeIfMachineBanned）。
+//
+// 解封不删行，Banned 改回 false：谁、为什么封过要查得到。
+type GalaxyMachineBan struct {
+	ID                 int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine            string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_machine_ban_fingerprint,priority:1"`
+	MachineFingerprint string `gorm:"column:machine_fingerprint;type:varchar(64);uniqueIndex:uk_gx_machine_ban_fingerprint,priority:2" description:"设备指纹 sha256，同 zt_galaxy_node.machine_fingerprint"`
+
+	// Banned 不加 default 标签：每次写入都带着明确的值，而 GORM 插入时会把零值换成 default 的值 ——
+	// 解封写的恰恰是零值 false，默认值一旦不是 false，解封就被写成了别的。
+	Banned bool `gorm:"column:banned" description:"是否封禁中；解封改回 false，不删行"`
+	// Reason / UpdatedBy 记的是最近一次操作，封禁和解封都会覆盖。UpdatedBy 取自凭证。
+	Reason    string `gorm:"column:reason;type:varchar(255)" description:"最近一次封禁 / 解封填的原因"`
+	UpdatedBy string `gorm:"column:updated_by;type:varchar(64)" description:"最近一次操作的管理端账号"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyMachineBan) TableName() string { return "zt_galaxy_machine_ban" }
+func (r *GalaxyMachineBan) Init()             {}
 
 // GalaxyPairingCode 一次性配对码。只对已记录当前条款版本同意的提供者签发（P-16）。
 type GalaxyPairingCode struct {
@@ -148,8 +226,8 @@ type GalaxyContribution struct {
 	SeatConcurrency     int    `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
 	ScheduleJSON        string `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
 
-	Status     string  `gorm:"column:status;type:varchar(16);index:idx_gx_contribution_node,priority:3" description:"active/draining/paused/disabled"`
-	Reputation float64 `gorm:"column:reputation;default:1" description:"信誉分 0..1，抽检与投诉扣分"`
+	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_contribution_node,priority:3" description:"active/draining/paused/disabled"`
+	// 信誉不在这里：贡献 id 带着 nodeId，重新配对就是一条新贡献。见 GalaxyMachine。
 
 	// Available / UnavailableReason 是**节点报上来的事实**，和 Status 是两回事：
 	// Status 说的是「主人愿不愿意共享」，这两个说的是「这台机器现在能不能干」。

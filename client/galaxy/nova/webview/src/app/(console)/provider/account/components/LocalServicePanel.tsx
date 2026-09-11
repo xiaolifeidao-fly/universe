@@ -26,7 +26,12 @@ import { isDesktop } from "@/utils/product";
 import { bridgeApi, fetchTools, syncBridgeHub, upgradeTool, type BridgeRuntimeStatus, type ToolStatus } from "../../api/bridge.api";
 import { fetchProviderEndpoint } from "../../api/provider.api";
 
-export function LocalServicePanel() {
+/**
+ * nodeIds 是主人名下的机器（没加载成功时是 null）。拿它判断「本机自认为配着，平台却已经不认」：
+ * 在控制台解绑这台电脑之后，本机令牌文件还在，bridge 只会在后台一遍遍被 401 退回来，
+ * 状态停在「正在连接平台」—— 不点破的话，主人会一直等，而且哪儿都没有重新配对的入口。
+ */
+export function LocalServicePanel({ nodeIds }: { nodeIds: string[] | null }) {
   const { t } = useLocale();
   const router = useRouter();
   const [status, setStatus] = useState<BridgeRuntimeStatus | null>(null);
@@ -113,9 +118,22 @@ export function LocalServicePanel() {
 
   const state = status?.state ?? "stopped";
   const paired = Boolean(status?.paired);
+  const detached = Boolean(paired && status?.nodeId && nodeIds && !nodeIds.includes(status.nodeId));
   // 状态还没拿到时什么都不说：先闪一下「还没加入共享池」再变成「已连接」，比空着更误导。
-  const headline = !status ? "—" : paired ? t(`bridge.state.${state}` as TranslationKey) : t("bridge.unpaired");
-  const detail = !status ? "" : paired ? t("bridge.identity", { node: status.nodeId || "-", hub: status.hubURL || "-" }) : t("bridge.unpairedHint");
+  const headline = !status
+    ? "—"
+    : detached
+      ? t("bridge.detached")
+      : paired
+        ? t(`bridge.state.${state}` as TranslationKey)
+        : t("bridge.unpaired");
+  const detail = !status
+    ? ""
+    : detached
+      ? t("bridge.detachedHint", { node: status.nodeId || "-" })
+      : paired
+        ? t("bridge.identity", { node: status.nodeId || "-", hub: status.hubURL || "-" })
+        : t("bridge.unpairedHint");
 
   return (
     <Card className="gx-rise gx-rise--2">
@@ -135,16 +153,25 @@ export function LocalServicePanel() {
             <span style={{ display: "block", fontSize: 13.5, fontWeight: 600 }}>{headline}</span>
             {detail ? (
               <span
-                className={paired ? "gx-mono" : undefined}
-                style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                className={paired && !detached ? "gx-mono" : undefined}
+                style={{
+                  display: "block",
+                  fontSize: 11,
+                  color: detached ? "var(--gx-warn-ink)" : "var(--gx-faint)",
+                  marginTop: 2,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
               >
                 {detail}
               </span>
             ) : null}
           </span>
-          {!status ? null : !paired ? (
-            <Btn tone="ghost" small onClick={() => router.push("/provider/pair")}>
-              {t("bridge.pair")}
+          {!status ? null : !paired || detached ? (
+            // 解绑过的电脑也走配对：本机旧令牌不用手动清，配对时会带上旧 nodeId，新令牌直接覆盖。
+            <Btn tone={detached ? "accent" : "ghost"} small onClick={() => router.push("/provider/pair")}>
+              {detached ? t("bridge.repair") : t("bridge.pair")}
             </Btn>
           ) : state === "stopped" || state === "error" ? (
             <Btn tone="ghost" small loading={busy === "reconnect"} onClick={() => void reconnect()}>

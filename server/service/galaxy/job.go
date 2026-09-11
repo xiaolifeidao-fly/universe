@@ -146,7 +146,7 @@ func (s *service) requeue(ctx context.Context, row *repository.GalaxyUnit) bool 
 		return false
 	}
 	if row.Attempt >= spec.Retry.MaxAttempts {
-		_ = s.repository.AdjustReputation(ctx, bizLine, runtime.CID, -0.05)
+		_ = s.adjustReputation(ctx, runtime.CID, -0.05)
 		cause := contract.NewUnitError(contract.ErrorClassNode, contract.CodeLeaseExpired, false, "重试次数已用尽")
 		_ = s.settle(ctx, runtime, spec, contract.Metering{}, contract.UnitFailed, false, cause)
 		return false
@@ -154,7 +154,7 @@ func (s *service) requeue(ctx context.Context, row *repository.GalaxyUnit) bool 
 
 	// 先把上一次的预留与并发还回去，再重派。顺序反了会让这个贡献的 inflight
 	// 一直挂着一个永远不会结束的请求。
-	_ = s.repository.AdjustReputation(ctx, bizLine, runtime.CID, -0.05)
+	_ = s.adjustReputation(ctx, runtime.CID, -0.05)
 	if err := s.control.Settle(ctx, SettleCommand{
 		RID: runtime.RID, CID: runtime.CID, ConsumerKey: runtime.ConsumerKey,
 		Estimate: runtime.Estimate, Actual: contract.Metering{},

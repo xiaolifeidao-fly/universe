@@ -163,6 +163,12 @@ func (h *Handler) hello(context *gin.Context) {
 			fail(context, http.StatusForbidden, contract.ErrorClassProtocol, contract.CodeConsentRequired, err.Error())
 			return
 		}
+		if errors.Is(err, contract.ErrNodeBanned) {
+			// 和 requireNode 拦下封禁节点回的是同一个：新配出来的记录要到 hello 才认得出被封，
+			// 不能因为拦在这一层就落到下面的 400「请求体不合法」。
+			fail(context, http.StatusUnauthorized, contract.ErrorClassProtocol, "node_unauthorized", err.Error())
+			return
+		}
 		fail(context, http.StatusBadRequest, contract.ErrorClassInput, contract.CodeInvalidBody, err.Error())
 		return
 	}

@@ -1,6 +1,6 @@
 "use client";
 
-import { ReloadOutlined, StopOutlined } from "@ant-design/icons";
+import { ReloadOutlined, StopOutlined, TeamOutlined } from "@ant-design/icons";
 import { Button, Popconfirm, Space, Table, Tabs, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
@@ -12,10 +12,12 @@ import {
   fetchAdminUsage,
   fetchPoolStatus,
   fetchProbes,
+  setProviderType,
   type AdminNodeView,
   type AuditProbeView,
   type LaneStatus,
   type PoolStatus,
+  type ProviderType,
   type UsageLine,
   type UsageReport,
 } from "../api/galaxy.api";
@@ -67,6 +69,17 @@ export function GalaxyOperations() {
     try {
       await banNode(nodeId, banned);
       message.success(t("galaxy.banned"));
+      void load();
+    } catch (error) {
+      message.error((error as Error).message || t("galaxy.loadFailed"));
+    }
+  };
+
+  // 身份挂在账号上：改一行，这个主人名下的每一行都跟着变，所以改完整表重拉。
+  const changeProviderType = async (ownerUserId: string, providerType: ProviderType) => {
+    try {
+      await setProviderType(ownerUserId, providerType);
+      message.success(t("galaxy.provider.saved"));
       void load();
     } catch (error) {
       message.error((error as Error).message || t("galaxy.loadFailed"));
@@ -128,7 +141,21 @@ export function GalaxyOperations() {
         </div>
       ),
     },
-    { title: t("galaxy.node.owner"), dataIndex: "ownerUserId", width: 140 },
+    {
+      title: t("galaxy.node.owner"),
+      dataIndex: "ownerUserId",
+      width: 180,
+      render: (ownerUserId: string, row) => (
+        <Space size={6} wrap>
+          <span>{ownerUserId}</span>
+          {row.providerType === "studio" ? (
+            <Tag color="geekblue">{t("galaxy.provider.studio")}</Tag>
+          ) : (
+            <Tag>{t("galaxy.provider.individual")}</Tag>
+          )}
+        </Space>
+      ),
+    },
     {
       title: t("galaxy.node.status"),
       dataIndex: "status",
@@ -165,21 +192,43 @@ export function GalaxyOperations() {
     {
       title: t("galaxy.actions"),
       key: "actions",
-      width: 120,
-      render: (_, row) =>
-        canWrite ? (
-          <Popconfirm
-            title={row.banned ? t("galaxy.node.unban") : t("galaxy.node.ban")}
-            description={t("galaxy.node.banHint")}
-            okText={t("galaxy.confirm")}
-            cancelText={t("galaxy.cancel")}
-            onConfirm={() => void ban(row.nodeId, !row.banned)}
-          >
-            <Button size="small" danger={!row.banned} icon={<StopOutlined />}>
-              {row.banned ? t("galaxy.node.unban") : t("galaxy.node.ban")}
-            </Button>
-          </Popconfirm>
-        ) : null,
+      width: 220,
+      render: (_, row) => {
+        if (!canWrite) {
+          return null;
+        }
+        const toStudio = row.providerType !== "studio";
+        return (
+          <Space size={6}>
+            <Popconfirm
+              title={toStudio ? t("galaxy.provider.toStudio") : t("galaxy.provider.toIndividual")}
+              description={
+                <div style={{ maxWidth: 300 }}>
+                  {toStudio ? t("galaxy.provider.toStudioHint") : t("galaxy.provider.toIndividualHint")}
+                </div>
+              }
+              okText={t("galaxy.confirm")}
+              cancelText={t("galaxy.cancel")}
+              onConfirm={() => void changeProviderType(row.ownerUserId, toStudio ? "studio" : "individual")}
+            >
+              <Button size="small" icon={<TeamOutlined />}>
+                {toStudio ? t("galaxy.provider.toStudio") : t("galaxy.provider.toIndividual")}
+              </Button>
+            </Popconfirm>
+            <Popconfirm
+              title={row.banned ? t("galaxy.node.unban") : t("galaxy.node.ban")}
+              description={t("galaxy.node.banHint")}
+              okText={t("galaxy.confirm")}
+              cancelText={t("galaxy.cancel")}
+              onConfirm={() => void ban(row.nodeId, !row.banned)}
+            >
+              <Button size="small" danger={!row.banned} icon={<StopOutlined />}>
+                {row.banned ? t("galaxy.node.unban") : t("galaxy.node.ban")}
+              </Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
     },
   ];
 
@@ -262,7 +311,7 @@ export function GalaxyOperations() {
                 columns={nodeColumns}
                 dataSource={nodes}
                 pagination={{ pageSize: 20, showSizeChanger: false }}
-                scroll={{ x: 1000 }}
+                scroll={{ x: 1100 }}
               />
             ),
           },

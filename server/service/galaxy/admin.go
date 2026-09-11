@@ -19,6 +19,10 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 	}
 	now := time.Now()
 	views := make([]dto.AdminNodeView, 0, len(nodes))
+	reputations, providerTypes, err := s.nodeReputations(ctx, nodes, now)
+	if err != nil {
+		return nil, err
+	}
 	for _, node := range nodes {
 		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
 		if err != nil {
@@ -31,35 +35,19 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 				Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
 				Contributions: make([]dto.ContributionView, 0, len(rows)),
 			},
-			OwnerUserID: node.OwnerUserID,
+			OwnerUserID:  node.OwnerUserID,
+			ProviderType: providerTypes[node.OwnerUserID],
 		}
 		grants, err := s.loadGrants(ctx, cidsOf(rows))
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
-			view.Contributions = append(view.Contributions, s.contributionView(ctx, row, grants[row.CID], now))
+			view.Contributions = append(view.Contributions, s.contributionView(ctx, row, grants[row.CID], now, reputations[node.NodeID]))
 		}
 		views = append(views, view)
 	}
 	return views, nil
-}
-
-// BanNode 封禁 / 解封一台机器。
-//
-// 和主人自己「撤销」的区别：撤销是把令牌作废，主人重新配对就能回来；
-// 封禁是平台的处置，主人解不开，而且立刻把它的贡献从候选里摘掉。
-func (s *service) BanNode(ctx context.Context, req dto.BanNodeRequest) error {
-	if err := s.repository.SetNodeBanned(ctx, bizLine, req.NodeID, req.Banned); err != nil {
-		return err
-	}
-	if !req.Banned {
-		return nil
-	}
-	if err := s.control.DropNode(ctx, req.NodeID); err != nil {
-		return err
-	}
-	return s.repository.DisableContributionsByNode(ctx, bizLine, req.NodeID)
 }
 
 // AdminProbes 最近的抽检结果。只返回签名与判定，请求原文在比对完成时就已清掉。

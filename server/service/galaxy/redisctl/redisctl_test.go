@@ -106,6 +106,26 @@ func TestTouchNodeReportsMissingRegistration(t *testing.T) {
 	}
 }
 
+// 心跳把机器信誉写进快照：派单打分读的就是这里。已经过期的贡献不能被这一步写回来。
+func TestSetReputationPatchesOnlyLiveContributions(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	seedContribution(t, plane, "c1", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
+	if err := plane.SetReputation(ctx, []string{"c1", "c_expired"}, 0.35); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, found, err := plane.GetContribution(ctx, "c1")
+	if err != nil || !found {
+		t.Fatalf("读快照: found=%v err=%v", found, err)
+	}
+	if snapshot.Reputation != 0.35 {
+		t.Fatalf("派单读到的信誉应是 0.35，实际 %v", snapshot.Reputation)
+	}
+	if server.Exists(plane.contribKey("c_expired")) {
+		t.Fatal("写信誉给一条不在控制面里的贡献建出了空壳")
+	}
+}
+
 func registerTestNode(t *testing.T, plane *ControlPlane, nodeID string) {
 	t.Helper()
 	if err := plane.RegisterNode(context.Background(), galaxy.NodeRuntime{

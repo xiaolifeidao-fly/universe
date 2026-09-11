@@ -33,6 +33,8 @@ import {
 
 export function AccessKeyPanel() {
   const { t } = useLocale();
+  // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
+  const [modal, modalHolder] = Modal.useModal();
   const [keys, setKeys] = useState<ProviderKeyView[]>([]);
   const [terms, setTerms] = useState<TermsStatus | null>(null);
   const [hubUrl, setHubUrl] = useState("");
@@ -83,7 +85,7 @@ export function AccessKeyPanel() {
   };
 
   const revoke = (key: ProviderKeyView) => {
-    Modal.confirm({
+    void modal.confirm({
       title: t("account.keyRevoke"),
       content: t("account.keyRevokeConfirm"),
       okText: t("common.confirm"),
@@ -108,7 +110,7 @@ export function AccessKeyPanel() {
       setIssued(null);
       return;
     }
-    Modal.confirm({
+    void modal.confirm({
       title: t("account.keyCloseTitle"),
       content: t("account.keyCloseConfirm"),
       okText: t("account.keyCloseOk"),
@@ -259,6 +261,8 @@ export function AccessKeyPanel() {
           </div>
         ) : null}
       </Modal>
+      {/* 放在上面那个弹窗外面：关弹窗的确认一点「确定」就把 issued 清空，放里面会跟着内容一起被卸载。 */}
+      {modalHolder}
     </Card>
   );
 }

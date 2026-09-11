@@ -330,7 +330,7 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 		if row.Reason == "forged" {
 			delta = -1
 		}
-		_ = s.repository.AdjustReputation(ctx, bizLine, row.CID, delta)
+		_ = s.adjustReputation(ctx, row.CID, delta)
 	}
 	return nil
 }

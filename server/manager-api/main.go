@@ -118,6 +118,11 @@ func buildGalaxyService(database *gorm.DB) (galaxysvc.Service, func()) {
 	if raw, err := strconv.Atoi(httpx.Property("galaxy.heartbeat_timeout_ms")); err == nil && raw > 0 {
 		config.HeartbeatTimeout = time.Duration(raw) * time.Millisecond
 	}
+	// 信誉回升速率同理：管理端列表上的信誉是现算的，速率对不上，
+	// 这里显示的分数就和 galaxy-api 派单时用的那份不一样。
+	if raw, err := strconv.ParseFloat(strings.TrimSpace(httpx.Property("galaxy.reputation_recovery_per_day")), 64); err == nil && raw > 0 {
+		config.ReputationRecoveryPerDay = raw
+	}
 	service := galaxysvc.New(database, galaxysvc.Ports{Control: control}, nil, config)
 	return service, func() { _ = control.Close() }
 }

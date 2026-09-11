@@ -67,6 +67,9 @@ type Config struct {
 	// UsageMismatchRatio 节点自报与 Hub 解析的偏差告警阈值。
 	UsageMismatchRatio float64
 
+	// ReputationRecoveryPerDay 机器信誉每天回升多少，封顶 1。
+	ReputationRecoveryPerDay float64
+
 	PresignPutTTL time.Duration
 	PresignGetTTL time.Duration
 
@@ -91,28 +94,29 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		ContractVersion:       1,
-		PlatformSeatLimit:     10,
-		BindIdleTTL:           30 * time.Minute,
-		SpillWait:             3 * time.Second,
-		MaxWait:               10 * time.Second,
-		HeartbeatTimeout:      45 * time.Second,
-		BodyTTL:               60 * time.Second,
-		MaxPlaceAttempts:      3,
-		Weights:               DefaultScoreWeights(),
-		KeyTTL:                30 * 24 * time.Hour,
-		KeyFreeze:             30 * 24 * time.Hour,
-		KeyConcurrency:        4,
-		KeyRPM:                120,
-		ProviderTermsVersion:  "provider-terms/v1",
-		ConsumerNoticeVersion: "consumer-notice/v1",
-		UsageMismatchRatio:    0.10,
-		PresignPutTTL:         15 * time.Minute,
-		PresignGetTTL:         60 * time.Minute,
-		SessionIdleTTL:        24 * time.Hour,
-		PayoutRate:            100,
-		PayoutMinCredits:      1000,
-		PayoutHoldDays:        7,
+		ContractVersion:          1,
+		PlatformSeatLimit:        10,
+		BindIdleTTL:              30 * time.Minute,
+		SpillWait:                3 * time.Second,
+		MaxWait:                  10 * time.Second,
+		HeartbeatTimeout:         45 * time.Second,
+		BodyTTL:                  60 * time.Second,
+		MaxPlaceAttempts:         3,
+		Weights:                  DefaultScoreWeights(),
+		KeyTTL:                   30 * 24 * time.Hour,
+		KeyFreeze:                30 * 24 * time.Hour,
+		KeyConcurrency:           4,
+		KeyRPM:                   120,
+		ProviderTermsVersion:     "provider-terms/v1",
+		ConsumerNoticeVersion:    "consumer-notice/v1",
+		UsageMismatchRatio:       0.10,
+		ReputationRecoveryPerDay: DefaultReputationRecoveryPerDay,
+		PresignPutTTL:            15 * time.Minute,
+		PresignGetTTL:            60 * time.Minute,
+		SessionIdleTTL:           24 * time.Hour,
+		PayoutRate:               100,
+		PayoutMinCredits:         1000,
+		PayoutHoldDays:           7,
 	}
 }
 
@@ -180,6 +184,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.UsageMismatchRatio <= 0 {
 		c.UsageMismatchRatio = defaults.UsageMismatchRatio
+	}
+	if c.ReputationRecoveryPerDay <= 0 {
+		c.ReputationRecoveryPerDay = defaults.ReputationRecoveryPerDay
 	}
 	if c.PresignPutTTL <= 0 {
 		c.PresignPutTTL = defaults.PresignPutTTL
@@ -405,6 +412,8 @@ type Service interface {
 	AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeView, error)
 	// BanNode 平台封禁。和主人自己撤销的区别：封禁主人解不开。
 	BanNode(ctx context.Context, req dto.BanNodeRequest) error
+	// SetProviderType 把账号设成工作室 / 改回散户。注册默认是散户，只有管理端能改。
+	SetProviderType(ctx context.Context, req dto.SetProviderTypeRequest) error
 	AdminProbes(ctx context.Context, cid string, limit int) ([]dto.AuditProbeView, error)
 	AdminUsage(ctx context.Context, query dto.UsageQuery) (dto.UsageReport, error)
 

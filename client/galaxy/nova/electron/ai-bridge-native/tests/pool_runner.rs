@@ -181,6 +181,10 @@ async fn a_claimed_unit_is_relayed_upstream_and_streamed_back_byte_for_byte() {
     assert_eq!(contributions[0]["available"], json!(true));
     assert!(contributions[0].get("seats").is_none(), "座位不该由节点申报");
     assert_eq!(h.runner.lane_ids(), vec!["claude".to_string()]);
+    // 设备指纹：Hub 只认 64 位小写十六进制的 sha256，别的一律当没报，信誉就退回按节点记。
+    let fingerprint = hello["machineFingerprint"].as_str().expect("hello 带设备指纹");
+    assert_eq!(fingerprint.len(), 64);
+    assert!(fingerprint.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{fingerprint}");
 
     wait_for("单元报终态", || !h.hub.completed.lock().unwrap().is_empty()).await;
 

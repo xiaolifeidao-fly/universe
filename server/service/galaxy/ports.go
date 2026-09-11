@@ -290,6 +290,8 @@ type ControlPlane interface {
 	ReplaceContributions(ctx context.Context, nodeID string, snapshots []ContributionSnapshot) error
 	UpdateLaneRuntime(ctx context.Context, runtimes []LaneRuntime) error
 	SetDraining(ctx context.Context, cid string, draining bool) error
+	// SetReputation 把 Hub 算好的机器信誉写进这些贡献的快照。只改已经在控制面里的。
+	SetReputation(ctx context.Context, cids []string, reputation float64) error
 	// SyncQuota 用当前窗口的计数器重算贡献的 used / left 并写回快照。
 	// 窗口翻转后的自动恢复就发生在这里：新窗口计数器是空的，余量自然回到上限。
 	SyncQuota(ctx context.Context, cid string, limits contract.Metering, windowKeys map[contract.MeterUnit]string) (used, reserved contract.Metering, err error)

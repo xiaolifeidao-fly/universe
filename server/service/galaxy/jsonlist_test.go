@@ -42,7 +42,7 @@ func TestListFieldsNeverSerializeToNull(t *testing.T) {
 	svc := &service{control: noContribution{}, config: DefaultConfig()}
 	bare := svc.contributionView(context.Background(), &repository.GalaxyContribution{
 		CID: "n_1:claude", NodeID: "n_1", Kind: "llm.chat", Provider: "claude_oauth",
-	}, nil, time.Now())
+	}, nil, time.Now(), 1)
 
 	cases := []struct {
 		name  string

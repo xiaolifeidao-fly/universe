@@ -77,9 +77,8 @@ func (s *service) IssuePairingCode(ctx context.Context, req dto.IssuePairingCode
 	if !agreed {
 		return dto.PairingCodeView{}, contract.ErrConsentRequired
 	}
-	if err := s.assertNoOnlineNode(ctx, req.OwnerUserID); err != nil {
-		return dto.PairingCodeView{}, err
-	}
+	// 签发时不看名下有没有机器在线：码还不知道会被哪台电脑拿去用，
+	// 「这台电脑是不是已经配过」只能在兑换时凭 previousNodeId 判断（见 Pair）。
 	row := &repository.GalaxyPairingCode{
 		BizLine:      bizLine,
 		Code:         pairingCode(),
@@ -112,9 +111,7 @@ func (s *service) Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult
 	if !agreed {
 		return dto.PairResult{}, contract.ErrConsentRequired
 	}
-	// 签发那里已经拦过一次，这里再拦一次不是多余：码有 10 分钟有效期，
-	// 连点两下「生成配对码」就能在一台机器上线之前攒下两个码，拿去配第二台。
-	if err := s.assertNoOnlineNode(ctx, code.OwnerUserID); err != nil {
+	if err := s.assertMachineNotPaired(ctx, code.OwnerUserID, req.PreviousNodeID); err != nil {
 		return dto.PairResult{}, err
 	}
 
@@ -141,39 +138,53 @@ func (s *service) Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult
 	return dto.PairResult{NodeID: nodeID, Token: secret}, nil
 }
 
-// assertNoOnlineNode 名下已经有机器在线时不放行配对。
+// assertMachineNotPaired 同一台电脑只能配对一次：它上一次配对出来的节点还在线，就不再放行。
 //
-// 换机器的路径因此是「先撤销、再配对」，而不是配一台新的、把旧的晾在那儿 ——
-// 后者会留下一堆主人自己也说不清还在不在跑的机器。重新配对同一台也走这条路。
+// 以前这里拦的是「名下任何一台在线」。那是一个账号只有一台 Nova 的年代定的规矩；
+// 现在主人名下常常同时有这台电脑和机房里用接入密钥注册的服务器，服务器在线
+// 挡住这台电脑重新加入，等于逼主人为了配自己的笔记本去把服务器停掉。
+// 所以只看**这台电脑自己**：它由本机令牌文件里上一次的 nodeId 认出来（previousNodeId）。
 //
-// 判活以节点 status 为准：巡检每分钟把心跳过期的降为 offline，控制台机器列表上
-// 那个绿标看的也是它。两边必须是同一条标准，否则会出现列表说在线、上面却还摆着
-// 「生成配对码」的自相矛盾。
-func (s *service) assertNoOnlineNode(ctx context.Context, ownerUserID string) error {
-	nodes, err := s.repository.ListNodesByOwner(ctx, bizLine, ownerUserID)
+// 上一次的节点已经离线、被撤销（令牌被拒、在控制台解绑过）就放行 —— 配对成功后
+// retirePreviousNode 会把旧记录退役，这台电脑名下始终只留一条。认不出来的
+// （本机令牌文件没了）只能当新电脑处理。
+func (s *service) assertMachineNotPaired(ctx context.Context, ownerUserID, previousNodeID string) error {
+	previousNodeID = strings.TrimSpace(previousNodeID)
+	if previousNodeID == "" {
+		return nil
+	}
+	row, err := s.repository.FindNode(ctx, bizLine, previousNodeID)
+	if notFound(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	online := firstOnlineNode(nodes)
-	if online == nil {
+	paired := pairedOnline(row, ownerUserID)
+	if paired == nil {
 		return nil
 	}
-	name := online.DisplayName
+	name := paired.DisplayName
 	if name == "" {
-		name = online.NodeID
+		name = paired.NodeID
 	}
-	return fmt.Errorf("%s 已经在线，有机器在线时不再配对；要换一台机器或者重新配对这一台，请先撤销它", name)
+	return fmt.Errorf("这台电脑已经配对过（%s），现在在线，不需要再配对；确实要重新配对，请先在控制台解绑它", name)
 }
 
-// firstOnlineNode 名下第一台在线的机器，没有则 nil。
-// 封禁的不算在线 —— 它已经接不了活，拿它挡住配对只会让主人卡在一台没用的机器上。
-func firstOnlineNode(nodes []*repository.GalaxyNode) *repository.GalaxyNode {
-	for _, node := range nodes {
-		if node != nil && !node.Banned && node.Status == statusActive {
-			return node
-		}
+// pairedOnline 这台电脑上一次配对出来的节点是否还「配着、在线」，是就返回它。
+//
+// 判活以节点 status 为准：巡检每分钟把心跳过期的降为 offline，控制台机器列表上
+// 那个绿标看的也是它，两边必须是同一条标准。封禁的不算 —— 它已经接不了活，
+// 拿它挡住配对只会让主人卡在一台没用的节点上。别的主人名下的也不算：
+// previousNodeId 是客户端传的，只认同一个主人，和 retirePreviousNode 同一条线。
+func pairedOnline(previous *repository.GalaxyNode, ownerUserID string) *repository.GalaxyNode {
+	if previous == nil || previous.OwnerUserID != ownerUserID {
+		return nil
 	}
-	return nil
+	if previous.Banned || previous.Status != statusActive {
+		return nil
+	}
+	return previous
 }
 
 // retirePreviousNode 把同一台机器上一次配对出来的节点退役。
@@ -216,7 +227,12 @@ func (s *service) AuthenticateNode(ctx context.Context, token string) (NodeIdent
 	if err != nil {
 		return NodeIdentity{}, err
 	}
-	if row.Banned || row.Status == "revoked" {
+	// 封禁只看节点行上这一列，不去查封禁表：每个节点请求都要过这里。按设备的封禁会在封禁时、
+	// 以及新记录 hello 时落到这一列上（见 ban.go）。
+	if row.Banned {
+		return NodeIdentity{}, contract.ErrNodeBanned
+	}
+	if row.Status == "revoked" {
 		return NodeIdentity{}, fmt.Errorf("节点已被停用")
 	}
 	return NodeIdentity{NodeID: row.NodeID, OwnerUserID: row.OwnerUserID, DisplayName: row.DisplayName, Banned: row.Banned}, nil
@@ -248,6 +264,15 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 	result := dto.HelloResult{QuotaEffective: map[string][]dto.QuotaGrantInput{}}
 	inventory := make([]*repository.GalaxyContribution, 0, len(req.Contributions))
 
+	// 指纹要赶在下面算生效集合之前记下：快照里的信誉按它去找这台机器的分数。
+	if err := s.rememberMachine(ctx, req.NodeID, req.MachineFingerprint); err != nil {
+		return dto.HelloResult{}, err
+	}
+	// 封禁跟着设备走（见 ban.go）：指纹刚记下，这台设备被封了就停在这里，能力清单一行都不落。
+	if err := s.refuseBannedMachine(ctx, req.NodeID, req.MachineFingerprint); err != nil {
+		return dto.HelloResult{}, err
+	}
+
 	for _, input := range req.Contributions {
 		spec, err := s.validateCapability(input)
 		if err != nil {
@@ -264,7 +289,6 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 			NodeID: req.NodeID, OwnerUserID: req.OwnerUserID,
 			Kind: spec.Kind, KindVersion: spec.Version, Provider: input.Provider,
 			Status:            statusDisabled,
-			Reputation:        1,
 			Available:         input.Available == nil || *input.Available,
 			UnavailableReason: truncate(input.UnavailableReason, 256),
 			// 截断而不是拒绝：模型清单只是候选项，一个上游返回几百个模型
@@ -278,7 +302,11 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 		return dto.HelloResult{}, err
 	}
 
-	plan, err := s.effectiveContributions(ctx, req.NodeID, req.Resources, now)
+	node, err := s.repository.FindNode(ctx, bizLine, req.NodeID)
+	if err != nil {
+		return dto.HelloResult{}, err
+	}
+	plan, err := s.effectiveContributions(ctx, node, req.Resources, now)
 	if err != nil {
 		return dto.HelloResult{}, err
 	}
@@ -348,6 +376,8 @@ type effectivePlan struct {
 	// Quota 是给节点更新展示副本用的生效额度。
 	Quota  map[string][]dto.QuotaGrantInput
 	Grants map[string][]QuotaGrant
+	// Reputation 这台机器此刻的信誉，Snapshots 里每一条贡献带的都是它。
+	Reputation float64
 }
 
 // effectiveContributions 把「主人开着 + 本机可用」的那些贡献算出来。
@@ -355,8 +385,15 @@ type effectivePlan struct {
 // 两个条件缺一不可，而且各自的失败要分得开：主人关掉的不该下发给节点，
 // 本机不可用的（Claude 登录态过期）也不该进放置候选 —— 但后者主人的勾选要留着，
 // 登录回来下一次心跳就自动恢复，不用他再点一次。
-func (s *service) effectiveContributions(ctx context.Context, nodeID string, resources map[string]any, now time.Time) (effectivePlan, error) {
+func (s *service) effectiveContributions(ctx context.Context, node *repository.GalaxyNode, resources map[string]any, now time.Time) (effectivePlan, error) {
+	nodeID := node.NodeID
 	rows, err := s.repository.ListContributionsByNode(ctx, bizLine, nodeID)
+	if err != nil {
+		return effectivePlan{}, err
+	}
+	// 按真正的此刻算，不用 now：syncNodeToControlPlane 传进来的 now 是这台机器最近一次心跳，
+	// 拿它算回升会少算关机那段时间。
+	reputation, err := s.nodeReputation(ctx, node, time.Now())
 	if err != nil {
 		return effectivePlan{}, err
 	}
@@ -377,13 +414,14 @@ func (s *service) effectiveContributions(ctx context.Context, nodeID string, res
 		return effectivePlan{}, err
 	}
 	plan := effectivePlan{
-		Enabled:   make([]dto.EnabledContribution, 0, len(live)),
-		Snapshots: make([]ContributionSnapshot, 0, len(live)),
-		Quota:     map[string][]dto.QuotaGrantInput{},
-		Grants:    grants,
+		Enabled:    make([]dto.EnabledContribution, 0, len(live)),
+		Snapshots:  make([]ContributionSnapshot, 0, len(live)),
+		Quota:      map[string][]dto.QuotaGrantInput{},
+		Grants:     grants,
+		Reputation: reputation,
 	}
 	for _, row := range live {
-		snapshot := s.snapshotFromRow(row, grants[row.CID], now)
+		snapshot := s.snapshotFromRow(row, grants[row.CID], now, reputation)
 		snapshot.UpstreamOK = true
 		// 资源跟着贡献走而不是另开一张节点表：放置的硬过滤在贡献这一层做，
 		// 每次都去 join 一次节点会把「已绑定请求 ≤ 3 次 Redis 操作」这条打破。
@@ -535,8 +573,21 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	// 生效配置搭在心跳上下发。主人在控制台开关一条贡献、改额度或改时段，
 	// 节点最迟一个心跳周期（15s）就换过来 —— 「随时随地能调」靠的就是这一条，
 	// 不需要主人回到那台机器上做任何事。
-	plan, err := s.effectiveContributions(ctx, req.NodeID, nil, now)
+	node, err := s.repository.FindNode(ctx, bizLine, req.NodeID)
 	if err != nil {
+		return dto.HeartbeatResult{}, err
+	}
+	plan, err := s.effectiveContributions(ctx, node, nil, now)
+	if err != nil {
+		return dto.HeartbeatResult{}, err
+	}
+	// 信誉每个心跳写一次控制面：它按天回升，扣分也随时会发生。只在 hello 时写的话，
+	// 一台一直在线的机器，派单时用的永远是它上次重连那一刻的分数。
+	live := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		live = append(live, snapshot.CID)
+	}
+	if err := s.control.SetReputation(ctx, live, plan.Reputation); err != nil {
 		return dto.HeartbeatResult{}, err
 	}
 	result.Enabled = plan.Enabled
@@ -573,6 +624,10 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 	}
 	views := make([]dto.NodeView, 0, len(nodes))
 	now := time.Now()
+	reputations, _, err := s.nodeReputations(ctx, nodes, now)
+	if err != nil {
+		return nil, err
+	}
 	for _, node := range nodes {
 		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
 		if err != nil {
@@ -598,17 +653,18 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 			return nil, err
 		}
 		for _, row := range rows {
-			view.Contributions = append(view.Contributions, s.contributionView(ctx, row, grants[row.CID], now))
+			view.Contributions = append(view.Contributions, s.contributionView(ctx, row, grants[row.CID], now, reputations[node.NodeID]))
 		}
 		views = append(views, view)
 	}
 	return views, nil
 }
 
-func (s *service) contributionView(ctx context.Context, row *repository.GalaxyContribution, grants []QuotaGrant, now time.Time) dto.ContributionView {
+// contributionView 的 reputation 是这条贡献所在机器的信誉：信誉挂在机器上，同一台机器的每条贡献都一样。
+func (s *service) contributionView(ctx context.Context, row *repository.GalaxyContribution, grants []QuotaGrant, now time.Time, reputation float64) dto.ContributionView {
 	snapshot, found, _ := s.control.GetContribution(ctx, row.CID)
 	if !found {
-		snapshot = s.snapshotFromRow(row, grants, time.Time{})
+		snapshot = s.snapshotFromRow(row, grants, time.Time{}, reputation)
 	}
 	plan := BuildQuotaPlan(grants, now)
 	// 每一个列都过一遍 orEmpty：模型白名单、挂机时段、额度都可能是空的，
@@ -619,7 +675,7 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
 		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
-		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status, Reputation: row.Reputation,
+		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status, Reputation: reputation,
 		Online:    Online(snapshot, now, s.config.HeartbeatTimeout),
 		SeatsUsed: snapshot.SeatsUsed, Inflight: snapshot.Inflight,
 		SeatsEffective: EffectiveSeats(snapshot, plan, now, nil),
@@ -821,7 +877,7 @@ func (s *service) syncNodeToControlPlane(ctx context.Context, nodeID string) err
 	if node.LastBeatAt != nil {
 		beat = *node.LastBeatAt
 	}
-	plan, err := s.effectiveContributions(ctx, nodeID, decodeResources(node.ResourcesJSON), beat)
+	plan, err := s.effectiveContributions(ctx, node, decodeResources(node.ResourcesJSON), beat)
 	if err != nil {
 		return err
 	}
@@ -901,7 +957,7 @@ func scopedCID(nodeID, local string) string {
 
 func unscopedCID(nodeID, cid string) string { return strings.TrimPrefix(cid, nodeID+":") }
 
-func (s *service) snapshotFromRow(row *repository.GalaxyContribution, grants []QuotaGrant, beat time.Time) ContributionSnapshot {
+func (s *service) snapshotFromRow(row *repository.GalaxyContribution, grants []QuotaGrant, beat time.Time, reputation float64) ContributionSnapshot {
 	limits := contract.Metering{}
 	for _, grant := range grants {
 		limits[grant.Unit] = grant.Limit
@@ -913,7 +969,7 @@ func (s *service) snapshotFromRow(row *repository.GalaxyContribution, grants []Q
 		Seats: row.Seats, SeatConcurrency: row.SeatConcurrency,
 		QuotaLimit: limits, QuotaUsed: contract.Metering{}, QuotaReserved: contract.Metering{},
 		Schedule:   decodeScheduleWindows(row.ScheduleJSON),
-		Reputation: row.Reputation, LastBeatAt: beat,
+		Reputation: reputation, LastBeatAt: beat,
 		Draining: row.Status != statusActive,
 	}
 }

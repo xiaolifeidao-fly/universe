@@ -50,6 +50,7 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.GET("/probes", h.probes)
 	admin.GET("/usage", h.usage)
 	admin.POST("/node/ban", h.banNode)
+	admin.POST("/provider/type", h.setProviderType)
 	admin.GET("/disputes", h.disputes)
 	admin.POST("/disputes/resolve", h.resolveDispute)
 	admin.GET("/packages", h.packages)
@@ -129,7 +130,23 @@ func (h *Handler) banNode(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
+	// 谁封的只取自凭证，同 resolveDispute。
+	req.UpdatedBy = httpx.CallerID(context)
 	httpx.JSON(context, req.NodeID, h.service.BanNode(context.Request.Context(), req))
+}
+
+// setProviderType 把账号设成工作室 / 改回散户。谁改的只取自凭证，同 resolveDispute。
+func (h *Handler) setProviderType(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SetProviderTypeRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UpdatedBy = httpx.CallerID(context)
+	httpx.JSON(context, req.OwnerUserID, h.service.SetProviderType(context.Request.Context(), req))
 }
 
 func (h *Handler) disputes(context *gin.Context) {

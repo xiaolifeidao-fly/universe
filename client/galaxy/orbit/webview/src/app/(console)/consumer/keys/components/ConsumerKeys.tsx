@@ -35,6 +35,8 @@ const KEY_FREEZE_DAYS = 30;
 export function ConsumerKeys() {
   const { t } = useLocale();
   const router = useRouter();
+  // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
+  const [modal, modalHolder] = Modal.useModal();
   const [keys, setKeys] = useState<ConsumerKeyView[]>([]);
   const [notice, setNotice] = useState<NoticeStatus | null>(null);
   const [issued, setIssued] = useState<IssuedKeyView | null>(null);
@@ -70,7 +72,7 @@ export function ConsumerKeys() {
   const current = useMemo(() => keys.find((key) => key.keyId === selected) ?? null, [keys, selected]);
 
   const reissue = (key: ConsumerKeyView) => {
-    Modal.confirm({
+    void modal.confirm({
       title: t("keys.reissue"),
       content: t("keys.reissueConfirm"),
       okText: t("common.confirm"),
@@ -92,7 +94,7 @@ export function ConsumerKeys() {
   };
 
   const revoke = (key: ConsumerKeyView) => {
-    Modal.confirm({
+    void modal.confirm({
       title: t("keys.revoke"),
       content: t("keys.revokeConfirm"),
       okText: t("common.confirm"),
@@ -140,6 +142,7 @@ export function ConsumerKeys() {
           </>
         }
       />
+      {modalHolder}
       <div className="gx-body">
         {/* 数据告知是签发密钥的硬前置：没确认过就买不了额度，也发不出密钥（C-13）。 */}
         {notice && !notice.accepted ? (

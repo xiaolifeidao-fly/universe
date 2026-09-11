@@ -35,6 +35,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 用 RequirePlatformAdmin 而不是 RequireAdmin：后者还要求 product_research 身份，
 	// 那是交付工作台的门；共享池的运营不在那个身份体系里。
 	api.POST("/node/ban", httpx.RequirePlatformAdmin(), h.banNode)
+	// 散户 / 工作室决定信誉跟着账号还是设备走，和封禁一样是平台的处置。
+	api.POST("/provider/type", httpx.RequirePlatformAdmin(), h.setProviderType)
 	api.GET("/disputes", h.disputes)
 	// 裁决要动三本账，和封禁一样是处置动作。
 	api.POST("/disputes/resolve", httpx.RequirePlatformAdmin(), h.resolveDispute)
@@ -162,7 +164,20 @@ func (h *Handler) banNode(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
+	// 谁封的要留痕，且只能取自凭证 —— 请求体里报个名字不算数。
+	req.UpdatedBy = httpx.CallerID(context)
 	httpx.JSON(context, req.NodeID, h.service.BanNode(context.Request.Context(), req))
+}
+
+func (h *Handler) setProviderType(context *gin.Context) {
+	var req dto.SetProviderTypeRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	// 谁改的要留痕，且只能取自凭证 —— 请求体里报个名字不算数。
+	req.UpdatedBy = httpx.CallerID(context)
+	httpx.JSON(context, req.OwnerUserID, h.service.SetProviderType(context.Request.Context(), req))
 }
 
 // parseTime 接受 RFC3339；解析不了返回零值，由 service 套默认区间。

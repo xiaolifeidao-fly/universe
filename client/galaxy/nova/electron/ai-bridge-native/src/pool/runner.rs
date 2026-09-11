@@ -5,6 +5,7 @@ use super::client::{
 use super::export::{normalize_public_url, resolve_secret, ExportServer};
 use super::hub_address::HubAddressCheck;
 use super::lane::{Lane, LaneConfig};
+use super::machine::machine_fingerprint;
 use super::models::list_models;
 use super::probe::probe;
 use super::token::{fingerprint, read_node_identity, resolve_node_token_file, NodeIdentity};
@@ -108,6 +109,8 @@ pub(crate) struct RunnerInner {
     export_config: Option<PoolExportConfig>,
     /// Hub 在 hello 里回的接入方式结论。老版本 Hub 不回，是 None。
     hub_access: Mutex<Option<String>>,
+    /// 设备指纹，主人是工作室时 Hub 按它记信誉。启动时算一次：机器 id 运行期不会变。
+    machine_fingerprint: Option<String>,
 }
 
 /// 一个正在本机跑的单元。
@@ -136,9 +139,12 @@ pub async fn create_pool_runner(
     http: reqwest::Client,
 ) -> Result<PoolRunner, String> {
     let settings = cfg.pool.clone().ok_or("mode=pool 但缺少 pool 配置段")?;
-    let identity = read_node_identity(&resolve_node_token_file(Some(&settings), &env))
+    let token_file = resolve_node_token_file(Some(&settings), &env);
+    let identity = read_node_identity(&token_file)
         .await?
         .ok_or("还没有配对过。先在控制台生成配对码，再重新配对这台机器")?;
+    // 兜底 id 和令牌放在一起：同一份安装里重新配对，令牌换了，这个文件还在。
+    let machine = token_file.parent().and_then(machine_fingerprint);
     let client = Arc::new(HubClient::new(
         settings.hub_url.clone(),
         settings.contract,
@@ -169,6 +175,7 @@ pub async fn create_pool_runner(
             access,
             export_config,
             hub_access: Mutex::new(None),
+            machine_fingerprint: machine,
         }),
         tasks: Mutex::new(vec![]),
         export: tokio::sync::Mutex::new(None),
@@ -550,7 +557,14 @@ impl RunnerInner {
         let resources = serde_json::to_value(local_resources()).unwrap_or(json!({}));
         let result = self
             .client
-            .hello(&self.bridge_version, &resources, &reports, &self.access, &self.loop_cancel)
+            .hello(
+                &self.bridge_version,
+                &resources,
+                &reports,
+                &self.access,
+                self.machine_fingerprint.as_deref(),
+                &self.loop_cancel,
+            )
             .await?;
         for rejected in &result.rejected {
             log_error!("pool_capability_rejected", "cid": rejected.cid, "reason": rejected.reason);

@@ -360,12 +360,16 @@ impl HubClient {
     /// access 每次都带，不只在注册时给一次：公网地址会变（家宽的 IP 每天换，
     /// 容器换一次宿主端口就换）。只报一次的话，Hub 会拿着一个早就失效的地址
     /// 一直回连不上，而节点这边一切正常、日志里一个字都没有。
+    ///
+    /// machine_fingerprint 是设备指纹（见 pool/machine.rs），主人是工作室时 Hub 按它记这台机器的信誉。
+    /// 只在 hello 里带：拿到令牌之后第一件事就是 hello，贡献也要到 hello 才进池子。
     pub async fn hello(
         &self,
         bridge_version: &str,
         resources: &Value,
         contributions: &[CapabilityReport],
         access: &AccessDeclaration,
+        machine_fingerprint: Option<&str>,
         cancel: &Cancel,
     ) -> Result<HelloResult, HubFailure> {
         let mut body = json!({
@@ -377,6 +381,9 @@ impl HubClient {
         });
         if let Some(endpoint) = &access.endpoint {
             body["endpoint"] = json!({ "url": endpoint.url, "secret": endpoint.secret });
+        }
+        if let Some(fingerprint) = machine_fingerprint {
+            body["machineFingerprint"] = json!(fingerprint);
         }
         let response = self.send_cancellable("/agent/v1/hello", &body, Some(REQUEST_TIMEOUT), cancel).await?;
         let status = response.status().as_u16();

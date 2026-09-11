@@ -220,6 +220,13 @@ type HelloRequest struct {
 	// 空字符串表示「这一版节点不声明」，Hub 维持现状；要清空得显式改成 poll。
 	AccessMode string               `json:"accessMode"`
 	Endpoint   *ExportEndpointInput `json:"endpoint"`
+	// MachineFingerprint 设备指纹：sha256(命名空间 + 系统的机器 id) 的十六进制，64 位小写。
+	// 工作室的信誉按它记，同一台机器解绑重配、换账号再配都不清零。散户的节点也报，照样记下。
+	//
+	// 只在 hello 里带，配对和注册不带：节点拿到令牌之后第一件事就是 hello，而贡献要到
+	// hello 才进池子，在那之前不可能被扣分。升级前就配好对的节点也靠这里补上。
+	// 已经记下的指纹不会被改；老版本节点不传，Hub 退回按节点记。
+	MachineFingerprint string `json:"machineFingerprint"`
 }
 
 type HelloResult struct {
@@ -804,10 +811,29 @@ type SaveContributionLimitsRequest struct {
 
 // ---------- 平台运营（manager 后台） ----------
 
-// AdminNodeView 平台视角的节点。比提供者自己看到的多两样：主人是谁、能不能封。
+// 提供者身份。注册出来默认是散户，只有管理端能设成工作室。
+//
+// 两者只差信誉跟着谁走：散户跟着账号（名下几台机器共用一份分数），
+// 工作室跟着设备（按设备指纹，每台机器各算各的，换账号配也还是那份）。
+const (
+	ProviderIndividual = "individual"
+	ProviderStudio     = "studio"
+)
+
+// AdminNodeView 平台视角的节点。比提供者自己看到的多三样：主人是谁、主人是散户还是工作室、能不能封。
 type AdminNodeView struct {
 	NodeView
 	OwnerUserID string `json:"ownerUserId"`
+	// ProviderType 主人的身份，individual / studio。这台机器贡献上的信誉按它读账号或设备那一份。
+	ProviderType string `json:"providerType"`
+}
+
+// SetProviderTypeRequest 管理端改一个账号的身份。改的是账号，名下所有机器一起变。
+type SetProviderTypeRequest struct {
+	OwnerUserID  string `json:"ownerUserId" binding:"required"`
+	ProviderType string `json:"providerType" binding:"required"`
+	// UpdatedBy 由接口层从凭证里取，请求体里报的不算数。
+	UpdatedBy string `json:"-"`
 }
 
 // AuditProbeView 一次抽检的结果。只有签名与判定，没有请求内容 ——
@@ -826,10 +852,13 @@ type AuditProbeView struct {
 }
 
 // BanNodeRequest 封禁一台机器。封禁不是暂停：它是平台单方面的处置，主人自己解不开。
+// 报过设备指纹的节点封的是那台设备，同一台设备上的其他节点记录一起封、一起解。
 type BanNodeRequest struct {
 	NodeID string `json:"nodeId" binding:"required"`
 	Banned bool   `json:"banned"`
 	Reason string `json:"reason"`
+	// UpdatedBy 由接口层从凭证里取，请求体里报的不算数。
+	UpdatedBy string `json:"-"`
 }
 
 // ---------- 争议工单（S-09） ----------

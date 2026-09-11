@@ -48,8 +48,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
   `endpoint_error`   varchar(255) DEFAULT '',                      -- export：最近一次回连失败的原因，人话，直接展示
   `endpoint_checked_at` timestamp NULL DEFAULT NULL,               -- export：最近一次回连探测时刻
   `resources_json`   text,                                         -- 探测到的本机资源，仅供放置的资源需求过滤
+  `machine_fingerprint` varchar(64),                               -- 设备指纹 sha256，工作室的信誉、平台封禁都跟着它走；老版本节点不报，为空
   `status`           varchar(16),                                  -- active/offline/revoked
-  `banned`           boolean DEFAULT false,                        -- 平台封禁
+  `banned`           boolean DEFAULT false,                        -- 平台封禁。请求路径只看这一列；报过指纹的节点随 zt_galaxy_machine_ban 一起改
   `last_beat_at`     timestamp NULL DEFAULT NULL,                               -- 最近一次心跳
   `online_since`     timestamp NULL DEFAULT NULL,                               -- 本轮连续在线起点
   `created_time`     datetime(3) NULL,                             -- 创建时间
@@ -57,7 +58,56 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
   PRIMARY KEY (`id`),
   INDEX `idx_gx_node_owner` (`biz_line`,`owner_user_id`,`status`),
   INDEX `idx_gx_node_token` (`biz_line`,`token_hash`),
+  INDEX `idx_gx_node_fingerprint` (`biz_line`,`machine_fingerprint`),
   UNIQUE INDEX `uk_gx_node_id` (`biz_line`,`node_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 提供者身份：散户 / 工作室。注册默认是散户，没有行就是散户；只有管理端能设成工作室。
+-- 两者只差信誉跟着谁走：散户跟着账号，工作室跟着设备（设备指纹）。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_provider` (
+  `id`            bigint AUTO_INCREMENT,
+  `biz_line`      varchar(32),
+  `owner_user_id` varchar(64),                                  -- 提供者用户标识
+  `provider_type` varchar(16),                                  -- individual=散户，信誉跟着账号；studio=工作室，信誉跟着设备
+  `updated_by`    varchar(64),                                  -- 最近一次改身份的管理端账号
+  `created_time`  datetime(3) NULL,
+  `updated_time`  datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_provider_owner` (`biz_line`,`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 信誉记录。主体 account:<账号>（散户读）、device:<设备指纹>（工作室读）、node:<nodeId>（没报指纹的老节点）。
+-- 扣分同时记账号和设备两份，读哪份看身份，所以改身份不清零。
+-- 行只在第一次扣分时建，没有行就是满分。reputation 是 reputation_at 那一刻的分数，
+-- 此刻的分数按 galaxy.reputation_recovery_per_day 现算。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_reputation` (
+  `id`            bigint AUTO_INCREMENT,
+  `biz_line`      varchar(32),
+  `subject`       varchar(96),                                  -- account:<账号> / device:<设备指纹> / node:<nodeId>
+  `reputation`    double,                                       -- 信誉分 0..1，截至 reputation_at；此后按天回升
+  `reputation_at` timestamp NULL DEFAULT NULL,                  -- reputation 的结算时刻
+  `created_time`  datetime(3) NULL,
+  `updated_time`  datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_reputation_subject` (`biz_line`,`subject`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 平台封禁，按设备指纹记，和散户 / 工作室无关。节点记录每配一次对就换一个 nodeId，
+-- 封禁只记在节点上的话，被封的机器解绑重配、换个账号再配就回来了。
+-- 请求路径看的仍是 zt_galaxy_node.banned：封禁 / 解封时带这个指纹的节点一起改，
+-- 新配出来的节点在 hello 报上指纹时补标。没报过指纹的老节点只能封节点那一行。
+-- 解封不删行，banned 改回 false。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_machine_ban` (
+  `id`                  bigint AUTO_INCREMENT,
+  `biz_line`            varchar(32),
+  `machine_fingerprint` varchar(64),                            -- 设备指纹 sha256，同 zt_galaxy_node.machine_fingerprint
+  `banned`              boolean,                                -- 是否封禁中；解封改回 false，不删行
+  `reason`              varchar(255),                           -- 最近一次封禁 / 解封填的原因
+  `updated_by`          varchar(64),                            -- 最近一次操作的管理端账号
+  `created_time`        datetime(3) NULL,
+  `updated_time`        datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_machine_ban_fingerprint` (`biz_line`,`machine_fingerprint`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_pairing_code` (
@@ -116,7 +166,6 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `seat_concurrency`  bigint DEFAULT 2,                             -- 单座位并发上限
   `schedule_json`     varchar(512),                                 -- 挂机时段
   `status`            varchar(16),                                  -- active/draining/paused/disabled
-  `reputation`        double DEFAULT 1.000000,                      -- 信誉分 0..1，抽检与投诉扣分
   `created_time`      datetime(3) NULL,
   `updated_time`      datetime(3) NULL,
   PRIMARY KEY (`id`),

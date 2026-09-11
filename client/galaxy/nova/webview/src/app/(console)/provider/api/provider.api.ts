@@ -176,6 +176,22 @@ export function nodeDisplayName(node: NodeView): string {
   return node.displayName || node.nodeId;
 }
 
+/**
+ * 机器列表的顺序：这台电脑钉在第一个，其余按名字排（机房-2 排在机房-10 前面）。
+ *
+ * 「今天」和「共享设置」必须是同一个顺序，不然主人每换一页都得把机器重新找一遍。
+ *
+ * 刻意不按在线状态排：列表 20 秒刷一次，机器一上下线就挪位置，
+ * 鼠标正要点的那一行会从手底下跑掉。在不在线看状态点。
+ */
+export function orderMachines(nodes: NodeView[], localNodeId: string): NodeView[] {
+  return [...nodes].sort((left, right) => {
+    const local = Number(right.nodeId === localNodeId) - Number(left.nodeId === localNodeId);
+    if (local !== 0) return local;
+    return nodeDisplayName(left).localeCompare(nodeDisplayName(right), undefined, { numeric: true });
+  });
+}
+
 /* ---------- 接入密钥（独立部署的 ai-bridge 用） ---------- */
 
 /**

@@ -362,6 +362,20 @@ func (c *ControlPlane) SetDraining(ctx context.Context, cid string, draining boo
 		patchArgs(0, map[string]any{"draining": boolToInt(draining)})...).Err()
 }
 
+// SetReputation 同 SetDraining，只给已经存在的快照打补丁，不续期 —— 续期是心跳的事。
+func (c *ControlPlane) SetReputation(ctx context.Context, cids []string, reputation float64) error {
+	if len(cids) == 0 {
+		return nil
+	}
+	pipe := c.client.Pipeline()
+	for _, cid := range cids {
+		pipe.Eval(ctx, patchIfExistsLua, []string{c.contribKey(cid)},
+			patchArgs(0, map[string]any{"reputation": reputation})...)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
 func (c *ControlPlane) ListLaneContributions(ctx context.Context, lane string) ([]galaxy.ContributionSnapshot, error) {
 	cids, err := c.client.SMembers(ctx, c.laneKey(lane)).Result()
 	if err != nil {

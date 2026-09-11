@@ -480,4 +480,7 @@ var (
 	ErrKindNotRegistered = errors.New("能力未注册")
 	ErrNoCapacity        = errors.New("共享池暂无可用算力，请稍后重试")
 	ErrConsentRequired   = errors.New("请先阅读并同意共享池条款")
+	// ErrNodeBanned 节点鉴权和 hello 拦下被封禁的机器时回的都是它：hello 只是新配出来的记录
+	// 第一个被认出来的地方，节点侧不该因为拦在哪一层而看到两种结果。
+	ErrNodeBanned = errors.New("这台机器已被平台停用")
 )

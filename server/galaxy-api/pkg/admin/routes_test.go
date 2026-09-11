@@ -24,6 +24,7 @@ func TestAdminRoutesRegisterWithoutConflict(t *testing.T) {
 	want := []string{
 		"GET /api/galaxy/admin/pool",
 		"GET /api/galaxy/admin/nodes",
+		"POST /api/galaxy/admin/provider/type",
 		"GET /api/galaxy/admin/disputes",
 		"POST /api/galaxy/admin/disputes/resolve",
 		"GET /api/galaxy/admin/packages",

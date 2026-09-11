@@ -1,5 +1,5 @@
 -- =========================================================================
--- 管理端权限资源：共享算力池运营接口（9 条）
+-- 管理端权限资源：共享算力池运营接口（10 条）
 --
 -- 首选做法**不是**跑这份 SQL，而是：
 --
@@ -70,6 +70,12 @@ INSERT INTO zt_manager_resource
 SELECT 0, 'api.post.api.galaxy.admin.node.ban', 'POST /api/galaxy/admin/node/ban', 'api', 'POST', '/api/galaxy/admin/node/ban', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.node.ban');
 
+-- 把账号设成工作室 / 改回散户：决定信誉跟着账号还是设备走。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.provider.type', 'POST /api/galaxy/admin/provider/type', 'api', 'POST', '/api/galaxy/admin/provider/type', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.provider.type');
+
 INSERT INTO zt_manager_resource
   (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
 SELECT 0, 'api.post.api.galaxy.admin.disputes.resolve', 'POST /api/galaxy/admin/disputes/resolve', 'api', 'POST', '/api/galaxy/admin/disputes/resolve', '', '', 0, 'active', NOW(3), NOW(3)
@@ -106,6 +112,7 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.disputes',
     'api.get.api.galaxy.admin.packages',
     'api.post.api.galaxy.admin.node.ban',
+    'api.post.api.galaxy.admin.provider.type',
     'api.post.api.galaxy.admin.disputes.resolve',
     'api.post.api.galaxy.admin.packages.save'
   )
@@ -129,6 +136,7 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.disputes',
     'api.get.api.galaxy.admin.packages',
     'api.post.api.galaxy.admin.node.ban',
+    'api.post.api.galaxy.admin.provider.type',
     'api.post.api.galaxy.admin.disputes.resolve',
     'api.post.api.galaxy.admin.packages.save'
   )
