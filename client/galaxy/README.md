@@ -37,13 +37,17 @@ client/galaxy/
 │   ├── electron/
 │   │   ├── src/main.ts
 │   │   ├── src/preload.ts
-│   │   ├── src/impl/register.ts     Orbit 实现注册表，目前为空
+│   │   ├── src/impl/register.ts     Orbit 实现注册表：只有 ClientConfigImpl
+│   │   ├── src/impl/clientconfig.impl.ts  「使用」按钮：写本机 Claude Code / Codex 配置
+│   │   ├── src/modules/clientconfig/ 改配置文件的纯逻辑与 node --test 用例
 │   │   ├── tsconfig.json
 │   │   └── package.json
 │   └── webview/                    独立 Next.js / React / antd 使用端 UI
 │       ├── src/app/(console)/consumer/
-│       │   ├── keys/               密钥：额度跟着密钥走，明文只显示一次
-│       │   ├── store/              充值：商品 → 额度包 → 充到哪把密钥 + 充值记录
+│       │   ├── keys/               密钥：有效 / 无效分栏，「使用」一键接到本机客户端 + 手动接入命令
+│       │   ├── models/             模型广场：模型、单价、挂在模型下的套餐（按积分标价）
+│       │   ├── store/              购买：用积分买套餐 → 签发或充进已有密钥 + 购买记录
+│       │   ├── points/             积分：余额、流水、分享链接与各模型返现比例、邀请的人
 │       │   ├── usage/              使用记录：逐笔扣费 + 账单 / 会话 / 任务 / 申诉
 │       │   ├── chat/               对话（占位，见文件顶注）
 │       │   └── account/            账户：资料、密钥概况、数据告知、语言
@@ -122,7 +126,7 @@ macOS 上窗口用 `titleBarStyle: 'hiddenInset'`，左栏顶部空出 34px 给�
 - 界面：桌面壳只 `loadURL` 一个**远端**地址，安装包里不带 Next 服务、不监听端口。
 - 业务请求：本端 React 页面 → 本端 axios 封装 → 部署在远端的 Next.js `/api/*` → Galaxy Go API。
 - Nova 本机能力：Nova Webview 的 BridgeApi → preload 自动代理 → IPC → BridgeImpl → UtilityProcess 私有通道 → 内置 ai-bridge。
-- Orbit 不暴露 bridge，也不注册 bridge IPC。
+- Orbit 不暴露 bridge，也不注册 bridge IPC；它只有 `ClientConfigApi`（见下文「Orbit 本机 API」）。
 - common 不负责页面、不接管业务 HTTP、不持有平台登录 token。
 - 两端拥有独立 appId、userData、登录态、窗口与本机服务端口（Nova 17898，Orbit 17899）。
 - Electron 使用 sandbox、contextIsolation，禁用 nodeIntegration；Nova 的 IPC 校验窗口、frame、来源和接口白名单。
@@ -160,7 +164,9 @@ npm run package:nova    →  release/nova/           安装包，不含 Next 服
 Nova 把 `BridgeApi` 整个暴露给渲染进程（`pair` 能把节点绑到任意 Hub、
 `startUpstreamLogin` 会在本机拉起命令、`createToken` 会签发能花你订阅的凭据），
 页面来自网络之后，能控制那台服务器或能改包的人就能驱动这台机器的 bridge。
-Orbit 没这个问题 —— 它的 IPC 注册表是空的（`registerApi` 只给 nova 返回 `[BridgeApi]`）。
+Orbit 的面要窄得多：`registerApi` 给它的只有 `ClientConfigApi`，能做的只是把一把 Galaxy 密钥写进本机
+Claude Code / Codex 的两个固定配置文件，而且每一次写都要用户在主进程画的系统确认框里点头。
+一台被人改过的服务器最多能让用户在框里看到一个奇怪的地址 —— 这正是确认框要把地址摆出来的原因。
 
 启动时壳会先探一次 `<origin>/api/desktop-health` 并核对 `product`，确认这个地址上
 跑的确实是这个端的控制台（防的是配错地址，不是防攻击 —— 挡攻击的是上面那三条）；
@@ -295,7 +301,44 @@ const tools = await bridgeApi.getTools();
 对外的 Anthropic/OpenAI/agent 协议属于原 bridge 的业务接口，在 relay 模式启动时仍由
 原 HTTP 模块提供并保留 token/scope 鉴权；它们不等同于 Webview 的管理 API。
 
+窗口拦掉了 `window.open`，页面要让系统浏览器打开外部地址（账户页下载 ai-bridge 安装包）走另一个契约：
+
+| 方法 | 用途 |
+| --- | --- |
+| `ShellApi.openExternal(url)` | 交给 `shell.openExternal`；主进程只放行 `http:` / `https:`，其他协议直接拒绝 |
+
+纯浏览器调试时它不可用，页面退回 `window.open`（见 Nova Webview 的 `utils/shell.ts`）。
+
 运行 `npm run test:bridge` 执行迁移后的 bridge 测试，`npm run test:desktop` 验证 preload
 自动注册机制。构建 Nova 时先编译 ai-bridge ESM 包，再构建主进程和 Webview。
 打包会携带 bridge 及其运行依赖；worker 从应用资源内加载，不依赖源码目录。
 工作区 `.npmrc` 沿用 bridge 原有的 `legacy-peer-deps` 设置以保持其可选 SDK 的安装兼容性。
+
+
+## Orbit 本机 API（2026-09-12）
+
+密钥页的「使用」按钮背后是 `ClientConfigApi`（契约在 `common/eleapi/clientconfig.api.ts`）。浏览器里
+`isAvailable()` 为假，页面不画按钮，只给手动接入命令。
+
+| 方法 | 用途 |
+| --- | --- |
+| `getStatus()` | 这台电脑上 Claude Code / Codex 现在接的地址、密钥末 4 位，以及是不是 Orbit 写进去的那一把（卡片上的「使用中」） |
+| `applyKey({ tool, baseUrl, secret, keyId })` | 弹系统确认框，点「写入配置」才写；第一次改写前把原件存成 `<文件>.orbit-backup`，之后不再覆盖它 |
+
+写的是哪两处、改动范围只有多大：
+
+| 客户端 | 文件 | 改什么 |
+| --- | --- | --- |
+| Claude Code | `~/.claude/settings.json`（认 `CLAUDE_CONFIG_DIR`） | `env.ANTHROPIC_BASE_URL`（主机根，不带 `/v1`）、`env.ANTHROPIC_AUTH_TOKEN`，并删掉 `env.ANTHROPIC_API_KEY` —— 两个同时在时原来那把真密钥会跟着请求发到 Galaxy |
+| Codex | `~/.codex/config.toml`（认 `CODEX_HOME`） | 顶层 `model_provider = "galaxy"`，整段替换 `[model_providers.galaxy]`（`base_url` 带 `/v1`、`wire_api = "responses"`、`experimental_bearer_token`） |
+
+几条规则：
+
+- **页面不可信。** 路径不从页面来；密钥必须是 `sk-galaxy-` 形状、地址必须是不带账号/查询串的 http(s)，
+  过了校验才进 JSON / TOML。明文 http 地址在确认框里单独提示。
+- **认不清的文件不写。** settings.json 解析不了、config.toml 在顶层用内联表写了 `model_providers`，都直接报错，
+  不按空文件覆盖。TOML 按行改，注释、空行、别的表原样保留（多行字符串里长得像表头的行不算表头）。
+- **只对这台电脑成立。** 密钥页顶上那条「这台电脑」写的就是这两个文件的现状；「使用中」只认 Orbit 自己写进去、
+  文件里现在还是那一把的密钥，手动改过就不认。
+- 改文件的逻辑在 `orbit/electron/src/modules/clientconfig/files.ts`，用例随 `npm run test:desktop` 一起跑。
+  写进去的配置对**之后打开**的 Claude Code / Codex 生效，已经开着的要重开。

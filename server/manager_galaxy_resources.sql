@@ -1,5 +1,5 @@
 -- =========================================================================
--- 管理端权限资源：共享算力池运营接口（20 条）
+-- 管理端权限资源：共享算力池运营接口（27 条）
 --
 -- 首选做法**不是**跑这份 SQL，而是：
 --
@@ -146,6 +146,70 @@ INSERT INTO zt_manager_resource
 SELECT 0, 'api.post.api.galaxy.admin.portal.leads.handle', 'POST /api/galaxy/admin/portal/leads/handle', 'api', 'POST', '/api/galaxy/admin/portal/leads/handle', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.portal.leads.handle');
 
+-- 下面 7 条是使用者积分与分享返现上线时加的（2026-09-12）：全站密钥与明文、积分充值与流水、默认返现比例。
+
+-- 全站算力密钥列表（不含明文）。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.keys', 'GET /api/galaxy/admin/keys', 'api', 'GET', '/api/galaxy/admin/keys', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.keys');
+
+-- 取回密钥明文，运营转交给使用者。POST：只读角色天然拿不到。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.keys.secret', 'POST /api/galaxy/admin/keys/secret', 'api', 'POST', '/api/galaxy/admin/keys/secret', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.keys.secret');
+
+-- 使用者积分流水，充值明细就是 type=recharge 的那些。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.points.ledger', 'GET /api/galaxy/admin/points/ledger', 'api', 'GET', '/api/galaxy/admin/points/ledger', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.points.ledger');
+
+-- 某个使用者的积分余额与合计，充值框里显示。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.points.summary', 'GET /api/galaxy/admin/points/summary', 'api', 'GET', '/api/galaxy/admin/points/summary', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.points.summary');
+
+-- 给使用者充积分（线下收款之后）。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.points.recharge', 'POST /api/galaxy/admin/points/recharge', 'api', 'POST', '/api/galaxy/admin/points/recharge', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.points.recharge');
+
+-- 分享返现的默认比例。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.referral.settings', 'GET /api/galaxy/admin/referral/settings', 'api', 'GET', '/api/galaxy/admin/referral/settings', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.referral.settings');
+
+-- 保存分享返现的默认比例；各模型的比例随模型目录保存。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.referral.settings.save', 'POST /api/galaxy/admin/referral/settings/save', 'api', 'POST', '/api/galaxy/admin/referral/settings/save', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.referral.settings.save');
+
+-- 下面 3 条是 ai-bridge 版本分发上线时加的（2026-09-12）：安装包的列表、上传与上下架。
+
+-- 安装包列表（含已下架的）。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.bridge.releases', 'GET /api/galaxy/admin/bridge/releases', 'api', 'GET', '/api/galaxy/admin/bridge/releases', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.bridge.releases');
+
+-- 上传安装包。传上去就是发布：机器的一键升级会挑它作目标。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.bridge.releases.upload', 'POST /api/galaxy/admin/bridge/releases/upload', 'api', 'POST', '/api/galaxy/admin/bridge/releases/upload', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.bridge.releases.upload');
+
+-- 下架 / 重新上架某一个包。发现问题版本时先下架，它立刻不再是任何机器的升级目标。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.bridge.releases.status', 'POST /api/galaxy/admin/bridge/releases/status', 'api', 'POST', '/api/galaxy/admin/bridge/releases/status', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.bridge.releases.status');
+
 
 -- -------------------------------------------------------------------------
 -- 2. 角色授权
@@ -184,7 +248,17 @@ WHERE r.status = 'active'
     'api.post.api.galaxy.admin.portal.models.save',
     'api.post.api.galaxy.admin.portal.models.delete',
     'api.get.api.galaxy.admin.portal.leads',
-    'api.post.api.galaxy.admin.portal.leads.handle'
+    'api.post.api.galaxy.admin.portal.leads.handle',
+    'api.get.api.galaxy.admin.keys',
+    'api.post.api.galaxy.admin.keys.secret',
+    'api.get.api.galaxy.admin.points.ledger',
+    'api.get.api.galaxy.admin.points.summary',
+    'api.post.api.galaxy.admin.points.recharge',
+    'api.get.api.galaxy.admin.referral.settings',
+    'api.post.api.galaxy.admin.referral.settings.save',
+    'api.get.api.galaxy.admin.bridge.releases',
+    'api.post.api.galaxy.admin.bridge.releases.upload',
+    'api.post.api.galaxy.admin.bridge.releases.status'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
@@ -218,7 +292,17 @@ WHERE r.status = 'active'
     'api.post.api.galaxy.admin.portal.models.save',
     'api.post.api.galaxy.admin.portal.models.delete',
     'api.get.api.galaxy.admin.portal.leads',
-    'api.post.api.galaxy.admin.portal.leads.handle'
+    'api.post.api.galaxy.admin.portal.leads.handle',
+    'api.get.api.galaxy.admin.keys',
+    'api.post.api.galaxy.admin.keys.secret',
+    'api.get.api.galaxy.admin.points.ledger',
+    'api.get.api.galaxy.admin.points.summary',
+    'api.post.api.galaxy.admin.points.recharge',
+    'api.get.api.galaxy.admin.referral.settings',
+    'api.post.api.galaxy.admin.referral.settings.save',
+    'api.get.api.galaxy.admin.bridge.releases',
+    'api.post.api.galaxy.admin.bridge.releases.upload',
+    'api.post.api.galaxy.admin.bridge.releases.status'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
@@ -243,7 +327,12 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.disputes',
     'api.get.api.galaxy.admin.packages',
     'api.get.api.galaxy.admin.users',
-    'api.get.api.galaxy.admin.portal.models'
+    'api.get.api.galaxy.admin.portal.models',
+    'api.get.api.galaxy.admin.keys',
+    'api.get.api.galaxy.admin.points.ledger',
+    'api.get.api.galaxy.admin.points.summary',
+    'api.get.api.galaxy.admin.referral.settings',
+    'api.get.api.galaxy.admin.bridge.releases'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr

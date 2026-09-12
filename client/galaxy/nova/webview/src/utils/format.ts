@@ -112,8 +112,10 @@ export async function copyText(value: string): Promise<boolean> {
 /* ---------- 桌面端排版用的格式化 ---------- */
 
 /**
- * 带千分位的整数。积分、调用次数用它 —— 那些数字要能一眼读出量级，
+ * 带千分位的整数。调用次数、机器台数这类「个数」用它 —— 那些数字要能一眼读出量级，
  * formatNumber 的「1.2k」在账本里会把 1,284 和 1,249 显示成同一个值。
+ *
+ * 积分不要用它：账上存的是微积分，原样打出来会多六个零，见 formatPoints。
  */
 export function formatInt(value: number): string {
   if (!Number.isFinite(value)) return "-";
@@ -129,16 +131,27 @@ export function formatCompact(value: number): string {
   return formatInt(value);
 }
 
-/** 带符号的积分：+1,284 / −20,000。用真的减号，不是连字符。 */
-export function formatSignedInt(value: number): string {
-  if (value === 0) return "0";
-  return value > 0 ? `+${formatInt(value)}` : `−${formatInt(Math.abs(value))}`;
-}
-
 /** 服务端一律用「微分」存钱，展示才换成元。 */
 export function formatCny(micros: number): string {
   if (!Number.isFinite(micros)) return "-";
   return `¥${(micros / 1_000_000).toFixed(2)}`;
+}
+
+/**
+ * 积分。1 积分 = ¥1，服务端和金额一样存「微」。
+ *
+ * 不补零到两位：「20 积分」「9.9 积分」读起来是个数，「20.00 积分」读起来像一张收据。
+ * 最多留两位小数 —— 分成和返现都按比例算，会出现 0.99 这种零头，再细就没人关心了。
+ */
+export function formatPoints(micros: number): string {
+  if (!Number.isFinite(micros)) return "-";
+  return (micros / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+/** 带符号的积分，进来的同样是微积分：+1,284 / −20,000。用真的减号，不是连字符。 */
+export function formatSignedPoints(micros: number): string {
+  if (!Number.isFinite(micros) || micros === 0) return "0";
+  return micros > 0 ? `+${formatPoints(micros)}` : `−${formatPoints(Math.abs(micros))}`;
 }
 
 /** 09-10 23:38 —— 桌面窗口宽度有限，年份没有信息量。 */

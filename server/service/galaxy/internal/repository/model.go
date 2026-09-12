@@ -42,6 +42,26 @@ type GalaxyNode struct {
 	BridgeVersion   string `gorm:"column:bridge_version;type:varchar(32)" description:"ai-bridge 版本"`
 	ContractVersion int    `gorm:"column:contract_version" description:"节点声明的契约版本"`
 
+	// BridgePlatform / BridgeDistribution / UpgradeBlocker 是节点在 hello 里自报的
+	// 「我是什么、能不能被远程升级」。老版本节点不报，三个都是空串 —— 那种机器
+	// 只能手动装一次新版，控制台上的升级按钮会说清楚这一点。
+	BridgePlatform     string `gorm:"column:bridge_platform;type:varchar(32)" description:"节点自报的平台名，如 linux-x64"`
+	BridgeDistribution string `gorm:"column:bridge_distribution;type:varchar(16)" description:"cli=独立部署的命令行，能自升级；nova=随 Nova 应用分发"`
+	// UpgradeBlocker 节点自己算出来的「此刻为什么升不了」（没内置发布公钥、
+	// 可执行文件所在目录不可写……）。人话，控制台原样展示 —— 让主人在点之前
+	// 就看到原因，比点完等三分钟再看到一条失败强。
+	UpgradeBlocker string `gorm:"column:upgrade_blocker;type:varchar(255)" description:"节点自报的不能远程升级的原因，空表示可以"`
+
+	// 最近一次远程升级。同一台机器同时只有一次升级在跑，所以挂在节点这一行上
+	// 而不是单开一张指令表：心跳本来就要读这一行，挂上去不多一次查询。
+	UpgradeID          string     `gorm:"column:upgrade_id;type:varchar(40)" description:"升级指令 id，节点按它回报，对不上的回报一律忽略"`
+	UpgradeVersion     string     `gorm:"column:upgrade_version;type:varchar(32)" description:"这次升级的目标版本"`
+	UpgradeFromVersion string     `gorm:"column:upgrade_from_version;type:varchar(32)" description:"发起时机器上的版本"`
+	UpgradeStatus      string     `gorm:"column:upgrade_status;type:varchar(16)" description:"pending/downloading/installing/restarting/succeeded/failed"`
+	UpgradeMessage     string     `gorm:"column:upgrade_message;type:varchar(255)" description:"说明或失败原因，人话，直接展示"`
+	UpgradeRequestedAt *time.Time `gorm:"column:upgrade_requested_at;type:timestamp null default null" description:"控制台点「升级」的时刻"`
+	UpgradeUpdatedAt   *time.Time `gorm:"column:upgrade_updated_at;type:timestamp null default null" description:"升级状态最近一次变化的时刻"`
+
 	// AccessMode 这台机器和 Hub 之间是怎么通信的：
 	//   poll   节点长轮询领活，Hub 永不主动连它（可视化客户端唯一支持的方式）
 	//   export 节点把自己暴露在公网上，Hub 拿 endpoint + secret 主动回连
@@ -81,25 +101,38 @@ type GalaxyNode struct {
 func (r *GalaxyNode) TableName() string { return "zt_galaxy_node" }
 func (r *GalaxyNode) Init()             {}
 
+// 账号的两端。和 dto.SideProvider / dto.SideConsumer 是同一组值，这里各写一份：
+// repository 不依赖 dto，反过来让 dto 依赖持久化层更不合适。
+const (
+	SideProvider = "provider"
+	SideConsumer = "consumer"
+)
+
 // GalaxyUser Galaxy 自己的账号。和任务宇宙的 zt_identity_user 没有任何关系：
 // 不同的表、不同的令牌，谁也不认识谁。
 //
-// 共享端（提供者，用 Nova）和使用端（消费者，用 Orbit）是两批人，各注册各的 ——
-// 同一个用户名在两端可以各有一个账号，互不相通。UserID 带着端的前缀（pu_ / cu_），
-// 池内表里所有的 owner_user_id 存的就是它：看一眼就知道是哪一端的人，
-// 一个使用端的 id 出现在机器表里也能当场认出来。
+// 共享端（提供者，用 Nova）和使用端（消费者，用 Orbit）是两批人，**库里也是两张表**：
+// GalaxyProviderUser / GalaxyConsumerUser。两端账号的列一模一样，所以只有这一份定义，
+// 那两个类型由它派生；这个类型自己不对应任何一张表，落到哪张表由 Side 决定。
 //
-// 散户 / 工作室不在这张表上，在 GalaxyProvider：那是只有共享端才有、只由运营改的属性。
+// 分表不是为了两套读法，是为了两端在库里没有交集：不会再有「漏写 side 条件」的查询
+// 把另一端的人捞出来，用户名在一端内唯一也不用靠复合索引里的 side 撑着。
+//
+// UserID 照旧带端的前缀（pu_ / cu_）：池内表的 owner_user_id / user_id / provider_user_id
+// 是一列混着两端的引用（争议表两端都记），前缀让人一眼看出这一行说的是谁。
+//
+// 散户 / 工作室不在账号表上，在 GalaxyProvider：那是只有共享端才有、只由运营改的属性。
 type GalaxyUser struct {
 	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_user_id,priority:1;uniqueIndex:uk_gx_user_name,priority:1;index:idx_gx_user_side,priority:1"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_user_id,priority:1;uniqueIndex:uk_gx_user_name,priority:1;index:idx_gx_user_status,priority:1"`
 	UserID  string `gorm:"column:user_id;type:varchar(40);uniqueIndex:uk_gx_user_id,priority:2" description:"账号业务键，共享端 pu_…，使用端 cu_…"`
-	Side    string `gorm:"column:side;type:varchar(16);uniqueIndex:uk_gx_user_name,priority:2;index:idx_gx_user_side,priority:2" description:"provider=共享端；consumer=使用端"`
-	// Username 存小写。唯一性按端算：两端是两批人，同名不冲突。
-	Username     string `gorm:"column:username;type:varchar(64);uniqueIndex:uk_gx_user_name,priority:3" description:"登录名，小写，按端唯一"`
+	// Side 不是库里的一列 —— 它由这一行来自哪张表决定，读出来时由 repository 填上。
+	Side string `gorm:"-" description:"provider=共享端；consumer=使用端"`
+	// Username 存小写。唯一性按表算：两端是两张表，同名各是各的人。
+	Username     string `gorm:"column:username;type:varchar(64);uniqueIndex:uk_gx_user_name,priority:2" description:"登录名，小写，本端内唯一"`
 	DisplayName  string `gorm:"column:display_name;type:varchar(128)"`
 	PasswordHash string `gorm:"column:password_hash;type:varchar(255)" description:"bcrypt"`
-	Status       string `gorm:"column:status;type:varchar(16);index:idx_gx_user_side,priority:3" description:"active/disabled"`
+	Status       string `gorm:"column:status;type:varchar(16);index:idx_gx_user_status,priority:2" description:"active/disabled"`
 	// MustChangePassword 运营重置过密码的账号为真：改掉之前只能调 me 和改密码。
 	MustChangePassword bool `gorm:"column:must_change_password;default:false"`
 	// TokenVersion 签进令牌里。改密码、重置、停用都加一，已经发出去的令牌当场作废。
@@ -112,8 +145,20 @@ type GalaxyUser struct {
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
 }
 
-func (r *GalaxyUser) TableName() string { return "zt_galaxy_user" }
-func (r *GalaxyUser) Init()             {}
+// GalaxyProviderUser 共享端（Nova）的账号表。
+//
+// 写成 GalaxyUser 的派生类型而不是嵌一层：底层类型相同，两者可以直接互转，
+// 上层构造和读取用的都还是 GalaxyUser，只有 repository 在贴着库的那一层认这两个类型。
+type GalaxyProviderUser GalaxyUser
+
+func (r *GalaxyProviderUser) TableName() string { return "zt_galaxy_provider_user" }
+func (r *GalaxyProviderUser) Init()             {}
+
+// GalaxyConsumerUser 使用端（Orbit）的账号表。
+type GalaxyConsumerUser GalaxyUser
+
+func (r *GalaxyConsumerUser) TableName() string { return "zt_galaxy_consumer_user" }
+func (r *GalaxyConsumerUser) Init()             {}
 
 // GalaxyProvider 共享端账号的身份：散户 / 工作室。OwnerUserID 是 GalaxyUser.UserID（pu_…）。
 //
@@ -436,16 +481,23 @@ type GalaxyUsageMismatch struct {
 func (r *GalaxyUsageMismatch) TableName() string { return "zt_galaxy_usage_mismatch" }
 func (r *GalaxyUsageMismatch) Init()             {}
 
-// GalaxyConsumerKey 算力密钥。存 sha256，明文只在签发那一刻返回一次。
+// GalaxyConsumerKey 算力密钥。鉴权只按 sha256 查；明文另外加密存一份，供本人「使用」
+// 与运营转交时取回（2026-09-12 起，之前签发的只有哈希，取不回）。
 type GalaxyConsumerKey struct {
 	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
 	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_consumer_key_id,priority:1;uniqueIndex:uk_gx_consumer_key_hash,priority:1;index:idx_gx_consumer_key_owner,priority:1"`
 	KeyID   string `gorm:"column:key_id;type:varchar(64);uniqueIndex:uk_gx_consumer_key_id,priority:2" description:"匿名标识 ck_…，节点看到的就是它"`
 	KeyHash string `gorm:"column:key_hash;type:varchar(64);uniqueIndex:uk_gx_consumer_key_hash,priority:2" description:"sk- 明文的 sha256"`
+	// SecretCipher 明文的 AES-GCM 密文，密钥来自 galaxy.key_cipher_secret，不在库里。
+	// 空串表示取不回：老密钥，或签发时服务端没配加密密钥。
+	SecretCipher string `gorm:"column:secret_cipher;type:varchar(256)" description:"sk- 明文的 AES-GCM 密文，空表示取不回"`
 
 	Alias       string `gorm:"column:alias;type:varchar(64)" description:"日志与账单里的可读名"`
 	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_consumer_key_owner,priority:2"`
 	OrderID     string `gorm:"column:order_id;type:varchar(64)"`
+	// ModelID 买的是哪个模型的套餐。只用来认类别（Claude / Codex）和展示，不参与鉴权 ——
+	// 能调哪些模型仍然只看 ModelTierJSON。
+	ModelID string `gorm:"column:model_id;type:varchar(96)" description:"来源套餐绑定的模型，只用于认类别与展示"`
 
 	AllowedKindsJSON     string `gorm:"column:allowed_kinds_json;type:varchar(512)" description:"空数组表示不限"`
 	AllowedProvidersJSON string `gorm:"column:allowed_providers_json;type:varchar(512)"`
@@ -573,12 +625,21 @@ type GalaxyProviderLedger struct {
 	TxnID       string    `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_provider_ledger,priority:2"`
 	CID         string    `gorm:"column:cid;type:varchar(96);index:idx_gx_provider_ledger_cid,priority:2"`
 	OwnerUserID string    `gorm:"column:owner_user_id;type:varchar(64)"`
-	Type        string    `gorm:"column:type;type:varchar(16)" description:"contribute/settle/payout/clawback"`
-	Unit        string    `gorm:"column:unit;type:varchar(48)"`
-	Amount      int64     `gorm:"column:amount" description:"unit=credit 时为积分"`
+	Type        string    `gorm:"column:type;type:varchar(16)" description:"contribute/settle/payout/clawback/referral/ref_clawback"`
+	// Unit 这笔积分是**哪种计量单位**挣来的（settle / clawback），或者 credit（提现、邀请奖励）。
+	Unit string `gorm:"column:unit;type:varchar(48)"`
+	// Amount 一律是**微积分**（1,000,000 = 1 积分 = ¥1），和信用账户余额同一量纲。
+	//
+	// 不是计量数：原先 settle 行记的是 token 数，于是收益页上「今天赚了多少」加的是 token、
+	// 「可提现」用的是余额里的钱，两个口径根本不是一个东西。原始计量数在
+	// zt_galaxy_meter_record 里（对账以它求和为准），这一列只回答「这笔挣了多少」。
+	Amount int64 `gorm:"column:amount" description:"微积分，1,000,000 = 1 积分 = ¥1"`
 	Price       int64     `gorm:"column:price"`
 	UnitID      string    `gorm:"column:unit_id;type:varchar(40)"`
-	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime;index:idx_gx_provider_ledger_cid,priority:3"`
+	// RelatedUserID 邀请奖励是谁跑出来的（被邀请人 pu_…）。其它类型为空。
+	// 邀请页按它汇总「每个好友给你带来多少」，不另设计数器 —— 账本是唯一权威。
+	RelatedUserID string    `gorm:"column:related_user_id;type:varchar(64)" description:"邀请奖励对应的被邀请人"`
+	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime;index:idx_gx_provider_ledger_cid,priority:3"`
 }
 
 func (r *GalaxyProviderLedger) TableName() string { return "zt_galaxy_provider_ledger" }
@@ -686,6 +747,9 @@ type GalaxyPackage struct {
 	ModelTierJSON    string `gorm:"column:model_tier_json;type:varchar(1024)"`
 	Concurrency      int    `gorm:"column:concurrency;default:4"`
 	RPM              int    `gorm:"column:rpm;default:120"`
+	// ModelID 这个套餐属于模型目录里的哪个模型。分享返现按这个模型的比例算；
+	// 空表示通用套餐，返现走全局默认比例。
+	ModelID string `gorm:"column:model_id;type:varchar(96)" description:"绑定的模型（zt_galaxy_model.model_id），空为通用套餐"`
 
 	Listed      bool      `gorm:"column:listed;default:true;index:idx_gx_package_listed,priority:2"`
 	SortOrder   int       `gorm:"column:sort_order;default:0"`
@@ -716,7 +780,12 @@ type GalaxyOrder struct {
 	TargetKeyID string `gorm:"column:target_key_id;type:varchar(64)" description:"非空表示给这把已有密钥充值，空表示签发新密钥"`
 	KeyID       string `gorm:"column:key_id;type:varchar(64)" description:"履约后落到哪把密钥"`
 
+	// ModelID 下单那一刻套餐绑定的模型。套餐之后改绑不影响这一单的返现口径。
+	ModelID string `gorm:"column:model_id;type:varchar(96)" description:"下单时套餐绑定的模型快照"`
+
 	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_order_user,priority:3" description:"pending/paid/fulfilled/cancelled"`
+	// PayMethod 怎么付的：points=积分；channel=支付渠道（含沙箱与人工确认到账）。
+	PayMethod string `gorm:"column:pay_method;type:varchar(16)" description:"points=积分；channel=支付渠道"`
 	// PaymentRef 支付渠道的流水号，同时是回调幂等键。
 	PaymentRef  string     `gorm:"column:payment_ref;type:varchar(128)"`
 	PaidAt      *time.Time `gorm:"column:paid_at;type:timestamp null default null"`
@@ -892,6 +961,10 @@ type GalaxyModel struct {
 	TagsJSON string `gorm:"column:tags_json;type:varchar(512)" description:"能力标签，JSON 数组"`
 	Summary  string `gorm:"column:summary;type:varchar(256)" description:"一句话说明，门户卡片上那行"`
 
+	// ReferralBps 被邀请人买这个模型的套餐时，按实付积分返给邀请人的比例，单位万分之一。
+	// NULL 表示没单独设、走全局默认；0 是「这个模型不返」，两者不是一回事，所以用指针。
+	ReferralBps *int64 `gorm:"column:referral_bps" description:"分享返现比例（万分之一），NULL 走全局默认"`
+
 	Listed      bool      `gorm:"column:listed;default:true;index:idx_gx_model_listed,priority:2"`
 	Featured    bool      `gorm:"column:featured;default:false" description:"首页精选位"`
 	SortOrder   int       `gorm:"column:sort_order;default:0"`
@@ -931,3 +1004,138 @@ type GalaxyLead struct {
 
 func (r *GalaxyLead) TableName() string { return "zt_galaxy_lead" }
 func (r *GalaxyLead) Init()             {}
+
+// ---------- 使用者积分与分享 ----------
+//
+// 使用者的钱只有一种形态：积分，1 积分 = ¥1。运营在管理端充进来，买套餐时花掉，
+// 邀请来的人买套餐时按模型的比例返一部分进来。库里存「微积分」，和 amount / price
+// 同一量纲（÷1_000_000 得到积分），所以套餐价直接就是积分价，不用再折算一次。
+//
+// 和提供者那本 GalaxyCreditAccount 不是一回事：那本是出算力赚的、按 PayoutRate
+// 折成钱提走的；两批人、两种来路、两套规则，合在一张表里迟早有一边被另一边的规则误伤。
+
+// GalaxyPointsAccount 使用者的积分余额。行不存在就是 0。
+type GalaxyPointsAccount struct {
+	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_points_account,priority:1"`
+	OwnerUserID string    `gorm:"column:owner_user_id;type:varchar(64);uniqueIndex:uk_gx_points_account,priority:2" description:"使用端账号 cu_…"`
+	Balance     int64     `gorm:"column:balance" description:"微积分"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyPointsAccount) TableName() string { return "zt_galaxy_points_account" }
+func (r *GalaxyPointsAccount) Init()             {}
+
+// GalaxyPointsLedger 积分流水。余额的每一次变动都有一行，而且和余额在同一个事务里写 ——
+// 「余额少了但查不到为什么」是账务上最不能出现的一种状态。
+//
+// 管理端的「充值明细」就是这里 type=recharge 的那些行，不另建一张表：两处各记一份，
+// 对不上的时候谁也说不清哪边是对的。
+type GalaxyPointsLedger struct {
+	ID          int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_points_ledger,priority:1;index:idx_gx_points_ledger_owner,priority:1;index:idx_gx_points_ledger_type,priority:1"`
+	TxnID       string `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_points_ledger,priority:2" description:"幂等键：recharge:<请求号> / order:<订单号>:pay|refund|referral"`
+	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_points_ledger_owner,priority:2"`
+	Type        string `gorm:"column:type;type:varchar(16);index:idx_gx_points_ledger_type,priority:2" description:"recharge/purchase/referral"`
+
+	Amount       int64 `gorm:"column:amount" description:"微积分，入账为正、出账为负"`
+	BalanceAfter int64 `gorm:"column:balance_after"`
+	// BaseAmount 这笔是按什么算出来的：充值是实付金额（微元），返现是那笔购买实付的积分。
+	BaseAmount int64 `gorm:"column:base_amount" description:"充值=实付金额（微元）；返现=那笔购买实付的积分"`
+	// RateBps 返现当时用的比例。比例改了不影响已经返过的，账上要能看出当时是按多少算的。
+	RateBps int64 `gorm:"column:rate_bps" description:"返现比例快照（万分之一）"`
+
+	OrderID       string    `gorm:"column:order_id;type:varchar(64)"`
+	RelatedUserID string    `gorm:"column:related_user_id;type:varchar(64)" description:"返现：下单的被邀请人"`
+	ModelID       string    `gorm:"column:model_id;type:varchar(96)"`
+	Remark        string    `gorm:"column:remark;type:varchar(256)"`
+	Operator      string    `gorm:"column:operator;type:varchar(64)" description:"运营充值：经手的管理端账号"`
+	CreatedAt     time.Time `gorm:"column:created_at;autoCreateTime;index:idx_gx_points_ledger_owner,priority:3;index:idx_gx_points_ledger_type,priority:3"`
+}
+
+func (r *GalaxyPointsLedger) TableName() string { return "zt_galaxy_points_ledger" }
+func (r *GalaxyPointsLedger) Init()             {}
+
+// GalaxyReferral 使用者的邀请码与「谁邀请了他」。一个使用端账号一行。
+//
+// 不挂在 zt_galaxy_consumer_user 上：邀请码要唯一索引，而老账号在第一次打开分享页
+// 之前没有码，那一列会有一片空串直接撞唯一键。老账号没有行，第一次打开分享页时补上。
+type GalaxyReferral struct {
+	ID         int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine    string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_referral_user,priority:1;uniqueIndex:uk_gx_referral_code,priority:1;index:idx_gx_referral_inviter,priority:1"`
+	UserID     string `gorm:"column:user_id;type:varchar(64);uniqueIndex:uk_gx_referral_user,priority:2" description:"使用端账号 cu_…"`
+	InviteCode string `gorm:"column:invite_code;type:varchar(16);uniqueIndex:uk_gx_referral_code,priority:2" description:"这个人的邀请码，大写"`
+	// InvitedBy 注册时用的是谁的邀请码。注册之后不能改：改得动的话，返现归谁就成了谁先去找运营的问题。
+	InvitedBy   string    `gorm:"column:invited_by;type:varchar(64);index:idx_gx_referral_inviter,priority:2" description:"邀请人 cu_…，空表示自己注册的"`
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime;index:idx_gx_referral_inviter,priority:3"`
+}
+
+func (r *GalaxyReferral) TableName() string { return "zt_galaxy_referral" }
+func (r *GalaxyReferral) Init()             {}
+
+// GalaxySetting 运营在后台改的零散开关（目前只有全局默认返现比例）。
+//
+// 部署参数进 application.properties，这里只放「运营随时要改、改完不该重启」的东西。
+type GalaxySetting struct {
+	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_setting,priority:1"`
+	SettingKey  string    `gorm:"column:setting_key;type:varchar(64);uniqueIndex:uk_gx_setting,priority:2"`
+	Value       string    `gorm:"column:value;type:varchar(1024)"`
+	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxySetting) TableName() string { return "zt_galaxy_setting" }
+func (r *GalaxySetting) Init()             {}
+
+// ---------- ai-bridge 的版本分发 ----------
+
+// GalaxyBridgeRelease 一个已发布的 ai-bridge 安装包（一个版本一个平台一行）。
+//
+// 字节在 OSS，这里只有「哪个版本、哪个平台、多大、校验值、签名」。签名是 Ed25519，
+// 签的是版本 + 平台 + sha256 三样，私钥离线保管、公钥编进 ai-bridge 自己 ——
+// 节点只装验得过签名的包。远程升级敢做就是因为这一条：Hub、数据库、OSS 里任何
+// 一个被人改了，推下去的东西也装不上（节点不信任 Hub，见 doc/galaxy 的原则 8）。
+//
+// 下架不删行：机器上报的版本要能对得上它当初装的是哪一个包。
+type GalaxyBridgeRelease struct {
+	ID         int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine    string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_bridge_release_id,priority:1;uniqueIndex:uk_gx_bridge_release_target,priority:1;index:idx_gx_bridge_release_platform,priority:1"`
+	ReleaseID  string `gorm:"column:release_id;type:varchar(40);uniqueIndex:uk_gx_bridge_release_id,priority:2" description:"业务键 br_…"`
+	Version    string `gorm:"column:version;type:varchar(32);uniqueIndex:uk_gx_bridge_release_target,priority:2" description:"语义版本，如 0.2.0"`
+	Platform   string `gorm:"column:platform;type:varchar(32);uniqueIndex:uk_gx_bridge_release_target,priority:3;index:idx_gx_bridge_release_platform,priority:2" description:"linux-x64 / darwin-arm64 / windows-x64 …"`
+	FileName   string `gorm:"column:file_name;type:varchar(128)" description:"ai-bridge-<版本>-<平台>.tar.gz（windows 是 .zip）"`
+	ObjectKey  string `gorm:"column:object_key;type:varchar(255)" description:"OSS 对象键，含部署配置的 prefix"`
+	Size       int64  `gorm:"column:size" description:"字节数"`
+	SHA256     string `gorm:"column:sha256;type:varchar(64)" description:"整个压缩包的 sha256，小写十六进制"`
+	Signature  string `gorm:"column:signature;type:varchar(128)" description:"发布签名（Ed25519，base64）"`
+	Notes      string `gorm:"column:notes;type:text" description:"版本说明"`
+	Status     string `gorm:"column:status;type:varchar(16);index:idx_gx_bridge_release_platform,priority:3" description:"published/withdrawn"`
+	PublishedBy string `gorm:"column:published_by;type:varchar(64)" description:"上传的管理端账号"`
+	PublishedAt *time.Time `gorm:"column:published_at;type:timestamp null default null"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyBridgeRelease) TableName() string { return "zt_galaxy_bridge_release" }
+func (r *GalaxyBridgeRelease) Init()             {}
+
+// GalaxyProviderReferral 共享端的邀请码与「谁邀请了他」。一个共享端账号一行。
+//
+// 和使用端那张 GalaxyReferral 分开：两端是两批人（pu_ / cu_），邀请码的命名空间
+// 混在一起时，一个共享端的码被填进 Orbit 的注册页会「查得到但返错人」。
+// 一个人两边都玩就各有一个码，各返各的。
+type GalaxyProviderReferral struct {
+	ID         int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine    string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_provider_referral_user,priority:1;uniqueIndex:uk_gx_provider_referral_code,priority:1;index:idx_gx_provider_referral_inviter,priority:1"`
+	UserID     string `gorm:"column:user_id;type:varchar(64);uniqueIndex:uk_gx_provider_referral_user,priority:2" description:"共享端账号 pu_…"`
+	InviteCode string `gorm:"column:invite_code;type:varchar(16);uniqueIndex:uk_gx_provider_referral_code,priority:2" description:"这个人的邀请码，大写"`
+	// InvitedBy 注册时用的是谁的邀请码。注册之后不能改：改得动的话，
+	// 返现归谁就成了谁先去找运营的问题。
+	InvitedBy   string    `gorm:"column:invited_by;type:varchar(64);index:idx_gx_provider_referral_inviter,priority:2" description:"邀请人 pu_…，空表示自己注册的"`
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime;index:idx_gx_provider_referral_inviter,priority:3"`
+}
+
+func (r *GalaxyProviderReferral) TableName() string { return "zt_galaxy_provider_referral" }
+func (r *GalaxyProviderReferral) Init()             {}

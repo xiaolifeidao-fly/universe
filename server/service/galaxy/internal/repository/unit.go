@@ -368,6 +368,30 @@ func (r *GalaxyRepository) SavePlatformLedger(ctx context.Context, rows []*Galax
 	}).Create(rows).Error
 }
 
+// SaveConsumerLedgerRow / SaveProviderLedgerRow 一次写一行，并告诉调用方**到底插进去没有**。
+//
+// 批量版拿不到这个答案（多行时 RowsAffected 是合计），而账本和余额必须绑在一起写：
+// 账本按 (biz_line, txn_id) 幂等，余额却是加减 —— 批量写完再按总额加一次的话，
+// 一次重放（节点重发 complete）就是白发一笔钱、白扣一次额度。
+func (r *GalaxyRepository) SaveConsumerLedgerRow(ctx context.Context, row *GalaxyConsumerLedger) (bool, error) {
+	return insertLedgerRow(ctx, r, row)
+}
+
+func (r *GalaxyRepository) SaveProviderLedgerRow(ctx context.Context, row *GalaxyProviderLedger) (bool, error) {
+	return insertLedgerRow(ctx, r, row)
+}
+
+func insertLedgerRow[T any](ctx context.Context, r *GalaxyRepository, row *T) (bool, error) {
+	result := r.Db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "biz_line"}, {Name: "txn_id"}},
+		DoNothing: true,
+	}).Create(row)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 // AddCredit 提供者积分入账。P1 只记账，P2 接提现。
 func (r *GalaxyRepository) AddCredit(ctx context.Context, bizLine, ownerUserID string, amount int64) error {
 	if amount == 0 || ownerUserID == "" {

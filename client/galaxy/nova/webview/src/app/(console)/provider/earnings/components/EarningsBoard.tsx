@@ -9,13 +9,14 @@
  */
 
 import { message } from "antd";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { WeekBars } from "@/components/galaxy/charts";
 import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconDownload, IconWallet } from "@/components/ui/icons";
 import { Btn, Card, CardHead, DataTable, Figure, Loading, Note, Pager, Pill, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatCny, formatDay, formatInt, formatSignedInt } from "@/utils/format";
+import { formatCny, formatDay, formatPoints, formatSignedPoints } from "@/utils/format";
 import {
   fetchDashboard,
   fetchLedger,
@@ -27,11 +28,13 @@ import {
 import { WithdrawModal } from "./WithdrawModal";
 
 const PAGE_SIZE = 12;
-/** 只用于展示折算。真正的兑换比在服务端（galaxy.payout_rate），下单金额也由它算。 */
-const CREDIT_RATE = 100;
 const HOLD_DAYS = 7;
 
-const LEDGER_TYPES = ["", "settle", "payout", "clawback"] as const;
+/**
+ * 筛选只给常用的几种。邀请奖励单列一个：它和自己机器赚的「收益」来路不同，主人会想单独对。
+ * ref_clawback（邀请奖励被追回）不单列，出现得少，在「全部」里按类型名认得出来。
+ */
+const LEDGER_TYPES = ["", "settle", "referral", "payout", "clawback"] as const;
 
 const WEEK_LABELS: Record<string, string[]> = {
   "zh-CN": ["日", "一", "二", "三", "四", "五", "六"],
@@ -40,6 +43,7 @@ const WEEK_LABELS: Record<string, string[]> = {
 
 export function EarningsBoard() {
   const { t, locale } = useLocale();
+  const router = useRouter();
   const [dashboard, setDashboard] = useState<ProviderDashboard | null>(null);
   const [entries, setEntries] = useState<CreditLedgerEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -81,7 +85,9 @@ export function EarningsBoard() {
     const lines = entries.map((entry) => [
       entry.createdAt,
       entry.type,
-      String(entry.amount),
+      // 账上是微积分，导出的是积分（1 积分 = ¥1）—— 表格里的数要和界面上看到的对得上。
+      // 不走 formatPoints：它带千分位、还会砍到两位小数，表格会把「1,284.5」当文本读。
+      String(entry.amount / 1_000_000),
       entry.unit,
       entry.unitId,
       entry.cid,
@@ -106,7 +112,11 @@ export function EarningsBoard() {
     );
   }
 
+  // credits 里每个数都是**微积分**：1,000,000 = 1 积分 = ¥1，和使用端同一个口径。
+  // 一律经 formatPoints / formatCny 落地，原样打出来会多六个零。
   const credits = dashboard.credits;
+  // credits 是嵌套对象、不经过转换，老服务端不带 referral 时是 undefined。
+  const referral = credits.referral ?? 0;
 
   return (
     <>
@@ -124,37 +134,53 @@ export function EarningsBoard() {
           <Card className="gx-rise" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
             <div className="gx-label">{t("earnings.available")}</div>
             <Figure
-              value={formatInt(credits.available)}
+              value={formatPoints(credits.available)}
               unit={t("today.credits")}
               aside={
                 <span
                   className="gx-mono"
                   style={{ fontSize: 12.5, color: "var(--gx-accent-ink)", background: "var(--gx-accent-soft)", padding: "4px 8px", borderRadius: 6 }}
                 >
-                  ≈ {formatCny((credits.available / CREDIT_RATE) * 1_000_000)}
+                  ≈ {formatCny(credits.available)}
                 </span>
               }
             />
-            <div style={{ display: "flex", gap: 28, fontSize: 12.5, color: "var(--gx-faint)" }}>
-              <span>
-                {t("earnings.pending")}{" "}
-                <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatInt(credits.pending)}</b>{" "}
-                {t("earnings.pendingHint", { days: HOLD_DAYS })}
-              </span>
-              <span>
-                {t("earnings.withdrawn")}{" "}
-                <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatInt(credits.withdrawn)}</b>
-              </span>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, color: "var(--gx-faint)" }}>
+              <div style={{ display: "flex", gap: 28 }}>
+                <span>
+                  {t("earnings.pending")}{" "}
+                  <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatPoints(credits.pending)}</b>{" "}
+                  {t("earnings.pendingHint", { days: HOLD_DAYS })}
+                </span>
+                <span>
+                  {t("earnings.withdrawn")}{" "}
+                  <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatPoints(credits.withdrawn)}</b>
+                </span>
+              </div>
+              {/*
+                邀请奖励单起一行，不和待结算、已提现排在一起：那两个是积分眼下在哪，这个是其中有多少
+                来自邀请（它本身也记在上面几个数里）—— 并排放会让人以为三个数要加起来。没有就不占这一行。
+              */}
+              {referral > 0 ? (
+                <span>
+                  {t("earnings.referral")}{" "}
+                  <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatPoints(referral)}</b>
+                  {" · "}
+                  <button type="button" className="gx-link" onClick={() => router.push("/provider/invite")}>
+                    {t("earnings.referralLink")}
+                  </button>
+                </span>
+              ) : null}
             </div>
             <Note>
-              <b style={{ fontWeight: 600 }}>{t("earnings.rules")}</b> · {t("earnings.rulesBody", { rate: CREDIT_RATE, days: HOLD_DAYS })}
+              <b style={{ fontWeight: 600 }}>{t("earnings.rules")}</b> · {t("earnings.rulesBody", { days: HOLD_DAYS })}
             </Note>
           </Card>
 
           <Card className="gx-rise gx-rise--1" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{t("earnings.week")}</span>
-              <span className="gx-card__hint">{t("earnings.weekSummary", { value: formatInt(credits.week) })}</span>
+              <span className="gx-card__hint">{t("earnings.weekSummary", { value: formatPoints(credits.week) })}</span>
             </div>
             <WeekBars
               points={dashboard.trend ?? []}
@@ -219,7 +245,8 @@ export function EarningsBoard() {
               {
                 key: "type",
                 title: t("earnings.col.type"),
-                width: "88px",
+                // 「邀请奖励追回」「Referral clawback」要放得下，88 会被截成省略号。
+                width: "120px",
                 render: (row: CreditLedgerEntry) => t(`earnings.type.${row.type}`),
               },
               {
@@ -239,7 +266,7 @@ export function EarningsBoard() {
                 align: "right",
                 render: (row: CreditLedgerEntry) => (
                   <span className="gx-mono" style={{ color: row.amount >= 0 ? "var(--gx-accent-ink)" : "var(--gx-soft)", fontWeight: 500 }}>
-                    {formatSignedInt(row.amount)}
+                    {formatSignedPoints(row.amount)}
                   </span>
                 ),
               },
@@ -270,7 +297,6 @@ export function EarningsBoard() {
         open={withdrawing}
         available={credits.available}
         pending={credits.pending}
-        rate={CREDIT_RATE}
         onClose={() => setWithdrawing(false)}
         onDone={() => {
           setWithdrawing(false);

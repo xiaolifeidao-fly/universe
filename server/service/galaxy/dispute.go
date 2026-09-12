@@ -287,11 +287,13 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 			BizLine: bizLine, TxnID: txn, KeyID: row.KeyID, Type: "refund",
 			Unit: unit, Amount: amount, Price: price.Price, UnitID: row.UnitID,
 		})
-		provider = append(provider, &repository.GalaxyProviderLedger{
-			BizLine: bizLine, TxnID: txn, CID: row.CID, Type: "clawback",
-			Unit: unit, Amount: amount, Price: price.Price, UnitID: row.UnitID,
-		})
 		cost, share := splitCost(amount, price)
+		// 追回记的和当初结算记的是同一个量纲：积分，不是计量数。
+		// 两边不一致的话，对账时「进来过又出去了」这句话就对不平。
+		provider = append(provider, &repository.GalaxyProviderLedger{
+			BizLine: bizLine, TxnID: txn, CID: row.CID, OwnerUserID: row.ProviderUserID,
+			Type: "clawback", Unit: unit, Amount: share, Price: price.Price, UnitID: row.UnitID,
+		})
 		platformLoss += cost - share
 	}
 	if err := s.repository.SaveConsumerLedger(ctx, consumer); err != nil {
@@ -323,6 +325,9 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 			return err
 		}
 	}
+	// 这次执行带出去的邀请奖励一并退回。不退的话，一次伪造的执行能同时套出两笔钱：
+	// 提供者那笔被追回了，邀请人那笔还留在账上。
+	s.clawbackProviderReferral(ctx, row)
 	// 伪造被坐实按设计文档 6.2 清零信誉，其它成立的申诉只扣一点。
 	// 分开是因为这两件事性质不同：一个是作弊，一个是没干好。
 	if row.CID != "" {

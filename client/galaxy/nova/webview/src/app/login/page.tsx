@@ -25,11 +25,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
+  // 从带邀请码的注册页点「去登录」过来的：再点「注册」要把邀请码带回去，不然来回一趟就丢了。
+  // 读地址栏用 window.location，理由见注册页（useSearchParams 要套 Suspense）。
+  const [invite, setInvite] = useState("");
 
   // 已经登录过就别再让人看一次登录页。判断只能在挂载后做 —— 令牌在
   // localStorage 里，服务端读不到。
   useEffect(() => {
-    if (isAuthenticated()) router.replace(productConfig.home);
+    if (isAuthenticated()) {
+      router.replace(productConfig.home);
+      return;
+    }
+    setInvite(new URLSearchParams(window.location.search).get("invite")?.trim() ?? "");
   }, [router]);
 
   const submit = async (event: React.FormEvent) => {
@@ -107,7 +114,11 @@ export default function LoginPage() {
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--gx-faint)" }}>
         <span>
           {t("login.noAccount")}{" "}
-          <button type="button" className="gx-link" onClick={() => router.push("/register")}>
+          <button
+            type="button"
+            className="gx-link"
+            onClick={() => router.push(invite ? `/register?invite=${encodeURIComponent(invite)}` : "/register")}
+          >
             {t("login.register")}
           </button>
         </span>

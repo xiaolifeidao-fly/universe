@@ -716,12 +716,20 @@ func (s *service) settle(ctx context.Context, runtime UnitRuntime, spec contract
 		// 不计费也不烧提供者额度：预留原样回滚，实际用量只入流水做统计。
 		settled = contract.Metering{}
 	}
-	if err := s.control.Settle(ctx, SettleCommand{
+	done, err := s.control.Settle(ctx, SettleCommand{
 		RID: runtime.RID, CID: runtime.CID, ConsumerKey: runtime.ConsumerKey,
 		Estimate: runtime.Estimate, Actual: settled, WindowKeys: plan.Windows,
 		Lane: contract.Lane(runtime.Kind, runtime.Provider), State: state,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	if !done {
+		// 这个单元之前就结过账了（节点重发了一次 complete，或者两条收尾路径撞在一起）。
+		// 再往下走一遍：账本按 txn 幂等挡得住，但**余额是加减** —— 提供者会被重复入账、
+		// 消费者会被重复扣额度；事件流里也会多出一条终态。就此打住。
+		s.metrics.Count(MetricUnitResettled, map[string]string{"kind": runtime.Kind}, 1)
+		return nil
 	}
 
 	values := map[string]any{

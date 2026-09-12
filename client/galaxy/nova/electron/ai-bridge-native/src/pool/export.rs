@@ -184,6 +184,10 @@ async fn execute(State(state): State<Arc<ExportState>>, headers: HeaderMap, body
         // 503 让 Hub 知道换一台机器就行，不是这个单元本身有问题。
         return reject(&state, StatusCode::SERVICE_UNAVAILABLE, "node_stopping", "节点正在退出");
     }
+    if state.runner.draining_for_restart() {
+        // 为重启排空：对 Hub 来说和正在退出是一回事 —— 这台机器马上就不在了，换一台。
+        return reject(&state, StatusCode::SERVICE_UNAVAILABLE, "node_stopping", "节点正在重启升级");
+    }
     let parsed: ExecuteBody = match serde_json::from_slice(&body) {
         Ok(parsed) => parsed,
         Err(e) => return reject(&state, StatusCode::BAD_REQUEST, "invalid_body", &format!("单元解析失败：{e}")),

@@ -15,7 +15,7 @@ import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
 import { clearAuthToken, getAuthUser } from "@/utils/auth";
 import { hasOverlayTitlebar, productConfig } from "@/utils/product";
 import { IconChevronDown, IconLogout, IconUser } from "@/components/ui/icons";
-import { IconCoins, IconHome, IconList, IconSliders } from "@/components/ui/icons";
+import { IconCoins, IconHome, IconList, IconSend, IconSliders } from "@/components/ui/icons";
 
 interface NavEntry {
   href: string;
@@ -23,11 +23,14 @@ interface NavEntry {
   icon: ReactNode;
 }
 
+// 邀请排在使用记录之后、账户之前：前四条都围着自己的机器转，天天看；
+// 邀请是隔一阵才来复制一次链接的，插进中间会把那条主线拆开。
 const NAV: NavEntry[] = [
   { href: "/provider/today", labelKey: "nav.today", icon: <IconHome size={18} /> },
   { href: "/provider/share", labelKey: "nav.share", icon: <IconSliders size={18} /> },
   { href: "/provider/earnings", labelKey: "nav.earnings", icon: <IconCoins size={18} /> },
   { href: "/provider/records", labelKey: "nav.records", icon: <IconList size={18} /> },
+  { href: "/provider/invite", labelKey: "nav.invite", icon: <IconSend size={18} /> },
   { href: "/provider/account", labelKey: "nav.account", icon: <IconUser size={18} /> },
 ];
 

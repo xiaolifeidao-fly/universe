@@ -21,7 +21,13 @@ import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useCanWrite } from "@/components/permission/WritePermission";
-import { fetchGalaxyPackages, saveGalaxyPackage, type GalaxyPackageView } from "../api/galaxy.api";
+import {
+  fetchGalaxyModels,
+  fetchGalaxyPackages,
+  saveGalaxyPackage,
+  type GalaxyModelView,
+  type GalaxyPackageView,
+} from "../api/galaxy.api";
 
 /** 金额与单价在库里都是整数微元；除以它得到「元」。 */
 const MICRO = 1_000_000;
@@ -64,6 +70,8 @@ type PackageForm = {
   rpm: number | null;
   allowedKinds: string[];
   modelTier: string[];
+  /** 绑定的模型。undefined 是 antd Select 的「没选」，提交时换成空串。 */
+  modelId?: string;
   sortOrder: number | null;
   listed: boolean;
 };
@@ -81,6 +89,7 @@ function toForm(row: GalaxyPackageView | null): PackageForm {
       rpm: 120,
       allowedKinds: [],
       modelTier: [],
+      modelId: undefined,
       sortOrder: 0,
       listed: true,
     };
@@ -96,6 +105,7 @@ function toForm(row: GalaxyPackageView | null): PackageForm {
     rpm: row.rpm,
     allowedKinds: row.allowedKinds ?? [],
     modelTier: row.modelTier ?? [],
+    modelId: row.modelId || undefined,
     sortOrder: row.sortOrder,
     listed: row.listed,
   };
@@ -118,6 +128,8 @@ export function PackageCatalog() {
   // 商品直接决定卖多少钱、发多少额度，只读角色一律看不到入口。
   const canWrite = useCanWrite();
   const [rows, setRows] = useState<GalaxyPackageView[]>([]);
+  // 绑定模型的下拉候选。下架的模型也列：套餐可能还挂着它在卖。
+  const [models, setModels] = useState<GalaxyModelView[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<GalaxyPackageView | null>(null);
   const [open, setOpen] = useState(false);
@@ -127,7 +139,9 @@ export function PackageCatalog() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await fetchGalaxyPackages());
+      const [packages, modelList] = await Promise.all([fetchGalaxyPackages(), fetchGalaxyModels().catch(() => [] as GalaxyModelView[])]);
+      setRows(packages);
+      setModels(modelList);
     } catch (error) {
       message.error((error as Error).message || t("galaxy.loadFailed"));
     } finally {
@@ -148,7 +162,7 @@ export function PackageCatalog() {
   /** 把一行原样存回去，只改 listed。上下架不该顺手动到别的字段。 */
   const toggleListed = async (row: GalaxyPackageView, listed: boolean) => {
     try {
-      await saveGalaxyPackage({ ...row, units: row.units ?? {}, listed });
+      await saveGalaxyPackage({ ...row, units: row.units ?? {}, modelId: row.modelId ?? "", listed });
       message.success(t("galaxy.package.saved"));
       void load();
     } catch (error) {
@@ -182,6 +196,7 @@ export function PackageCatalog() {
         modelTier: values.modelTier ?? [],
         concurrency: values.concurrency ?? 0,
         rpm: values.rpm ?? 0,
+        modelId: values.modelId ?? "",
         listed: values.listed,
         sortOrder: values.sortOrder ?? 0,
       });
@@ -208,6 +223,22 @@ export function PackageCatalog() {
           </Typography.Text>
         </Space>
       ),
+    },
+    {
+      title: t("galaxy.package.model"),
+      dataIndex: "modelId",
+      width: 180,
+      render: (modelId: string) => {
+        if (!modelId) return <Typography.Text type="secondary">{t("galaxy.package.modelNone")}</Typography.Text>;
+        const model = models.find((item) => item.modelId === modelId);
+        return (
+          <Space direction="vertical" size={0}>
+            <span>{model?.displayName || modelId}</span>
+            {/* 目录里删掉了还被套餐绑着：返现会回落到默认比例，运营得看得出来。 */}
+            {model ? null : <Tag color="warning">{t("galaxy.package.modelMissing")}</Tag>}
+          </Space>
+        );
+      },
     },
     {
       title: t("galaxy.package.units"),
@@ -395,6 +426,19 @@ export function PackageCatalog() {
               <Input />
             </Form.Item>
           </Space>
+
+          <Form.Item name="modelId" label={t("galaxy.package.model")} extra={t("galaxy.package.modelHint")}>
+            <Select
+              allowClear
+              showSearch
+              placeholder={t("galaxy.package.modelNone")}
+              optionFilterProp="label"
+              options={models.map((model) => ({
+                value: model.modelId,
+                label: model.displayName && model.displayName !== model.modelId ? `${model.displayName} · ${model.modelId}` : model.modelId,
+              }))}
+            />
+          </Form.Item>
 
           <Space size={12} style={{ display: "flex" }} align="start">
             <Form.Item

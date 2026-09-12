@@ -3,8 +3,9 @@
 <!--
   ai-bridge 的 LaunchAgent。
 
-    sudo install -m 0755 ai-bridge /usr/local/bin/ai-bridge
-    cp com.galaxy.ai-bridge.plist ~/Library/LaunchAgents/
+    curl -fsSL <平台地址>/agent/v1/bridge/install.sh | sh        （不要 sudo：装到 ~/.local/share/ai-bridge）
+    cp ~/.local/share/ai-bridge/deploy/macos/com.galaxy.ai-bridge.plist ~/Library/LaunchAgents/
+    sed -i '' "s#/usr/local/bin/ai-bridge#$HOME/.local/bin/ai-bridge#" ~/Library/LaunchAgents/com.galaxy.ai-bridge.plist
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.galaxy.ai-bridge.plist
     tail -f /tmp/ai-bridge.log
 
@@ -12,7 +13,10 @@
 
   是 LaunchAgent 而不是 LaunchDaemon：Claude 的订阅登录态在当前用户的钥匙串里，
   只有用户会话里读得到。ProgramArguments 写可执行文件的绝对路径、PATH 显式给出 ——
-  launchd 不继承 shell 的环境，换了安装位置记得同步改这里。
+  launchd 不继承 shell 的环境，也不认 ~，换了安装位置记得同步改这里。
+  可执行文件所在的目录要属于你自己：远程升级要在里面换文件（用 sudo 装到 /opt/ai-bridge 的，
+  安装时要把目录交给你自己的用户，见 deploy/README.md「远程升级的前提」）。
+  （这段注释里不能出现两个连续的减号：XML 注释不允许，launchd 会读不出这个文件。）
 -->
 <plist version="1.0">
 <dict>

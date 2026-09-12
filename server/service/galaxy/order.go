@@ -24,6 +24,10 @@ const (
 	orderPaid      = "paid"
 	orderFulfilled = "fulfilled"
 	orderCancelled = "cancelled"
+
+	// 订单怎么付的。积分那一路不经过任何渠道，扣积分和推到 paid 在同一个事务里。
+	payByPoints  = "points"
+	payByChannel = "channel"
 )
 
 func (s *service) ListPackages(ctx context.Context, listedOnly bool) ([]dto.PackageView, error) {
@@ -45,18 +49,20 @@ func packageView(row *repository.GalaxyPackage) dto.PackageView {
 		PackageCode: row.PackageCode, Title: row.Title, Units: decodeMetering(row.UnitsJSON),
 		Amount: row.Amount, Currency: row.Currency, TTLDays: row.TTLDays,
 		AllowedKinds: kinds, ModelTier: tiers,
-		Concurrency: row.Concurrency, RPM: row.RPM,
-		Category: packageCategory(kinds, tiers),
+		Concurrency: row.Concurrency, RPM: row.RPM, ModelID: row.ModelID,
+		Category: scopeCategory(kinds, tiers, row.ModelID),
 		Listed:   row.Listed, SortOrder: row.SortOrder,
 	}
 }
 
-// packageCategory 这份额度包卖的是哪一类算力。
+// scopeCategory 一份额度包（或它签发出来的密钥）属于哪一类算力：claude / codex / video / other。
 //
 // 按模型档而不是按 kind 分：llm.chat 下面同时有 Claude 和 Codex，光看 kind
-// 会把两类商品堆进同一栏。范围为空（不限）的包归 other —— 它什么都能用，
-// 硬塞进某一栏反而是错的。
-func packageCategory(kinds, tiers []string) string {
+// 会把两类商品堆进同一栏。模型档没说清楚时再看绑定的模型 —— 运营常常只绑了模型、
+// 没去填模型档。两样都没有（范围不限）的归 other：它什么都能用，硬塞进某一栏反而是错的。
+//
+// 密钥页的「使用」按钮也按它决定写 Claude Code 还是 Codex 的配置，所以规则只在这一处。
+func scopeCategory(kinds, tiers []string, modelID string) string {
 	for _, kind := range kinds {
 		if strings.HasPrefix(kind, "video.") {
 			return "video"
@@ -70,12 +76,46 @@ func packageCategory(kinds, tiers []string) string {
 			return "codex"
 		}
 	}
+	if strings.TrimSpace(modelID) != "" {
+		family, _ := inferFamily(modelID)
+		return familyCategory(family)
+	}
 	return "other"
+}
+
+// familyCategory 模型族 → 使用端的类别。gpt 一族在使用端叫 codex：Orbit 上接它的就是 Codex CLI。
+func familyCategory(family string) string {
+	switch family {
+	case "claude":
+		return "claude"
+	case "gpt":
+		return "codex"
+	default:
+		return "other"
+	}
 }
 
 func (s *service) SavePackage(ctx context.Context, req dto.SavePackageRequest) error {
 	if len(req.Units) == 0 {
 		return fmt.Errorf("商品必须声明额度")
+	}
+	modelID := strings.TrimSpace(req.ModelID)
+	if modelID != "" {
+		// 绑一个目录里没有的模型，返现就只能悄悄回落到默认比例，而运营以为设的是那个模型的。
+		//
+		// 只在「改绑」时查：模型删掉之后还挂着它的老套餐照样要能下架、改价 ——
+		// 整行覆盖会把原来的绑定原样带回来，这时候拒掉，运营就只能先解绑才能下架。
+		current, err := s.repository.FindPackage(ctx, bizLine, req.PackageCode)
+		if err != nil && !notFound(err) {
+			return err
+		}
+		if current == nil || current.ModelID != modelID {
+			if _, err := s.repository.FindModel(ctx, bizLine, modelID); notFound(err) {
+				return fmt.Errorf("模型目录里没有 %s，先在模型目录里建好再绑定", modelID)
+			} else if err != nil {
+				return err
+			}
+		}
 	}
 	listed := true
 	if req.Listed != nil {
@@ -88,43 +128,53 @@ func (s *service) SavePackage(ctx context.Context, req dto.SavePackageRequest) e
 		AllowedKindsJSON: encodeJSON(req.AllowedKinds), ModelTierJSON: encodeJSON(req.ModelTier),
 		Concurrency: defaultInt(req.Concurrency, s.config.KeyConcurrency),
 		RPM:         defaultInt(req.RPM, s.config.KeyRPM),
+		ModelID:     modelID,
 		Listed:      listed, SortOrder: req.SortOrder,
 	})
 }
 
 // CreateOrder 下单。额度快照在这一刻定死：商品之后改价改量都不影响已下的单。
 func (s *service) CreateOrder(ctx context.Context, req dto.CreateOrderRequest) (dto.OrderView, error) {
-	item, err := s.repository.FindPackage(ctx, bizLine, req.PackageCode)
-	if notFound(err) {
-		return dto.OrderView{}, fmt.Errorf("额度商品不存在")
-	}
+	row, err := s.createOrder(ctx, req, payByChannel)
 	if err != nil {
 		return dto.OrderView{}, err
 	}
+	return orderView(row, ""), nil
+}
+
+// createOrder 建一张待支付的单子。渠道支付和积分购买共用它，校验只写一份。
+func (s *service) createOrder(ctx context.Context, req dto.CreateOrderRequest, payMethod string) (*repository.GalaxyOrder, error) {
+	item, err := s.repository.FindPackage(ctx, bizLine, req.PackageCode)
+	if notFound(err) {
+		return nil, fmt.Errorf("额度商品不存在")
+	}
+	if err != nil {
+		return nil, err
+	}
 	if !item.Listed {
-		return dto.OrderView{}, fmt.Errorf("该额度商品已下架")
+		return nil, fmt.Errorf("该额度商品已下架")
 	}
 
 	if req.TargetKeyID != "" {
 		// 充值到已有密钥：先确认这把密钥是本人的，且还能收额度。
 		key, err := s.repository.FindConsumerKey(ctx, bizLine, req.TargetKeyID)
 		if notFound(err) {
-			return dto.OrderView{}, contract.ErrNotFound
+			return nil, contract.ErrNotFound
 		}
 		if err != nil {
-			return dto.OrderView{}, err
+			return nil, err
 		}
 		if key.OwnerUserID != req.UserID {
-			return dto.OrderView{}, fmt.Errorf("无权给该密钥充值")
+			return nil, fmt.Errorf("无权给该密钥充值")
 		}
 		if key.Status == keyStatusRevoked {
-			return dto.OrderView{}, fmt.Errorf("密钥已吊销，请改为签发新密钥")
+			return nil, fmt.Errorf("密钥已吊销，请改为签发新密钥")
 		}
 	} else {
 		// 要签发新密钥：数据告知的确认是硬前置，下单时就挡住，
 		// 别等到支付完成才发现发不出密钥（C-13）。
 		if err := s.requireConsumerNotice(ctx, req.UserID, req.NoticeVersion); err != nil {
-			return dto.OrderView{}, err
+			return nil, err
 		}
 	}
 
@@ -133,11 +183,12 @@ func (s *service) CreateOrder(ctx context.Context, req dto.CreateOrderRequest) (
 		BizLine: bizLine, OrderID: "o_" + NewULID(now), UserID: req.UserID,
 		PackageCode: item.PackageCode, Amount: item.Amount, Currency: item.Currency,
 		UnitsJSON: item.UnitsJSON, TargetKeyID: req.TargetKeyID, Status: orderPending,
+		ModelID: item.ModelID, PayMethod: payMethod,
 	}
 	if err := s.repository.CreateOrder(ctx, row); err != nil {
-		return dto.OrderView{}, err
+		return nil, err
 	}
-	return orderView(row, ""), nil
+	return row, nil
 }
 
 func (s *service) requireConsumerNotice(ctx context.Context, userID, version string) error {
@@ -177,7 +228,12 @@ func (s *service) PayOrder(ctx context.Context, req dto.PayOrderRequest) (dto.Or
 		// 已经付过并履约过：把当前状态还回去，不重复发额度。
 		return orderView(row, ""), nil
 	}
-	return s.fulfilOrder(ctx, req.OrderID)
+	view, err := s.fulfilOrder(ctx, req.OrderID)
+	if err != nil {
+		return dto.OrderView{}, err
+	}
+	s.rewardReferrer(ctx, req.OrderID)
+	return view, nil
 }
 
 // fulfilOrder 履约：签发新密钥或给已有密钥充值。
@@ -209,6 +265,7 @@ func (s *service) fulfilOrder(ctx context.Context, orderID string) (dto.OrderVie
 		issue := dto.IssueKeyRequest{
 			OwnerUserID: row.UserID, Alias: row.PackageCode,
 			Grants: units, NoticeVersion: s.config.ConsumerNoticeVersion,
+			ModelID: row.ModelID,
 		}
 		if item != nil {
 			issue.TTLDays = item.TTLDays
@@ -293,6 +350,7 @@ func orderView(row *repository.GalaxyOrder, secret string) dto.OrderView {
 	return dto.OrderView{
 		OrderID: row.OrderID, PackageCode: row.PackageCode, Units: decodeMetering(row.UnitsJSON),
 		Amount: row.Amount, Currency: row.Currency, Status: row.Status,
+		PayMethod: defaultString(row.PayMethod, payByChannel), ModelID: row.ModelID,
 		TargetKeyID: row.TargetKeyID, KeyID: row.KeyID,
 		PaidAt: row.PaidAt, FulfilledAt: row.FulfilledAt, CreatedTime: row.CreatedTime,
 		IssuedSecret: secret,
@@ -332,8 +390,8 @@ func (s *service) RenewKey(ctx context.Context, req dto.RenewKeyRequest) (dto.Is
 	secret := "sk-galaxy-" + randomToken(32)
 	keyID := "ck_" + NewULID(now)
 	fresh := &repository.GalaxyConsumerKey{
-		BizLine: bizLine, KeyID: keyID, KeyHash: HashSecret(secret),
-		Alias: old.Alias, OwnerUserID: old.OwnerUserID, OrderID: old.OrderID,
+		BizLine: bizLine, KeyID: keyID, KeyHash: HashSecret(secret), SecretCipher: s.sealSecret(secret),
+		Alias: old.Alias, OwnerUserID: old.OwnerUserID, OrderID: old.OrderID, ModelID: old.ModelID,
 		AllowedKindsJSON: old.AllowedKindsJSON, AllowedProvidersJSON: old.AllowedProvidersJSON,
 		ModelTierJSON: old.ModelTierJSON, Concurrency: old.Concurrency, RPM: old.RPM,
 		Status: keyStatusActive, IssuedAt: now, ExpiresAt: now.Add(ttl),

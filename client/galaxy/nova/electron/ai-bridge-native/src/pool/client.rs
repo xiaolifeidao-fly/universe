@@ -1,3 +1,4 @@
+use super::upgrade::{truncate_message, UpgradeCommand, UpgradeState};
 use crate::business::{ArtifactRef, Metering, NamedArtifact, UnitError, WorkUnit, WorkspaceRef};
 use crate::core::errors::{http_error, BridgeError};
 use crate::core::request::Cancel;
@@ -16,6 +17,10 @@ use std::time::Duration;
 // 将来换 WebSocket 只要换掉这个文件（T-06）。
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 升级进度上报的超时（契约 3.4 第 9 条）。这条上报是给控制台看的，
+/// 说不出去只记日志、升级照做 —— 不能让它拖住升级本身。
+const UPGRADE_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HubLane {
@@ -123,6 +128,90 @@ pub struct HeartbeatResult {
     pub drain: Vec<String>,
     #[serde(default)]
     pub enabled: Option<Vec<EnabledContribution>>,
+    /// 升级指令（契约 3.2）。没有指令时 Hub 整个省略。机器处在 pending 时每次心跳都带，
+    /// 直到节点报了 downloading 或终态 —— 所以节点必须按 id 去重。
+    #[serde(default, deserialize_with = "lenient_upgrade")]
+    pub upgrade: Option<UpgradeCommand>,
+}
+
+/// 升级指令解不动就当没有，**不连累整份心跳响应**。
+///
+/// 心跳里还搭着取消清单和生效配置。一个字段形状不对就让整份响应退回默认值，
+/// 等于让一条升级指令把「消费者走了立刻停手」和「主人改了配置」一起吞掉。
+fn lenient_upgrade<'de, D>(deserializer: D) -> Result<Option<UpgradeCommand>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(raw) = Option::<Value>::deserialize(deserializer)? else { return Ok(None) };
+    match serde_json::from_value(raw) {
+        Ok(command) => Ok(Some(command)),
+        Err(error) => {
+            log_warn!("pool_upgrade_unparsable", "error": error.to_string(),
+                "hint": "心跳里的升级指令解不动，这一次当作没有；取消清单和生效配置照常处理");
+            Ok(None)
+        }
+    }
+}
+
+/// hello 里说明「这份 ai-bridge 是怎么装的」那三个字段（契约 3.1）。
+///
+/// 合在一起传而不是三个散参数：它们只有放在一起才回答得了 Hub 真正要问的那句话 ——
+/// 控制台上这台机器的「升级」按钮该不该亮、不亮的话该显示什么。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct InstallInfo {
+    /// 平台名（linux-x64 这类），认不出来是空串。
+    pub platform: String,
+    /// cli（独立部署，能自升级）/ nova（随 Nova 分发）。
+    pub distribution: String,
+    /// 此刻为什么不能远程升级，人话；空串 = 可以。
+    pub upgrade_blocker: String,
+}
+
+/// 发布清单（契约第 4 节），`ai-bridge upgrade` 用。
+///
+/// 字段全部兜底成空值：清单里多一个少一个字段不该让命令行直接报「解析失败」，
+/// 真正要用的那几项缺了，调用方自己会说缺的是什么。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BridgeReleaseManifest {
+    /// 所有平台里最高的那个版本；一个包都没发布时是空串。
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub version: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub notes: String,
+    #[serde(default, rename = "publishedAt", deserialize_with = "null_as_default")]
+    pub published_at: String,
+    #[serde(default, rename = "hubUrl", deserialize_with = "null_as_default")]
+    pub hub_url: String,
+    #[serde(default, rename = "installScript", deserialize_with = "null_as_default")]
+    pub install_script: String,
+    #[serde(default, rename = "installPowerShell", deserialize_with = "null_as_default")]
+    pub install_power_shell: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub platforms: Vec<BridgeReleasePackage>,
+}
+
+/// 清单里一个平台的最新已发布包。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct BridgeReleasePackage {
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub platform: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub version: String,
+    #[serde(default, rename = "fileName", deserialize_with = "null_as_default")]
+    pub file_name: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub size: u64,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub sha256: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub signature: String,
+    /// Hub 上的稳定地址（302 到 OSS），不会过期。
+    #[serde(default, rename = "downloadUrl", deserialize_with = "null_as_default")]
+    pub download_url: String,
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub notes: String,
+    #[serde(default, rename = "publishedAt", deserialize_with = "null_as_default")]
+    pub published_at: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -363,6 +452,9 @@ impl HubClient {
     ///
     /// machine_fingerprint 是设备指纹（见 pool/machine.rs），主人是工作室时 Hub 按它记这台机器的信誉。
     /// 只在 hello 里带：拿到令牌之后第一件事就是 hello，贡献也要到 hello 才进池子。
+    ///
+    /// install 的三个字段每次都带、空也照发空串：upgradeBlocker 会变（主人改好了目录权限），
+    /// 而「没带」在 Hub 那边的意思是「这是个不认识升级协议的老节点」。
     pub async fn hello(
         &self,
         bridge_version: &str,
@@ -370,6 +462,7 @@ impl HubClient {
         contributions: &[CapabilityReport],
         access: &AccessDeclaration,
         machine_fingerprint: Option<&str>,
+        install: &InstallInfo,
         cancel: &Cancel,
     ) -> Result<HelloResult, HubFailure> {
         let mut body = json!({
@@ -378,6 +471,9 @@ impl HubClient {
             "resources": resources,
             "contributions": contributions,
             "accessMode": access.mode,
+            "platform": install.platform,
+            "distribution": install.distribution,
+            "upgradeBlocker": truncate_message(&install.upgrade_blocker),
         });
         if let Some(endpoint) = &access.endpoint {
             body["endpoint"] = json!({ "url": endpoint.url, "secret": endpoint.secret });
@@ -533,6 +629,57 @@ impl HubClient {
         Ok(payload.get("cancelRequested").and_then(Value::as_bool).unwrap_or(false))
     }
 
+    /// 报一次升级进度（契约 3.3）。返回 Hub 认不认这条指令。
+    ///
+    /// id 对不上（过期的指令）Hub 也回 200，只是 accepted=false —— 那不是网络错误，
+    /// 调用方要能分得出来。老版本 Hub 回里没有 accepted 时按「认」处理：
+    /// 不能因为对面少一个字段就把一次好好的升级停掉。
+    pub async fn report_upgrade(&self, id: &str, state: UpgradeState, message: &str) -> Result<bool, String> {
+        let body = json!({ "id": id, "state": state.label(), "message": truncate_message(message) });
+        let response = self
+            .request("/agent/v1/upgrade/report")
+            .timeout(UPGRADE_REPORT_TIMEOUT)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| describe_transport(&e.without_url()))?;
+        let status = response.status().as_u16();
+        let payload = read_json(response).await;
+        if !(200..300).contains(&status) {
+            return Err(message_of(&payload).unwrap_or_else(|| format!("Hub 返回 {status}")));
+        }
+        Ok(payload.get("accepted").and_then(Value::as_bool).unwrap_or(true))
+    }
+
+    /// 平台上最新的发布清单（契约第 4 节）。
+    ///
+    /// 公开端点，不带节点令牌：`ai-bridge upgrade` 在还没注册、或者令牌已经被撤的机器上
+    /// 也得能用 —— 那正是最需要手动升级的时候。
+    pub async fn fetch_latest_release(&self) -> Result<BridgeReleaseManifest, String> {
+        let response = self
+            .client
+            .get(self.url("/agent/v1/bridge/releases/latest"))
+            .header("accept", "application/json")
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(|e| describe_transport(&e.without_url()))?;
+        let status = response.status().as_u16();
+        let payload = read_json(response).await;
+        if status == 404 && message_of(&payload).is_none() {
+            return Err("平台上没有发布清单端点：平台版本太旧，还不支持在线升级".into());
+        }
+        if !(200..300).contains(&status) {
+            return Err(message_of(&payload).unwrap_or_else(|| format!("Hub 返回 {status}")));
+        }
+        // 地址填成了控制台首页这类会回 200 的东西时，解出来是一份「什么都没发布」的空清单 ——
+        // 那会被说成「已经是最新」，而真相是地址填错了。
+        if payload.get("platforms").is_none() && payload.get("version").is_none() {
+            return Err("这个地址返回的不是发布清单：检查平台地址是不是节点接入用的那个".into());
+        }
+        serde_json::from_value(payload).map_err(|e| format!("发布清单解析失败：{e}"))
+    }
+
     pub async fn complete(&self, unit_id: &str, body: &CompleteBody) {
         let response = self
             .request(&format!("/agent/v1/units/{unit_id}/complete"))
@@ -624,7 +771,7 @@ fn transport_error(e: reqwest::Error) -> BridgeError {
 
 /// reqwest 顶层那句「error sending request」本身不说原因 —— 连接被拒、DNS 解析不到、
 /// TLS 握手失败都长这样。把 source 链接上，命令行用户才看得出该去查网络还是查证书。
-fn describe_transport(error: &reqwest::Error) -> String {
+pub(crate) fn describe_transport(error: &reqwest::Error) -> String {
     let mut message = error.to_string();
     let mut source = std::error::Error::source(error);
     while let Some(cause) = source {

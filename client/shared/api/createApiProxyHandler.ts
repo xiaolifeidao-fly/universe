@@ -13,6 +13,10 @@
  *   target: process.env.SERVER_TARGET ?? "",
  *   prefix: process.env.APP_URL_PREFIX ?? "/api",
  * });
+ * // 请求体上限工厂带不过去：Next 只从路由文件自己的导出里读 config，得在路由文件里写。
+ * // manager 要收 base64 编码的 ai-bridge 安装包（最大 64MB，编码后约 86MB），放到了 96mb；
+ * // 不收大包的 app 不用写，默认 1MB。
+ * export const config = { api: { bodyParser: { sizeLimit: "96mb" } } };
  * ```
  *
  * TODO(shared-api): web 的 src/pages/api/[...all].js 还是它自己那份手写实现，
@@ -79,9 +83,12 @@ export function createApiProxyHandler({ target, prefix }: ApiProxyHandlerOptions
 
   async function forward(url: string, req: IncomingMessage & { body?: unknown }) {
     const { method, headers } = req;
-    if (method === "POST") return axios.post(url, req.body, { headers });
-    if (method === "PUT") return axios.put(url, req.body, { headers });
-    if (method === "DELETE") return axios.delete(url, { params: req.body, headers });
+    // 大包转发不靠 axios 的默认值：现在这版默认是 -1（不限），可底下 follow-redirects 自己的默认上限是 10MB，
+    // 哪天默认值变了，大请求体会在发往上游之前就被本地拦下，报错却长得像上游出了问题。
+    const options = { headers, maxBodyLength: Infinity, maxContentLength: Infinity };
+    if (method === "POST") return axios.post(url, req.body, options);
+    if (method === "PUT") return axios.put(url, req.body, options);
+    if (method === "DELETE") return axios.delete(url, { ...options, params: req.body });
     return null;
   }
 

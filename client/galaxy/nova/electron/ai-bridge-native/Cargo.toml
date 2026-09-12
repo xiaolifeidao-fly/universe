@@ -1,6 +1,7 @@
 [package]
 name = "ai-bridge-native"
-version = "0.1.0"
+# 0.2.0 起节点认远程升级协议（hello 报 platform / distribution / upgradeBlocker，心跳收 upgrade 指令）。
+version = "0.2.0"
 edition = "2021"
 
 [lib]
@@ -42,6 +43,9 @@ unicode-normalization = "0.1.25"
 async-trait = "0.1.92"
 async-stream = "0.3.6"
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
+# 验发布包的 Ed25519 签名（远程升级的信任根，见 src/pool/upgrade.rs）。
+# 不是新依赖：rustls 底下本来就是它，这里只是直接用上，依赖树一个包都没多。
+ring = "0.17"
 
 [features]
 # 默认不开：`cargo test` 直接可跑。打包脚本用 --features node 产出 .node。

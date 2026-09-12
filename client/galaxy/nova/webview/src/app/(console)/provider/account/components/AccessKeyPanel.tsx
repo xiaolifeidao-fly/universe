@@ -31,7 +31,8 @@ import {
   type ProviderKeyView,
   type TermsStatus,
 } from "../../api/provider.api";
-import { Blank, RowList, TabStrip } from "./parts";
+import { unixInstallCommand } from "./BridgeInstallPanel";
+import { Blank, CommandBlock, RowList, TabStrip } from "./parts";
 
 const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
 
@@ -39,6 +40,7 @@ export function AccessKeyPanel({
   keys,
   terms,
   hubUrl,
+  installScript,
   nodeNames,
   issueOpen,
   onIssueOpenChange,
@@ -48,6 +50,11 @@ export function AccessKeyPanel({
   terms: TermsStatus | null;
   /** 平台地址由服务端给，前端不自己拼（见 ProviderEndpoint 的注释）。 */
   hubUrl: string;
+  /**
+   * Linux / macOS 一行安装脚本的地址。平台发布过这两种系统的安装包才有值，否则空串 ——
+   * 脚本找不到包只会装到一半报错，不如不给。
+   */
+  installScript: string;
   /** 节点 ID → 机器名，在用的和解绑的都在。「最近注册」后面报机器名，比一串 n_… 认得出。 */
   nodeNames: Record<string, string>;
   /** 签发弹窗开没开。「其他机器」那一块的「接入服务器」也打开它，所以由页面管。 */
@@ -236,6 +243,14 @@ export function AccessKeyPanel({
                 onCopied={() => setSecretCopied(true)}
               />
             </div>
+            {/* 一行装好再注册排在最前：机器上多半还没装 ai-bridge，下面两条的前提是已经装好了。 */}
+            {installScript ? (
+              <CommandBlock
+                title={t("account.cliInstall")}
+                command={unixInstallCommand(installScript, issued.secret)}
+                onCopied={() => setSecretCopied(true)}
+              />
+            ) : null}
             <CommandBlock title={t("account.cliPoll")} command={pollCommand(hub, issued.secret)} onCopied={() => setSecretCopied(true)} />
             <CommandBlock title={t("account.cliExport")} command={exportCommand(hub, issued.secret)} onCopied={() => setSecretCopied(true)} />
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -354,41 +369,4 @@ function pollCommand(hub: string, key: string) {
 
 function exportCommand(hub: string, key: string) {
   return `ai-bridge register --hub ${hub} --key ${key} \\\n  --mode export --public-url https://<public-host>:8788\nai-bridge run`;
-}
-
-function CommandBlock({ title, command, onCopied }: { title: string; command: string; onCopied?: () => void }) {
-  const { t } = useLocale();
-  const [copied, setCopied] = useState(false);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <span style={{ fontSize: 12.5, color: "var(--gx-soft)" }}>{title}</span>
-        <CopyBtn
-          value={command}
-          label={copied ? t("account.keyCopied") : t("account.cliCopy")}
-          copied={copied}
-          onCopied={() => {
-            setCopied(true);
-            onCopied?.();
-          }}
-        />
-      </div>
-      <pre
-        className="gx-mono"
-        style={{
-          margin: 0,
-          padding: "10px 12px",
-          borderRadius: 10,
-          border: "1px solid var(--gx-line)",
-          background: "var(--gx-muted)",
-          fontSize: 12,
-          lineHeight: 1.6,
-          whiteSpace: "pre-wrap",
-          overflowWrap: "anywhere",
-        }}
-      >
-        {command}
-      </pre>
-    </div>
-  );
 }

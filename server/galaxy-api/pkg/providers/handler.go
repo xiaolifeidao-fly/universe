@@ -49,6 +49,50 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.GET("/ledger", h.ledger)
 	api.GET("/payouts", h.listPayouts)
 	api.POST("/payouts", h.createPayout)
+	// 机器上的 ai-bridge：装哪儿下载、把远端那台升上去。
+	// 清单本身是公开的（/agent/v1/bridge/releases/latest），这条只是让控制台
+	// 和别的接口走同一套鉴权与信封，顺带把平台地址一起给前端。
+	api.GET("/bridge/releases", h.bridgeReleases)
+	api.POST("/node/upgrade", h.upgradeNode)
+	// 邀请返现。
+	api.GET("/referral", h.referral)
+	api.GET("/referral/invitees", h.referralInvitees)
+}
+
+// bridgeReleases 下载清单：每个平台最新的那一版，加上安装脚本地址。
+func (h *Handler) bridgeReleases(context *gin.Context) {
+	manifest, err := h.service.BridgeManifest(context.Request.Context())
+	httpx.JSON(context, manifest, err)
+}
+
+// upgradeNode 把这台机器上的 ai-bridge 升到最新版。
+//
+// 这里只是记下「该升到哪一版」：指令搭在下一次心跳上下发，装不装得成由节点说了算。
+// 所以它返回得很快，界面上的进度要靠轮询机器列表看。
+func (h *Handler) upgradeNode(context *gin.Context) {
+	var req struct {
+		NodeID string `json:"nodeId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.RequestNodeUpgrade(context.Request.Context(), auth.UserID(context), req.NodeID)
+	httpx.JSON(context, view, err)
+}
+
+// referral 邀请页顶上那一块：邀请码、链接、比例与几个数。
+func (h *Handler) referral(context *gin.Context) {
+	view, err := h.service.ProviderReferral(context.Request.Context(), auth.UserID(context))
+	httpx.JSON(context, view, err)
+}
+
+// referralInvitees 邀请来的人，分页。
+func (h *Handler) referralInvitees(context *gin.Context) {
+	offset, _ := strconv.Atoi(context.Query("offset"))
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "20"))
+	page, err := h.service.ListProviderInvitees(context.Request.Context(), auth.UserID(context), offset, limit)
+	httpx.JSON(context, page, err)
 }
 
 // dashboard 「今天」那一页的全部数字。

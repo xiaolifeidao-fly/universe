@@ -312,7 +312,10 @@ type ControlPlane interface {
 	MarkFirstByte(ctx context.Context, rid string, at time.Time) error
 	// RecordHubUsage 由持有消费者连接的实例在流结束时写入。
 	RecordHubUsage(ctx context.Context, rid string, usage contract.Metering) error
-	Settle(ctx context.Context, command SettleCommand) error
+	// Settle 终态回补。返回 false 表示这个单元**之前就结过账了**（节点重发了一次
+	// complete，或者两条收尾路径撞在一起）。调用方必须据此跳过计费 ——
+	// 账本按 txn 幂等，但余额是加减：重放一次就是白发一笔钱。
+	Settle(ctx context.Context, command SettleCommand) (bool, error)
 
 	RequestCancel(ctx context.Context, rid, reason string) error
 	CancelRequested(ctx context.Context, rid string) (bool, error)
@@ -336,6 +339,16 @@ type ControlPlane interface {
 type ObjectSigner interface {
 	SignPut(ctx context.Context, key, contentType string, size int64, ttl time.Duration) (string, error)
 	SignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
+}
+
+// ObjectUploader 服务端直接写对象存储。**只给 ai-bridge 安装包用**。
+//
+// 它是「Hub 不经手字节」那条约束的唯一例外，而且理由和产物正好相反：安装包是
+// 平台自己发布的东西，要在写进去之前算 sha256、验发布签名 —— 这两件事只有
+// 经手字节的一方做得了。产物仍然走 presigned 直传，一个字节都不过服务端。
+type ObjectUploader interface {
+	// Put 返回的是**带部署前缀的完整对象键**，签下载地址时要用它。
+	Put(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error)
 }
 
 // ---------- 可观测 ----------
@@ -374,6 +387,15 @@ const (
 	// 它不阻断 hello，所以没有这条指标就完全是静默的 —— 而它一旦持续发生，
 	// 表现是一台 export 机器悄悄退回长轮询，谁都不知道为什么变慢了。
 	MetricAccessSyncFailed = "galaxy_access_sync_failed_total"
+	// MetricUnitResettled 收到重复终态、被结算闸门挡下的次数。
+	// 正常应当接近 0；持续有量说明某条收尾路径在重发 complete。
+	MetricUnitResettled = "galaxy_unit_resettled_total"
+	// MetricNodeBridgeInfoFailed hello 记不下「机器装的是什么」的次数。
+	// 它不阻断 hello：那几列只服务于展示与升级，坏了不该让整个池子的机器连不上。
+	MetricNodeBridgeInfoFailed = "galaxy_node_bridge_info_failed_total"
+	// MetricReferralSelfInvite 邀请奖励因为「同一台设备」被拦下的次数。
+	// 拦下是正常风控，不是错误；盯着它能看出有没有人在批量刷小号。
+	MetricReferralSelfInvite = "galaxy_referral_self_invite_total"
 	// MetricExportDispatch Hub 回连派单的结果计数，按 outcome 分（ok/unreachable/rejected）。
 	MetricExportDispatch = "galaxy_export_dispatch_total"
 	// MetricExportDispatchLatency 一次回连派单从发起到拿到响应头的耗时。

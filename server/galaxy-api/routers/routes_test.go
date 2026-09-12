@@ -31,7 +31,7 @@ func TestConsoleSurfacesShareOnePrefix(t *testing.T) {
 	portal.NewHandler(nil, portal.Options{}).RegisterHandler(console)
 	authpkg.NewHandler(nil, gate).RegisterHandler(console)
 	providers.NewHandler(nil, gate).RegisterHandler(console)
-	consumers.NewHandler(nil, gate).RegisterConsole(console)
+	consumers.NewHandler(nil, gate, consumers.Options{}).RegisterConsole(console)
 
 	registered := map[string]bool{}
 	for _, route := range engine.Routes() {

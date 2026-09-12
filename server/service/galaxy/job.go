@@ -155,12 +155,18 @@ func (s *service) requeue(ctx context.Context, row *repository.GalaxyUnit) bool 
 	// 先把上一次的预留与并发还回去，再重派。顺序反了会让这个贡献的 inflight
 	// 一直挂着一个永远不会结束的请求。
 	_ = s.adjustReputation(ctx, runtime.CID, -0.05)
-	if err := s.control.Settle(ctx, SettleCommand{
+	done, err := s.control.Settle(ctx, SettleCommand{
 		RID: runtime.RID, CID: runtime.CID, ConsumerKey: runtime.ConsumerKey,
 		Estimate: runtime.Estimate, Actual: contract.Metering{},
 		WindowKeys: map[contract.MeterUnit]string{}, Lane: contract.Lane(runtime.Kind, runtime.Provider),
 		State: contract.UnitFailed,
-	}); err != nil {
+	})
+	if err != nil {
+		return false
+	}
+	if !done {
+		// 这个单元已经结过账了（终态早就到了，只是这条重试路径还在跑）。
+		// 再派一次会让一个已经收过钱的单元重新进入执行，绝不能继续。
 		return false
 	}
 

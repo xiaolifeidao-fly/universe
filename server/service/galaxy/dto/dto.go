@@ -227,6 +227,15 @@ type HelloRequest struct {
 	// hello 才进池子，在那之前不可能被扣分。升级前就配好对的节点也靠这里补上。
 	// 已经记下的指纹不会被改；老版本节点不传，Hub 退回按节点记。
 	MachineFingerprint string `json:"machineFingerprint"`
+	// Platform / Distribution / UpgradeBlocker 是这台机器上的 ai-bridge 自报的身份：
+	// 装的是哪个平台的包（linux-x64…）、怎么分发来的（cli 独立部署 / nova 随应用），
+	// 以及此刻为什么不能远程升级（目录不可写、没有内置发布公钥……，空串表示可以）。
+	//
+	// 每次 hello 都带而不是只在注册时报一次：它们会变 —— 安装目录的权限被改过、
+	// 换了一份没有公钥的自编译包。只记一次的话，控制台上的升级按钮会按一份旧事实亮着。
+	Platform       string `json:"platform"`
+	Distribution   string `json:"distribution"`
+	UpgradeBlocker string `json:"upgradeBlocker"`
 }
 
 type HelloResult struct {
@@ -276,6 +285,11 @@ type HeartbeatResult struct {
 	// 主人在控制台开关一条贡献、改额度或改时段，节点最迟一个心跳周期就换过来 ——
 	// 「随时随地能调」靠的就是这一条，不需要主人回到那台机器上做任何事。
 	Enabled []EnabledContribution `json:"enabled"`
+	// Upgrade 待执行的升级指令，搭的是同一条路（控制台点完最多等一个心跳）。
+	//
+	// 没有指令时整个字段省略，**不能发 null**：节点侧的 serde 遇上显式 null 会让
+	// 整个响应解析失败，那次心跳里的取消、排空、生效配置会一起丢掉。
+	Upgrade *NodeUpgradeCommand `json:"upgrade,omitempty"`
 }
 
 // ---------- 节点：领活与回传 ----------
@@ -353,6 +367,8 @@ type IssueKeyRequest struct {
 	NoticeVersion    string   `json:"noticeVersion" binding:"required"`
 	// Grants 初始额度余额，P0 由后台直接给内测额度。
 	Grants contract.Metering `json:"grants"`
+	// ModelID 来源套餐绑定的模型，只用来认类别与展示。
+	ModelID string `json:"modelId"`
 }
 
 type IssuedKeyView struct {
@@ -363,11 +379,17 @@ type IssuedKeyView struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
-// ConsumerKeyView 是 /v1/keys/me 的形状。绝不包含明文或哈希。
+// ConsumerKeyView 是 /v1/keys/me 的形状。绝不包含明文或哈希 —— 明文要单独走取回接口。
 type ConsumerKeyView struct {
-	KeyID            string            `json:"keyId"`
-	Alias            string            `json:"alias"`
-	Status           string            `json:"status"`
+	KeyID  string `json:"keyId"`
+	Alias  string `json:"alias"`
+	Status string `json:"status"`
+	// Category 这把密钥该接到哪个客户端：claude / codex / video / other。
+	// other 表示范围不限，Claude Code 和 Codex 都能接。
+	Category string `json:"category"`
+	ModelID  string `json:"modelId,omitempty"`
+	// Revealable 服务端能不能取回明文。老密钥只存了哈希，要换发一次才行。
+	Revealable       bool              `json:"revealable"`
 	AllowedKinds     []string          `json:"allowedKinds"`
 	AllowedProviders []string          `json:"allowedProviders"`
 	ModelTier        []string          `json:"modelTier"`
@@ -494,6 +516,20 @@ type NodeView struct {
 	EndpointError     string             `json:"endpointError,omitempty"`
 	EndpointCheckedAt *time.Time         `json:"endpointCheckedAt,omitempty"`
 	Contributions     []ContributionView `json:"contributions"`
+
+	// 下面几项是「这台机器上的 ai-bridge」：装的是什么、能不能一键升级、升到哪儿了。
+	// 老版本节点报不上来，Platform / Distribution 是空串 —— 界面据此说「版本太旧」。
+	Platform     string `json:"platform"`
+	Distribution string `json:"distribution"`
+	// UpgradeBlocker 节点自报的「此刻升不了的原因」，人话，直接显示在按钮旁边。
+	UpgradeBlocker string `json:"upgradeBlocker"`
+	// LatestVersion 这个平台当前最新的已发布版本；没有包时是空串。
+	LatestVersion string `json:"latestVersion"`
+	// UpgradeAvailable 有没有更新的版本可升。它只看版本与分发方式，
+	// **不看在不在线**：一台关着的机器也该显示「有新版本」，只是点不动。
+	UpgradeAvailable bool `json:"upgradeAvailable"`
+	// Upgrade 最近一次升级。从没升级过就没有这个字段。
+	Upgrade *NodeUpgradeView `json:"upgrade,omitempty"`
 }
 
 // ExecutionRecord 是「我的机器上跑过什么」的匿名化日志（P-14）：
@@ -550,6 +586,8 @@ type PackageView struct {
 	ModelTier    []string          `json:"modelTier,omitempty"`
 	Concurrency  int               `json:"concurrency"`
 	RPM          int               `json:"rpm"`
+	// ModelID 绑定的模型，空表示通用套餐。分享返现按这个模型的比例算。
+	ModelID string `json:"modelId,omitempty"`
 	// Category 是商品归属（claude / codex / video / other），由 kind 与模型档推出来。
 	// 派生规则放服务端：控制台按它分栏，两个端各写一份匹配规则的话，
 	// 同一个额度包会在 Nova 和 Orbit 上落进不同的栏。
@@ -573,8 +611,10 @@ type SavePackageRequest struct {
 	ModelTier    []string          `json:"modelTier"`
 	Concurrency  int               `json:"concurrency"`
 	RPM          int               `json:"rpm"`
-	Listed       *bool             `json:"listed"`
-	SortOrder    int               `json:"sortOrder"`
+	// ModelID 绑定到模型目录里的哪个模型，留空为通用套餐。填了就必须在目录里存在。
+	ModelID   string `json:"modelId"`
+	Listed    *bool  `json:"listed"`
+	SortOrder int    `json:"sortOrder"`
 }
 
 // CreateOrderRequest 下单。TargetKeyID 非空表示给已有密钥充值，
@@ -594,11 +634,14 @@ type OrderView struct {
 	Amount      int64             `json:"amount"`
 	Currency    string            `json:"currency"`
 	Status      string            `json:"status"`
-	TargetKeyID string            `json:"targetKeyId,omitempty"`
-	KeyID       string            `json:"keyId,omitempty"`
-	PaidAt      *time.Time        `json:"paidAt,omitempty"`
-	FulfilledAt *time.Time        `json:"fulfilledAt,omitempty"`
-	CreatedTime time.Time         `json:"createdTime"`
+	// PayMethod points=积分；channel=支付渠道。老订单是空串，按 channel 看。
+	PayMethod   string     `json:"payMethod,omitempty"`
+	ModelID     string     `json:"modelId,omitempty"`
+	TargetKeyID string     `json:"targetKeyId,omitempty"`
+	KeyID       string     `json:"keyId,omitempty"`
+	PaidAt      *time.Time `json:"paidAt,omitempty"`
+	FulfilledAt *time.Time `json:"fulfilledAt,omitempty"`
+	CreatedTime time.Time  `json:"createdTime"`
 	// IssuedSecret 只在履约签发出新密钥的那一次返回，之后永远查不到。
 	IssuedSecret string `json:"issuedSecret,omitempty"`
 }
@@ -933,6 +976,9 @@ type ProviderDashboard struct {
 
 // CreditSummary 积分的四个口径。可提现 + 待结算才是「已经赚到的」，
 // 分开显示是因为待结算那部分要过 7 天争议期。
+//
+// 这里所有的数都是**微积分**：1,000,000 = 1 积分 = ¥1，和使用端那套积分同一个口径，
+// 也和账本、单价同一量纲。界面按 ÷1,000,000 显示。
 type CreditSummary struct {
 	Available int64 `json:"available"`
 	Pending   int64 `json:"pending"`
@@ -941,6 +987,11 @@ type CreditSummary struct {
 	Week      int64 `json:"week"`
 	Month     int64 `json:"month"`
 	Total     int64 `json:"total"`
+	// Referral 邀请奖励的累计净额（已扣掉申诉追回的那部分）。
+	//
+	// 它已经算在余额里了，单独给一格是因为上面那几个口径只统计**自己贡献算力**
+	// 结算出来的积分 —— 邀请带来的那部分在里面一点都看不见。
+	Referral int64 `json:"referral"`
 }
 
 // DayStats 一天的执行统计。用来回答「今天跑了多少、成功率如何」。
@@ -1027,9 +1078,12 @@ type PayoutView struct {
 // CreatePayoutRequest 发起提现。
 type CreatePayoutRequest struct {
 	OwnerUserID string `json:"-"`
-	Credits     int64  `json:"credits" binding:"required"`
-	Method      string `json:"method" binding:"required"`
-	Account     string `json:"account" binding:"required"`
+	// Credits 提现金额，单位是**微积分**（1,000,000 = 1 积分 = ¥1），
+	// 和余额、账本同一量纲 —— 界面拿到的是什么单位，就原样提回来，中间不折算。
+	// 服务端要求它不低于起提金额，且是整数积分。
+	Credits int64  `json:"credits" binding:"required"`
+	Method  string `json:"method" binding:"required"`
+	Account string `json:"account" binding:"required"`
 }
 
 // ---------- 消费者：概览与逐笔记录 ----------
@@ -1163,6 +1217,10 @@ type PortalModelView struct {
 	// 所有模型显示同一个价，看起来像是页面坏了。
 	Priced    bool `json:"priced"`
 	SortOrder int  `json:"sortOrder"`
+	// ReferralBps / Listed 只有运营的目录接口会填：返现比例跟陌生人无关，
+	// 门户那条公开接口本来就只列上架的。ReferralBps 为空表示走全局默认。
+	ReferralBps *int64 `json:"referralBps,omitempty"`
+	Listed      *bool  `json:"listed,omitempty"`
 }
 
 // PortalPriceLine kind × 单位的当前单价，定价页那张表直接渲染它。
@@ -1215,9 +1273,11 @@ type SaveModelRequest struct {
 	Currency        string   `json:"currency"`
 	Tags            []string `json:"tags"`
 	Summary         string   `json:"summary"`
-	Listed          *bool    `json:"listed"`
-	Featured        bool     `json:"featured"`
-	SortOrder       int      `json:"sortOrder"`
+	// ReferralBps 分享返现比例（万分之一），不传就是走全局默认。整行覆盖，所以编辑时要把原值带回来。
+	ReferralBps *int64 `json:"referralBps"`
+	Listed      *bool  `json:"listed"`
+	Featured    bool   `json:"featured"`
+	SortOrder   int    `json:"sortOrder"`
 }
 
 // LeadRecord 运营看到的线索。比 LeadView 多的是联系方式与正文 ——

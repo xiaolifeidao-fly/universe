@@ -20,6 +20,7 @@ import (
 	"service/manager"
 
 	"common/middleware/httpx"
+	"common/objectstore"
 	"manager-api/pkg/tokenstore"
 	"manager-api/routers"
 )
@@ -127,8 +128,42 @@ func buildGalaxyService(database *gorm.DB) (galaxysvc.Service, func()) {
 	if raw, err := strconv.ParseFloat(strings.TrimSpace(httpx.Property("galaxy.reputation_recovery_per_day")), 64); err == nil && raw > 0 {
 		config.ReputationRecoveryPerDay = raw
 	}
-	service := galaxysvc.New(database, galaxysvc.Ports{Control: control}, nil, config)
+	// 取回密钥明文要和签发它的 galaxy-api 用同一把加密密钥；地址是运营转交密钥时一起给对方的那个 base_url。
+	// 两项都没配时对应的功能明说「取不回」「没有地址」，不影响别的运营页面。
+	config.KeyCipherSecret = strings.TrimSpace(httpx.Property("galaxy.key_cipher_secret"))
+	if config.KeyCipherSecret == "" {
+		log.Print("manager-api 未配置 galaxy.key_cipher_secret：管理端取不回算力密钥明文")
+	}
+	config.ConsumerBaseURL = strings.TrimSpace(httpx.Property("galaxy.consumer_base_url"))
+	// ai-bridge 的发布公钥。上传安装包时服务端按它验一遍签名，验不过不收 ——
+	// 没签名的包发下去，每台机器都会在升级的最后一步拒装，而运营要到那时候才知道。
+	config.BridgeReleaseKeys = splitList(httpx.Property("galaxy.bridge_release.public_keys"))
+
+	ports := galaxysvc.Ports{Control: control}
+	// 上传安装包是**唯一**要服务端经手字节的地方，也是唯一在管理端装配对象存储的理由：
+	// sha256 与发布签名的校验只有经手字节的一方做得了。产物仍然走 presigned 直传。
+	// 没配 OSS 不影响别的运营页面，只是传不了包（接口会明说）。
+	if deployment, err := objectstore.LoadAliyunOSSDeployment(httpx.Property); err != nil {
+		log.Printf("manager-api OSS 配置不可用，ai-bridge 安装包上传不可用：%v", err)
+	} else if storage, err := deployment.NewClient(); err != nil {
+		log.Printf("manager-api OSS 客户端不可用，ai-bridge 安装包上传不可用：%v", err)
+	} else if storage != nil {
+		ports.Uploader = storage
+	}
+	service := galaxysvc.New(database, ports, nil, config)
 	return service, func() { _ = control.Close() }
+}
+
+// splitList 逗号分隔的配置值。空白项去掉 —— 配置里换行对齐时很容易多出一个空串，
+// 而一把空的公钥会让验签在循环里白跑一轮。
+func splitList(raw string) []string {
+	var values []string
+	for _, part := range strings.Split(raw, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }
 
 func defaultString(value, fallback string) string {

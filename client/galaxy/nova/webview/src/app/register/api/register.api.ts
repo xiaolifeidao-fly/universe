@@ -8,6 +8,8 @@ export interface RegisterPayload {
   /** 不填就用用户名。 */
   displayName?: string;
   password: string;
+  /** 邀请码。大小写不敏感、前后空白服务端也会忽略；没填就不带。填了但不存在，注册直接失败。 */
+  inviteCode?: string;
 }
 
 /** 注册完直接是登录状态。共享端注册出来一律是散户，工作室由平台运营在管理端开通。 */

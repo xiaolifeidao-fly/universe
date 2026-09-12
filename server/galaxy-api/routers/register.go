@@ -18,6 +18,7 @@ import (
 	"galaxy-api/adapters/videofarm"
 	"galaxy-api/pkg/agent"
 	authpkg "galaxy-api/pkg/auth"
+	bridgepkg "galaxy-api/pkg/bridge"
 	"galaxy-api/pkg/consumers"
 	"galaxy-api/pkg/exportdispatch"
 	"galaxy-api/pkg/local"
@@ -47,6 +48,7 @@ type Assembly struct {
 
 	Auth      *authpkg.Handler
 	Agent     *agent.Handler
+	Bridge    *bridgepkg.Handler
 	Consumers *consumers.Handler
 	Providers *providers.Handler
 	Portal    *portal.Handler
@@ -149,7 +151,12 @@ func Build(database *gorm.DB) (*Assembly, error) {
 		Auth:     authpkg.NewHandler(accounts, gate),
 		Agent: agent.NewHandler(service, exchange, journal,
 			durationProperty("galaxy.stream_idle_timeout_ms", 60_000), registry),
-		Consumers: consumers.NewHandler(service, gate),
+		// ai-bridge 的下载清单、安装脚本与下载跳转。不鉴权，理由见那个包的注释。
+		Bridge: bridgepkg.NewHandler(service),
+		// 模型广场的兜底清单和门户是同一份，理由同下。
+		Consumers: consumers.NewHandler(service, gate, consumers.Options{
+			Models: strings.Split(httpx.Property("galaxy.models"), ","),
+		}),
 		Providers: providers.NewHandler(service, gate),
 		// 门户拿的是同一份声明清单：模型目录表为空时，门户上列出来的
 		// 必须和客户端能填的那份一致，否则页面写着有、填进去用不了。
@@ -201,6 +208,11 @@ func loadConfig() galaxy.Config {
 	config.MaxWait = durationProperty("galaxy.max_wait_ms", int(config.MaxWait.Milliseconds()))
 	config.HeartbeatTimeout = durationProperty("galaxy.heartbeat_timeout_ms", int(config.HeartbeatTimeout.Milliseconds()))
 	config.KeyTTL = time.Duration(intProperty("galaxy.key_ttl_days", 30)) * 24 * time.Hour
+	// 密钥明文加密存储用的密钥。manager-api 取回明文时要用同一个值，没配就只是取不回。
+	config.KeyCipherSecret = strings.TrimSpace(httpx.Property("galaxy.key_cipher_secret"))
+	if config.KeyCipherSecret == "" {
+		log.Print("galaxy.key_cipher_secret 未配置：新签发的算力密钥取不回明文，「使用」按钮与运营转交都不可用")
+	}
 	config.KeyFreeze = time.Duration(intProperty("galaxy.key_freeze_days", 30)) * 24 * time.Hour
 	config.ProviderTermsVersion = defaultString(httpx.Property("galaxy.provider_terms_version"), config.ProviderTermsVersion)
 	config.ConsumerNoticeVersion = defaultString(httpx.Property("galaxy.consumer_notice_version"), config.ConsumerNoticeVersion)
@@ -220,6 +232,26 @@ func loadConfig() galaxy.Config {
 	// 门户上那句可用性承诺。不配就是空串 —— 门户少显示一格，
 	// 而不是替部署方许一个他没许的诺。
 	config.PortalAvailability = strings.TrimSpace(httpx.Property("galaxy.portal.availability"))
+
+	// ai-bridge 安装包的公开访问前缀。桶是公开读或者前面挂了 CDN 时配上，
+	// 下载就不再逐次签名；不配走签名地址（下载那一跳当场签）。
+	config.BridgeDownloadBaseURL = strings.TrimSpace(httpx.Property("galaxy.bridge_release.download_base_url"))
+
+	// 共享端邀请返现。比例是 0~1 的小数，0 或不配表示这个活动没开；
+	// 注册页地址不配就没有链接可分享（邀请页只显示邀请码）。
+	if raw := strings.TrimSpace(httpx.Property("galaxy.referral.rate")); raw != "" {
+		if value, err := strconv.ParseFloat(raw, 64); err == nil && value >= 0 {
+			config.ReferralRate = value
+		}
+	}
+	// 期限单独解析而不是走 intProperty：那个函数把 0 当成「没配」，
+	// 而这里的 0 有确切含义 —— 长期有效。
+	if raw := strings.TrimSpace(httpx.Property("galaxy.referral.days")); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value >= 0 {
+			config.ReferralDays = value
+		}
+	}
+	config.ReferralRegisterURL = strings.TrimSpace(httpx.Property("galaxy.referral.register_url"))
 	return config
 }
 

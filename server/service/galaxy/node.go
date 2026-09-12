@@ -343,6 +343,17 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 	}); err != nil {
 		return dto.HelloResult{}, err
 	}
+	// 机器上的 ai-bridge 是什么、能不能被远程升级：跟着每次 hello 更新。
+	//
+	// 写不进去不中断 hello。这几列只服务于展示与升级按钮，而 hello 失败意味着
+	// 这台机器整个不接活 —— 两件事的代价差着数量级。
+	if err := s.repository.SaveNodeBridgeInfo(ctx, bizLine, req.NodeID,
+		truncate(req.Platform, 32), truncate(req.Distribution, 16), truncate(req.UpgradeBlocker, 255)); err != nil {
+		s.metrics.Count(MetricNodeBridgeInfoFailed, map[string]string{"nodeId": req.NodeID}, 1)
+	}
+	// 一次远程升级成没成，只有重启之后的这一次 hello 说了算：节点报的「装好了」
+	// 只说明文件换了，**跑起来的是哪一版**要看它现在报上来的版本。
+	s.settleNodeUpgrade(ctx, node, req.BridgeVersion, now)
 	// 空切片要发成 []，不能发成 null。
 	//
 	// Go 的 nil 切片序列化出去是 JSON 的 null，而节点侧是 Rust：serde 的 default
@@ -591,6 +602,9 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 		return dto.HeartbeatResult{}, err
 	}
 	result.Enabled = plan.Enabled
+	// 升级指令走的是同一条路：控制台点完，机器最多等一个心跳周期就收到。
+	// 没有待执行的指令时它是 nil，序列化时整个字段省略。
+	result.Upgrade = s.pendingUpgradeCommand(ctx, node, now)
 	// 同 Hello：空切片发 []，不发 null，否则节点连这次心跳一起丢掉。
 	result.Cancel = orEmpty(result.Cancel)
 	result.Drain = orEmpty(result.Drain)
@@ -628,6 +642,13 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 	if err != nil {
 		return nil, err
 	}
+	// 每个平台最新的那一版：机器行上要显示「可升级到 x」。一次列表只查一次 ——
+	// 名下几十台机器是常态，放进循环就是几十次重复查询。
+	// 查不到不影响列表本身：机器该显示的还得显示，只是这一次没有升级提示。
+	latest, err := s.latestBridgeReleases(ctx)
+	if err != nil {
+		latest = map[string]*repository.GalaxyBridgeRelease{}
+	}
 	for _, node := range nodes {
 		rows, err := s.repository.ListContributionsByNode(ctx, bizLine, node.NodeID)
 		if err != nil {
@@ -647,6 +668,18 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 			EndpointError:     node.EndpointError,
 			EndpointCheckedAt: node.EndpointCheckedAt,
 			Contributions:     make([]dto.ContributionView, 0, len(rows)),
+
+			Platform:       node.BridgePlatform,
+			Distribution:   node.BridgeDistribution,
+			UpgradeBlocker: node.UpgradeBlocker,
+			Upgrade:        nodeUpgradeView(node, now),
+		}
+		if release, ok := latest[node.BridgePlatform]; ok {
+			view.LatestVersion = release.Version
+			// 只有独立部署的命令行能被远程升级；Nova 内置的那份随应用走，
+			// 老节点连自己是什么都报不上来。界面按这个决定按钮亮不亮。
+			view.UpgradeAvailable = node.BridgeDistribution == distributionCLI &&
+				compareBridgeVersions(release.Version, node.BridgeVersion) > 0
 		}
 		grants, err := s.loadGrants(ctx, cidsOf(rows))
 		if err != nil {

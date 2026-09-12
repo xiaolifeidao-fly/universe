@@ -23,7 +23,7 @@ Nova 的 Electron UtilityProcess 里那层薄 JS 壳直接 `require` 它，不�
 | `credentials/` | `credentials/*`，含 `toml_lite`（`local-upstream.ts` 里那个轻量 TOML 解析） |
 | `modules/{health,relay,admin}` | 同名模块（axum 替 express） |
 | `business/` | `business/core` 的类型与工具，以及三种节点 provider：`llm_chat` / `delivery_task` / `video_edit` |
-| `pool/` | `modules/pool/*`：Hub 客户端、运行循环、通道闸门、能力探测、模型清单、节点令牌、工具面板、配置改写 |
+| `pool/` | `modules/pool/*`：Hub 客户端、运行循环、通道闸门、能力探测、模型清单、节点令牌、工具面板、配置改写；远程升级（`upgrade.rs`，TS 侧没有） |
 | `app.rs` | `app.ts` 的装配与优雅关闭 |
 | `napi_api.rs` | 给 Node 的导出面：`NativeBridge` 与 `parseConfigJson` |
 
@@ -110,6 +110,28 @@ node scripts/build-cli.cjs --target x86_64-unknown-linux-gnu --zig
 
 `.node` 与命令行必须分开编：napi 的符号要 Node 宿主提供，所以 `scripts/build.cjs`
 只编库（`--lib --features node`），命令行不带 node 特性。
+
+## 远程升级（`pool/upgrade.rs`）
+
+独立部署的命令行可以在控制台上远程升级；随 Nova 分发的 bridge 不行 —— hello 里报
+`distribution: "nova"`，真收到指令也只回「请更新 Nova」。
+
+- **信任根是 `release-keys.txt`**：编译期嵌进二进制的 Ed25519 发布公钥。节点先验签名（覆盖版本、
+  平台、整包 sha256）再下载，下载完再比 sha256；Hub 下发的地址和校验值都不单独可信。
+  文件里一把公钥都没有的构建不能远程升级，hello 的 `upgradeBlocker` 会说原因。
+- **runner 只管时机和上报**：心跳收到指令 → 按 id 去重、一次一个 → 报 `downloading` →
+  `installing` → `restarting`；装好之后停止领新活（心跳把通道报成 paused、export 入口回 503）
+  并通过 `restart_requested()` 交棒。进程主人（`src/bin/ai-bridge.rs`）接着
+  `drain_for_restart(120s)` → `stop()` → exec 新文件（PID 不变）。
+- **换文件在 `SelfUpdater`**：临时目录建在可执行文件旁边（同一个文件系统，rename 才原子），
+  系统 `tar` 解包，先试跑 `<新文件> version`，旧文件留 `.old`，换失败还原。
+  可执行文件所在目录必须对运行服务的用户可写。
+- **发版**：`scripts/release-sign.cjs`（keygen / sign / verify）；`build-cli.cjs` 设了
+  `AI_BRIDGE_RELEASE_KEY` 时顺手签。完整流程见 [`deploy/README.md`](deploy/README.md)「发布与签名」。
+
+`src/pool/upgrade.rs` 的测试对着真 tar 包、本地 HTTP 跑下载 / 验签 / 试跑 / 替换，
+还有一组 Node 签名脚本生成的向量；`tests/pool_upgrade.rs` 用假 Hub + 假升级器跑上报顺序、
+去重、排空与交棒。
 
 ## 已知边界
 

@@ -16,6 +16,24 @@ const target = process.env.SERVER_TARGET ?? "";
 const prefix = process.env.APP_URL_PREFIX ?? "/api";
 
 /**
+ * 请求体上限。Next 的 bodyParser 默认只收 1MB，超了直接回 413，请求根本走不到下面的 forward。
+ *
+ * 上传 ai-bridge 安装包（/galaxy/admin/bridge/releases/upload）是把整个压缩包 base64 塞进 JSON：
+ * 服务端收的包最大 64MB，base64 之后约 86MB，这里放到 96mb，给 JSON 外壳、签名和说明留余量。
+ *
+ * Pages API 的 config 只能按路由文件声明，所以放宽的是整条通配代理，不止那一个接口。代价是
+ * 任何 POST 都能带着最多 96mb 的体在这一层被整个读进内存、解析完再转发（鉴权在上游才做）；
+ * 管理端不对外，先接受这个代价。真要收紧，给上传单独建一个路由文件、复用这里的 handler，只在那个文件里放宽。
+ */
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: "96mb",
+    },
+  },
+};
+
+/**
  * 这里只转发到 manager-api 一个上游，**不再**按 /api/galaxy 前缀分流去 galaxy-api。
  *
  * 分流曾经在这儿，但它在鉴权上走不通：管理端的令牌是 Redis 会话里的一串随机数，
@@ -67,9 +85,12 @@ function proxyGet(req: IncomingMessage, res: ServerResponse) {
 
 async function forward(url: string, req: IncomingMessage & { body?: unknown }) {
   const { method, headers } = req;
-  if (method === "POST") return axios.post(url, req.body, { headers });
-  if (method === "PUT") return axios.put(url, req.body, { headers });
-  if (method === "DELETE") return axios.delete(url, { params: req.body, headers });
+  // 大包转发不靠 axios 的默认值：现在这版默认是 -1（不限），可底下 follow-redirects 自己的默认上限是 10MB，
+  // 哪天默认值变了，上传安装包会在发往 manager-api 之前就被本地拦下，报错却长得像上游出了问题。
+  const options = { headers, maxBodyLength: Infinity, maxContentLength: Infinity };
+  if (method === "POST") return axios.post(url, req.body, options);
+  if (method === "PUT") return axios.put(url, req.body, options);
+  if (method === "DELETE") return axios.delete(url, { ...options, params: req.body });
   return null;
 }
 

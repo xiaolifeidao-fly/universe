@@ -44,8 +44,8 @@ test('registration fails before exposure when implementation or registry is inva
   assert.throws(() => registerRpc(ipc, [DemoApi], [new DemoApi()], () => true), /Missing implementation/);
   assert.throws(() => registerRpc(ipc, [DemoApi, DemoApi], [new DemoImpl()], () => true), /Duplicate Electron API/);
   assert.throws(() => registerRpc(ipc, [], [new DemoImpl()], () => true), /no registered contract/);
-  assert.deepEqual(registerApi('orbit'), []);
-  assert.equal(registerApi('nova').length, 1);
+  assert.deepEqual(registerApi('orbit').map(Api => new Api().getRendererName()), ['galaxy_ClientConfigApi']);
+  assert.deepEqual(registerApi('nova').map(Api => new Api().getRendererName()), ['galaxy_BridgeApi', 'galaxy_ShellApi']);
 });
 
 test('a failed IPC registration rolls back already installed handlers', () => {

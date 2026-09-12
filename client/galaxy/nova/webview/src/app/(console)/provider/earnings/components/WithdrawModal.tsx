@@ -5,51 +5,70 @@
  *
  * 到账金额由服务端按积分算，这里只做预览 —— 让前端把金额传上去，
  * 等于把兑换比交给了客户端。所以请求里只有积分数、收款方式和账号。
+ *
+ * 输入框里是**积分**，发出去的是**微积分**：账上和接口都按微积分算
+ * （1,000,000 = 1 积分 = ¥1），让人对着一串六个零的数字填提现额没有意义。
  */
 
 import { Modal, message } from "antd";
 import { useEffect, useState } from "react";
 import { Btn, Field, Note } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatCny, formatInt } from "@/utils/format";
+import { formatCny, formatPoints } from "@/utils/format";
 import { createPayout } from "../../api/provider.api";
 
 const METHODS = ["alipay", "wechat", "bank"] as const;
+
+/** 1 积分 = ¥1 = 1,000,000 微积分。 */
+const POINT = 1_000_000;
+
+/**
+ * 起提额与「按整元提现」两条，跟服务端同一套（galaxy.payout_min_credits 默认 ¥10、
+ * 金额要能被 payout_rate 整除）。这里只是提前拦一下、把话说在前面 ——
+ * 真正说了算的还是服务端，部署方把配置调了，这边最多是少拦一次。
+ */
+const MIN_POINTS = 10;
 
 export function WithdrawModal({
   open,
   available,
   pending,
-  rate,
   onClose,
   onDone,
 }: {
   open: boolean;
+  /** 微积分。 */
   available: number;
+  /** 微积分。 */
   pending: number;
-  rate: number;
   onClose: () => void;
   onDone: () => void;
 }) {
   const { t } = useLocale();
-  const [credits, setCredits] = useState(0);
+  const [points, setPoints] = useState(0);
   const [method, setMethod] = useState<(typeof METHODS)[number]>("alipay");
   const [account, setAccount] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // 可提额里不足一元的零头提不出来，向下取整到整元。
+  const maxPoints = Math.floor(available / POINT);
+
   // 每次打开都按当前可提额重置。留着上一次的数字，会在余额变小之后
   // 让人对着一个提不出来的数字点确认。
   useEffect(() => {
-    if (open) setCredits(Math.floor(available / rate) * rate);
-  }, [available, open, rate]);
+    if (open) setPoints(maxPoints);
+  }, [maxPoints, open]);
 
-  const amount = (credits / rate) * 1_000_000;
-  const valid = credits > 0 && credits <= available && credits % rate === 0 && account.trim().length > 0;
+  // 输入框允许敲小数（可提额本身就可能带零头），能不能提由下面这条判 ——
+  // 服务端只收整元，所以四舍五入到微积分之后必须被 POINT 整除。
+  const micros = Math.round(points * POINT);
+  const valid =
+    micros >= MIN_POINTS * POINT && micros <= available && micros % POINT === 0 && account.trim().length > 0;
 
   const submit = async () => {
     setBusy(true);
     try {
-      await createPayout({ credits, method, account: account.trim() });
+      await createPayout({ credits: micros, method, account: account.trim() });
       message.success(t("withdraw.done"));
       onDone();
     } catch (error) {
@@ -70,28 +89,30 @@ export function WithdrawModal({
           {t("common.cancel")}
         </Btn>,
         <Btn key="ok" tone="accent" loading={busy} disabled={!valid} onClick={() => void submit()}>
-          {t("withdraw.submit", { amount: formatCny(amount) })}
+          {t("withdraw.submit", { amount: formatCny(micros) })}
         </Btn>,
       ]}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 16, paddingTop: 4 }}>
-        <span className="gx-card__hint">{t("withdraw.hint", { rate })}</span>
+        <span className="gx-card__hint">{t("withdraw.hint")}</span>
 
-        <Field label={t("withdraw.credits")}>
+        {/* 两条门槛写在输入框上，别等人填完点了确认才由服务端回一句「不少于 10 积分」。 */}
+        <Field label={t("withdraw.credits")} hint={t("withdraw.rule", { min: MIN_POINTS })}>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
               className="gx-input gx-input--mono"
               type="number"
               min={0}
-              step={rate}
-              max={available}
-              value={credits}
-              onChange={(event) => setCredits(Math.max(0, Number(event.target.value) || 0))}
+              step={1}
+              max={maxPoints}
+              value={points}
+              onChange={(event) => setPoints(Math.max(0, Number(event.target.value) || 0))}
             />
             <span className="gx-card__hint" style={{ whiteSpace: "nowrap" }}>
-              {t("withdraw.max", { value: formatInt(available) })}
+              {t("withdraw.max", { value: formatPoints(available) })}
             </span>
-            <Btn tone="ghost" small onClick={() => setCredits(Math.floor(available / rate) * rate)}>
+            {/* 「全部」取整元，直接按可提额填会填出一个提不出去的零头。 */}
+            <Btn tone="ghost" small onClick={() => setPoints(maxPoints)}>
               {t("withdraw.all")}
             </Btn>
           </div>
@@ -117,12 +138,12 @@ export function WithdrawModal({
         </Field>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 14px", borderRadius: 10, background: "var(--gx-muted)" }}>
-          <Row label={t("withdraw.exchange")} value={`${formatInt(credits)} → ${formatCny(amount)}`} />
+          <Row label={t("withdraw.exchange")} value={`${formatPoints(micros)} → ${formatCny(micros)}`} />
           <Row label={t("withdraw.fee")} value={formatCny(0)} />
-          <Row label={t("withdraw.amount")} value={formatCny(amount)} strong />
+          <Row label={t("withdraw.amount")} value={formatCny(micros)} strong />
         </div>
 
-        {pending > 0 ? <Note>{t("withdraw.pendingNote", { value: formatInt(pending) })}</Note> : null}
+        {pending > 0 ? <Note>{t("withdraw.pendingNote", { value: formatPoints(pending) })}</Note> : null}
       </div>
     </Modal>
   );

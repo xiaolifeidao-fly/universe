@@ -26,11 +26,19 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 	if err != nil {
 		return err
 	}
+	// 贡献先查出来：供给侧的每一行都要写上 owner（按人回查账本时不用再绕一圈 cid），
+	// 入账也要它。查不到就只记流水、不入账 —— 那是数据不一致，
+	// 不该顺手把钱发给一个不知道是谁的人。
+	owner := ""
+	contribution, err := s.repository.FindContribution(ctx, bizLine, runtime.CID)
+	if err == nil {
+		owner = contribution.OwnerUserID
+	}
 
 	meters := make([]*repository.GalaxyMeterRecord, 0, len(actual))
 	consumer := make([]*repository.GalaxyConsumerLedger, 0, len(actual))
 	provider := make([]*repository.GalaxyProviderLedger, 0, len(actual))
-	var platformFee, providerCredit int64
+	var platformFee int64
 
 	for _, unit := range actual.Units() {
 		amount := actual[unit]
@@ -59,28 +67,52 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 			continue
 		}
 		txn := fmt.Sprintf("%s:%d:%s", runtime.RID, runtime.Attempt, unit)
+		// 消费侧记的是**用量**：额度按计量单位发，余额也按单位扣。
 		consumer = append(consumer, &repository.GalaxyConsumerLedger{
 			BizLine: bizLine, TxnID: txn, KeyID: runtime.ConsumerKey, Type: "settle",
 			Unit: unit, Amount: amount, Price: price.Price, UnitID: runtime.RID,
 		})
-		providerCredit += share
 		platformFee += cost - share
+		// 供给侧记的是**积分**，和信用账户余额同一量纲。
+		//
+		// 这里原先记的是计量数（token 数），于是收益页上「今天赚了多少」加的是 token、
+		// 「可提现」用的是余额里的钱，两个口径根本不是一个东西。原始计量数在
+		// zt_galaxy_meter_record 里（对账以它为准），这一行只回答「这笔挣了多少」；
+		// 是哪种计量单位挣来的写在 Unit 上。
 		provider = append(provider, &repository.GalaxyProviderLedger{
-			BizLine: bizLine, TxnID: txn, CID: runtime.CID, Type: ledgerSettle,
-			Unit: unit, Amount: amount, Price: price.Price, UnitID: runtime.RID,
+			BizLine: bizLine, TxnID: txn, CID: runtime.CID, OwnerUserID: owner, Type: ledgerSettle,
+			Unit: unit, Amount: share, Price: price.Price, UnitID: runtime.RID,
 		})
-		// 余额扣减：P0 内测密钥可能没有该单位的余额行，扣不动就只记账不阻断。
-		_, _ = s.repository.ConsumeBalance(ctx, bizLine, runtime.ConsumerKey, unit, amount)
 	}
 
 	if err := s.repository.SaveMeterRecords(ctx, meters); err != nil {
 		return err
 	}
-	if err := s.repository.SaveConsumerLedger(ctx, consumer); err != nil {
-		return err
+	// 账本一行一行地写，**只对真的插进去的那些动余额**。
+	//
+	// 账本按 (biz_line, txn_id) 幂等，而余额是加减：批量写完再按总额加一次的话，
+	// 一次重放就是白发一笔钱。settle 那边已经有一道重放闸门（见 unit.go 的 settle），
+	// 这里是第二道 —— 钱的事不该只有一层保险，而且这条路还有别的调用方。
+	for _, row := range consumer {
+		inserted, err := s.repository.SaveConsumerLedgerRow(ctx, row)
+		if err != nil {
+			return err
+		}
+		if !inserted {
+			continue
+		}
+		// 余额扣减：P0 内测密钥可能没有该单位的余额行，扣不动就只记账不阻断。
+		_, _ = s.repository.ConsumeBalance(ctx, bizLine, runtime.ConsumerKey, row.Unit, row.Amount)
 	}
-	if err := s.repository.SaveProviderLedger(ctx, provider); err != nil {
-		return err
+	var providerCredit int64
+	for _, row := range provider {
+		inserted, err := s.repository.SaveProviderLedgerRow(ctx, row)
+		if err != nil {
+			return err
+		}
+		if inserted {
+			providerCredit += row.Amount
+		}
 	}
 	if platformFee > 0 {
 		if err := s.repository.SavePlatformLedger(ctx, []*repository.GalaxyPlatformLedger{{
@@ -90,10 +122,11 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 			return err
 		}
 	}
-	if providerCredit > 0 {
-		if row, err := s.repository.FindContribution(ctx, bizLine, runtime.CID); err == nil {
-			_ = s.repository.AddCredit(ctx, bizLine, row.OwnerUserID, providerCredit)
-		}
+	if providerCredit > 0 && owner != "" {
+		_ = s.repository.AddCredit(ctx, bizLine, owner, providerCredit)
+		// 邀请奖励：这笔收益的主人是被谁邀请来的，就额外给那个人记一笔。
+		// 钱是平台出的，上面这笔一分不少 —— 顺序也说明了这一点：先有收益，才谈得上奖励。
+		s.rewardProviderReferrer(ctx, runtime, contribution, providerCredit)
 	}
 	return nil
 }

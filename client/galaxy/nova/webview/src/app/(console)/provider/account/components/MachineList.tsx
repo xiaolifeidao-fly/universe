@@ -14,6 +14,9 @@
  * 在用的顺序和「今天」「共享设置」一样按名字排（机房-2 在机房-10 前面），不按在线状态：
  * 列表 20 秒刷一次，机器一上下线就挪位置，正要点开的那一行会从手底下跑掉。
  * 已解绑的按解绑先后，最近的在前（服务端排好）。
+ *
+ * 远程升级也照这个分法：行上只在名字后面挂一个小标签（升级中 / 可升级），扫一眼知道哪几台该升；
+ * 版本、平台、上一次升级走到哪、为什么点不了，都在点开的那一格里。已解绑的机器不给升级。
  */
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
@@ -21,7 +24,13 @@ import { IconAlert, IconChevronDown, IconPlus, IconSearch } from "@/components/u
 import { Btn, Card, CardHead, Loading } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { formatRelative } from "@/utils/format";
-import { isNodeOnline, nodeDisplayName, type NodeView } from "../../api/provider.api";
+import {
+  isNewerBridgeVersion,
+  isNodeOnline,
+  isUpgradeInProgress,
+  nodeDisplayName,
+  type NodeView,
+} from "../../api/provider.api";
 import { Blank, RowList, TabStrip } from "./parts";
 
 type Tab = "active" | "retired";
@@ -60,6 +69,72 @@ function endpointText(node: NodeView, t: Translate): string {
   return t("account.endpointPending");
 }
 
+/** 成功的那句挂一天就收：之后版本号本身已经说明了，一直挂着像是还有事没完。失败的留到下一次升级。 */
+const SUCCEEDED_VISIBLE_MS = 24 * 60 * 60 * 1000;
+
+const PROGRESS_TEXT = {
+  downloading: "account.upgradeDownloading",
+  installing: "account.upgradeInstalling",
+  restarting: "account.upgradeRestarting",
+} as const;
+
+/**
+ * 上一次升级走到哪了。进行中的几步优先用节点报的人话（「正在下载 0.2.0」），没报就用自己的说法；
+ * 等领取、成功这两步由我们来说：那时节点还没说话，或者是 Hub 在重启后的 hello 里判的。
+ */
+function upgradeStatus(node: NodeView, t: Translate): { text: string; tone: "soft" | "ok" | "danger" } | null {
+  const upgrade = node.upgrade;
+  if (!upgrade?.status) return null;
+  const version = upgrade.version || "-";
+  const at = upgrade.updatedAt || upgrade.requestedAt;
+  const ago = at ? ` · ${t("account.ago", { value: formatRelative(at) })}` : "";
+  switch (upgrade.status) {
+    case "pending":
+      return { text: t("account.upgradePending", { version }), tone: "soft" };
+    case "downloading":
+    case "installing":
+    case "restarting":
+      return { text: upgrade.message || t(PROGRESS_TEXT[upgrade.status], { version }), tone: "soft" };
+    case "succeeded": {
+      const time = at ? new Date(at).getTime() : Number.NaN;
+      if (Date.now() - time > SUCCEEDED_VISIBLE_MS) return null;
+      const text = upgrade.fromVersion
+        ? t("account.upgradeSucceeded", { from: upgrade.fromVersion, version })
+        : t("account.upgradeSucceededPlain", { version });
+      return { text: text + ago, tone: "ok" };
+    }
+    case "failed": {
+      const text = upgrade.message
+        ? t("account.upgradeFailed", { version, message: upgrade.message })
+        : t("account.upgradeFailedPlain", { version });
+      return { text: text + ago, tone: "danger" };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * 「升级到 x」为什么点不了；null 是能点。能点的条件只有一条：
+ * 在线 && distribution === "cli" && 没有 upgradeBlocker && upgradeAvailable && 不在升级中（升级中由调用方先挡掉）。
+ *
+ * 顺序是「哪句最先把事说明白」：随 Nova 分发、版本太旧是结构性的，上线也没用，排最前；
+ * 障碍（目录不可写、没有发布公钥）排在「已是最新」前面 —— 不修，下一版照样升不了；
+ * 离线排最后：离线又已是最新时说「上线后才能升级」是在误导。
+ */
+function upgradeBlocked(node: NodeView, t: Translate): { text: string; warn?: boolean } | null {
+  if (node.distribution === "nova") return { text: t("account.upgradeNova") };
+  if (node.distribution !== "cli") return { text: t("account.upgradeLegacy") };
+  if (node.upgradeBlocker) return { text: node.upgradeBlocker, warn: true };
+  if (!node.latestVersion) return { text: t("account.upgradeNoPackage") };
+  if (!node.upgradeAvailable) return { text: t("account.upgradeLatest") };
+  // 封禁的机器行上已经写着「已封禁」，这里不再补一句「上线后才能升级」—— 它上不了线。
+  if (!isNodeOnline(node)) return { text: node.banned ? "" : t("account.upgradeOffline") };
+  return null;
+}
+
+const STATUS_COLOR = { soft: "var(--gx-soft)", ok: "var(--gx-ok)", danger: "var(--gx-danger)" } as const;
+
 export function MachineList({
   machines,
   retired,
@@ -68,6 +143,7 @@ export function MachineList({
   desktop,
   busy,
   onUnbind,
+  onUpgrade,
   onAddServer,
   onRetryRetired,
 }: {
@@ -81,6 +157,8 @@ export function MachineList({
   desktop: boolean;
   busy: boolean;
   onUnbind: (node: NodeView) => void;
+  /** 确认、下发、刷新都由页面做：确认框要用页面那个 useModal，刷新也得连着轮询节奏一起改。 */
+  onUpgrade: (node: NodeView) => void;
   onAddServer: () => void;
   onRetryRetired: () => void;
 }) {
@@ -134,6 +212,7 @@ export function MachineList({
         busy={busy}
         onToggle={() => setExpanded((current) => (current === node.nodeId ? "" : node.nodeId))}
         onUnbind={() => onUnbind(node)}
+        onUpgrade={() => onUpgrade(node)}
       />
     ));
   }
@@ -194,6 +273,7 @@ function MachineRow({
   busy,
   onToggle,
   onUnbind,
+  onUpgrade,
 }: {
   node: NodeView;
   retired: boolean;
@@ -203,10 +283,20 @@ function MachineRow({
   busy: boolean;
   onToggle: () => void;
   onUnbind: () => void;
+  onUpgrade: () => void;
 }) {
   const { t } = useLocale();
   const online = !retired && isNodeOnline(node);
   const direct = node.accessMode === "export";
+  // 行上只挂这两种：升级中得看得见（那几分钟它不接新活），可升级是在提醒去点开。
+  // 随 Nova 分发、版本太旧、有障碍这些「升不了」的原因不上行 —— 十台里挂一排灰标签，等于没说。
+  const upgradeTag = retired
+    ? null
+    : isUpgradeInProgress(node.upgrade)
+      ? { label: t("account.upgrading"), className: "gx-pill gx-pill--sm gx-pill--warn" }
+      : node.distribution === "cli" && node.upgradeAvailable
+        ? { label: t("account.upgradable"), className: "gx-pill gx-pill--sm" }
+        : null;
   // 回连失败只对在用的 export 机器有意义：解绑之后没人再去探它，留着的是解绑前的旧话。
   const unreachable = !retired && direct && node.endpointStatus === "unreachable";
   const seen = node.lastBeatAt ? formatRelative(node.lastBeatAt) : "";
@@ -241,6 +331,7 @@ function MachineRow({
             {nodeDisplayName(node)}
           </span>
           {local ? <span className="gx-pill gx-pill--sm">{t("account.thisComputer")}</span> : null}
+          {upgradeTag ? <span className={upgradeTag.className}>{upgradeTag.label}</span> : null}
         </span>
         <span
           style={{
@@ -272,7 +363,9 @@ function MachineRow({
           style={{ color: "var(--gx-faint)", transition: "transform .15s ease", transform: open ? "rotate(180deg)" : undefined }}
         />
       </button>
-      {open ? <MachineDetail id={detailId} node={node} retired={retired} busy={busy} onUnbind={onUnbind} /> : null}
+      {open ? (
+        <MachineDetail id={detailId} node={node} retired={retired} busy={busy} onUnbind={onUnbind} onUpgrade={onUpgrade} />
+      ) : null}
     </div>
   );
 }
@@ -283,12 +376,14 @@ function MachineDetail({
   retired,
   busy,
   onUnbind,
+  onUpgrade,
 }: {
   id: string;
   node: NodeView;
   retired: boolean;
   busy: boolean;
   onUnbind: () => void;
+  onUpgrade: () => void;
 }) {
   const { t } = useLocale();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -300,9 +395,20 @@ function MachineDetail({
     panelRef.current?.scrollIntoView({ block: "nearest" });
   }, []);
 
-  const fields: { label: string; value: string; danger?: boolean }[] = [
+  // 有新版就在版本后面带一句，不管这台能不能远程升：随 Nova 分发、版本太旧的机器也该知道落后了。
+  const newer = !retired && isNewerBridgeVersion(node.latestVersion, node.bridgeVersion);
+  const fields: { label: string; value: ReactNode; danger?: boolean }[] = [
     { label: t("account.detailNode"), value: node.nodeId },
-    { label: "ai-bridge", value: node.bridgeVersion || "-" },
+    {
+      label: "ai-bridge",
+      value: (
+        <>
+          {node.bridgeVersion || "-"}
+          {newer ? <span style={{ color: "var(--gx-faint)" }}> {t("account.latestVersion", { version: node.latestVersion })}</span> : null}
+        </>
+      ),
+    },
+    { label: t("account.detailPlatform"), value: node.platform || "-" },
     {
       label: t("account.detailBeat"),
       value: node.lastBeatAt ? t("account.ago", { value: formatRelative(node.lastBeatAt) }) : t("share.machineNeverSeen"),
@@ -312,6 +418,13 @@ function MachineDetail({
   if (direct && !retired) {
     fields.push({ label: t("account.detailProbe"), value: endpointText(node, t), danger: node.endpointStatus === "unreachable" });
   }
+
+  const status = retired ? null : upgradeStatus(node, t);
+  const upgrading = isUpgradeInProgress(node.upgrade);
+  const blocked = retired || upgrading ? null : upgradeBlocked(node, t);
+  const canUpgrade = !retired && !upgrading && blocked === null;
+  // 刚升级成功、已是最新时不再补一句「已是最新版本」：上面那句已经说了。
+  const reason = blocked?.text && !(status?.tone === "ok" && !node.upgradeAvailable) ? blocked : null;
 
   return (
     // 左边让出状态点那一列，和上面的机器名对齐。
@@ -337,6 +450,22 @@ function MachineDetail({
           </Fragment>
         ))}
       </div>
+      {status || reason || canUpgrade ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
+          <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2, fontSize: 12, lineHeight: 1.6 }}>
+            {status ? <span style={{ color: STATUS_COLOR[status.tone], overflowWrap: "anywhere" }}>{status.text}</span> : null}
+            {reason ? (
+              <span style={{ color: reason.warn ? "var(--gx-warn-ink)" : "var(--gx-faint)", overflowWrap: "anywhere" }}>{reason.text}</span>
+            ) : null}
+            {canUpgrade && !status ? <span style={{ color: "var(--gx-faint)" }}>{t("account.upgradeHint")}</span> : null}
+          </span>
+          {canUpgrade ? (
+            <Btn tone="accent" small disabled={busy} onClick={onUpgrade}>
+              {t("account.upgradeAction", { version: node.latestVersion })}
+            </Btn>
+          ) : null}
+        </div>
+      ) : null}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
         <span className="gx-card__hint" style={{ flex: 1, lineHeight: 1.6 }}>
           {retired ? t("account.retiredHint") : t("account.unbindHint")}

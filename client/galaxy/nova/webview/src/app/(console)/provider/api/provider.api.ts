@@ -154,6 +154,84 @@ export class NodeView {
   endpointCheckedAt?: string;
 
   contributions: ContributionView[] = [];
+
+  /** 平台名，和安装包同一套：linux-x64、darwin-arm64、windows-x64……老节点不报，是空串。 */
+  platform = "";
+
+  /**
+   * ai-bridge 是怎么装上的。cli：独立部署的命令行，能远程升级；nova：随 Nova 应用分发，
+   * 跟着应用更新。老节点不报，是空串 —— 那一版还不认远程升级指令。
+   */
+  distribution = "";
+
+  /** 节点自己报的「此刻为什么不能远程升级」，人话，原样展示；空串是没有障碍。只对 cli 有意义。 */
+  upgradeBlocker = "";
+
+  /** 这台机器所在平台最新的已发布版本；空串是平台还没发布这个平台的包。 */
+  latestVersion = "";
+
+  /** 服务端算好的：cli 且 latestVersion 比 bridgeVersion 新。按钮能不能点以它为准，前端不自己比。 */
+  upgradeAvailable = false;
+
+  /**
+   * 最近一次远程升级；从没升级过就没有。
+   *
+   * 嵌套对象不经过 class-transformer（项目里没用 @Type），拿到的是服务端原样的普通对象，
+   * NodeUpgrade 上的默认值在这里不生效 —— 读的时候按可能缺字段处理。
+   */
+  upgrade?: NodeUpgrade;
+}
+
+export type NodeUpgradeStatus = "pending" | "downloading" | "installing" | "restarting" | "succeeded" | "failed";
+
+export class NodeUpgrade {
+  id = "";
+
+  /** 目标版本。 */
+  version = "";
+
+  /** 发起时的版本。 */
+  fromVersion = "";
+
+  status: NodeUpgradeStatus = "pending";
+
+  /** 人话，原样显示：节点报的进度、失败原因，或者服务端判的超时。 */
+  message = "";
+
+  requestedAt?: string;
+
+  updatedAt?: string;
+}
+
+const UPGRADE_IN_PROGRESS = new Set<string>(["pending", "downloading", "installing", "restarting"]);
+
+/**
+ * 这次升级还没到终态。卡太久的服务端已经折算成 failed，前端不自己算超时 ——
+ * 两边各算一套，就会出现这边说超时、机器那边其实刚装完。
+ */
+export function isUpgradeInProgress(upgrade: NodeUpgrade | undefined): boolean {
+  return Boolean(upgrade && UPGRADE_IN_PROGRESS.has(upgrade.status));
+}
+
+const BRIDGE_VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
+
+/**
+ * candidate 是不是比 current 新。规则和节点、服务端同一套：先比三段数字；数字相同时
+ * 没有预发布后缀的更大；两个都有后缀按字符串比。
+ *
+ * 只用来显示「（最新 x）」—— 随 Nova 分发、版本太旧的机器 upgradeAvailable 恒为 false，
+ * 可主人照样该知道有新版。任何一边认不出来就当不新，宁可少说一句也不乱说。
+ */
+export function isNewerBridgeVersion(candidate: string, current: string): boolean {
+  const next = BRIDGE_VERSION.exec((candidate ?? "").trim());
+  const now = BRIDGE_VERSION.exec((current ?? "").trim());
+  if (!next || !now) return false;
+  for (let index = 1; index <= 3; index += 1) {
+    const delta = Number(next[index]) - Number(now[index]);
+    if (delta !== 0) return delta > 0;
+  }
+  if (!next[4] || !now[4]) return !next[4] && Boolean(now[4]);
+  return next[4] > now[4];
 }
 
 /**
@@ -353,6 +431,70 @@ export async function revokeNode(nodeId: string) {
 }
 
 /**
+ * 远程升级一台 cli 机器。只是下发指令：机器下一次心跳领走，之后的进度看 NodeView.upgrade。
+ * 条件不满足时服务端回人话（不在线、随 Nova 分发、版本太旧、有障碍、没有包、已是最新、正在升级），原样弹出。
+ */
+export async function requestNodeUpgrade(nodeId: string) {
+  const response = await instance.post<ApiResponse<NodeUpgrade>>("/galaxy/provider/node/upgrade", { nodeId });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- ai-bridge 安装包 ---------- */
+
+/** 一个平台最新的已发布安装包。 */
+export class BridgeReleasePackage {
+  /** <系统>-<架构>：linux-x64、linux-arm64、darwin-arm64、darwin-x64、windows-x64、windows-arm64。 */
+  platform = "";
+
+  version = "";
+
+  fileName = "";
+
+  size = 0;
+
+  /** 整个压缩包的 sha256，小写十六进制。 */
+  sha256 = "";
+
+  signature = "";
+
+  /** Hub 上的稳定地址（302 到 OSS），不会过期，可以写进脚本和文档。 */
+  downloadUrl = "";
+
+  notes = "";
+
+  publishedAt?: string;
+}
+
+/**
+ * 安装包清单。version / notes / publishedAt 取所有平台里最新的那个；一个包都没发布时
+ * version 是空串、platforms 是空数组。platforms 由服务端排好序，每个平台只列最新一个。
+ *
+ * platforms 里的每一项同 NodeView.upgrade，是没经过转换的普通对象。
+ */
+export class BridgeReleaseManifest {
+  version = "";
+
+  notes = "";
+
+  publishedAt?: string;
+
+  /** Hub 的对外地址。手动安装那几行 register 命令用它。 */
+  hubUrl = "";
+
+  /** Linux / macOS 一行安装脚本的地址，Hub 地址已经写在脚本里。 */
+  installScript = "";
+
+  /** Windows 的 PowerShell 版。 */
+  installPowerShell = "";
+
+  platforms: BridgeReleasePackage[] = [];
+}
+
+export async function fetchBridgeReleases() {
+  return getData(BridgeReleaseManifest, "/galaxy/provider/bridge/releases");
+}
+
+/**
  * 开关一条贡献。
  *
  * **nodeId 不能省。** cid 在视图里是去掉节点前缀的短名（relay_codex），主人有两台
@@ -413,6 +555,14 @@ export class CreditSummary {
   month = 0;
 
   total = 0;
+
+  /**
+   * 累计邀请奖励净额（已扣掉申诉追回）。不是和上面并列的一个桶：邀请奖励本身也记在
+   * available / pending / total 里，这里只是单独报一下其中有多少来自邀请。
+   *
+   * credits 在 ProviderDashboard 里是嵌套对象，不经过转换 —— 老服务端不带这个字段时读到的是 undefined。
+   */
+  referral = 0;
 }
 
 export class DailyPoint {

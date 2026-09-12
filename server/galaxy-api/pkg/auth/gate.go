@@ -96,6 +96,13 @@ func UserID(ginContext *gin.Context) string {
 	return principal.UserID
 }
 
+// Side 当前账号在哪一端。两端各一张账号表，所以要按 id 找回这个人的接口都得带上它。
+// 取的是门认定的那个端，不是路径里的字符串 —— 两者一致由 Gate.Require 保证。
+func Side(ginContext *gin.Context) string {
+	principal, _ := CurrentAccount(ginContext)
+	return principal.Side
+}
+
 func hasSuffix(path string, suffixes []string) bool {
 	for _, suffix := range suffixes {
 		if strings.HasSuffix(path, suffix) {

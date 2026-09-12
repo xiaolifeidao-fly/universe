@@ -25,6 +25,8 @@ var (
 	ErrWrongPassword  = errors.New("当前密码不正确")
 	ErrSamePassword   = errors.New("新密码不能和当前密码相同")
 	ErrAccountMissing = errors.New("账号不存在")
+	// ErrInviteInvalid 邀请码对不上。不悄悄忽略：注册成了、返现却没挂上，邀请人要到很久以后才发现。
+	ErrInviteInvalid = errors.New("邀请码无效：检查一下分享链接，或者清空邀请码直接注册")
 )
 
 // usernamePattern 登录名：字母数字开头，允许 _ . @ + -，所以手机号和邮箱都能直接当用户名用。
@@ -84,6 +86,17 @@ func (s *service) Register(ctx context.Context, req dto.RegisterAccountRequest) 
 	} else if !repository.IsNotFound(err) {
 		return dto.AccountLoginResult{}, err
 	}
+	// 邀请码两端都认，但**各查各的表**：两端是两批人，邀请码的命名空间不共享。
+	// 共用一张表的话，一个共享端的码填进使用端的注册页会「查得到但返错人」。
+	// 在建账号之前查：码不对就当场说，别等用户名已经占上了才报错。
+	invitedBy := ""
+	if code := galaxy.NormalizeInviteCode(req.InviteCode); code != "" {
+		resolved, err := s.resolveInviter(ctx, req.Side, code)
+		if err != nil {
+			return dto.AccountLoginResult{}, err
+		}
+		invitedBy = resolved
+	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
 		return dto.AccountLoginResult{}, err
@@ -94,7 +107,24 @@ func (s *service) Register(ctx context.Context, req dto.RegisterAccountRequest) 
 		Username: username, DisplayName: displayName, PasswordHash: hash,
 		Status: dto.AccountActive, TokenVersion: 1, LastLoginAt: &now,
 	}
-	if err := s.repository.CreateUser(ctx, row); err != nil {
+	// 账号和它的邀请关系一起建：账号建成了、邀请关系没写进去，这个人之后
+	// 买的每一单（使用端）或跑出来的每一笔积分（共享端）都不会给邀请人返现，
+	// 而且没有任何地方会报错。
+	err = s.repository.Tx(ctx, func(tx *repository.GalaxyRepository) error {
+		if err := tx.CreateUser(ctx, row); err != nil {
+			return err
+		}
+		switch row.Side {
+		case dto.SideConsumer:
+			_, err := galaxy.CreateReferral(ctx, tx, row.UserID, invitedBy)
+			return err
+		case dto.SideProvider:
+			_, err := galaxy.CreateProviderReferral(ctx, tx, row.UserID, invitedBy)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		// 两个人同时抢一个用户名：查重都过了，唯一索引挡下后一个。
 		// 回头再查一次，把 1062 翻成人话，而不是把驱动的报错原样丢给用户。
 		if _, findErr := s.repository.FindUserByName(ctx, bizLine, req.Side, username); findErr == nil {
@@ -103,6 +133,34 @@ func (s *service) Register(ctx context.Context, req dto.RegisterAccountRequest) 
 		return dto.AccountLoginResult{}, err
 	}
 	return s.loginResult(ctx, row)
+}
+
+// resolveInviter 按端查邀请码的主人，返回他的账号 id。
+//
+// 两端各查各的表是刻意的：邀请码的命名空间不共享，共享端的码在使用端**查不到**，
+// 于是会明明白白地报「邀请码无效」，而不是悄悄把返现记到另一端的某个人头上。
+func (s *service) resolveInviter(ctx context.Context, side, code string) (string, error) {
+	switch side {
+	case dto.SideConsumer:
+		row, err := s.repository.FindReferralByCode(ctx, bizLine, code)
+		if repository.IsNotFound(err) {
+			return "", ErrInviteInvalid
+		}
+		if err != nil {
+			return "", err
+		}
+		return row.UserID, nil
+	case dto.SideProvider:
+		row, err := s.repository.FindProviderReferralByCode(ctx, bizLine, code)
+		if repository.IsNotFound(err) {
+			return "", ErrInviteInvalid
+		}
+		if err != nil {
+			return "", err
+		}
+		return row.UserID, nil
+	}
+	return "", nil
 }
 
 func (s *service) Login(ctx context.Context, req dto.LoginAccountRequest) (dto.AccountLoginResult, error) {
@@ -125,7 +183,7 @@ func (s *service) Login(ctx context.Context, req dto.LoginAccountRequest) (dto.A
 	}
 	now := time.Now()
 	// 登录时间写不进去不该挡住登录本身。
-	if err := s.repository.TouchUserLogin(ctx, bizLine, row.UserID, now); err == nil {
+	if err := s.repository.TouchUserLogin(ctx, bizLine, row.Side, row.UserID, now); err == nil {
 		row.LastLoginAt = &now
 	}
 	return s.loginResult(ctx, row)
@@ -141,15 +199,16 @@ func (s *service) Authenticate(ctx context.Context, side, token string) (Princip
 	if err != nil {
 		return Principal{}, ErrNotLogin
 	}
-	row, err := s.repository.FindUser(ctx, bizLine, claims.Subject)
+	// 只在这一端的表里找。令牌里签的端就是这么被兑现的：一张共享端的令牌拿到
+	// 使用端的接口上，即便签名对、版本对，那个 pu_ 开头的 id 在使用端表里也不存在。
+	row, err := s.repository.FindUser(ctx, bizLine, side, claims.Subject)
 	if err != nil {
 		if repository.IsNotFound(err) {
 			return Principal{}, ErrNotLogin
 		}
 		return Principal{}, err
 	}
-	// Side 再比一次：前缀是签发时定的，库里这一列才是权威。
-	if row.Side != side || row.Status != dto.AccountActive || row.TokenVersion != claims.Version {
+	if row.Status != dto.AccountActive || row.TokenVersion != claims.Version {
 		return Principal{}, ErrNotLogin
 	}
 	return Principal{
@@ -158,8 +217,8 @@ func (s *service) Authenticate(ctx context.Context, side, token string) (Princip
 	}, nil
 }
 
-func (s *service) Current(ctx context.Context, userID string) (dto.AccountView, error) {
-	row, err := s.repository.FindUser(ctx, bizLine, userID)
+func (s *service) Current(ctx context.Context, side, userID string) (dto.AccountView, error) {
+	row, err := s.repository.FindUser(ctx, bizLine, side, userID)
 	if repository.IsNotFound(err) {
 		return dto.AccountView{}, ErrAccountMissing
 	}
@@ -173,11 +232,11 @@ func (s *service) Current(ctx context.Context, userID string) (dto.AccountView, 
 	return views[0], nil
 }
 
-func (s *service) ChangeOwnPassword(ctx context.Context, userID string, req dto.ChangeAccountPasswordRequest) (dto.AccountLoginResult, error) {
+func (s *service) ChangeOwnPassword(ctx context.Context, side, userID string, req dto.ChangeAccountPasswordRequest) (dto.AccountLoginResult, error) {
 	if req.CurrentPassword == "" || req.NewPassword == "" {
 		return dto.AccountLoginResult{}, errors.New("请填写当前密码和新密码")
 	}
-	row, err := s.repository.FindUser(ctx, bizLine, userID)
+	row, err := s.repository.FindUser(ctx, bizLine, side, userID)
 	if repository.IsNotFound(err) {
 		return dto.AccountLoginResult{}, ErrAccountMissing
 	}
@@ -196,12 +255,12 @@ func (s *service) ChangeOwnPassword(ctx context.Context, userID string, req dto.
 	}
 	// 改密即全端下线：密码被人拿去登过的那台机器上的令牌也跟着失效。
 	// 当前这台接着用回去的新令牌，不用重新登录。
-	if err := s.repository.BumpTokenVersion(ctx, bizLine, userID, map[string]any{
+	if err := s.repository.BumpTokenVersion(ctx, bizLine, side, userID, map[string]any{
 		"password_hash": hash, "must_change_password": false,
 	}); err != nil {
 		return dto.AccountLoginResult{}, err
 	}
-	updated, err := s.repository.FindUser(ctx, bizLine, userID)
+	updated, err := s.repository.FindUser(ctx, bizLine, side, userID)
 	if err != nil {
 		return dto.AccountLoginResult{}, err
 	}

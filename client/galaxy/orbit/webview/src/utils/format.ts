@@ -120,6 +120,12 @@ export function formatInt(value: number): string {
   return Math.round(value).toLocaleString("en-US");
 }
 
+/** 套餐里的一项额度：时长、体积按各自的量纲写（1h、2.0GB），token 这类个数用紧凑写法。 */
+export function formatQuota(unit: string, value: number): string {
+  if (unit.endsWith(".seconds") || unit.endsWith(".bytes")) return formatUnitValue(unit, value);
+  return formatCompact(value);
+}
+
 /** token 这种大基数用紧凑写法：1.21M / 316k。 */
 export function formatCompact(value: number): string {
   if (!Number.isFinite(value)) return "-";
@@ -139,6 +145,23 @@ export function formatSignedInt(value: number): string {
 export function formatCny(micros: number): string {
   if (!Number.isFinite(micros)) return "-";
   return `¥${(micros / 1_000_000).toFixed(2)}`;
+}
+
+/**
+ * 积分。1 积分 = ¥1，服务端和金额一样存「微」。
+ *
+ * 不补零到两位：「20 积分」「9.9 积分」读起来是个数，「20.00 积分」读起来像一张收据。
+ * 最多留两位小数 —— 返现按比例算，会出现 0.99 这种零头，再细就没人关心了。
+ */
+export function formatPoints(micros: number): string {
+  if (!Number.isFinite(micros)) return "-";
+  return (micros / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+/** 返现比例存的是万分之一：1000 → 10%，250 → 2.5%。 */
+export function formatBps(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return "0%";
+  return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
 
 /** 09-10 23:38 —— 桌面窗口宽度有限，年份没有信息量。 */

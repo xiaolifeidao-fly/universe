@@ -25,10 +25,18 @@ import (
 type Handler struct {
 	service galaxy.Service
 	gate    *auth.Gate
+	options Options
 }
 
-func NewHandler(service galaxy.Service, gate *auth.Gate) *Handler {
-	return &Handler{service: service, gate: gate}
+// Options 部署方声明的东西。
+type Options struct {
+	// Models 是 galaxy.models 里声明的模型清单。模型目录表为空时，模型广场用它兜底 ——
+	// 和门户同一份，否则广场上写着有的模型，客户端填进去却用不了。
+	Models []string
+}
+
+func NewHandler(service galaxy.Service, gate *auth.Gate, options Options) *Handler {
+	return &Handler{service: service, gate: gate, options: options}
 }
 
 // RegisterNative 挂在根路由下，与 relay 的 /v1/messages 同一鉴权。
@@ -72,6 +80,17 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	console.POST("/disputes", h.consoleFileDispute)
 	console.POST("/disputes/:disputeId/withdraw", h.consoleWithdrawDispute)
 	console.GET("/packages", h.listPackages)
+	// 模型广场与积分购买。积分只能由运营在 manager-api 里充进来，这里只有看和花。
+	console.GET("/catalog", h.catalog)
+	console.GET("/points", h.pointsSummary)
+	console.GET("/points/ledger", h.pointsLedger)
+	console.POST("/points/purchase", h.purchaseWithPoints)
+	// 分享：自己的邀请码、邀请来的人。返现不用调接口，被邀请人买的那一单交付时服务端自己记。
+	console.GET("/referral", h.referral)
+	console.GET("/referral/invitees", h.invitees)
+	// 取回密钥明文：「使用」按钮写本机配置、复制带密钥的接入命令都要它。
+	// 用 POST 而不是 GET：keyId 放在请求体里，明文所在的这次请求不会被当成可缓存的资源。
+	console.POST("/keys/secret", h.revealKey)
 	console.GET("/payments/channels", h.paymentChannels)
 	console.POST("/orders", h.createOrder)
 	console.GET("/orders", h.listOrders)
@@ -188,6 +207,71 @@ func (h *Handler) paySandbox(context *gin.Context) {
 	req.UserID = auth.UserID(context)
 	view, err := h.service.PaySandbox(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
+}
+
+// ---------- 模型广场、积分与分享 ----------
+
+func (h *Handler) catalog(context *gin.Context) {
+	view, err := h.service.ConsumerCatalog(context.Request.Context(), h.options.Models)
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) pointsSummary(context *gin.Context) {
+	view, err := h.service.PointsSummary(context.Request.Context(), auth.UserID(context))
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) pointsLedger(context *gin.Context) {
+	var query dto.PointsLedgerQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	// 范围只由令牌决定：OwnerUserID 不从请求里绑，按人找的关键字也只有运营那边认。
+	query.Operator, query.OwnerUserID, query.OwnerKeyword = false, auth.UserID(context), ""
+	page, err := h.service.PointsLedger(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) purchaseWithPoints(context *gin.Context) {
+	var req dto.PurchaseRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UserID = auth.UserID(context)
+	view, err := h.service.PurchaseWithPoints(context.Request.Context(), req)
+	noStore(context)
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) referral(context *gin.Context) {
+	view, err := h.service.ReferralOverview(context.Request.Context(), auth.UserID(context))
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) invitees(context *gin.Context) {
+	page, err := h.service.ListInvitees(context.Request.Context(), auth.UserID(context),
+		atoiOr(context.Query("offset"), 0), atoiOr(context.Query("limit"), 20))
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) revealKey(context *gin.Context) {
+	var req struct {
+		KeyID string `json:"keyId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.RevealKey(context.Request.Context(), auth.UserID(context), req.KeyID)
+	noStore(context)
+	httpx.JSON(context, view, err)
+}
+
+// noStore 响应里带着密钥明文时用：任何一层代理、浏览器缓存都不该留一份。
+func noStore(context *gin.Context) {
+	context.Header("Cache-Control", "no-store")
 }
 
 func (h *Handler) renewKey(context *gin.Context) {

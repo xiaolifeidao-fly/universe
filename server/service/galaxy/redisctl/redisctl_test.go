@@ -317,7 +317,7 @@ func TestSettleReturnsReservationAndRecordsActual(t *testing.T) {
 
 	// 实际只用了 120：预留的 1000 全额回滚，再按实际扣 120。
 	actual := contract.Metering{contract.UnitOutputTokens: 120}
-	if err := plane.Settle(ctx, galaxy.SettleCommand{
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
 		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: actual,
 		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth", State: contract.UnitCompleted,
 	}); err != nil {
@@ -358,9 +358,16 @@ func TestSettleIsIdempotent(t *testing.T) {
 		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: actual,
 		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth", State: contract.UnitCompleted,
 	}
+	// 返回值是「这次真的结了没有」：第一次为真，之后必须为假。
+	// 调用方靠它决定要不要走计费 —— 丢了这个布尔值，一次重发的 complete
+	// 就会让提供者被重复入账（账本按 txn 幂等，余额是加减）。
 	for i := 0; i < 3; i++ {
-		if err := plane.Settle(ctx, command); err != nil {
+		settled, err := plane.Settle(ctx, command)
+		if err != nil {
 			t.Fatalf("第 %d 次结算失败: %v", i+1, err)
+		}
+		if want := i == 0; settled != want {
+			t.Fatalf("第 %d 次结算应当返回 %v，实际 %v", i+1, want, settled)
 		}
 	}
 	snapshot, _, _ := plane.GetContribution(ctx, "c1")
@@ -382,7 +389,7 @@ func TestSettleReleasesSeatWhenAsked(t *testing.T) {
 	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil {
 		t.Fatalf("放置失败: %v", err)
 	}
-	if err := plane.Settle(ctx, galaxy.SettleCommand{
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
 		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: contract.Metering{},
 		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth", State: contract.UnitFailed, ReleaseSeat: true,
 	}); err != nil {
@@ -407,7 +414,7 @@ func TestWindowRolloverRestoresQuota(t *testing.T) {
 	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil {
 		t.Fatalf("放置失败: %v", err)
 	}
-	_ = plane.Settle(ctx, galaxy.SettleCommand{
+	_, _ = plane.Settle(ctx, galaxy.SettleCommand{
 		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate,
 		Actual:     contract.Metering{contract.UnitOutputTokens: 900},
 		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth", State: contract.UnitCompleted,

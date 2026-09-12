@@ -8,7 +8,7 @@ use crate::core::paths::{default_config_path, Env};
 use crate::credentials::CredentialRegistry;
 use crate::pool::client::HubClient;
 use crate::pool::probe::probe;
-use crate::pool::runner::{create_pool_runner, PoolRunner};
+use crate::pool::runner::{create_pool_runner_with, PoolRunner, RunnerOptions};
 use crate::pool::setup::{hub_needs_rebind, login_command, open_terminal, origin_of, write_pool_connection};
 use crate::pool::token::{read_node_identity, resolve_node_token_file, write_node_identity, NodeIdentity};
 use crate::pool::tools::{tool_statuses, upgrade_tool};
@@ -442,8 +442,12 @@ impl NativeBridge {
         cfg: AppConfig,
         generation: u64,
     ) -> std::result::Result<(), String> {
+        // 随 Nova 分发的 bridge 没有 updater：它的可执行文件是 Electron 应用包的一部分，
+        // 换它等于改应用签名过的包。Hub 下发升级指令时 runner 直接报「请更新 Nova」。
+        let options = RunnerOptions { distribution: "nova".into(), updater: None };
         let runner = Arc::new(
-            create_pool_runner(cfg, self.env.clone(), self.bridge_version.clone(), self.http.clone()).await?,
+            create_pool_runner_with(cfg, self.env.clone(), self.bridge_version.clone(), self.http.clone(), options)
+                .await?,
         );
         runtime.pool = Some(Arc::clone(&runner));
         // hello 可能重试好几分钟。绝不能让 IPC 的这一次回复等在 Hub 上。

@@ -9,13 +9,30 @@ import (
 )
 
 func (r *GalaxyRepository) SavePackage(ctx context.Context, row *GalaxyPackage) error {
-	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "biz_line"}, {Name: "package_code"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"title", "units_json", "amount", "currency", "ttl_days",
-			"allowed_kinds_json", "model_tier_json", "concurrency", "rpm", "listed", "sort_order", "updated_time",
-		}),
-	}).Create(row).Error
+	listed := row.Listed
+	return r.Tx(ctx, func(tx *GalaxyRepository) error {
+		if err := tx.Db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "biz_line"}, {Name: "package_code"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"title", "units_json", "amount", "currency", "ttl_days",
+				"allowed_kinds_json", "model_tier_json", "concurrency", "rpm", "model_id", "listed", "sort_order", "updated_time",
+			}),
+		}).Create(row).Error; err != nil {
+			return err
+		}
+		return tx.writeListed(ctx, &GalaxyPackage{}, "package_code", row.BizLine, row.PackageCode, listed)
+	})
+}
+
+// writeListed 把上下架单独再写一次。
+//
+// listed 的标签默认值是 true：GORM 建记录时会把值为 false 的字段换成标签里的默认值再插入
+// （还顺手把结构体上的值改掉），upsert 的 VALUES(listed) 于是也是 true —— 「下架」保存成功、库里却还是上架。
+// 这个坑从有下架那天就在，套餐和模型目录都踩着。
+func (r *GalaxyRepository) writeListed(ctx context.Context, model any, keyColumn, bizLine, key string, listed bool) error {
+	return r.Db.WithContext(ctx).Model(model).
+		Where("biz_line = ?", bizLine).Where(keyColumn+" = ?", key).
+		UpdateColumn("listed", listed).Error
 }
 
 func (r *GalaxyRepository) ListPackages(ctx context.Context, bizLine string, listedOnly bool) ([]*GalaxyPackage, error) {

@@ -28,18 +28,24 @@
 -- -------------------------------------------------------------------------
 -- 0. 账号
 -- Galaxy 自己的账号体系，和任务宇宙的 zt_identity_user 没有任何关系，令牌也互不通用。
--- 共享端（provider，Nova）和使用端（consumer，Orbit）是两批人，各注册各的：
--- 用户名按端唯一，user_id 带端的前缀（pu_ / cu_）。池内表里所有 owner_user_id /
--- user_id / provider_user_id 存的都是这个 user_id。
+-- 共享端（provider，Nova）和使用端（consumer，Orbit）是两批人，**两张表**：
+-- 各注册各的，同一个用户名在两端可以各有一个账号，谁也不认识谁。
+--
+-- 两张表的列一模一样，因为它们本来就是同一件事分两拨人。分表不是为了让两端长得不一样，
+-- 是为了它们在库里没有交集：查账号必须先说清是哪一端，漏掉端的查询查不出东西来，
+-- 而不是安安静静地把另一端的人捞出来。
+--
+-- user_id 照旧带端的前缀（pu_ / cu_）：池内表的 owner_user_id / user_id /
+-- provider_user_id 是一列混着两端的引用（争议表两端都记），前缀让人一眼看出是谁。
 -- 从任务宇宙账号迁过来的老数据见 server/migrations/20260911_galaxy_user.sql。
 -- -------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS `zt_galaxy_user` (
+-- 共享端（Nova）：出算力的人。散户 / 工作室的身份在 zt_galaxy_provider，不在这里。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_provider_user` (
   `id`                   bigint AUTO_INCREMENT,
   `biz_line`             varchar(32),                             -- 业务线，池内固定 galaxy
-  `user_id`              varchar(40),                             -- 账号业务键：共享端 pu_…，使用端 cu_…
-  `side`                 varchar(16),                             -- provider=共享端；consumer=使用端
-  `username`             varchar(64),                             -- 登录名，小写，按端唯一
+  `user_id`              varchar(40),                             -- 账号业务键，共享端固定 pu_ 开头
+  `username`             varchar(64),                             -- 登录名，小写，共享端内唯一
   `display_name`         varchar(128),
   `password_hash`        varchar(255),                            -- bcrypt
   `status`               varchar(16),                             -- active/disabled
@@ -51,8 +57,29 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_user` (
   `updated_time`         datetime(3) NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_user_id` (`biz_line`,`user_id`),
-  UNIQUE INDEX `uk_gx_user_name` (`biz_line`,`side`,`username`),
-  INDEX `idx_gx_user_side` (`biz_line`,`side`,`status`)
+  UNIQUE INDEX `uk_gx_user_name` (`biz_line`,`username`),
+  INDEX `idx_gx_user_status` (`biz_line`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 使用端（Orbit）：花积分买额度的人。积分、邀请码、订单都挂在这批账号上。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_user` (
+  `id`                   bigint AUTO_INCREMENT,
+  `biz_line`             varchar(32),                             -- 业务线，池内固定 galaxy
+  `user_id`              varchar(40),                             -- 账号业务键，使用端固定 cu_ 开头
+  `username`             varchar(64),                             -- 登录名，小写，使用端内唯一
+  `display_name`         varchar(128),
+  `password_hash`        varchar(255),                            -- bcrypt
+  `status`               varchar(16),                             -- active/disabled
+  `must_change_password` boolean DEFAULT false,                   -- 运营重置过密码：改掉之前只能调 me 和改密码
+  `token_version`        bigint DEFAULT 1,                        -- 签进令牌；改密码、重置、停用都加一，旧令牌作废
+  `last_login_at`        timestamp null default null,
+  `updated_by`           varchar(64),                             -- 最近一次处置这个账号（停用、启用、重置密码）的管理端账号
+  `created_time`         datetime(3) NULL,
+  `updated_time`         datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_user_id` (`biz_line`,`user_id`),
+  UNIQUE INDEX `uk_gx_user_name` (`biz_line`,`username`),
+  INDEX `idx_gx_user_status` (`biz_line`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
@@ -71,6 +98,16 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
   `display_name`     varchar(128),                                 -- 主人给机器起的名字
   `token_hash`       varchar(64),                                  -- 节点令牌 sha256
   `bridge_version`   varchar(32),                                  -- ai-bridge 版本
+  `bridge_platform`  varchar(32),                                  -- 节点自报的平台名，如 linux-x64；老版本节点不报，为空
+  `bridge_distribution` varchar(16),                               -- cli=独立部署的命令行，能自升级；nova=随 Nova 应用分发
+  `upgrade_blocker`  varchar(255),                                 -- 节点自报的「此刻为什么不能远程升级」，人话，直接展示
+  `upgrade_id`       varchar(40),                                  -- 最近一次升级指令的 id，节点按它回报，对不上的忽略
+  `upgrade_version`  varchar(32),                                  -- 最近一次升级的目标版本
+  `upgrade_from_version` varchar(32),                              -- 发起升级时机器上的版本
+  `upgrade_status`   varchar(16),                                  -- pending/downloading/installing/restarting/succeeded/failed
+  `upgrade_message`  varchar(255),                                 -- 最近一次升级的说明或失败原因
+  `upgrade_requested_at` timestamp NULL DEFAULT NULL,              -- 控制台点「升级」的时刻
+  `upgrade_updated_at`   timestamp NULL DEFAULT NULL,              -- 升级状态最近一次变化的时刻
   `contract_version` bigint,                                       -- 节点声明的契约版本
   `access_mode`      varchar(16) DEFAULT 'poll',                   -- poll=节点长轮询领活；export=Hub 回连节点公网地址
   `endpoint_url`     varchar(255) DEFAULT '',                      -- export：Hub 回连的公网基地址
@@ -98,7 +135,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_node` (
 CREATE TABLE IF NOT EXISTS `zt_galaxy_provider` (
   `id`            bigint AUTO_INCREMENT,
   `biz_line`      varchar(32),
-  `owner_user_id` varchar(64),                                  -- 共享端账号 zt_galaxy_user.user_id（pu_…）
+  `owner_user_id` varchar(64),                                  -- 共享端账号 zt_galaxy_provider_user.user_id（pu_…）
   `provider_type` varchar(16),                                  -- individual=散户，信誉跟着账号；studio=工作室，信誉跟着设备
   `updated_by`    varchar(64),                                  -- 最近一次改身份的管理端账号
   `created_time`  datetime(3) NULL,
@@ -337,7 +374,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_usage_mismatch` (
 
 -- -------------------------------------------------------------------------
 -- 3. 消费者：密钥、余额、商品与订单
--- 算力密钥只存 sha256，明文在签发那一次返回后永远查不到。
+-- 算力密钥鉴权只按 sha256 查。2026-09-12 起明文另外加密存一份（secret_cipher，
+-- 加密密钥在 galaxy.key_cipher_secret，不进库），给使用端「一键使用」和运营转交用；
+-- 更早签发的只有哈希，取不回，换发一次即可。
 -- 支付与履约分两步：回调只把订单推到 paid，履约单独一步且幂等 ——
 -- 渠道重推同一条通知不会重复发额度。
 -- -------------------------------------------------------------------------
@@ -347,9 +386,11 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_key` (
   `biz_line`               varchar(32),
   `key_id`                 varchar(64),                                    -- 匿名标识 ck_…，节点看到的就是它
   `key_hash`               varchar(64),                                    -- sk- 明文的 sha256
+  `secret_cipher`          varchar(256),                                   -- sk- 明文的 AES-GCM 密文，空表示取不回
   `alias`                  varchar(64),                                    -- 日志与账单里的可读名
   `owner_user_id`          varchar(64),
   `order_id`               varchar(64),
+  `model_id`               varchar(96),                                    -- 来源套餐绑定的模型，只用于认类别（Claude / Codex）与展示
   `allowed_kinds_json`     varchar(512),                                   -- 空数组表示不限
   `allowed_providers_json` varchar(512),
   `model_tier_json`        varchar(1024),                                  -- 允许的模型模式
@@ -439,6 +480,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_package` (
   `model_tier_json`    varchar(1024),
   `concurrency`        bigint DEFAULT 4,
   `rpm`                bigint DEFAULT 120,
+  `model_id`           varchar(96),                              -- 绑定的模型（zt_galaxy_model.model_id），空为通用套餐；分享返现按它的比例算
   `listed`             boolean DEFAULT true,
   `sort_order`         bigint DEFAULT 0,
   `created_time`       datetime(3) NULL,
@@ -459,7 +501,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_order` (
   `units_json`    varchar(1024),
   `target_key_id` varchar(64),                                              -- 非空表示给这把已有密钥充值，空表示签发新密钥
   `key_id`        varchar(64),                                              -- 履约后落到哪把密钥
+  `model_id`      varchar(96),                                              -- 下单时套餐绑定的模型快照
   `status`        varchar(16),                                              -- pending/paid/fulfilled/cancelled
+  `pay_method`    varchar(16),                                              -- points=积分；channel=支付渠道（空串按 channel 看）
   `payment_ref`   varchar(128),
   `paid_at`       timestamp NULL DEFAULT NULL,
   `fulfilled_at`  timestamp NULL DEFAULT NULL,
@@ -704,6 +748,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_model` (
   `currency`          varchar(8) DEFAULT 'CNY',
   `tags_json`         varchar(512),                                       -- 能力标签，JSON 数组
   `summary`           varchar(256),                                       -- 一句话说明，门户卡片上那行
+  `referral_bps`      bigint,                                             -- 分享返现比例（万分之一），NULL 走全局默认，0 是不返
   `listed`            boolean DEFAULT true,
   `featured`          boolean DEFAULT false,                              -- 首页精选位
   `sort_order`        bigint DEFAULT 0,
@@ -736,4 +781,115 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_lead` (
   UNIQUE INDEX `uk_gx_lead` (`biz_line`,`lead_id`),
   INDEX `idx_gx_lead_status` (`biz_line`,`status`,`created_time` desc),
   INDEX `idx_gx_lead_ip` (`biz_line`,`ip`,`created_time` desc)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- -------------------------------------------------------------------------
+-- 7. 使用者积分与分享
+-- 使用者的钱只有积分一种形态，1 积分 = ¥1，库里存「微积分」（与 amount / price 同量纲）。
+-- 运营在管理端充进来，买套餐花掉，邀请来的人买套餐时按套餐所绑模型的比例返给邀请人。
+-- 余额的每次变动都和 points_ledger 的一行在同一个事务里，txn_id 是幂等键；
+-- 管理端的「充值明细」就是 type=recharge 的那些流水，不另建表。
+-- 和提供者的 credit_account 不是一回事：那本是出算力赚的、按 payout_rate 提现的。
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_points_account` (
+  `id`            bigint AUTO_INCREMENT,
+  `biz_line`      varchar(32),
+  `owner_user_id` varchar(64),                                      -- 使用端账号 cu_…
+  `balance`       bigint,                                           -- 微积分
+  `updated_time`  datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_points_account` (`biz_line`,`owner_user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_points_ledger` (
+  `id`              bigint AUTO_INCREMENT,
+  `biz_line`        varchar(32),
+  `txn_id`          varchar(96),                                    -- 幂等键：recharge:<请求号> / order:<订单号>:pay|referral
+  `owner_user_id`   varchar(64),
+  `type`            varchar(16),                                    -- recharge/purchase/referral
+  `amount`          bigint,                                         -- 微积分，入账为正、出账为负
+  `balance_after`   bigint,
+  `base_amount`     bigint,                                         -- 充值=实付金额（微元）；返现=那笔购买实付的积分
+  `rate_bps`        bigint,                                         -- 返现比例快照（万分之一）
+  `order_id`        varchar(64),
+  `related_user_id` varchar(64),                                    -- 返现：下单的被邀请人
+  `model_id`        varchar(96),
+  `remark`          varchar(256),                                   -- 运营备注，使用端看不到
+  `operator`        varchar(64),                                    -- 运营充值：经手的管理端账号
+  `created_at`      datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_points_ledger` (`biz_line`,`txn_id`),
+  INDEX `idx_gx_points_ledger_owner` (`biz_line`,`owner_user_id`,`created_at`),
+  INDEX `idx_gx_points_ledger_type` (`biz_line`,`type`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 邀请关系。一个使用端账号一行；老账号第一次打开分享页时补上（邀请人留空）。
+-- 不挂在 zt_galaxy_consumer_user 上：邀请码要唯一索引，而老账号在第一次打开分享页
+-- 之前没有码，那一列会有一片空串直接撞唯一键。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_referral` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `user_id`      varchar(64),                                       -- 使用端账号 cu_…
+  `invite_code`  varchar(16),                                       -- 这个人的邀请码，大写
+  `invited_by`   varchar(64),                                       -- 邀请人 cu_…，空表示自己注册的；注册后不可改
+  `created_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_referral_user` (`biz_line`,`user_id`),
+  UNIQUE INDEX `uk_gx_referral_code` (`biz_line`,`invite_code`),
+  INDEX `idx_gx_referral_inviter` (`biz_line`,`invited_by`,`created_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 运营在后台随时要改、改完不该重启的零散开关。目前只有 referral.default_bps（通用套餐的返现比例）。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_setting` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `setting_key`  varchar(64),
+  `value`        varchar(1024),
+  `updated_by`   varchar(64),                                       -- 管理端账号
+  `updated_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_setting` (`biz_line`,`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 已发布的 ai-bridge 安装包。一个版本一个平台一行；字节在 OSS，这里只有元数据。
+-- 签名是 Ed25519，签的是版本 + 平台 + sha256；节点只装验得过签名的包。
+-- 下架不删行：机器上报的版本要能对得上它当初装的是哪一个包。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_bridge_release` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `release_id`   varchar(40),                                       -- 业务键 br_…
+  `version`      varchar(32),                                       -- 语义版本，如 0.2.0
+  `platform`     varchar(32),                                       -- linux-x64 / darwin-arm64 / windows-x64 …
+  `file_name`    varchar(128),                                      -- ai-bridge-<版本>-<平台>.tar.gz（windows 是 .zip）
+  `object_key`   varchar(255),                                      -- OSS 对象键，含部署配置的 prefix
+  `size`         bigint,
+  `sha256`       varchar(64),                                       -- 整个压缩包的 sha256，小写十六进制
+  `signature`    varchar(128),                                      -- 发布签名（Ed25519，base64）
+  `notes`        text,                                              -- 版本说明
+  `status`       varchar(16),                                       -- published/withdrawn
+  `published_by` varchar(64),                                       -- 上传的管理端账号
+  `published_at` timestamp NULL DEFAULT NULL,
+  `created_time` datetime(3) NULL,
+  `updated_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_bridge_release_id` (`biz_line`,`release_id`),
+  UNIQUE INDEX `uk_gx_bridge_release_target` (`biz_line`,`version`,`platform`),
+  INDEX `idx_gx_bridge_release_platform` (`biz_line`,`platform`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 共享端的邀请码与邀请人。和使用端那张 zt_galaxy_referral 分开：两端是两批人，
+-- 邀请码的命名空间混在一起时，一端的码填进另一端会「查得到但返错人」。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_provider_referral` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `user_id`      varchar(64),                                       -- 共享端账号 pu_…
+  `invite_code`  varchar(16),                                       -- 这个人的邀请码，大写
+  `invited_by`   varchar(64),                                       -- 邀请人 pu_…，空表示自己注册的；注册后不可改
+  `created_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_provider_referral_user` (`biz_line`,`user_id`),
+  UNIQUE INDEX `uk_gx_provider_referral_code` (`biz_line`,`invite_code`),
+  INDEX `idx_gx_provider_referral_inviter` (`biz_line`,`invited_by`,`created_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -1,6 +1,6 @@
 use super::client::{
     AccessDeclaration, CapabilityReport, CompleteBody, EnabledContribution, HeartbeatLane, HubClient,
-    HubFailure, HubLane, NextResult,
+    HubFailure, HubLane, InstallInfo, NextResult,
 };
 use super::export::{normalize_public_url, resolve_secret, ExportServer};
 use super::hub_address::HubAddressCheck;
@@ -9,6 +9,7 @@ use super::machine::machine_fingerprint;
 use super::models::list_models;
 use super::probe::probe;
 use super::token::{fingerprint, read_node_identity, resolve_node_token_file, NodeIdentity};
+use super::upgrade::{compare_versions, current_platform, UpgradeCommand, UpgradeState, Updater, Version};
 use crate::business::llm_chat::RelayProvider;
 use crate::business::video_edit::FfmpegLocalProvider;
 use crate::business::{
@@ -24,7 +25,7 @@ use async_stream::stream;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -52,6 +53,21 @@ const SHUTDOWN_REPORT_TIMEOUT: Duration = Duration::from_secs(3);
 /// 探到变化就主动重发一次 hello。60 秒是折中 —— 探测要读 Keychain，不是白拿的，
 /// 但恢复延迟也不该长到让人以为没生效。
 const HEALTH_PROBE_MS: u64 = 60_000;
+
+/// 没有 updater 时（随 Nova 分发）对升级指令的回答。契约 3.4 第 2 条的原话，控制台原样显示。
+const NO_UPDATER_MESSAGE: &str = "这台机器的 ai-bridge 随 Nova 应用分发，不能远程升级，请更新 Nova";
+
+/// 建 runner 时的可选项。默认值（distribution 空串、没有 updater）就是老行为。
+#[derive(Clone, Default)]
+pub struct RunnerOptions {
+    /// hello 里报的分发方式：`cli`（独立部署，能自升级）/ `nova`（随 Nova 分发）。
+    pub distribution: String,
+    /// 远程升级用的升级器。None 表示这份 ai-bridge 不能自己换自己，收到指令只报 failed。
+    ///
+    /// **给了 updater 的调用方必须等 `restart_requested()`**：升级装好之后 runner 会停止领新活、
+    /// 等着被重启。没人接这一棒的话，这台机器会一直挂着不干活。
+    pub updater: Option<Arc<dyn Updater>>,
+}
 
 /// LocalCapability 是本机对一项能力知道、而 Hub 不知道的那部分：
 /// 拿哪一份订阅登录态、跑哪个可执行文件。Hub 只发「要不要、给多少」，
@@ -111,6 +127,37 @@ pub(crate) struct RunnerInner {
     hub_access: Mutex<Option<String>>,
     /// 设备指纹，主人是工作室时 Hub 按它记信誉。启动时算一次：机器 id 运行期不会变。
     machine_fingerprint: Option<String>,
+    /// cli / nova，hello 里原样报。
+    distribution: String,
+    updater: Option<Arc<dyn Updater>>,
+    upgrade_gate: Mutex<UpgradeGate>,
+    /// 新版本已经装好，正在为重启排空：不领新活、心跳把通道报成 paused、export 入口回 503。
+    ///
+    /// 和 stopping 分开：排空期间心跳、续租、终态上报都要照常走，在跑的单元得好好跑完 ——
+    /// stopping 会把这些一起掐掉。
+    restart_draining: AtomicBool,
+    /// 「可以重启了」。watch 而不是 Notify：进程主人什么时候开始等都拿得到这个结果，
+    /// 不会因为通知发在它开始等之前就错过。
+    restart: tokio::sync::watch::Sender<bool>,
+}
+
+/// 升级指令的去重与互斥（契约 3.4 第 1 条）。
+#[derive(Default)]
+struct UpgradeGate {
+    /// 接手过的指令 id。Hub 在收到 downloading 之前每次心跳都重发同一条，
+    /// 不按 id 去重的话，一次升级会被下载十几遍。
+    seen: HashSet<String>,
+    /// 有一次升级在跑，或者已经装好在等重启。这期间新来的指令一律不接 ——
+    /// 不记进 seen，等这一次失败结束后 Hub 再发来时照常处理。
+    busy: bool,
+}
+
+/// 一次升级在节点这边怎么收场。
+enum UpgradeEnd {
+    /// 本机已经是目标版本，报 succeeded。
+    AlreadyCurrent,
+    /// 新版本已经换上，等进程主人重启。
+    Installed,
 }
 
 /// 一个正在本机跑的单元。
@@ -137,6 +184,16 @@ pub async fn create_pool_runner(
     env: Env,
     bridge_version: String,
     http: reqwest::Client,
+) -> Result<PoolRunner, String> {
+    create_pool_runner_with(cfg, env, bridge_version, http, RunnerOptions::default()).await
+}
+
+pub async fn create_pool_runner_with(
+    cfg: AppConfig,
+    env: Env,
+    bridge_version: String,
+    http: reqwest::Client,
+    options: RunnerOptions,
 ) -> Result<PoolRunner, String> {
     let settings = cfg.pool.clone().ok_or("mode=pool 但缺少 pool 配置段")?;
     let token_file = resolve_node_token_file(Some(&settings), &env);
@@ -176,6 +233,11 @@ pub async fn create_pool_runner(
             export_config,
             hub_access: Mutex::new(None),
             machine_fingerprint: machine,
+            distribution: options.distribution,
+            updater: options.updater,
+            upgrade_gate: Mutex::new(UpgradeGate::default()),
+            restart_draining: AtomicBool::new(false),
+            restart: tokio::sync::watch::Sender::new(false),
         }),
         tasks: Mutex::new(vec![]),
         export: tokio::sync::Mutex::new(None),
@@ -409,6 +471,45 @@ impl PoolRunner {
     pub fn public_url(&self) -> Option<String> {
         self.inner.access.endpoint.as_ref().map(|endpoint| endpoint.url.clone())
     }
+
+    /// 远程升级把新版本装好、要求重启时返回。没有升级就一直挂着。
+    ///
+    /// runner 自己不重启：换进程是进程主人的事（它还得先排空、再 stop），
+    /// 这里只负责把「可以重启了」这一棒交出去。
+    pub async fn restart_requested(&self) {
+        let mut receiver = self.inner.restart.subscribe();
+        // 发送端和 runner 同寿，wait_for 只会因为值变成 true 而返回。
+        let _ = receiver.wait_for(|requested| *requested).await;
+    }
+
+    /// 为重启排空：不再接新活，等在跑的单元跑完，最多等 timeout。返回到点时还剩几个没跑完。
+    ///
+    /// 停止接活分三处落实 —— 长轮询不再去领；心跳把每条通道报成 paused，Hub 不再往这台机器派；
+    /// export 入口回 503 node_stopping，Hub 立刻改派。在跑的单元不受影响，续租、上行、终态照常。
+    /// 剩下没跑完的，由接下来的 stop() 按 node_shutdown 报给 Hub 改派。
+    pub async fn drain_for_restart(&self, timeout: Duration) -> usize {
+        self.inner.restart_draining.store(true, Ordering::Relaxed);
+        let started = Instant::now();
+        let initial = self.inner.inflight_units();
+        if initial > 0 {
+            log_info!("pool_restart_draining", "units": initial as u64, "timeoutMs": timeout.as_millis() as u64);
+        }
+        loop {
+            let running = self.inner.inflight_units();
+            if running == 0 {
+                if initial > 0 {
+                    log_info!("pool_restart_drained", "ms": started.elapsed().as_millis() as u64);
+                }
+                return 0;
+            }
+            if started.elapsed() >= timeout {
+                log_warn!("pool_restart_drain_timeout", "units": running as u64,
+                    "hint": "等不完了，剩下的在停机时报给平台改派");
+                return running;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
 }
 
 fn is_token_rejection(message: &str) -> bool {
@@ -425,6 +526,26 @@ impl RunnerInner {
     /// 本机声明了 export，Hub 却按 poll 接入了这台机器。
     fn hub_downgraded(&self) -> bool {
         self.is_export() && self.hub_access.lock().unwrap().as_deref() == Some("poll")
+    }
+
+    /// 新版本已装好、正在为重启排空。
+    pub(crate) fn draining_for_restart(&self) -> bool {
+        self.restart_draining.load(Ordering::Relaxed)
+    }
+
+    /// 在本机跑着的单元数。和 stop() 报给 Hub 的是同一份登记。
+    fn inflight_units(&self) -> usize {
+        self.aborts.lock().unwrap().len()
+    }
+
+    /// hello 里的 platform / distribution / upgradeBlocker。blocker 每次现问：
+    /// 主人把目录权限改对之后，下一次 hello 控制台上的升级按钮就该亮。
+    fn install_info(&self) -> InstallInfo {
+        InstallInfo {
+            platform: current_platform().unwrap_or_default().to_string(),
+            distribution: self.distribution.clone(),
+            upgrade_blocker: self.updater.as_ref().and_then(|updater| updater.blocker()).unwrap_or_default(),
+        }
     }
 
     async fn wait(&self, ms: u64) {
@@ -563,6 +684,7 @@ impl RunnerInner {
                 &reports,
                 &self.access,
                 self.machine_fingerprint.as_deref(),
+                &self.install_info(),
                 &self.loop_cancel,
             )
             .await?;
@@ -616,6 +738,8 @@ impl RunnerInner {
     async fn heartbeat_loop(self: Arc<Self>) {
         while !self.stopping.load(Ordering::Relaxed) {
             let lanes: Vec<Arc<Lane>> = self.lanes.read().unwrap().values().cloned().collect();
+            // 为重启排空时每条通道都报 paused：Hub 据此不再往这台机器派单，在跑的照常跑完。
+            let restarting = self.draining_for_restart();
             let payload: Vec<HeartbeatLane> = lanes
                 .iter()
                 .map(|lane| HeartbeatLane {
@@ -624,7 +748,7 @@ impl RunnerInner {
                     queued: 0,
                     throttled_until: lane.throttled_until_ms().and_then(iso_from_ms),
                     upstream_ok: lane.upstream_ok.load(Ordering::Relaxed),
-                    paused: lane.paused.load(Ordering::Relaxed),
+                    paused: restarting || lane.paused.load(Ordering::Relaxed),
                 })
                 .collect();
             match self.client.heartbeat(&payload, &self.loop_cancel).await {
@@ -639,6 +763,9 @@ impl RunnerInner {
                     // 之后：apply_enabled 会把被关掉的通道重新置成 draining，
                     // 顺序反了会被上面那个循环立刻清掉。
                     self.apply_enabled(result.enabled.as_deref());
+                    if let Some(command) = result.upgrade {
+                        self.accept_upgrade(command);
+                    }
                 }
                 Err(failure) => log_warn!("pool_heartbeat_failed", "message": failure.message()),
             }
@@ -646,9 +773,141 @@ impl RunnerInner {
         }
     }
 
+    // ---------- 远程升级 ----------
+
+    /// 接一条升级指令：按 id 去重，一次只跑一个，真正的活放到后台 —— 下载可能要几十秒，
+    /// 心跳不能停，停了 Hub 会把这台机器判成离线，连带着在跑的单元一起改派。
+    fn accept_upgrade(self: &Arc<Self>, command: UpgradeCommand) {
+        if command.id.is_empty() {
+            log_warn!("pool_upgrade_without_id", "version": command.version,
+                "hint": "升级指令没有 id，没法上报结果，不执行");
+            return;
+        }
+        {
+            let mut gate = self.upgrade_gate.lock().unwrap();
+            if gate.seen.contains(&command.id) {
+                return;
+            }
+            // 正在退出或已经在为重启排空的进程不再开始新的升级：它马上就不在了。
+            if gate.busy || self.stopping.load(Ordering::Relaxed) || self.draining_for_restart() {
+                log_debug!("pool_upgrade_deferred", "id": command.id, "hint": "已有一次升级在跑，或者进程正要重启");
+                return;
+            }
+            gate.seen.insert(command.id.clone());
+            gate.busy = true;
+        }
+        let inner = Arc::clone(self);
+        tokio::spawn(async move { inner.run_upgrade(command).await });
+    }
+
+    async fn run_upgrade(self: Arc<Self>, command: UpgradeCommand) {
+        log_info!("pool_upgrade_started", "id": command.id, "version": command.version,
+            "from": self.bridge_version, "platform": command.platform);
+        match self.upgrade_steps(&command).await {
+            Ok(UpgradeEnd::Installed) => {
+                // 闸门不放开：新版本已经换上，这个进程只剩重启一件事，再来的指令一律不接。
+            }
+            Ok(UpgradeEnd::AlreadyCurrent) => {
+                let message = format!("已经是 {}", self.bridge_version);
+                log_info!("pool_upgrade_already_current", "id": command.id, "version": command.version);
+                self.report_upgrade(&command.id, UpgradeState::Succeeded, &message).await;
+                self.upgrade_gate.lock().unwrap().busy = false;
+            }
+            Err(message) => {
+                // 任何一步失败：临时文件已经随 PreparedUpgrade 删掉，旧文件没动（或已还原），
+                // 进程照常干活。
+                log_warn!("pool_upgrade_failed", "id": command.id, "version": command.version, "message": message);
+                self.report_upgrade(&command.id, UpgradeState::Failed, &message).await;
+                self.upgrade_gate.lock().unwrap().busy = false;
+            }
+        }
+    }
+
+    /// 契约 3.4 的第 2–7 步。Err 里是给控制台看的人话。
+    async fn upgrade_steps(&self, command: &UpgradeCommand) -> Result<UpgradeEnd, String> {
+        let Some(updater) = self.updater.clone() else {
+            return Err(NO_UPDATER_MESSAGE.into());
+        };
+        let target = command.version.as_str();
+        if Version::parse(target).is_none() {
+            return Err(format!("升级指令里的版本号不合法：{target}"));
+        }
+        match compare_versions(target, &self.bridge_version) {
+            None => return Err(format!("本机版本号 {} 认不出来，判断不了这是不是升级", self.bridge_version)),
+            Some(std::cmp::Ordering::Equal) => return Ok(UpgradeEnd::AlreadyCurrent),
+            Some(std::cmp::Ordering::Less) => {
+                return Err(format!("不降级：本机已经是 {}，比 {target} 新", self.bridge_version));
+            }
+            Some(std::cmp::Ordering::Greater) => {}
+        }
+        let local = current_platform().unwrap_or("认不出来的平台");
+        if command.platform != local {
+            return Err(format!("安装包是 {} 的，这台机器是 {local}", command.platform));
+        }
+        if let Some(blocker) = updater.blocker() {
+            return Err(blocker);
+        }
+        // 先验签名再报 downloading：签名不对的指令，连「正在下载」都不该在控制台上出现过。
+        updater.verify(command)?;
+
+        self.report_step(command, UpgradeState::Downloading, &format!("正在下载 {target}")).await?;
+        // 停机时别等下载：丢掉这个 future 就是中止，临时目录和 tar 子进程随之清理。
+        let prepared = tokio::select! {
+            biased;
+            () = self.loop_cancel.cancelled() => return Err("节点正在退出，升级中断了；重新发起一次即可".into()),
+            prepared = updater.prepare(command) => prepared?,
+        };
+
+        self.report_step(command, UpgradeState::Installing, &format!("正在安装 {target}")).await?;
+        let installed = updater.install(prepared).await?;
+        log_info!("pool_upgrade_installed", "id": command.id, "version": target,
+            "path": installed.to_string_lossy());
+
+        // 顺序是有讲究的：先停止接新活，再说「正在重启」，最后才让进程主人去重启 ——
+        // 反过来的话，主人可能在 restarting 这条上报发出去之前就已经 exec 了。
+        self.restart_draining.store(true, Ordering::Relaxed);
+        self.report_upgrade(&command.id, UpgradeState::Restarting,
+            &format!("{target} 已装好，等在跑的单元结束后重启")).await;
+        self.restart.send_replace(true);
+        Ok(UpgradeEnd::Installed)
+    }
+
+    /// 报一步进度；Hub 明说不认这条指令（过期了）就不再往下做。
+    ///
+    /// 网络不通只记日志、照做不误（契约 3.4 第 9 条）。但 accepted=false 是 Hub 明确的回答：
+    /// 这条指令已经被判超时或被新指令顶替了，控制台上显示的是失败 —— 这时候再把机器重启一次，
+    /// 主人只会看到一台莫名其妙重启了的机器。
+    async fn report_step(&self, command: &UpgradeCommand, state: UpgradeState, message: &str) -> Result<(), String> {
+        if self.report_upgrade(&command.id, state, message).await == Some(false) {
+            return Err("平台已经不认这条升级指令（超时或被新的指令顶替），这次不升级".into());
+        }
+        Ok(())
+    }
+
+    /// 返回 Hub 认不认；没说出去是 None。
+    async fn report_upgrade(&self, id: &str, state: UpgradeState, message: &str) -> Option<bool> {
+        match self.client.report_upgrade(id, state, message).await {
+            Ok(accepted) => {
+                if !accepted {
+                    log_warn!("pool_upgrade_report_stale", "id": id, "state": state.label());
+                }
+                Some(accepted)
+            }
+            Err(error) => {
+                log_warn!("pool_upgrade_report_failed", "id": id, "state": state.label(), "message": error);
+                None
+            }
+        }
+    }
+
     async fn next_loop(self: Arc<Self>) {
         let mut backoff = RECONNECT_MIN_MS;
         while !self.stopping.load(Ordering::Relaxed) {
+            if self.draining_for_restart() {
+                // 在为重启排空：不去领活。进程马上就要被换掉，领来的活只能再还回去。
+                self.wait(1_000).await;
+                continue;
+            }
             let now = now_ms();
             let free: Vec<HubLane> = self
                 .lanes
@@ -672,6 +931,12 @@ impl RunnerInner {
                         return;
                     }
                     if claimed.unit.id.is_empty() {
+                        continue;
+                    }
+                    if self.draining_for_restart() {
+                        // 排空开始之前就挂上的那条长轮询，可能在排空之后才领回一个单元。
+                        // 不跑，立刻还给 Hub 改派 —— 跑到一半被重启打断，消费者要多等一整轮。
+                        self.hand_back(&claimed).await;
                         continue;
                     }
                     let inner = Arc::clone(&self);
@@ -707,6 +972,25 @@ impl RunnerInner {
             }
         }
         stopped
+    }
+
+    /// 把一个领到了、但不打算跑的单元还给 Hub：failed + node_shutdown + retryable，
+    /// 和 stop() 报在跑单元是同一个说法，Hub 立刻改派。
+    async fn hand_back(&self, claimed: &NextResult) {
+        log_info!("pool_unit_handed_back", "unitId": claimed.unit.id, "reason": "restarting");
+        self.client
+            .complete(&claimed.unit.id, &CompleteBody {
+                lease: claimed.lease.token.clone(),
+                state: "failed".into(),
+                error: Some(UnitError {
+                    class: ErrorClass::NodeFault,
+                    code: "node_shutdown".into(),
+                    retryable: true,
+                    message: "节点正在重启升级".into(),
+                }),
+                ..Default::default()
+            })
+            .await;
     }
 
     /// 建一份回调（产物签名 + 进度上报）。两条路都要，形状一样。

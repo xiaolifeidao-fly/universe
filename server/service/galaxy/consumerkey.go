@@ -43,9 +43,10 @@ func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Is
 	secret := "sk-galaxy-" + randomToken(32)
 	keyID := "ck_" + NewULID(now)
 	row := &repository.GalaxyConsumerKey{
-		BizLine: bizLine, KeyID: keyID, KeyHash: HashSecret(secret),
+		BizLine: bizLine, KeyID: keyID, KeyHash: HashSecret(secret), SecretCipher: s.sealSecret(secret),
 		Alias:                truncate(defaultString(req.Alias, keyID), 64),
 		OwnerUserID:          req.OwnerUserID,
+		ModelID:              truncate(req.ModelID, 96),
 		AllowedKindsJSON:     encodeJSON(req.AllowedKinds),
 		AllowedProvidersJSON: encodeJSON(req.AllowedProviders),
 		ModelTierJSON:        encodeJSON(req.ModelTier),
@@ -169,12 +170,90 @@ func (s *service) keyView(ctx context.Context, row *repository.GalaxyConsumerKey
 	for _, item := range balances {
 		balance[item.Unit] = item.Balance
 	}
+	kinds, tiers := decodeStrings(row.AllowedKindsJSON), decodeStrings(row.ModelTierJSON)
 	return dto.ConsumerKeyView{
 		KeyID: row.KeyID, Alias: row.Alias, Status: row.Status,
-		AllowedKinds: decodeStrings(row.AllowedKindsJSON), AllowedProviders: decodeStrings(row.AllowedProvidersJSON),
-		ModelTier: decodeStrings(row.ModelTierJSON), Concurrency: row.Concurrency, RPM: row.RPM,
+		Category: scopeCategory(kinds, tiers, row.ModelID), ModelID: row.ModelID,
+		Revealable:   row.SecretCipher != "" && s.cipher != nil,
+		AllowedKinds: kinds, AllowedProviders: decodeStrings(row.AllowedProvidersJSON),
+		ModelTier: tiers, Concurrency: row.Concurrency, RPM: row.RPM,
 		IssuedAt: row.IssuedAt, ExpiresAt: row.ExpiresAt, FrozenUntil: row.FrozenUntil, Balance: balance,
 	}, nil
+}
+
+// RevealKey 取回密钥明文。
+//
+// 使用端（ownerUserID 非空）只认本人名下的，别人的一律回 ErrNotFound —— 回「无权查看」
+// 等于告诉对方这个 keyId 真实存在。吊销了的也不给：拿到一把用不了的明文没有任何用处，
+// 只会让它多出现在一个地方。运营（ownerUserID 为空）哪把都能取，吊销的也能，查问题要用。
+func (s *service) RevealKey(ctx context.Context, ownerUserID, keyID string) (dto.KeySecretView, error) {
+	row, err := s.repository.FindConsumerKey(ctx, bizLine, strings.TrimSpace(keyID))
+	if notFound(err) {
+		return dto.KeySecretView{}, contract.ErrNotFound
+	}
+	if err != nil {
+		return dto.KeySecretView{}, err
+	}
+	if ownerUserID != "" {
+		if row.OwnerUserID != ownerUserID {
+			return dto.KeySecretView{}, contract.ErrNotFound
+		}
+		if row.Status == keyStatusRevoked {
+			return dto.KeySecretView{}, fmt.Errorf("密钥已吊销")
+		}
+	}
+	if row.SecretCipher == "" {
+		return dto.KeySecretView{}, fmt.Errorf("这把密钥签发时平台还不保存明文，取不回来；换发一次，新密钥就能查看和一键使用")
+	}
+	secret, err := s.cipher.open(row.SecretCipher)
+	if err != nil {
+		return dto.KeySecretView{}, err
+	}
+	// 解出来的东西再和哈希对一次：密文被人改过、或者配错了一个恰好也能解的密钥，
+	// 都不能把一串对不上号的明文当成这把密钥交出去。
+	if HashSecret(secret) != row.KeyHash {
+		return dto.KeySecretView{}, errKeyCipherMismatch
+	}
+	return dto.KeySecretView{KeyID: row.KeyID, Secret: secret, BaseURL: s.config.ConsumerBaseURL}, nil
+}
+
+// AdminKeys 运营翻全站密钥。主人一页查一次，不按行查。
+func (s *service) AdminKeys(ctx context.Context, query dto.AdminKeyQuery) (dto.AdminKeyPage, error) {
+	limit := query.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	offset := query.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	rows, total, err := s.repository.ListConsumerKeyPage(ctx, repository.ConsumerKeyPageQuery{
+		BizLine: bizLine, OwnerUserID: strings.TrimSpace(query.OwnerUserID),
+		Keyword: query.Keyword, Status: strings.TrimSpace(query.Status),
+		Offset: offset, Limit: limit,
+	})
+	if err != nil {
+		return dto.AdminKeyPage{}, err
+	}
+	owners := make([]string, 0, len(rows))
+	for _, row := range rows {
+		owners = append(owners, row.OwnerUserID)
+	}
+	names, err := s.userNames(ctx, dto.SideConsumer, owners)
+	if err != nil {
+		return dto.AdminKeyPage{}, err
+	}
+	page := dto.AdminKeyPage{Total: total, Keys: make([]dto.AdminKeyView, 0, len(rows))}
+	for _, row := range rows {
+		view, err := s.keyView(ctx, row)
+		if err != nil {
+			return dto.AdminKeyPage{}, err
+		}
+		page.Keys = append(page.Keys, dto.AdminKeyView{
+			ConsumerKeyView: view, OwnerUserID: row.OwnerUserID, OwnerName: names[row.OwnerUserID], OrderID: row.OrderID,
+		})
+	}
+	return page, nil
 }
 
 func (s *service) RevokeKey(ctx context.Context, ownerUserID, keyID string) error {

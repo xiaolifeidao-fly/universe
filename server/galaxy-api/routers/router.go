@@ -53,6 +53,10 @@ func New(database *gorm.DB) (*gin.Engine, *Assembly, error) {
 
 	// 节点面。
 	assembly.Agent.RegisterHandler(engine.Group("/agent/v1"))
+	// ai-bridge 的下载清单、安装脚本与下载跳转，挂在同一个前缀下（节点与安装脚本
+	// 用的是同一个平台地址）。**不鉴权**：要装它的那台机器此刻还没有任何身份，
+	// 而安装包不是秘密 —— 完整性由 sha256 与发布签名保证，能不能入池由接入密钥决定。
+	assembly.Bridge.RegisterHandler(engine.Group("/agent/v1"))
 
 	// 控制台面。门户面和两端的登录注册先挂：它们没有鉴权，放在最前面，
 	// 读路由的人第一眼就会看到这件事。

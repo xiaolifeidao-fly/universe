@@ -75,7 +75,7 @@ func (h *Handler) login(side string) gin.HandlerFunc {
 // me 每次都从库里读：运营把人改成工作室、停用、重置密码，控制台要看得到最新的样子，
 // 而登录时存在浏览器里的那份是登录那一刻的快照。
 func (h *Handler) me(context *gin.Context) {
-	view, err := h.accounts.Current(context.Request.Context(), UserID(context))
+	view, err := h.accounts.Current(context.Request.Context(), Side(context), UserID(context))
 	httpx.JSON(context, view, err)
 }
 
@@ -85,7 +85,7 @@ func (h *Handler) changePassword(context *gin.Context) {
 		httpx.Fail(context, "请求格式不对")
 		return
 	}
-	result, err := h.accounts.ChangeOwnPassword(context.Request.Context(), UserID(context), req)
+	result, err := h.accounts.ChangeOwnPassword(context.Request.Context(), Side(context), UserID(context), req)
 	httpx.JSON(context, result, err)
 }
 

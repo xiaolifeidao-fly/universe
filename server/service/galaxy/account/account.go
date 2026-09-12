@@ -1,17 +1,20 @@
 // Package account 是 Galaxy 自己的账号体系。
 //
-// 它和任务宇宙的 service/identity 完全分开：不同的表（zt_galaxy_user）、不同的令牌、
-// 不读也不写对方的任何东西。任务宇宙的令牌打到 galaxy-api 上是 not login，
-// Galaxy 的令牌打到 web-api 上也一样 —— 就算两边配了同一个签名密钥，
-// 令牌的形状（iss / aud / 字符串 sub）也对不上。
+// 它和任务宇宙的 service/identity 完全分开：不同的表、不同的令牌、不读也不写对方的
+// 任何东西。任务宇宙的令牌打到 galaxy-api 上是 not login，Galaxy 的令牌打到 web-api 上
+// 也一样 —— 就算两边配了同一个签名密钥，令牌的形状（iss / aud / 字符串 sub）也对不上。
 //
-// 账号分两端，是两批人：
+// 账号分两端，是两批人，各有各的表：
 //
-//	共享端 provider  出算力，用 Nova。身份分散户 / 工作室（zt_galaxy_provider，只由运营改）
-//	使用端 consumer  花钱买额度，用 Orbit
+//	共享端 provider  出算力，用 Nova。zt_galaxy_provider_user；
+//	                 身份分散户 / 工作室（zt_galaxy_provider，只由运营改）
+//	使用端 consumer  花钱买额度，用 Orbit。zt_galaxy_consumer_user
 //
 // 同一个人两边都用，就在两边各注册一个；同一个用户名在两端可以各有一个账号。
 // 令牌里签着端，一端的令牌调不了另一端的接口。
+//
+// 所以这个包里几乎每个方法都要一个 side：拿不出端就找不到账号。这不是啰嗦 ——
+// 两端在库里是两张表，「不带端地查一个账号」这件事本身已经不成立了。
 package account
 
 import (
@@ -33,9 +36,11 @@ type Service interface {
 	Login(ctx context.Context, req dto.LoginAccountRequest) (dto.AccountLoginResult, error)
 	// Authenticate 校验一张令牌是不是这一端的、账号是否还有效。
 	Authenticate(ctx context.Context, side, token string) (Principal, error)
-	Current(ctx context.Context, userID string) (dto.AccountView, error)
+	// Current side 与 userID 都从凭证来 —— 接口层给的是 Principal 里的那两个值，
+	// 不是请求里报的。
+	Current(ctx context.Context, side, userID string) (dto.AccountView, error)
 	// ChangeOwnPassword 本人改密码。旧令牌全部作废，回一张新的。
-	ChangeOwnPassword(ctx context.Context, userID string, req dto.ChangeAccountPasswordRequest) (dto.AccountLoginResult, error)
+	ChangeOwnPassword(ctx context.Context, side, userID string, req dto.ChangeAccountPasswordRequest) (dto.AccountLoginResult, error)
 
 	// ---------- 运营 ----------
 	List(ctx context.Context, query dto.AccountQuery) (dto.AccountPage, error)

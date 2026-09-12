@@ -21,12 +21,16 @@ import {
   type UsageLine,
   type UsageReport,
 } from "../api/galaxy.api";
+import { BridgeReleases } from "./BridgeReleases";
 import { DisputeQueue } from "./DisputeQueue";
 import { GalaxyAccounts } from "./GalaxyAccounts";
+import { ConsumerKeyList } from "./ConsumerKeyList";
+import { ModelCatalog } from "./ModelCatalog";
 import { PackageCatalog } from "./PackageCatalog";
+import { PointsRecharge } from "./PointsRecharge";
 
 /**
- * 共享算力池的运营视图：池水位、节点与贡献、账号、抽检、争议工单、额度包、结算汇总。
+ * 共享算力池的运营视图：池水位、节点与贡献、账号、抽检、争议工单、额度包、结算汇总、ai-bridge 发布包。
  *
  * 这里是**平台**视角，和 client/galaxy 那个终端用户控制台不是一回事：
  * 那边一个人只看得到自己的机器和自己的密钥，这边看得到全池，还能封禁。
@@ -367,6 +371,23 @@ export function GalaxyOperations() {
             // 挂进统一的 load() 会在每次刷新时把运营正在编辑的那一行冲掉。
             children: <PackageCatalog />,
           },
+          // 下面三栏和额度包是一条链：模型（带返现比例）→ 套餐绑模型 → 给人充积分 → 人用积分买出密钥。
+          // 各自拉数据、各自刷新，理由同额度包：都是写面板或者自己翻页的列表。
+          {
+            key: "models",
+            label: t("galaxy.tab.models"),
+            children: <ModelCatalog />,
+          },
+          {
+            key: "points",
+            label: t("galaxy.tab.points"),
+            children: <PointsRecharge />,
+          },
+          {
+            key: "keys",
+            label: t("galaxy.tab.keys"),
+            children: <ConsumerKeyList />,
+          },
           {
             key: "settlement",
             label: t("galaxy.tab.settlement"),
@@ -386,6 +407,14 @@ export function GalaxyOperations() {
                 />
               </>
             ),
+          },
+          {
+            key: "bridgeReleases",
+            label: t("galaxy.tab.bridgeReleases"),
+            // 发布包自己拉数据、自己刷新：和额度包一样是写面板，只在上传、下架之后才变，
+            // 挂进统一的 load() 等于每刷一次池水位都顺带拉一遍全部发布记录。
+            // 放在最后一栏：前面几栏的位置不动，运营的点击习惯不被打乱。
+            children: <BridgeReleases />,
           },
         ]}
       />

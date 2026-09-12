@@ -2,7 +2,13 @@
 
 import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
 
-/** 消费者侧接口。密钥明文只在签发/换发的响应里出现一次，之后任何接口都查不到。 */
+/**
+ * 消费者侧接口。密钥列表里没有明文；要明文（「使用」、复制带密钥的命令）单独调 revealKey，
+ * 拿到就用、用完就丢，不落进任何存储。
+ */
+
+/** claude = 接 Claude Code；codex = 接 Codex；video / other 两个都不对口（other 是范围不限，两个都能接）。 */
+export type KeyCategory = "claude" | "codex" | "video" | "other";
 
 export class ConsumerKeyView {
   keyId = "";
@@ -10,6 +16,14 @@ export class ConsumerKeyView {
   alias = "";
 
   status = "";
+
+  /** 服务端按范围和来源套餐的模型推出来的类别，「使用」按钮据此决定写哪个客户端。 */
+  category: KeyCategory = "other";
+
+  modelId = "";
+
+  /** 平台能不能取回明文。老密钥只存了哈希，要换发一次才行。 */
+  revealable = false;
 
   allowedKinds: string[] = [];
 
@@ -33,7 +47,7 @@ export class ConsumerKeyView {
 export class IssuedKeyView {
   keyId = "";
 
-  /** 明文只显示这一次。不要落进任何存储。 */
+  /** 签发那一刻顺带回来的明文。之后在密钥页也能再取，但不要落进任何存储。 */
   secret = "";
 
   alias = "";
@@ -73,6 +87,9 @@ export class PackageView {
   concurrency = 0;
 
   rpm = 0;
+
+  /** 绑定的模型，空是通用套餐。分享返现按这个模型的比例算。 */
+  modelId = "";
 }
 
 export class OrderView {
@@ -87,6 +104,11 @@ export class OrderView {
   currency = "CNY";
 
   status = "";
+
+  /** points = 积分；channel = 支付渠道（老订单）。 */
+  payMethod = "channel";
+
+  modelId = "";
 
   targetKeyId = "";
 
@@ -164,6 +186,21 @@ export async function fetchKeys() {
 
 export async function revokeKey(keyId: string) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/consumer/keys/revoke", { keyId });
+  return unwrapApiResponse(response.data);
+}
+
+export class KeySecretView {
+  keyId = "";
+
+  secret = "";
+
+  /** SDK 的 base_url（带 /v1）。服务端没配时是空串。 */
+  baseUrl = "";
+}
+
+/** 取回密钥明文。只在要用的那一刻调，不缓存。 */
+export async function revealKey(keyId: string) {
+  const response = await instance.post<ApiResponse<KeySecretView>>("/galaxy/consumer/keys/secret", { keyId });
   return unwrapApiResponse(response.data);
 }
 
@@ -537,4 +574,183 @@ export async function fetchUsageRecords(params: {
   limit?: number;
 }) {
   return getData(UsageRecordPage, "/galaxy/consumer/usage/records", params);
+}
+
+/* ---------- 模型广场、积分与分享 ---------- */
+
+/**
+ * 1 积分 = ¥1。积分字段和金额一样是「微」（÷1_000_000 得到积分），套餐标价直接就是积分价。
+ * 积分只能由平台运营充值；这一端只有看和花。
+ */
+
+export class PortalModelView {
+  modelId = "";
+
+  displayName = "";
+
+  vendor = "";
+
+  family = "";
+
+  kind = "";
+
+  contextTokens = 0;
+
+  maxOutputTokens = 0;
+
+  /** 每百万 token 的单价，微积分。 */
+  inputPrice = 0;
+
+  outputPrice = 0;
+
+  cachePrice = 0;
+
+  currency = "CNY";
+
+  tags: string[] = [];
+
+  summary = "";
+
+  featured = false;
+
+  /** 为假表示这几个单价是按能力统一定的价，不是这个模型单独的价。 */
+  priced = false;
+
+  sortOrder = 0;
+}
+
+export class ConsumerModelView extends PortalModelView {
+  category: KeyCategory = "other";
+
+  /** 被邀请的人买这个模型的套餐时，按实付积分返给邀请人的比例，万分之一。 */
+  referralBps = 0;
+
+  packages: PackageView[] = [];
+}
+
+export class ConsumerCatalog {
+  endpoint = "";
+
+  models: ConsumerModelView[] = [];
+
+  /** 通用套餐：没绑模型的上架套餐。 */
+  packages: PackageView[] = [];
+
+  defaultBps = 0;
+
+  updatedAt = "";
+}
+
+export class PointsSummary {
+  balance = 0;
+
+  recharged = 0;
+
+  spent = 0;
+
+  referral = 0;
+}
+
+export type PointsType = "recharge" | "purchase" | "referral";
+
+export class PointsLedgerEntry {
+  txnId = "";
+
+  type: PointsType = "recharge";
+
+  amount = 0;
+
+  balanceAfter = 0;
+
+  /** 充值：实付金额（微元）；返现：那笔购买实付的积分。 */
+  baseAmount = 0;
+
+  rateBps = 0;
+
+  orderId = "";
+
+  /** 返现流水上被邀请人的用户名，打过码。 */
+  relatedName = "";
+
+  modelId = "";
+
+  createdAt = "";
+}
+
+export class PointsLedgerPage {
+  total = 0;
+
+  entries: PointsLedgerEntry[] = [];
+}
+
+export class ReferralRateView {
+  modelId = "";
+
+  displayName = "";
+
+  family = "";
+
+  bps = 0;
+
+  inherited = false;
+}
+
+export class ReferralOverview {
+  inviteCode = "";
+
+  invitees = 0;
+
+  earned = 0;
+
+  defaultBps = 0;
+
+  rates: ReferralRateView[] = [];
+}
+
+export class InviteeView {
+  name = "";
+
+  joinedAt = "";
+
+  earned = 0;
+}
+
+export class InviteePage {
+  total = 0;
+
+  invitees: InviteeView[] = [];
+}
+
+export async function fetchCatalog() {
+  return getData(ConsumerCatalog, "/galaxy/consumer/catalog");
+}
+
+export async function fetchPoints() {
+  return getData(PointsSummary, "/galaxy/consumer/points");
+}
+
+export async function fetchPointsLedger(params: { type?: PointsType | ""; offset?: number; limit?: number }) {
+  return getData(PointsLedgerPage, "/galaxy/consumer/points/ledger", { ...params, type: params.type || undefined });
+}
+
+/**
+ * 用积分买一个套餐。签发新密钥时回来的订单里带着明文（issuedSecret）。
+ * requestId 同一单重试时要带同一个：服务端按它只扣一次，重复的那次拿回的是第一次的订单（不带明文）。
+ */
+export async function purchaseWithPoints(packageCode: string, targetKeyId: string, noticeVersion: string, requestId: string) {
+  const response = await instance.post<ApiResponse<OrderView>>("/galaxy/consumer/points/purchase", {
+    packageCode,
+    targetKeyId,
+    noticeVersion,
+    requestId,
+  });
+  return unwrapApiResponse(response.data);
+}
+
+export async function fetchReferral() {
+  return getData(ReferralOverview, "/galaxy/consumer/referral");
+}
+
+export async function fetchInvitees(offset = 0, limit = 20) {
+  return getData(InviteePage, "/galaxy/consumer/referral/invitees", { offset, limit });
 }

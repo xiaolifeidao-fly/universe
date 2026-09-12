@@ -24,10 +24,10 @@ import {
   formatClock,
   formatCny,
   formatCompact,
-  formatInt,
   formatMillis,
+  formatPoints,
   formatRelative,
-  formatSignedInt,
+  formatSignedPoints,
   formatSince,
   formatUnitValue,
   unitLabel,
@@ -57,9 +57,6 @@ import {
  * 互相盖住强 —— 后者在中文下看不出来，只有切到英文才暴露。
  */
 const QUOTA_COLUMNS = "repeat(auto-fit, minmax(170px, 1fr))";
-
-/** 服务端一律用微分存钱，这里只做展示折算。 */
-const CREDIT_RATE = 100;
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -247,8 +244,9 @@ export function TodayBoard() {
             <div>
               <div className="gx-label">{t("today.earned")}</div>
               <div style={{ marginTop: 6 }}>
+                {/* credits 里的数都是微积分（1,000,000 = 1 积分 = ¥1），显示前必须换算。 */}
                 <Figure
-                  value={formatInt(dashboard.credits.today)}
+                  value={formatPoints(dashboard.credits.today)}
                   unit={t("today.credits")}
                   aside={
                     <span
@@ -261,7 +259,7 @@ export function TodayBoard() {
                         borderRadius: 6,
                       }}
                     >
-                      ≈ {formatCny((dashboard.credits.today / CREDIT_RATE) * 1_000_000)}
+                      ≈ {formatCny(dashboard.credits.today)}
                     </span>
                   }
                 />
@@ -269,13 +267,13 @@ export function TodayBoard() {
             </div>
             <div style={{ display: "flex", gap: 28, fontSize: 12.5, color: "var(--gx-faint)" }}>
               <span>
-                {t("today.week")} <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatInt(dashboard.credits.week)}</b>
+                {t("today.week")} <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatPoints(dashboard.credits.week)}</b>
               </span>
               <span>
-                {t("today.month")} <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatInt(dashboard.credits.month)}</b>
+                {t("today.month")} <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatPoints(dashboard.credits.month)}</b>
               </span>
               <span>
-                {t("today.total")} <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatInt(dashboard.credits.total)}</b>
+                {t("today.total")} <b className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>{formatPoints(dashboard.credits.total)}</b>
               </span>
             </div>
           </Card>
@@ -373,7 +371,7 @@ export function TodayBoard() {
                         className="gx-mono"
                         style={{ textAlign: "right", color: record.credits > 0 ? "var(--gx-accent-ink)" : "var(--gx-faint)", fontWeight: record.credits > 0 ? 500 : 400 }}
                       >
-                        {record.credits > 0 ? formatSignedInt(record.credits) : t("records.state.failed")}
+                        {record.credits > 0 ? formatSignedPoints(record.credits) : t("records.state.failed")}
                       </span>
                     </div>
                   ))

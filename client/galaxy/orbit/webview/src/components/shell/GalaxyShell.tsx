@@ -15,7 +15,7 @@ import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
 import { clearAuthToken, getAuthUser } from "@/utils/auth";
 import { hasOverlayTitlebar, productConfig } from "@/utils/product";
 import { IconChevronDown, IconLogout, IconUser } from "@/components/ui/icons";
-import { IconBag, IconChat, IconKey, IconList } from "@/components/ui/icons";
+import { IconBag, IconChat, IconCoins, IconKey, IconList, IconSparkle } from "@/components/ui/icons";
 
 interface NavEntry {
   href: string;
@@ -23,9 +23,12 @@ interface NavEntry {
   icon: ReactNode;
 }
 
+// 钱的流向排在一起：看模型 → 用积分买 → 积分从哪来（含分享返现）。
 const NAV: NavEntry[] = [
   { href: "/consumer/keys", labelKey: "nav.keys", icon: <IconKey size={18} /> },
+  { href: "/consumer/models", labelKey: "nav.models", icon: <IconSparkle size={18} /> },
   { href: "/consumer/store", labelKey: "nav.store", icon: <IconBag size={18} /> },
+  { href: "/consumer/points", labelKey: "nav.points", icon: <IconCoins size={18} /> },
   { href: "/consumer/usage", labelKey: "nav.usage", icon: <IconList size={18} /> },
   { href: "/consumer/chat", labelKey: "nav.chat", icon: <IconChat size={18} /> },
   { href: "/consumer/account", labelKey: "nav.account", icon: <IconUser size={18} /> },

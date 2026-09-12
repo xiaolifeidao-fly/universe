@@ -42,6 +42,11 @@ type Config struct {
 	KeyConcurrency int
 	KeyRPM         int
 
+	// KeyCipherSecret 加密存储密钥明文用的密钥（galaxy.key_cipher_secret）。
+	// 签发密钥的 galaxy-api 和取回明文的 manager-api 必须配同一个值；没配时密钥照发，
+	// 只是取不回明文 —— 「使用」按钮和运营转交都用不了。见 keycipher.go。
+	KeyCipherSecret string
+
 	// ProviderTermsVersion / ConsumerNoticeVersion 是同意记录的当前版本。
 	// 升版后旧同意失效，提供者下次 hello 被要求重新同意。
 	ProviderTermsVersion  string
@@ -76,11 +81,15 @@ type Config struct {
 	// SessionIdleTTL 会话多久没有新回合就自动关闭并释放座位。
 	SessionIdleTTL time.Duration
 
-	// PayoutRate 多少积分兑一块钱。默认 100 —— 界面上的「≈ ¥12.84」就是按它折的，
-	// 折算口径只有这一处，前端不自己乘。
+	// PayoutRate 多少「微积分」兑一块钱，默认 1,000,000。
+	//
+	// 提供者的积分和使用者的积分是同一个口径：**1 积分 = ¥1，库里存微积分**
+	// （和 amount / price 同一量纲）。这样两端只有一种「积分」，不会出现
+	// 同一个词在共享端值一分、在使用端值一块的局面。
+	// 账本与余额里的数都是微积分，界面按 ÷1,000,000 显示。
 	PayoutRate int
-	// PayoutMinCredits 单次提现的起提积分。低于它的申请直接拒 ——
-	// 一笔一块钱的提现，人工处理成本远高于金额本身。
+	// PayoutMinCredits 单次提现的起提金额，单位同样是微积分（默认 10,000,000 = ¥10）。
+	// 低于它的申请直接拒 —— 一笔一块钱的提现，人工处理成本远高于金额本身。
 	PayoutMinCredits int64
 	// PayoutHoldDays 争议期。这段时间内结算的积分算「待结算」，提不出来。
 	PayoutHoldDays int
@@ -90,6 +99,25 @@ type Config struct {
 	// 它是**部署方的承诺**，不是算出来的指标 —— 所以没配就是空串，门户那一格
 	// 直接不显示。默认给一个好看的数字等于替部署方许了一个他没许的诺。
 	PortalAvailability string
+
+	// BridgeReleaseKeys ai-bridge 的发布公钥（base64，可以配多把，换钥匙期间新旧并存）。
+	//
+	// 运营上传安装包时服务端先按它验一遍签名。没配就传不上去 —— 这是故意的：
+	// 一个没签名的包发出去，每台机器都会在升级的最后一步拒装，而运营要到那时候才知道。
+	// 私钥离线保管，公钥同时编进 ai-bridge 自己（release-keys.txt）。
+	BridgeReleaseKeys []string
+	// BridgeDownloadBaseURL 安装包的公开访问前缀（桶是公开读或者前面挂了 CDN 时配）。
+	// 配了就直接拼地址，不再逐次签名；不配走 OSS 签名地址。
+	BridgeDownloadBaseURL string
+
+	// ReferralRate 共享端邀请返现的比例：0.1 表示被邀请人赚到的积分，平台额外给
+	// 邀请人 10%。0 表示这个活动没开。被邀请人自己的收益不受影响 —— 这笔钱是平台出的。
+	ReferralRate float64
+	// ReferralDays 返现期限（天）。0 表示长期有效。
+	ReferralDays int
+	// ReferralRegisterURL 邀请链接指向的注册页（Nova 网页版的 /register）。
+	// 不配就没有链接可分享，邀请页只显示邀请码 —— 给一个打不开的链接更糟。
+	ReferralRegisterURL string
 }
 
 func DefaultConfig() Config {
@@ -114,8 +142,8 @@ func DefaultConfig() Config {
 		PresignPutTTL:            15 * time.Minute,
 		PresignGetTTL:            60 * time.Minute,
 		SessionIdleTTL:           24 * time.Hour,
-		PayoutRate:               100,
-		PayoutMinCredits:         1000,
+		PayoutRate:               priceScale,
+		PayoutMinCredits:         10 * priceScale,
 		PayoutHoldDays:           7,
 	}
 }
@@ -295,7 +323,28 @@ type Service interface {
 	RevokeKey(ctx context.Context, ownerUserID, keyID string) error
 	// RenewKey 续期换发：新密钥继承余额与允许范围，旧密钥立刻作废。
 	RenewKey(ctx context.Context, req dto.RenewKeyRequest) (dto.IssuedKeyView, error)
+	// RevealKey 取回密钥明文和接入地址。ownerUserID 非空只认本人名下、没吊销的；空串是运营，哪把都能取。
+	RevealKey(ctx context.Context, ownerUserID, keyID string) (dto.KeySecretView, error)
+	// AdminKeys 运营翻全站的密钥，带主人是谁。
+	AdminKeys(ctx context.Context, query dto.AdminKeyQuery) (dto.AdminKeyPage, error)
 	Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageReport, error)
+
+	// ---------- 使用者积分与分享 ----------
+	// 1 积分 = ¥1。运营充进来，买套餐花掉，邀请来的人买套餐时按模型的比例返给邀请人。
+	PointsSummary(ctx context.Context, ownerUserID string) (dto.PointsSummary, error)
+	// PointsLedger 积分流水。Operator 为真是运营（可翻全站、按 OwnerKeyword 找人）；否则只看 OwnerUserID 本人的。
+	PointsLedger(ctx context.Context, query dto.PointsLedgerQuery) (dto.PointsLedgerPage, error)
+	// RechargePoints 运营给使用者充积分。同一个 RequestID 只充一次。
+	RechargePoints(ctx context.Context, req dto.RechargePointsRequest) (dto.PointsLedgerEntry, error)
+	// PurchaseWithPoints 用积分买套餐：扣积分 → 签发或充值 → 给邀请人返现。发不出去就把积分原路退回。
+	PurchaseWithPoints(ctx context.Context, req dto.PurchaseRequest) (dto.OrderView, error)
+	// ReferralOverview 分享页：邀请码（老账号第一次打开时补一个）、邀请人数、累计返现、各模型比例。
+	ReferralOverview(ctx context.Context, ownerUserID string) (dto.ReferralOverview, error)
+	ListInvitees(ctx context.Context, ownerUserID string, offset, limit int) (dto.InviteePage, error)
+	ReferralSettings(ctx context.Context) (dto.ReferralSettings, error)
+	SaveReferralSettings(ctx context.Context, req dto.SaveReferralSettingsRequest) error
+	// ConsumerCatalog 使用端的模型广场：模型、挂在模型下的套餐、通用套餐，以及每个模型的返现比例。
+	ConsumerCatalog(ctx context.Context, fallbackModels []string) (dto.ConsumerCatalog, error)
 
 	// ---------- 额度商品与订单（P1） ----------
 	ListPackages(ctx context.Context, listedOnly bool) ([]dto.PackageView, error)
@@ -410,6 +459,29 @@ type Service interface {
 	SignNodeUpload(ctx context.Context, unitID, name, contentType string, size int64) (contract.ArtifactRef, error)
 	SignDownload(ctx context.Context, objectKey string) (contract.ArtifactRef, error)
 
+	// ---------- 提供者：机器上的 ai-bridge ----------
+	// RequestNodeUpgrade 控制台点「升级」。指令搭在下一次心跳上下发，
+	// 装不装得成由节点说了算（原则 8），这里只负责记下「该升到哪一版」。
+	RequestNodeUpgrade(ctx context.Context, ownerUserID, nodeID string) (dto.NodeUpgradeView, error)
+	// ReportNodeUpgrade 节点回报升级进度。返回 false 表示这条回报对应的不是当前这一次升级。
+	ReportNodeUpgrade(ctx context.Context, req dto.NodeUpgradeReport) (bool, error)
+
+	// ---------- 提供者：邀请返现 ----------
+	ProviderReferral(ctx context.Context, ownerUserID string) (dto.ProviderReferralOverview, error)
+	ListProviderInvitees(ctx context.Context, ownerUserID string, offset, limit int) (dto.ProviderInviteePage, error)
+
+	// ---------- ai-bridge 的版本分发 ----------
+	// BridgeManifest 下载清单：每个平台最新的那一版，加上安装脚本的地址。未登录也能取。
+	BridgeManifest(ctx context.Context) (dto.BridgeReleaseManifest, error)
+	// BridgeDownloadURL 真正的对象地址，供下载那一跳 302 过去。version 为空表示最新。
+	BridgeDownloadURL(ctx context.Context, platform, version string) (string, error)
+	// BridgeChecksum 给安装脚本校验用的 sha256 与文件名。
+	BridgeChecksum(ctx context.Context, platform, version string) (string, string, error)
+	ListBridgeReleases(ctx context.Context) ([]dto.BridgeReleaseView, error)
+	// PublishBridgeRelease 运营上传一个安装包：算校验值、验签、写对象存储、登记。
+	PublishBridgeRelease(ctx context.Context, req dto.PublishBridgeReleaseRequest) (dto.BridgeReleaseView, error)
+	SetBridgeReleaseStatus(ctx context.Context, req dto.SetBridgeReleaseStatusRequest) error
+
 	// ---------- 平台运营（manager 后台） ----------
 	AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeView, error)
 	// BanNode 平台封禁。和主人自己撤销的区别：封禁主人解不开。
@@ -443,12 +515,17 @@ type Ports struct {
 	// Payment 没配时支付回调接口整体关闭（内测期只有管理员手工确认到账这条路）。
 	// 不验签的回调等于把发额度的权限挂在公网上。
 	Payment PaymentVerifier
+	// Uploader 只有管理端装配它：上传 ai-bridge 安装包是运营动作，
+	// galaxy-api 上没有任何路径需要往对象存储里写整个文件。
+	Uploader ObjectUploader
 }
 
 type service struct {
 	repository *repository.GalaxyRepository
 	control    ControlPlane
 	signer     ObjectSigner
+	// uploader 只有管理端进程装配，其余进程是 nil：上传安装包是运营动作。
+	uploader ObjectUploader
 	notifier   ProviderNotifier
 	replayer   ShadowReplayer
 	payment    PaymentVerifier
@@ -456,6 +533,8 @@ type service struct {
 	metrics    Metrics
 	kinds      *KindRegistry
 	config     Config
+	// cipher 加密存储密钥明文。没配 KeyCipherSecret 时是 nil，取回明文的接口会明说原因。
+	cipher *keyCipher
 
 	// waiting 是等待队列深度的进程内计数。P0 单实例，等待发生在持有消费者连接的
 	// 那个进程里，不需要把 rid 放进 Redis 再被别人唤醒。
@@ -490,12 +569,14 @@ func New(database *gorm.DB, ports Ports, kinds *KindRegistry, config Config) Ser
 		repository: repo,
 		control:    ports.Control,
 		signer:     ports.Signer,
+		uploader:   ports.Uploader,
 		notifier:   ports.Notifier,
 		replayer:   ports.Replayer,
 		payment:    ports.Payment,
 		audit:      audit,
 		kinds:      kinds,
 		config:     config.withDefaults(),
+		cipher:     newKeyCipher(config.KeyCipherSecret),
 	}
 	svc.waiting.byKind = map[string]int{}
 	return svc

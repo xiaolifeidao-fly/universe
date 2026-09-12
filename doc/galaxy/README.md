@@ -141,6 +141,71 @@ export  Hub  ── POST {endpoint}/node/v1/execute ────▶ 节点    �
   派单器领到一个消费者连在别处的单元时判可改派的失败交还通道层；刻意不让节点按请求里
   给的地址反连推流 —— 那等于让拿到回连密钥的人指挥节点把自己的令牌发往任意地址。
 
+## ai-bridge 的版本分发与远程升级（2026-09-12）
+
+装在别人服务器上的 ai-bridge 原来只能手动装、手动换。现在平台自己发包，控制台上能一键升。
+
+```
+运营：打包 → 离线签名 → 管理端「ai-bridge 版本」上传（服务端验签 → 写 OSS → 登记）
+用户：控制台「安装 ai-bridge」复制一行命令 → curl <hub>/agent/v1/bridge/install.sh | sh -s -- --key gpk-…
+升级：控制台点「升级」 → 指令写在机器那一行 → 下一次心跳下发 → 节点验签、下载、安装、重启
+      → 重启后的 hello 报上来的版本等于目标版本，Hub 判定成功
+```
+
+| 部件 | 落点 |
+|---|---|
+| 发布记录 | `zt_galaxy_bridge_release`，迁移 `server/migrations/20260912_galaxy_bridge_release.sql`（同一份迁移给 `zt_galaxy_node` 加了十个升级相关的列） |
+| 领域逻辑 | `service/galaxy/bridgerelease.go`（发布、清单、签名校验、版本比较）与 `nodeupgrade.go`（指令、回报、超时、成功判定） |
+| 公开分发面 | `galaxy-api/pkg/bridge`：`/agent/v1/bridge/{releases/latest,download/:platform,checksum/:platform,install.sh,install.ps1}`，**不鉴权** |
+| 控制台 | `GET /api/galaxy/provider/bridge/releases`、`POST /api/galaxy/provider/node/upgrade`；Nova 账户页的「安装 ai-bridge」卡片与机器列表里的升级按钮 |
+| 运营 | `GET/POST /api/galaxy/admin/bridge/releases*`（manager-api），管理端「ai-bridge 版本」页签 |
+| 节点侧 | `ai-bridge-native/src/pool/upgrade.rs`；命令行 `ai-bridge upgrade`；签名工具 `scripts/release-sign.cjs` |
+
+几条要记住的规则：
+
+- **节点只装验得过签名的包。** Ed25519，签的是「版本 + 平台 + sha256」三样，私钥离线保管，
+  公钥编进 ai-bridge 自己（`release-keys.txt`）。这是远程升级敢做的前提：Hub、数据库、OSS
+  任何一个被改了，推下去的东西也装不上 —— 「在我的机器上执行什么不信任 Hub」这条原则没有因为
+  加了升级功能而让步。服务端在**上传时**也验一遍，免得运营发完才知道包没签。
+- **Hub 只发「装哪一个」，不发「必须装」。** 版本比目标旧、平台对不上、目录不可写、
+  新包在这台机器上跑不起来（试跑一次 `ai-bridge version`），节点都会自己拒掉并回报原因。
+- **升级前会等手上的活跑完**（最多 120 秒）：先停止领新活（心跳里把通道报成 paused，
+  export 入口回 503），等在跑的单元结束，再替换文件、原地 exec 重启。使用者无感。
+- **安装目录必须对运行服务的那个用户可写**，否则换不了文件。一行安装脚本给的布局就是
+  对的（`/opt/ai-bridge` + 软链），按老文档装进 `/usr/local/bin` 的要挪一次，
+  见 `ai-bridge-native/deploy/README.md`。节点会把这个障碍在 hello 里报上来，
+  控制台的按钮直接变灰并显示原因，而不是等点完三分钟再失败。
+- **Nova 内置的那份不参与**：它随应用分发（`distribution=nova`），控制台上显示
+  「随 Nova 应用更新」。老节点两个字段都报不上来，显示「版本太旧，先手动装一次」。
+- **卡住的升级会超时**：十分钟没来领、十五分钟没有新进展，控制台显示成失败并说明原因。
+  超时只影响显示，节点那边该装还在装，装完的那次 hello 仍然会把状态翻成成功。
+
+## 共享端的邀请返现（2026-09-12）
+
+分享一个带邀请码的注册链接，好友贡献算力赚到积分时，**平台额外**奖励分享者一个百分比，
+好友自己的收益一分不少。只返一层：奖励本身不再产生奖励。
+
+| 部件 | 落点 |
+|---|---|
+| 邀请关系 | `zt_galaxy_provider_referral`（和使用端的 `zt_galaxy_referral` 是两张表、两套码），迁移 `server/migrations/20260912_galaxy_provider_referral.sql` |
+| 领域逻辑 | `service/galaxy/providerreferral.go`；结算钩子在 `billing.go`，申诉追回钩子在 `dispute.go` |
+| 注册 | `POST /api/galaxy/provider/auth/register` 的 `inviteCode`，账号与邀请关系同一个事务 |
+| 控制台 | `GET /api/galaxy/provider/referral{,/invitees}`；Nova 的「邀请好友」页 |
+| 参数 | `galaxy.referral.rate`（0.1 = 10%）、`galaxy.referral.days`（0 = 长期）、`galaxy.referral.register_url` |
+
+几条要记住的规则：
+
+- **两端的邀请码不通用。** 一端的码在另一端查不到，注册时会明确报「邀请码无效」，
+  而不是悄悄把返现记到另一端的某个人头上。一个人两边都玩就各有一个码。
+- **奖励跟着那笔收益走，也跟着它退。** 申诉成立追回收益时，对应的奖励按**原额**
+  反向记一笔（`ref_clawback`，负数）。不退的话，一次伪造的执行能同时套出两笔钱。
+- **同一台设备上跑出来的收益不返。** 奖励是平台出的，把自己的机器挂到一个被自己邀请的
+  小号名下就能白拿一笔。按设备指纹拦（`zt_galaxy_node.machine_fingerprint`）——
+  指纹是节点自报的，挡不住改过的客户端，但挡得住「换个账号再配一次」这种顺手就能做的事。
+- **奖励同样要过争议期**才能提现：它跟着被邀请人的收益走，那笔被追回时它也要退。
+- **入账跟着账本行走**：先插账本（幂等键是那一次执行），插进去了才加余额；
+  重放时插不进去，也就不会多给一次。比例按万分之一存进账本，事后能逐笔对出金额。
+
 三种原语的消费者接口：
 
 ```
@@ -270,7 +335,7 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 
 | 部件 | 落点 |
 |---|---|
-| 账号表 | `zt_galaxy_user`（`side` + 按端唯一的用户名），迁移 `server/migrations/20260911_galaxy_user.sql` |
+| 账号表 | 两端各一张：`zt_galaxy_provider_user` / `zt_galaxy_consumer_user`（列相同，用户名在本端内唯一），迁移 `server/migrations/20260911_galaxy_user.sql` |
 | 领域服务 | `service/galaxy/account`：注册、登录、令牌、改密码；运营的列表、停用、重置密码 |
 | 登录路由与门禁 | `galaxy-api/pkg/auth`：`Gate.Provider()` / `Gate.Consumer()`，控制台路由一律挂它 |
 | 运营 | `manager-api/pkg/galaxy`：`/api/galaxy/admin/users*`、`/api/galaxy/admin/provider/type` |
@@ -301,6 +366,58 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 
 没做的：登录失败次数限制（和改之前一样没有）、注册的人机校验、自助找回密码。
 
+## 使用者积分、分享返现与密钥明文（2026-09-12）
+
+使用端不再自助充值。钱的流向改成：
+
+```
+使用者线下付款 ──▶ 运营在管理端充积分（1 积分 = ¥1，记实付金额）
+                     ──▶ 使用者在 Orbit「模型广场」挑套餐，在「购买」页用积分买
+                           ──▶ 签发新密钥 / 充进已有密钥
+                                 ──▶ 若他是别人邀请来的：实付积分 × 套餐所绑模型的比例 → 返给邀请人
+```
+
+| 部件 | 落点 |
+|---|---|
+| 表 | `zt_galaxy_points_account` / `zt_galaxy_points_ledger` / `zt_galaxy_referral` / `zt_galaxy_setting`；`zt_galaxy_consumer_key` + `secret_cipher`、`model_id`，`zt_galaxy_package` + `model_id`，`zt_galaxy_order` + `model_id`、`pay_method`，`zt_galaxy_model` + `referral_bps`。迁移 `server/migrations/20260912_galaxy_points_referral.sql` |
+| 领域 | `service/galaxy/points.go`（积分、购买、返现、邀请码）、`keycipher.go`（明文加密存储）、`consumerkey.go` 的 `RevealKey` / `AdminKeys` |
+| 使用端接口 | `GET /api/galaxy/consumer/{catalog,points,points/ledger,referral,referral/invitees}`、`POST …/points/purchase`、`POST …/keys/secret`；注册 `POST …/auth/register` 多一个 `inviteCode` |
+| 运营接口 | `GET /api/galaxy/admin/{keys,points/ledger,points/summary,referral/settings}`、`POST …/keys/secret`、`POST …/points/recharge`、`POST …/referral/settings/save`；模型的返现比例随 `portal/models/save` 的 `referralBps` 保存，套餐绑模型随 `packages/save` 的 `modelId` |
+| 界面 | Orbit：密钥（有效 / 无效、「使用」、手动接入命令）、模型广场、购买、积分；管理端「共享算力池」多了模型目录、积分充值、算力密钥三个页签 |
+
+几条要记住的规则：
+
+- **余额的每次变动都和一行流水在同一个事务里**，流水 `txn_id` 是幂等键：充值按前端打开充值框时生成的请求号
+  （`recharge:<请求号>`），购买按前端每准备一单生成的请求号（`purchase:<请求号>`，老客户端不带就退回
+  `order:<订单号>:pay`），返现按订单号（`order:<订单号>:referral`）。重试、连点只算一次，第二次原样拿回第一次的结果
+  （购买的那次不带明文，去密钥页取）。管理端的「充值明细」就是 `type=recharge` 的流水，不另建表。
+- **套餐和模型的「下架」以前存不进库**：`listed` 的 GORM 标签默认值是 true，建记录时 false 会被换成默认值，
+  upsert 跟着写回 true。现在保存之后在同一事务里单独写一次 `listed`（`repository.writeListed`）。
+- **扣积分、订单推到已付、签发或充值在一个事务里。** 签发写到一半失败，积分和订单状态一起回滚，
+  不存在「积分扣了、密钥没到」，也就没有「退款」这条补偿路径。下单前的校验（商品上架、目标密钥是本人的且没吊销、
+  签发新密钥前确认过数据告知）和渠道下单是同一套。
+- **返现跟着「交付」走，不跟着「付款」走**，发生在交付之后、事务之外；失败只记日志，流水按订单号幂等，照日志补。
+  比例在返现那一刻取并记进流水（`rate_bps`），之后改比例不影响已经返过的。实付就是订单金额 —— 积分付的是积分，
+  渠道付的是钱，量纲相同。渠道支付（`PayOrder`）交付的订单同样返。
+- **比例：模型单独设的用模型的，没设的走默认，通用套餐（没绑模型）也走默认。** `referral_bps` 为 NULL 是「走默认」，
+  0 是「这个模型不返」。默认比例没设过就是 0 —— 钱相关的默认值只能是「不给」。
+- **邀请关系只在注册时建。** 注册和邀请关系在同一个事务里；邀请码填了就必须有效（不悄悄忽略一个打错的码）。
+  老账号第一次打开分享页时补一个邀请码，邀请人留空 —— 事后补填等于让人随便认一个上家。邀请人看被邀请人只看得到打码的用户名。
+- **密钥明文从这天起取得回。** 使用端「使用」要把密钥写进本机配置，运营要随时看到密钥去转交，两件事都需要明文。
+  库里存 AES-GCM 密文（`secret_cipher`），加密密钥在 `galaxy.key_cipher_secret`、不进库 —— 拿到一份库不等于拿到全部密钥。
+  **galaxy-api 签发、manager-api 取回，两边必须配同一个值**，配上之后别改（改了之前的全部解不开，只能换发）。
+  鉴权仍然只按哈希查，密文不参与请求路径。更早签发的只有哈希，取不回，本人换发一次即可。
+  取回接口用 POST、响应带 `Cache-Control: no-store`；运营那条只授给有写权限的角色（只读角色只授 GET）。
+  取出来的明文会和哈希再核对一次，配错一个恰好也能解的密钥不会交出一串对不上号的明文。
+- 运营转交密钥时给的地址来自 manager-api 的 `galaxy.consumer_base_url`，要和 galaxy-api 的配成同一个。
+
+**部署顺序**：先跑迁移（新版使用端注册会写 `zt_galaxy_referral`，表不在注册整个失败），再发 galaxy-api、manager-api，
+两边配好 `galaxy.key_cipher_secret`（manager-api 再配 `galaxy.consumer_base_url`），跑一次 `managerinit`
+（或 `server/manager_galaxy_resources.sql`）登记 7 条新运营接口，最后发 Orbit 与管理端前端。
+使用端的桌面壳也要重新打包：「使用」按钮依赖新版 Orbit Electron 里的 `ClientConfigApi`。
+
+没做的：积分的人工扣减与退款、返现的补发入口、邀请关系的多级分成。
+
 ## 实现中对设计的修正
 
 写代码时发现下面这些地方按文档原样做会出问题，实现取了另一种做法。**以本节为准**，
@@ -313,9 +430,11 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 | 设计 8 节 `node:seats:{cid}` | SET | **ZSET，score = 座位过期时刻**。SET 没有成员级 TTL，座位到期收不回来，一个走掉的消费者会永久占着位置 |
 | 设计 8 节 `contrib:{cid}.quotaLeft` | 一个 JSON 字段 | **按单位展开成 `limit:`/`used:`/`left:` 三组 hash 字段**。放置与结算都要在 Lua 里改单个维度，HINCRBY 一个字段是原子的，读改写一个 JSON 串不是 |
 | 设计 6.2 「抽检判定伪造 → 追回」 | 只说了追回 | **追回不抹原始流水，而是在三本账上各记一笔反向的**（`refund` / `clawback` / `baddebt`，幂等键加 `:dispute` 后缀）。抹掉原始记录对不出「这笔钱进来过又出去了」，事后没法审 |
+| 设计 8 节 `provider_ledger.amount` | 未写明量纲 | **供给侧账本记的是积分，不是计量数**（2026-09-12 改）。原先 settle 行记 token 数，于是收益页上「今天赚了多少」加的是 token、「可提现」用的是余额里的钱，两个口径根本不是一个东西。原始计量数在 `zt_galaxy_meter_record`（对账以它为准）。同时把提供者积分与使用者积分统一成一个口径：**1 积分 = ¥1，库里存微积分**（`galaxy.payout_rate` 随之变成「多少微积分兑一块钱」= 1,000,000，老配置里的 100 含义完全不同，升级时必须一起改） |
+| 设计 6 节 结算幂等 | 只说账本按 `(unitId, attempt)` 幂等 | **重放不再走计费**（2026-09-12 改）。Lua 脚本本来就会对已结算的单元返回 0，但那个结果被 `ControlPlane.Settle` 丢掉了 —— 节点重发一次 complete，账本按 txn 挡得住，余额却是加减，提供者会被重复入账、消费者被重复扣额度。现在 `Settle` 把这个结果交给调用方，`settle` 据此整段跳过；`record` 里入账与扣额度也只跟着**真的插进去的**账本行走（第二道闸） |
 | 设计 S-09 争议工单 | 未说明受理期限与粒度 | **工单钉在 `(unitId, attempt)` 上，且只受理 7 天内的执行**。结算幂等键就是这两个，重跑过的单元每次尝试各自结算，只钉 unitId 会让一次退款退掉两次的钱；不设期限则提供者的积分永远处在「随时可能被追回」的状态，提现结不了账 |
 | 需求 S-09 后台 | 未说明运营用哪种身份 | **运营用管理端账号（`zt_manager_*`），接口全在 manager-api。** 中间有过一版：galaxy-api 自带一组 `/api/galaxy/admin/*`，用新增的 `httpx.RequirePlatformAdmin()` 认任务宇宙的管理员（`RequireAdmin()` 还要求 `product_research` 身份，那是交付工作台的门）。2026-09-11 账号体系独立后那组接口删掉了，见「账号体系」 |
-| 架构 13 安全架构 / 架构 14 `service/identity` | 控制台用「现有用户 token」；提供者与购买密钥的用户挂在现有用户体系 | **Galaxy 自己的账号体系**（`service/galaxy/account`、`zt_galaxy_user`），共享端与使用端两批人，令牌互不通用，也不和任务宇宙通用。galaxy-api 进程里不再装配 `service/identity` |
+| 架构 13 安全架构 / 架构 14 `service/identity` | 控制台用「现有用户 token」；提供者与购买密钥的用户挂在现有用户体系 | **Galaxy 自己的账号体系**（`service/galaxy/account`），共享端与使用端两批人、两张表（`zt_galaxy_provider_user` / `zt_galaxy_consumer_user`），令牌互不通用，也不和任务宇宙通用。galaxy-api 进程里不再装配 `service/identity` |
 | 设计 3.3 控制台接口 | 「Nova 只打 provider/*，Orbit 只打 consumer/*，访问另一端的路由返回 404」 | **前端页面是 404，接口层按端鉴权**：令牌的 `aud` 是端，另一端的令牌打进来是 `not login`。改之前接口层只认「登录了」，同一张令牌两组路由都能调 |
 | 设计 13 节 requestId | 「消费者 ← Hub ← 节点三段同一值」 | **实现补了 `X-Galaxy-Request-Id` 响应头**。原先消费者侧根本拿不到这个值，也就无从申诉、无从追问某一次调用 |
 | 设计 4.2 步骤 4 `q:wait` | Redis ZSET 等待队列 | **进程内等待**。P0 单实例，等待发生在持有消费者连接的那个进程里；放进 Redis 也没有第二个实例去唤醒它。队列深度仍作为指标暴露 |

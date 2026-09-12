@@ -39,6 +39,16 @@ func TestAdminRoutesRegisterWithoutConflict(t *testing.T) {
 		"POST /api/galaxy/admin/portal/models/delete",
 		"GET /api/galaxy/admin/portal/leads",
 		"POST /api/galaxy/admin/portal/leads/handle",
+		"GET /api/galaxy/admin/keys",
+		"POST /api/galaxy/admin/keys/secret",
+		"GET /api/galaxy/admin/points/ledger",
+		"GET /api/galaxy/admin/points/summary",
+		"POST /api/galaxy/admin/points/recharge",
+		"GET /api/galaxy/admin/referral/settings",
+		"POST /api/galaxy/admin/referral/settings/save",
+		"GET /api/galaxy/admin/bridge/releases",
+		"POST /api/galaxy/admin/bridge/releases/upload",
+		"POST /api/galaxy/admin/bridge/releases/status",
 	}
 	registered := map[string]bool{}
 	for _, route := range engine.Routes() {

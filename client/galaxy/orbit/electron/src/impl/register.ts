@@ -1,2 +1,3 @@
 import type { ElectronApi } from '@galaxy/common/eleapi/base';
-export function registerApiImpl(): readonly ElectronApi[] { return []; }
+import { ClientConfigImpl } from './clientconfig.impl';
+export function registerApiImpl(): readonly ElectronApi[] { return [new ClientConfigImpl()]; }

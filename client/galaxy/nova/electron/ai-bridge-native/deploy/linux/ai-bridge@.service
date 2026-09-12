@@ -1,13 +1,17 @@
 # ai-bridge 的 systemd 模板单元。实例名就是运行它的用户：
 #
-#   sudo install -m 0755 ai-bridge /usr/local/bin/ai-bridge
-#   sudo cp ai-bridge@.service /etc/systemd/system/
+#   curl -fsSL <平台地址>/agent/v1/bridge/install.sh | sudo sh -s -- --user alice
+#   sudo cp /opt/ai-bridge/deploy/linux/ai-bridge@.service /etc/systemd/system/
 #   sudo systemctl enable --now ai-bridge@alice
 #   journalctl -u ai-bridge@alice -f
 #
 # 用户必须是登录过 claude / codex、并执行过 `ai-bridge register` 的那一个：
 # 订阅登录态和 ai-bridge 的配置都在他的家目录里（~/.claude、~/.codex、
 # ~/.config/ai-bridge）。换个用户跑，本机能力会全部显示成「不可用」。
+#
+# ExecStart 走 /usr/local/bin 下的软链，真正的文件在 /opt/ai-bridge。那个目录必须属于
+# 这个用户（安装脚本的 --user）：远程升级要在里面换文件。装在 root 的目录里照样能跑，
+# 只是控制台上的「升级」按钮不亮 —— 怎么挪过去见 deploy/README.md「远程升级的前提」。
 [Unit]
 Description=ai-bridge (Galaxy shared pool node, user %i)
 After=network-online.target

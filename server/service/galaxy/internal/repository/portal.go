@@ -22,15 +22,31 @@ func (r *GalaxyRepository) ListModels(ctx context.Context, bizLine string, liste
 }
 
 func (r *GalaxyRepository) SaveModel(ctx context.Context, row *GalaxyModel) error {
-	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "biz_line"}, {Name: "model_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{
-			"display_name", "vendor", "family", "kind",
-			"context_tokens", "max_output_tokens",
-			"input_price", "output_price", "cache_price", "currency",
-			"tags_json", "summary", "listed", "featured", "sort_order", "updated_time",
-		}),
-	}).Create(row).Error
+	listed := row.Listed
+	return r.Tx(ctx, func(tx *GalaxyRepository) error {
+		if err := tx.Db.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "biz_line"}, {Name: "model_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{
+				"display_name", "vendor", "family", "kind",
+				"context_tokens", "max_output_tokens",
+				"input_price", "output_price", "cache_price", "currency",
+				"tags_json", "summary", "referral_bps", "listed", "featured", "sort_order", "updated_time",
+			}),
+		}).Create(row).Error; err != nil {
+			return err
+		}
+		// 同 SavePackage：listed 的默认值是 true，false 不单独写一次就存不进去。
+		return tx.writeListed(ctx, &GalaxyModel{}, "model_id", row.BizLine, row.ModelID, listed)
+	})
+}
+
+func (r *GalaxyRepository) FindModel(ctx context.Context, bizLine, modelID string) (*GalaxyModel, error) {
+	var row GalaxyModel
+	err := r.Db.WithContext(ctx).Where("biz_line = ?", bizLine).Where("model_id = ?", modelID).First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
 }
 
 func (r *GalaxyRepository) DeleteModel(ctx context.Context, bizLine, modelID string) error {

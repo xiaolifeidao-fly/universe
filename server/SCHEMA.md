@@ -43,15 +43,18 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 **供给单元是贡献，不是节点**——座位、额度、队列、绑定、限流全部以 `cid` 为主键。
 一台机器（节点）可以有多个贡献，同机两个贡献的额度互相独立。
 
-**账号是 Galaxy 自己的，和下面 `zt_identity_*`（任务宇宙）无关。** 共享端（提供者，Nova）
-和使用端（消费者，Orbit）是两批人，各注册各的，令牌互不通用；池内表里所有
-`owner_user_id` / `user_id` / `provider_user_id` 存的都是 `zt_galaxy_user.user_id`
+**账号是 Galaxy 自己的，和下面 `zt_identity_*`（任务宇宙）无关，而且两端各一张表。**
+共享端（提供者，Nova）和使用端（消费者，Orbit）是两批人，各注册各的，令牌互不通用；
+池内表里所有 `owner_user_id` / `user_id` / `provider_user_id` 存的都是这两张表的 `user_id`
 （共享端 `pu_…`，使用端 `cu_…`，从任务宇宙迁过来的是 `pu_legacy_<原 id>` / `cu_legacy_<原 id>`）。
-运营不在这套账号里：共享池的运营接口全在 manager-api，认的是 `zt_manager_*`。
+两张表的列一模一样——分表不是为了让两端长得不一样，是为了它们在库里没有交集：**查账号必须
+先说清是哪一端**，漏掉端的查询查不出东西，而不是把另一端的人捞出来。运营不在这套账号里：
+共享池的运营接口全在 manager-api，认的是 `zt_manager_*`。
 
 | 表 | 作用 |
 |---|---|
-| `zt_galaxy_user` | Galaxy 账号。`side` 分共享端 / 使用端，用户名按端唯一；`token_version` 签进令牌，改密码、重置、停用都加一 |
+| `zt_galaxy_provider_user` | 共享端账号。用户名在本端内唯一；`token_version` 签进令牌，改密码、重置、停用都加一 |
+| `zt_galaxy_consumer_user` | 使用端账号。列与共享端那张相同；积分、邀请码、订单都挂在这批账号上 |
 | `zt_galaxy_provider` | 共享端账号的身份：散户 / 工作室。没有行就是散户，只有运营能设成工作室 |
 | `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
 | `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
@@ -63,23 +66,29 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_unit_event` | 单元事件流；只记结构化事实，不记 body 与凭据 |
 | `zt_galaxy_meter_record` | 计量流水，幂等键 `(unit_id, attempt, unit)`，对账以它求和为准 |
 | `zt_galaxy_usage_mismatch` | 节点自报与 Hub 解析的偏差超阈值的记录，累计影响信誉 |
-| `zt_galaxy_consumer_key` | 算力密钥：存 sha256，带有效期、冻结期与允许范围 |
+| `zt_galaxy_consumer_key` | 算力密钥：鉴权按 sha256 查；`secret_cipher` 是明文的 AES-GCM 密文（加密密钥在配置 `galaxy.key_cipher_secret`，不进库），给「一键使用」和运营转交取回；带有效期、冻结期与允许范围 |
 | `zt_galaxy_consumer_balance` | 密钥的单位余额 |
 | `zt_galaxy_consent_record` | 提供者加入同意与消费者数据告知确认；两者都是硬前置 |
 | `zt_galaxy_price` | kind 的「单位 → 单价」表，单价按每百万单位的微分存 |
 | `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
-| `zt_galaxy_credit_account` | 提供者积分账户 |
+| `zt_galaxy_credit_account` | 提供者积分账户。存**微积分**（1,000,000 = 1 积分 = ¥1），和使用者那本 `points_account` 同一口径 |
 | `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
 | `zt_galaxy_payout` | 提现申请。账本只记受理那一笔，待打款/驳回这段状态在这张表上 |
 | `zt_galaxy_audit_probe` | 抽检记录：以 Hub 自有账号影子重放，比对结构相似度 |
-| `zt_galaxy_package` | 额度商品：多少钱换多少额度、密钥有效期多久 |
-| `zt_galaxy_order` | 订单。支付与履约分两步，回调只推到 `paid`，履约幂等 |
+| `zt_galaxy_package` | 额度商品：多少钱换多少额度、密钥有效期多久；`model_id` 绑定模型目录里的模型，分享返现按它的比例算 |
+| `zt_galaxy_order` | 订单。支付与履约分两步，回调只推到 `paid`，履约幂等；`pay_method` 区分积分与支付渠道，积分购买的扣分、推到已付、签发在同一个事务里 |
 | `zt_galaxy_ledger_session` | 有状态会话：钉在哪个贡献、跑到第几回合、工作区在哪个 commit |
 | `zt_galaxy_ledger_turn` | 回合摘要。`(sid, seq)` 是幂等键，重复提交不重跑 |
 | `zt_galaxy_ledger_checkpoint` | 节点侧 CLI 的高保真快照，绑 CLI 版本 |
 | `zt_galaxy_dispute` | 争议工单。`(unit_id, attempt)` 唯一，同一次执行只能有一张 |
-| `zt_galaxy_model` | 门户对外的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时门户回落到 `galaxy.models` 声明的清单 |
+| `zt_galaxy_model` | 门户与使用端模型广场的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时回落到 `galaxy.models` 声明的清单。`referral_bps` 是分享返现比例（万分之一），NULL 走默认 |
 | `zt_galaxy_lead` | 门户「联系我们」线索。**全站唯一被未鉴权接口写入的表**，字段一律短、按 IP 限流、`ip`/`user_agent` 不进任何对外视图 |
+| `zt_galaxy_points_account` | 使用者积分余额（1 积分 = ¥1，存微积分）。和提供者的 `credit_account` 是两本账 |
+| `zt_galaxy_points_ledger` | 积分流水：运营充值 / 买套餐 / 分享返现。和余额变动同一个事务写，`txn_id` 幂等；管理端的充值明细就是 `type=recharge` 的行 |
+| `zt_galaxy_referral` | 使用者的邀请码与邀请人。注册时和账号一起建，之后邀请人不可改；老账号打开分享页时补码 |
+| `zt_galaxy_setting` | 运营随时要改、改完不该重启的开关，目前只有默认返现比例 `referral.default_bps` |
+| `zt_galaxy_bridge_release` | 已发布的 ai-bridge 安装包（一个版本一个平台一行）。字节在 OSS，这里只有 sha256 与 Ed25519 发布签名；节点只装验得过签名的包，下架不删行 |
+| `zt_galaxy_provider_referral` | 共享端的邀请码与邀请人。和使用端的 `zt_galaxy_referral` 是两张表、两套码：两端是两批人，码混在一个命名空间里会「查得到但返错人」 |
 
 **建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，
 并顺带写入 `llm.chat` 的默认定价；或者直接执行 `server/galaxy.sql`（只建表，定价表是空的，
@@ -93,7 +102,27 @@ AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，�
 
 已经建过库的环境走增量：`server/migrations/20260907_galaxy_dispute.sql`、
 `server/migrations/20260910_galaxy_payout.sql`，以及 `server/migrations/` 下其余 `*_galaxy_*.sql`。
-`20260911_galaxy_user.sql` 建账号表并把老数据从任务宇宙账号迁过来，**要在发新版 galaxy-api 和 manager-api 之前跑**。
+`20260911_galaxy_user.sql` 建两张账号表、把老数据从任务宇宙账号迁过来，
+并把这份脚本上一版建的两端共用表 `zt_galaxy_user` 里的行按端搬进新表（旧表不删，确认无误后手工 DROP），
+**要在发新版 galaxy-api 和 manager-api 之前跑**。
+`20260912_galaxy_points_referral.sql` 加积分、邀请、配置三类表和密钥 / 套餐 / 订单 / 模型的新列，同样**先于发版**：
+新版使用端注册在同一事务里写 `zt_galaxy_referral`，表不在注册整个失败。
+`20260912_galaxy_bridge_release.sql` 给 `zt_galaxy_node` 加十个升级相关的列并建安装包表，
+`20260912_galaxy_provider_referral.sql` 建共享端邀请表并给供给侧账本加 `related_user_id`。
+这两个**必须先于新版 galaxy-api 发布**：节点行的那十列在每次 hello / 心跳的查询里，
+缺列会让**所有机器**连不上（不是少一个功能，是整个池子掉线）。
+
+**2026-09-12 同一批还改了供给侧账本的量纲**（不需要迁移脚本，但要确认一次）：
+`zt_galaxy_provider_ledger.amount` 从「计量数（token 数）」改成「微积分」，
+`galaxy.payout_rate` 从「多少积分兑一块钱 = 100」改成「多少微积分兑一块钱 = 1,000,000」。
+定价表为空的部署不会有历史 settle 行（`record` 在未定价时根本不写账本），发版前核对一次：
+
+```sql
+SELECT COUNT(*) FROM zt_galaxy_provider_ledger WHERE biz_line = 'galaxy' AND type = 'settle';
+```
+
+不是 0 的话，那些老行记的是 token 数、和新写进去的积分混在一个列里，收益页的合计会偏大；
+按 `zt_galaxy_meter_record` 与当时的 `zt_galaxy_price` 重算一次再上线。
 
 **抽检表的隐私取舍：** `zt_galaxy_audit_probe` 会**短期保留**被抽中那次请求的原文
 （比例上限 1%/贡献/日），因为不留原文就无法重放比对；但节点的响应只保留**结构签名**

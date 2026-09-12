@@ -59,13 +59,16 @@ func (s *service) List(ctx context.Context, query dto.AccountQuery) (dto.Account
 // 那些各有各的开关（封禁机器、吊销密钥），混在一起的话，运营想让一个人登不上控制台，
 // 会顺手把一池子消费者的请求一起掐断。
 func (s *service) SetStatus(ctx context.Context, req dto.SetAccountStatusRequest) error {
+	if !validSide(req.Side) {
+		return errors.New("请选择共享端或使用端")
+	}
 	userID := strings.TrimSpace(req.UserID)
 	switch req.Status {
 	case dto.AccountActive, dto.AccountDisabled:
 	default:
 		return errors.New("非法的账号状态")
 	}
-	err := s.repository.BumpTokenVersion(ctx, bizLine, userID, map[string]any{
+	err := s.repository.BumpTokenVersion(ctx, bizLine, req.Side, userID, map[string]any{
 		"status": req.Status, "updated_by": truncate(req.UpdatedBy, 64),
 	})
 	if repository.IsNotFound(err) {
@@ -76,11 +79,14 @@ func (s *service) SetStatus(ctx context.Context, req dto.SetAccountStatusRequest
 
 // ResetPassword 运营替忘了密码的人设一个临时密码。本人下次登录必须先改掉它。
 func (s *service) ResetPassword(ctx context.Context, req dto.ResetAccountPasswordRequest) error {
+	if !validSide(req.Side) {
+		return errors.New("请选择共享端或使用端")
+	}
 	hash, err := hashPassword(req.Password)
 	if err != nil {
 		return err
 	}
-	err = s.repository.BumpTokenVersion(ctx, bizLine, strings.TrimSpace(req.UserID), map[string]any{
+	err = s.repository.BumpTokenVersion(ctx, bizLine, req.Side, strings.TrimSpace(req.UserID), map[string]any{
 		"password_hash": hash, "must_change_password": true, "updated_by": truncate(req.UpdatedBy, 64),
 	})
 	if repository.IsNotFound(err) {

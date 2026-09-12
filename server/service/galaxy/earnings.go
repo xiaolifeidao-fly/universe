@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,7 +87,9 @@ func (s *service) creditSummary(ctx context.Context, ownerUserID string, scope r
 	}
 
 	hold := scope
-	hold.Types = []string{ledgerSettle}
+	// 邀请奖励同样要过争议期：它跟着被邀请人的那笔收益走，那笔被追回时奖励也要退。
+	// 让它一到账就能提，等于把追回的风险留给平台。
+	hold.Types = append([]string{ledgerSettle}, referralTypes...)
 	hold.From = now.AddDate(0, 0, -s.config.PayoutHoldDays)
 	pending, err := s.repository.SumProviderLedger(ctx, hold)
 	if err != nil {
@@ -124,11 +127,31 @@ func (s *service) creditSummary(ctx context.Context, ownerUserID string, scope r
 		return summary, err
 	}
 
+	// 邀请奖励单独给一格：上面那几个口径只算自己贡献算力赚的，
+	// 邀请带来的那部分在里面一点都看不见，而它确实在余额里。
+	referral := scope
+	referral.Types = referralTypes
+	referral.From, referral.To = time.Time{}, time.Time{}
+	referralTotal, err := s.repository.SumProviderLedger(ctx, referral)
+	if err != nil {
+		return summary, err
+	}
+
 	summary.Available = balance - pending
 	summary.Pending = pending
 	summary.Withdrawn = withdrawn
 	summary.Total = total
+	summary.Referral = referralTotal
 	return summary, nil
+}
+
+// formatPoints 把微积分写成人看的积分（1,000,000 = 1 积分 = ¥1）。
+// 只用于错误信息：界面上的格式化在前端，服务端不替它排版。
+func formatPoints(micro int64) string {
+	if micro%priceScale == 0 {
+		return strconv.FormatInt(micro/priceScale, 10)
+	}
+	return strconv.FormatFloat(float64(micro)/priceScale, 'f', -1, 64)
 }
 
 // dayStats 一段时间的执行统计。单元表是权威：积分从账本来，次数与用量从单元来。
@@ -327,12 +350,14 @@ func (s *service) CreatePayout(ctx context.Context, req dto.CreatePayoutRequest)
 	if account == "" {
 		return dto.PayoutView{}, fmt.Errorf("请填写收款账号")
 	}
+	// 下面两条都按**微积分**算（1,000,000 = 1 积分 = ¥1），报错时换成积分说，
+	// 界面上显示的就是积分 —— 拿微积分的原始数字去提示，用户看到的是一串读不懂的零。
 	if req.Credits < s.config.PayoutMinCredits {
-		return dto.PayoutView{}, fmt.Errorf("单次提现不少于 %d 积分", s.config.PayoutMinCredits)
+		return dto.PayoutView{}, fmt.Errorf("单次提现不少于 %s 积分", formatPoints(s.config.PayoutMinCredits))
 	}
 	if req.Credits%int64(s.config.PayoutRate) != 0 {
 		// 不整除会在折算时留下不足一分的零头，那笔零头既打不出去也退不回来。
-		return dto.PayoutView{}, fmt.Errorf("提现积分需为 %d 的整数倍", s.config.PayoutRate)
+		return dto.PayoutView{}, fmt.Errorf("提现金额需为整数积分（%s 积分的整数倍）", formatPoints(int64(s.config.PayoutRate)))
 	}
 
 	scope, err := s.ledgerScope(ctx, req.OwnerUserID)

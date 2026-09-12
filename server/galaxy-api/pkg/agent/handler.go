@@ -67,6 +67,29 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	authenticated.POST("/units/:unitId/progress", h.progress)
 	authenticated.POST("/units/:unitId/complete", h.complete)
 	authenticated.POST("/units/:unitId/artifacts", h.signArtifact)
+	// 升级进度回报。指令是搭在心跳响应上下来的，回报却单独一条路：
+	// 节点装完就要立刻重启，等不到下一次心跳（那时候进程已经换人了）。
+	authenticated.POST("/upgrade/report", h.upgradeReport)
+}
+
+// upgradeReport 节点回报这一次远程升级走到哪了。
+//
+// 回报不改变任何调度决定，只影响控制台上那一行字。所以它对失败很宽容：
+// 指令 id 对不上（上一次升级的迟到回报）回 200 + accepted:false，让节点安心往下走，
+// 而不是回一个错误码把节点带进重试。
+func (h *Handler) upgradeReport(context *gin.Context) {
+	var req dto.NodeUpgradeReport
+	if err := context.ShouldBindJSON(&req); err != nil {
+		fail(context, http.StatusBadRequest, contract.ErrorClassInput, contract.CodeInvalidBody, err.Error())
+		return
+	}
+	req.NodeID = nodeFrom(context).NodeID
+	accepted, err := h.service.ReportNodeUpgrade(context.Request.Context(), req)
+	if err != nil {
+		fail(context, http.StatusBadRequest, contract.ErrorClassInput, contract.CodeInvalidBody, err.Error())
+		return
+	}
+	context.JSON(http.StatusOK, gin.H{"accepted": accepted})
 }
 
 // requireNode 用凭证认定节点身份，并覆盖请求体里的任何节点字段（端侧不可信）。

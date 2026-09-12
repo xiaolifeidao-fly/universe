@@ -63,11 +63,13 @@ export function Btn({
   } & React.ButtonHTMLAttributes<HTMLButtonElement>
 >) {
   return (
+    // disabled 写在展开之后：调用方一传 disabled，放在前面的那个就被覆盖，
+    // loading 期间按钮还能再点一次 —— 下单这种按钮点两下就是买两份。
     <button
       type="button"
       className={`gx-btn gx-btn--${tone}${small ? " gx-btn--sm" : ""} ${className}`}
-      disabled={rest.disabled || loading}
       {...rest}
+      disabled={rest.disabled || loading}
     >
       {loading ? <Spinner /> : icon}
       {children}

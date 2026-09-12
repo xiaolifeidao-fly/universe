@@ -8,11 +8,14 @@
  *
  * 身份一律是散户，不给选：散户、工作室的信誉是两种算法（跟着账号走 / 每台机器各算各的），
  * 那张身份表是读分的依据，只有平台运营能在管理端改。
+ *
+ * 邀请链接落在这一页：<注册页>?invite=<邀请码>，进来就把邀请码填好。邀请码选填 ——
+ * 自己找来的人不该被一个空着的框挡住；填错了服务端会说，让人检查链接或者清空再注册。
  */
 
 import { message } from "antd";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoginShell } from "@/components/shell/LoginShell";
 import { IconArrowRight } from "@/components/ui/icons";
 import { Btn, Field } from "@/components/ui/kit";
@@ -47,12 +50,28 @@ export default function RegisterPage() {
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [busy, setBusy] = useState(false);
+  // 只在进页面时读一次地址栏：语言挂载后才定下来，t 会跟着变一次，
+  // 重跑的话会把人已经改过的邀请码又盖回链接里那个。
+  const entered = useRef(false);
 
   // 同登录页：已经登录就直接回首页。判断只能在挂载后做 —— 令牌在 localStorage 里。
+  //
+  // 用 window.location 而不是 useSearchParams()：后者在 App Router 里要求外面套一层 <Suspense>，
+  // 否则 next build 直接报错 —— 为一个可选的预填值付这个代价不值当（同 Orbit 的商店页）。
   useEffect(() => {
-    if (isAuthenticated()) router.replace(productConfig.home);
-  }, [router]);
+    if (entered.current) return;
+    entered.current = true;
+    const invite = new URLSearchParams(window.location.search).get("invite")?.trim() ?? "";
+    if (isAuthenticated()) {
+      // 邀请只认新注册的账号。不说一声就跳走，点了好友链接的人会以为邀请已经记上了。
+      if (invite) message.info(t("register.inviteSignedIn"));
+      router.replace(productConfig.home);
+      return;
+    }
+    if (invite) setInviteCode(invite);
+  }, [router, t]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -63,7 +82,14 @@ export default function RegisterPage() {
     }
     setBusy(true);
     try {
-      const result = await register({ username: username.trim(), displayName: displayName.trim() || undefined, password });
+      // 邀请码不分大小写，统一大写再发；空着就不带这个字段，不发一个空串让服务端去猜。
+      const code = inviteCode.trim().toUpperCase();
+      const result = await register({
+        username: username.trim(),
+        displayName: displayName.trim() || undefined,
+        password,
+        inviteCode: code || undefined,
+      });
       // 注册页不摆「保持登录」：刚设好的密码，没理由下次打开就让人再输一遍。
       setAuthToken(result.token, true);
       setAuthUser(result.user, true);
@@ -117,6 +143,17 @@ export default function RegisterPage() {
           onChange={(event) => setConfirm(event.target.value)}
         />
       </Field>
+      <Field label={t("register.inviteCode")}>
+        <input
+          className="gx-input gx-input--mono"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={32}
+          placeholder={t("register.inviteCodePlaceholder")}
+          value={inviteCode}
+          onChange={(event) => setInviteCode(event.target.value)}
+        />
+      </Field>
 
       <Btn tone="accent" type="submit" loading={busy} icon={<IconArrowRight size={16} />}>
         {t("register.submit")}
@@ -125,7 +162,12 @@ export default function RegisterPage() {
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: "var(--gx-faint)" }}>
         <span>
           {t("register.hasAccount")}{" "}
-          <button type="button" className="gx-link" onClick={() => router.push("/login")}>
+          <button
+            type="button"
+            className="gx-link"
+            // 邀请码跟着带过去：点错去了登录页再点回来，不该让人回聊天记录里重新找那条链接。
+            onClick={() => router.push(inviteCode.trim() ? `/login?invite=${encodeURIComponent(inviteCode.trim())}` : "/login")}
+          >
             {t("register.login")}
           </button>
         </span>

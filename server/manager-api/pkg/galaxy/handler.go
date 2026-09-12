@@ -69,6 +69,26 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.POST("/keys/issue", h.issueKey)
 	// 人工确认到账：线下转账、渠道回调丢了要补单。渠道回调那条验签的路仍在 galaxy-api。
 	admin.POST("/orders/pay", h.payOrder)
+	// 全站算力密钥与明文。运营要随时看得到密钥，连同接入地址一起转交给对方。
+	// 取明文用 POST：只读角色只授 GET，明文天然就不在它的授权范围里。
+	admin.GET("/keys", h.keys)
+	admin.POST("/keys/secret", h.revealKey)
+
+	// 使用者积分。积分只能从这里进来（线下收款后由运营充值），使用端只能花。
+	// 充值明细就是 type=recharge 的那些流水。
+	admin.GET("/points/ledger", h.pointsLedger)
+	admin.GET("/points/summary", h.pointsSummary)
+	admin.POST("/points/recharge", h.rechargePoints)
+	// 分享返现：通用套餐（没绑模型）的默认比例。各模型自己的比例随门户模型目录一起保存（referralBps）。
+	admin.GET("/referral/settings", h.referralSettings)
+	admin.POST("/referral/settings/save", h.saveReferralSettings)
+
+	// ai-bridge 安装包。上传要带离线签出来的签名，服务端先验一遍再收 ——
+	// 没签名的包发下去，每台机器都会在升级的最后一步拒装，而运营要到那时候才知道。
+	admin.GET("/bridge/releases", h.bridgeReleases)
+	admin.POST("/bridge/releases/upload", h.uploadBridgeRelease)
+	admin.POST("/bridge/releases/status", h.setBridgeReleaseStatus)
+
 	// 门户的模型目录。列全部（含下架的），保存是整行覆盖。
 	admin.GET("/portal/models", h.portalModels)
 	admin.POST("/portal/models/save", h.savePortalModel)
@@ -76,6 +96,47 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 门户「联系我们」收到的线索，里面是陌生人留下的联系方式 —— 资源表里别给只读角色。
 	admin.GET("/portal/leads", h.portalLeads)
 	admin.POST("/portal/leads/handle", h.handlePortalLead)
+}
+
+// bridgeReleases 全部安装包，含已下架的 —— 那是历史，机器上报的版本要对得上它。
+func (h *Handler) bridgeReleases(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	views, err := h.service.ListBridgeReleases(context.Request.Context())
+	httpx.JSON(context, views, err)
+}
+
+// uploadBridgeRelease 上传一个安装包。
+//
+// 整个包走 base64 进请求体：浏览器到这里中间隔着 Next.js 的通配代理，那条路只转发 JSON。
+// 包三兆上下，base64 之后四兆，比为它单开一条多部件上传的路便宜得多。
+func (h *Handler) uploadBridgeRelease(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.PublishBridgeReleaseRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.Operator = httpx.CallerID(context)
+	view, err := h.service.PublishBridgeRelease(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+// setBridgeReleaseStatus 下架 / 重新上架。下架之后它不再是任何机器的升级目标。
+func (h *Handler) setBridgeReleaseStatus(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SetBridgeReleaseStatusRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.Operator = httpx.CallerID(context)
+	httpx.JSON(context, req.ReleaseID, h.service.SetBridgeReleaseStatus(context.Request.Context(), req))
 }
 
 // enabled 挡住「路由在、服务没装配」这一种情况。
@@ -234,7 +295,7 @@ func (h *Handler) accountsEnabled(context *gin.Context) bool {
 	return true
 }
 
-// users 按端翻账号。side 必填：两端是两批人。
+// users 按端翻账号。side 必填：两端各一张账号表，不说翻哪一端就无从翻起。
 func (h *Handler) users(context *gin.Context) {
 	if !h.accountsEnabled(context) {
 		return
@@ -307,6 +368,104 @@ func (h *Handler) payOrder(context *gin.Context) {
 	}
 	view, err := h.service.PayOrder(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
+}
+
+// ---------- 全站密钥 ----------
+
+func (h *Handler) keys(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.AdminKeyQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminKeys(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// revealKey 取密钥明文。ownerUserID 传空串：运营哪把都能取，吊销了的也能（排查要用）。
+func (h *Handler) revealKey(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req struct {
+		KeyID string `json:"keyId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.RevealKey(context.Request.Context(), "", req.KeyID)
+	context.Header("Cache-Control", "no-store")
+	httpx.JSON(context, view, err)
+}
+
+// ---------- 使用者积分与分享 ----------
+
+func (h *Handler) pointsLedger(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.PointsLedgerQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	// ownerUserId 单独取：dto 上它不从请求绑定（使用端那条路由靠这个挡越权）。
+	query.Operator, query.OwnerUserID = true, strings.TrimSpace(context.Query("ownerUserId"))
+	page, err := h.service.PointsLedger(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) pointsSummary(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	userID := strings.TrimSpace(context.Query("userId"))
+	if userID == "" {
+		httpx.Fail(context, "缺少 userId")
+		return
+	}
+	view, err := h.service.PointsSummary(context.Request.Context(), userID)
+	httpx.JSON(context, view, err)
+}
+
+// rechargePoints 给使用者充积分。经手人只取自凭证，同 resolveDispute。
+func (h *Handler) rechargePoints(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.RechargePointsRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.Operator = httpx.CallerID(context)
+	view, err := h.service.RechargePoints(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) referralSettings(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	view, err := h.service.ReferralSettings(context.Request.Context())
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) saveReferralSettings(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SaveReferralSettingsRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UpdatedBy = httpx.CallerID(context)
+	httpx.JSON(context, req.DefaultBps, h.service.SaveReferralSettings(context.Request.Context(), req))
 }
 
 // ---------- 门户 ----------

@@ -173,15 +173,12 @@ func (s *service) SetProviderType(ctx context.Context, req dto.SetProviderTypeRe
 	default:
 		return fmt.Errorf("非法的提供者身份: %s", req.ProviderType)
 	}
-	account, err := s.repository.FindUser(ctx, bizLine, owner)
-	if repository.IsNotFound(err) {
-		return fmt.Errorf("账号不存在: %s", owner)
-	}
-	if err != nil {
+	// 只在共享端那张表里找：散户 / 工作室是共享端才有的身份，
+	// 一个使用端的账号 id 传进来查不到，报的就是「共享端账号不存在」。
+	if _, err := s.repository.FindUser(ctx, bizLine, dto.SideProvider, owner); repository.IsNotFound(err) {
+		return fmt.Errorf("共享端账号不存在: %s", owner)
+	} else if err != nil {
 		return err
-	}
-	if account.Side != dto.SideProvider {
-		return fmt.Errorf("只有共享端账号才分散户和工作室")
 	}
 	return s.repository.SaveProviderType(ctx, &repository.GalaxyProvider{
 		BizLine: bizLine, OwnerUserID: owner, ProviderType: req.ProviderType, UpdatedBy: truncate(req.UpdatedBy, 64),

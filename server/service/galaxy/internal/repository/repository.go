@@ -23,8 +23,8 @@ func (r *GalaxyRepository) AutoMigrate() error {
 // 两处各写一份的话，新表迟早只进其中一处，另一处要等到线上报「表不存在」才发现。
 func models() []any {
 	return []any{
-		// 账号：共享端与使用端各一批，和任务宇宙的账号体系无关
-		&GalaxyUser{},
+		// 账号：共享端与使用端两张表，两批人在库里没有交集，和任务宇宙的账号体系也无关
+		&GalaxyProviderUser{}, &GalaxyConsumerUser{},
 		// 供给：机器 → 贡献 → 授权 → 座位
 		&GalaxyNode{}, &GalaxyProvider{}, &GalaxyReputation{}, &GalaxyMachineBan{}, &GalaxyPairingCode{}, &GalaxyProviderKey{}, &GalaxyContribution{},
 		&GalaxyQuotaGrant{}, &GalaxyQuotaWindow{}, &GalaxySeatBinding{},
@@ -40,6 +40,10 @@ func models() []any {
 		&GalaxyPlatformLedger{}, &GalaxyPayout{}, &GalaxyAuditProbe{}, &GalaxyDispute{},
 		// 门户：对外的模型目录与「联系我们」线索
 		&GalaxyModel{}, &GalaxyLead{},
+		// 使用者积分与分享
+		&GalaxyPointsAccount{}, &GalaxyPointsLedger{}, &GalaxyReferral{}, &GalaxySetting{},
+		// ai-bridge 的版本分发，与共享端的邀请返现
+		&GalaxyBridgeRelease{}, &GalaxyProviderReferral{},
 	}
 }
 

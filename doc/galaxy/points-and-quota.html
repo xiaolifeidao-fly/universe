@@ -1,0 +1,1252 @@
+<title>积分与额度</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --paper: #F1F4F1;
+    --surface: #FFFFFF;
+    --surface-2: #F7F9F7;
+    --ink: #152019;
+    --ink-2: #46564E;
+    --ink-3: #77877E;
+    --line: #D9E1DB;
+    --line-strong: #BCC9C1;
+    --points: #9C5F14;
+    --points-soft: #F4E6D3;
+    --quota: #0D6A62;
+    --quota-soft: #D7EBE8;
+    --danger: #A23325;
+    --danger-soft: #F6E0DB;
+    --code-bg: #EBF0EC;
+    --shadow: 0 1px 2px rgba(21, 32, 25, .05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0E1412;
+      --surface: #161D1A;
+      --surface-2: #1B2420;
+      --ink: #E7EEE9;
+      --ink-2: #AEBDB5;
+      --ink-3: #7E8E86;
+      --line: #28332E;
+      --line-strong: #3B4942;
+      --points: #E0A662;
+      --points-soft: #35281A;
+      --quota: #5DC7BA;
+      --quota-soft: #12302C;
+      --danger: #E58D7C;
+      --danger-soft: #37201C;
+      --code-bg: #1E2723;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #0E1412;
+    --surface: #161D1A;
+    --surface-2: #1B2420;
+    --ink: #E7EEE9;
+    --ink-2: #AEBDB5;
+    --ink-3: #7E8E86;
+    --line: #28332E;
+    --line-strong: #3B4942;
+    --points: #E0A662;
+    --points-soft: #35281A;
+    --quota: #5DC7BA;
+    --quota-soft: #12302C;
+    --danger: #E58D7C;
+    --danger-soft: #37201C;
+    --code-bg: #1E2723;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 15.5px;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame { max-width: 1040px; margin: 0 auto; padding: 0 28px 96px; }
+  .prose { max-width: 74ch; }
+
+  h1, h2, h3 {
+    font-family: "Archivo", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-weight: 700;
+    letter-spacing: -.012em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  /* ---------- 报头 ---------- */
+
+  .masthead { border-bottom: 1px solid var(--line); background: var(--surface); }
+  .masthead .frame { padding-top: 44px; padding-bottom: 30px; }
+  .eyebrow {
+    font-size: 11.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-3); font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  h1 { font-size: 40px; line-height: 1.12; margin: 12px 0 0; }
+  .lede { max-width: 68ch; margin: 14px 0 0; color: var(--ink-2); font-size: 16.5px; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 26px; margin-top: 24px;
+    font-size: 12.5px; color: var(--ink-3); font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  .jump { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 26px; }
+  .jump a {
+    font-size: 12.5px; color: var(--ink-2); text-decoration: none;
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; background: var(--surface-2);
+  }
+  .jump a:hover { border-color: var(--line-strong); color: var(--ink); }
+  a:focus-visible, .jump a:focus-visible { outline: 2px solid var(--quota); outline-offset: 2px; }
+
+  /* ---------- 章节 ---------- */
+
+  section { padding-top: 58px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; border-top: 2px solid var(--ink); padding-top: 14px; }
+  .sec-no {
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12.5px; font-weight: 500;
+    color: var(--ink-3); letter-spacing: .06em; padding-top: 6px;
+  }
+  h2 { font-size: 25px; line-height: 1.25; }
+  h3 { font-size: 17px; margin: 34px 0 10px; letter-spacing: 0; }
+  p { margin: 14px 0; }
+  .sec-head + p { margin-top: 16px; }
+  ul { margin: 14px 0; padding-left: 20px; }
+  li { margin: 6px 0; }
+  strong { font-weight: 600; }
+
+  code, .mono {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+    font-size: .88em;
+  }
+  code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; }
+
+  /* ---------- 两种钱的标记 ---------- */
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
+    border-radius: 4px; padding: 1px 7px; white-space: nowrap;
+  }
+  .tag-points { color: var(--points); background: var(--points-soft); }
+  .tag-quota { color: var(--quota); background: var(--quota-soft); }
+  .tag-warn { color: var(--danger); background: var(--danger-soft); }
+
+  /* ---------- 图 ---------- */
+
+  figure { margin: 28px 0 0; }
+  .canvas {
+    overflow-x: auto; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 18px 20px; box-shadow: var(--shadow);
+  }
+  .canvas svg { display: block; min-width: 760px; width: 100%; height: auto; }
+  figcaption { margin-top: 10px; font-size: 12.5px; color: var(--ink-3); }
+
+  svg text { font-family: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", sans-serif; }
+  .s-lane { font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+  .s-node { font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .s-sub { font-size: 10.5px; fill: var(--ink-3); font-family: "IBM Plex Mono", monospace; }
+  .s-msg { font-size: 12px; fill: var(--ink-2); }
+  .s-note { font-size: 11px; fill: var(--ink-3); }
+  .s-badge { font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+  .lifeline { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 4; }
+  .box { fill: var(--surface-2); stroke: var(--line-strong); stroke-width: 1.2; }
+  .box-points { fill: var(--points-soft); stroke: var(--points); stroke-width: 1.3; }
+  .box-quota { fill: var(--quota-soft); stroke: var(--quota); stroke-width: 1.3; }
+  .flow { stroke: var(--ink-2); stroke-width: 1.4; fill: none; }
+  .flow-back { stroke: var(--points); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  .flow-fail { stroke: var(--danger); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  .txbox { fill: none; stroke: var(--quota); stroke-width: 1.3; stroke-dasharray: 6 4; }
+  .txfill { fill: var(--quota-soft); opacity: .35; }
+
+  /* ---------- 步骤 ---------- */
+
+  ol.steps { list-style: none; counter-reset: step; margin: 22px 0 0; padding: 0; }
+  ol.steps > li {
+    counter-increment: step; position: relative; padding: 0 0 18px 44px; margin: 0;
+    border-left: 1px solid var(--line);
+  }
+  ol.steps > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: -13px; top: 1px;
+    width: 25px; height: 25px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line-strong);
+    color: var(--ink-2); font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 500;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps b { display: block; font-weight: 600; font-size: 15px; }
+  ol.steps p { margin: 4px 0 0; color: var(--ink-2); max-width: 72ch; }
+  .ref {
+    display: inline-block; margin-top: 6px; font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    color: var(--ink-3); background: var(--code-bg); border-radius: 4px; padding: 1px 7px;
+  }
+
+  /* ---------- 表 ---------- */
+
+  .table-wrap { overflow-x: auto; margin: 24px 0 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; }
+  th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    font-weight: 600; background: var(--surface-2); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- 便签 ---------- */
+
+  .note {
+    margin: 24px 0 0; padding: 14px 18px; border-left: 3px solid var(--quota);
+    background: var(--surface); border-radius: 0 8px 8px 0; font-size: 14.5px; color: var(--ink-2);
+  }
+  .note.warn { border-left-color: var(--danger); }
+  .note.points { border-left-color: var(--points); }
+  .note b { color: var(--ink); }
+
+  /* ---------- 取舍卡 ---------- */
+
+  .why { display: grid; gap: 14px; margin-top: 24px; }
+  .why > div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; box-shadow: var(--shadow); }
+  .why h3 { margin: 0 0 6px; font-size: 15.5px; font-family: inherit; font-weight: 600; }
+  .why p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+  .why p + p { margin-top: 8px; }
+
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-3); }
+
+  @media (max-width: 700px) {
+    .frame { padding: 0 18px 72px; }
+    h1 { font-size: 30px; }
+    h2 { font-size: 21px; }
+    body { font-size: 15px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<header class="masthead">
+  <div class="frame">
+    <div class="eyebrow">Galaxy 使用端 · 账务设计</div>
+    <h1>积分与额度</h1>
+    <p class="lede">
+      使用端有两种「钱」：<span class="tag tag-points">积分</span>挂在人名下，用来买东西；
+      <span class="tag tag-quota">额度</span>挂在密钥名下，调用时被烧掉。
+      这份文档把它们从运营充值一路讲到请求结算 —— 每一步谁调谁、写哪张表、什么时候碰 Redis、哪一段在同一个事务里、失败回滚到哪儿。
+    </p>
+    <div class="meta">
+      <span>2026-09-12</span>
+      <span>server/service/galaxy · galaxy-api · manager-api</span>
+      <span>迁移 20260912_galaxy_points_referral.sql</span>
+    </div>
+    <nav class="jump">
+      <a href="#money">两种钱</a>
+      <a href="#recharge">① 运营充积分</a>
+      <a href="#purchase">② 用积分买套餐</a>
+      <a href="#referral">③ 分享返现</a>
+      <a href="#runtime">④ 额度被烧掉</a>
+      <a href="#idem">幂等键</a>
+      <a href="#states">状态机</a>
+      <a href="#why">设计取舍</a>
+      <a href="#ops">出错了怎么办</a>
+      <a href="#map">代码地图</a>
+    </nav>
+  </div>
+</header>
+
+<div class="frame">
+
+  <!-- ============ 两种钱 ============ -->
+  <section id="money">
+    <div class="sec-head"><span class="sec-no">00</span><h2>两种钱，一次转换</h2></div>
+    <div class="prose">
+      <p>
+        整条链路只有一次「换钱」：<strong>买套餐的那一刻，积分变成额度</strong>。这一步之前的钱是人的，之后的钱是密钥的。
+        两边的单位、住的表、改它的人、过期方式都不一样，分开看就不会乱。
+      </p>
+    </div>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 900 500" role="img" aria-label="积分与额度的全景流向图">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink-2)"></path>
+            </marker>
+            <marker id="ah-points" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--points)"></path>
+            </marker>
+          </defs>
+
+          <!-- 1 运营 -->
+          <rect class="box" x="250" y="24" width="300" height="52" rx="8"></rect>
+          <text class="s-node" x="400" y="46" text-anchor="middle">运营 · 管理端</text>
+          <text class="s-sub" x="400" y="63" text-anchor="middle">manager-api /galaxy/admin/points/recharge</text>
+
+          <line class="flow" x1="400" y1="76" x2="400" y2="116" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="414" y="100">充值：+积分，线下收的钱记在 base_amount</text>
+          <text class="s-sub" x="236" y="100" text-anchor="end">recharge:&lt;请求号&gt;</text>
+
+          <!-- 2 积分账户 -->
+          <rect class="box-points" x="250" y="116" width="300" height="56" rx="8"></rect>
+          <text class="s-node" x="400" y="140" text-anchor="middle">积分账户 · 一个人一行</text>
+          <text class="s-sub" x="400" y="157" text-anchor="middle">zt_galaxy_points_account.balance</text>
+
+          <line class="flow" x1="400" y1="172" x2="400" y2="212" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="414" y="196">购买：−积分，余额不够就整单退回</text>
+          <text class="s-sub" x="236" y="196" text-anchor="end">purchase:&lt;请求号&gt;</text>
+
+          <!-- 3 订单 -->
+          <rect class="box" x="250" y="212" width="300" height="56" rx="8"></rect>
+          <text class="s-node" x="400" y="236" text-anchor="middle">订单 pending → paid → fulfilled</text>
+          <text class="s-sub" x="400" y="253" text-anchor="middle">zt_galaxy_order</text>
+
+          <line class="flow" x1="400" y1="268" x2="400" y2="308" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="414" y="292">履约：签发新密钥，或充进已有密钥</text>
+
+          <!-- 4 额度 -->
+          <rect class="box-quota" x="250" y="308" width="300" height="56" rx="8"></rect>
+          <text class="s-node" x="400" y="332" text-anchor="middle">密钥额度 · 一把密钥一个单位一行</text>
+          <text class="s-sub" x="400" y="349" text-anchor="middle">zt_galaxy_consumer_balance(key_id, unit)</text>
+
+          <line class="flow" x1="400" y1="364" x2="400" y2="404" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="414" y="388">调用结算：按用量扣，条件更新扣不成负数</text>
+          <text class="s-sub" x="236" y="388" text-anchor="end">&lt;rid&gt;:&lt;attempt&gt;:&lt;unit&gt;</text>
+
+          <!-- 5 结算 -->
+          <rect class="box" x="250" y="404" width="300" height="56" rx="8"></rect>
+          <text class="s-node" x="400" y="428" text-anchor="middle">结算流水 settle</text>
+          <text class="s-sub" x="400" y="445" text-anchor="middle">zt_galaxy_consumer_ledger</text>
+
+          <!-- 返现回路 -->
+          <path class="flow-back" d="M 550 240 H 700 V 144 H 550" marker-end="url(#ah-points)"></path>
+          <text class="s-msg" x="712" y="186">返现：交付之后</text>
+          <text class="s-msg" x="712" y="203">按比例返给邀请人</text>
+          <text class="s-sub" x="712" y="222">order:&lt;订单号&gt;:referral</text>
+
+          <!-- 左侧分区标记 -->
+          <rect class="box-points" x="24" y="116" width="56" height="24" rx="5"></rect>
+          <text class="s-badge" x="52" y="133" text-anchor="middle" fill="var(--points)">积分</text>
+          <rect class="box-quota" x="24" y="308" width="56" height="24" rx="5"></rect>
+          <text class="s-badge" x="52" y="325" text-anchor="middle" fill="var(--quota)">额度</text>
+        </svg>
+      </div>
+      <figcaption>整条链路只有一条回路：返现。它发生在订单交付之后，把积分还回到邀请人的账户上。</figcaption>
+    </figure>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>&nbsp;</th><th>积分</th><th>额度</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">挂在谁名下</th>
+            <td>人（<code>cu_…</code>）</td>
+            <td>一把密钥的一个计量单位（<code>ck_…</code> × <code>unit</code>）</td>
+          </tr>
+          <tr>
+            <th scope="row">单位</th>
+            <td>微积分，<strong>1 积分 = ¥1</strong>，库里存 <span class="num mono">1_000_000</span> 表示 1 分</td>
+            <td>计量单位本身：token、call、秒……按 <code>unit</code> 分别记</td>
+          </tr>
+          <tr>
+            <th scope="row">余额表</th>
+            <td class="mono">zt_galaxy_points_account</td>
+            <td class="mono">zt_galaxy_consumer_balance</td>
+          </tr>
+          <tr>
+            <th scope="row">流水表</th>
+            <td class="mono">zt_galaxy_points_ledger</td>
+            <td class="mono">zt_galaxy_consumer_ledger</td>
+          </tr>
+          <tr>
+            <th scope="row">谁让它变多</th>
+            <td>运营充值 <code>recharge</code>、分享返现 <code>referral</code></td>
+            <td>订单履约（签发 / 充值）<code>topup</code>、续期换发转移</td>
+          </tr>
+          <tr>
+            <th scope="row">谁让它变少</th>
+            <td>买套餐 <code>purchase</code>（负数）</td>
+            <td>调用结算 <code>settle</code></td>
+          </tr>
+          <tr>
+            <th scope="row">会不会过期</th>
+            <td>不会。它是钱，没有有效期</td>
+            <td>跟着密钥：密钥到期即冻结，冻结期内换发可整体转移</td>
+          </tr>
+          <tr>
+            <th scope="row">用户在哪儿看</th>
+            <td>Orbit「积分」页：余额、流水、邀请</td>
+            <td>Orbit「密钥」页：每把密钥的剩余额度</td>
+          </tr>
+          <tr>
+            <th scope="row">谁能直接改</th>
+            <td>只有运营（manager-api）。使用端只能花</td>
+            <td>没有直接改的入口：只能买进来、烧掉；争议裁决退额度走同一张表的反向流水</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note points">
+      <b>为什么积分不是「余额」两个字。</b>它一开始叫余额，改成积分是因为它不能退：运营在线下收钱，
+      系统里记的是「实付多少钱换了多少积分」（<code>base_amount</code>），两者不必相等，也不构成一个可退款的账户。
+      口径统一成 1 积分 = ¥1，是为了让套餐标价、返现比例、充值实付三处不用换算。
+    </div>
+  </section>
+
+  <!-- ============ 1 充值 ============ -->
+  <section id="recharge">
+    <div class="sec-head"><span class="sec-no">01</span><h2>运营给使用者充积分</h2></div>
+    <div class="prose">
+      <p>
+        入口只有管理端一处。使用端没有任何能让自己积分变多的接口 —— 购买和返现都由服务端在别的流程里顺带记账。
+      </p>
+    </div>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 900 400" role="img" aria-label="运营充积分的时序图">
+          <!-- 泳道 -->
+          <rect class="box" x="14" y="10" width="150" height="32" rx="6"></rect>
+          <text class="s-lane" x="89" y="31" text-anchor="middle">管理端页面</text>
+          <rect class="box" x="214" y="10" width="150" height="32" rx="6"></rect>
+          <text class="s-lane" x="289" y="31" text-anchor="middle">manager-api</text>
+          <rect class="box" x="424" y="10" width="190" height="32" rx="6"></rect>
+          <text class="s-lane" x="519" y="31" text-anchor="middle">service/galaxy</text>
+          <rect class="box" x="700" y="10" width="180" height="32" rx="6"></rect>
+          <text class="s-lane" x="790" y="31" text-anchor="middle">MySQL</text>
+
+          <line class="lifeline" x1="89" y1="42" x2="89" y2="380"></line>
+          <line class="lifeline" x1="289" y1="42" x2="289" y2="380"></line>
+          <line class="lifeline" x1="519" y1="42" x2="519" y2="380"></line>
+          <line class="lifeline" x1="790" y1="42" x2="790" y2="380"></line>
+
+          <!-- 1 -->
+          <line class="flow" x1="89" y1="80" x2="285" y2="80" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="96" y="72">POST /points/recharge</text>
+          <text class="s-note" x="96" y="96">选人、积分数、实付金额、备注、请求号</text>
+
+          <!-- 2 -->
+          <line class="flow" x1="289" y1="124" x2="515" y2="124" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="296" y="116">经手人取自登录凭证</text>
+
+          <!-- 3 自校验 -->
+          <rect class="box" x="424" y="146" width="190" height="34" rx="6"></rect>
+          <text class="s-msg" x="519" y="167" text-anchor="middle">校验：≤100 万 / 账号是使用端</text>
+
+          <!-- 事务盒 -->
+          <rect class="txfill" x="404" y="200" width="482" height="112" rx="10"></rect>
+          <rect class="txbox" x="404" y="200" width="482" height="112" rx="10"></rect>
+          <text class="s-badge" x="418" y="219" fill="var(--quota)">一个事务</text>
+
+          <line class="flow" x1="519" y1="248" x2="786" y2="248" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="240">UPDATE 账户 balance + ?（没有就建）</text>
+
+          <line class="flow" x1="519" y1="292" x2="786" y2="292" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="284">INSERT 流水 ON CONFLICT DO NOTHING</text>
+
+          <!-- 重放 -->
+          <path class="flow-fail" d="M 786 330 H 523" marker-end="url(#ah)"></path>
+          <text class="s-msg" x="530" y="322" fill="var(--danger)">0 行 = 这个请求号充过了 → 回滚</text>
+
+          <!-- 返回 -->
+          <path class="flow-back" d="M 515 368 H 93" marker-end="url(#ah-points)"></path>
+          <text class="s-msg" x="100" y="360">返回那一行流水：积分数、余额、时间</text>
+        </svg>
+      </div>
+      <figcaption>请求号在前端打开充值框时生成。重试、连点、超时重发都落在同一个 <code>txn_id</code> 上。</figcaption>
+    </figure>
+
+    <ol class="steps">
+      <li>
+        <b>请求号在前端生成，不在服务端</b>
+        <p>
+          运营打开充值框的那一刻就有了请求号。服务端拿它当幂等键，因此「网络超时了、我再点一次」和「我要再充一笔」
+          是两件能分清的事 —— 后者得关掉框重新打开。
+        </p>
+        <span class="ref">client/manager/src/app/(console)/galaxy/components/PointsRecharge.tsx</span>
+      </li>
+      <li>
+        <b>经手人只信凭证</b>
+        <p>
+          <code>operator</code> 字段不从请求体读，取的是管理端登录凭证里的账号 id。请求体里带一个别人的名字进来是没用的。
+        </p>
+        <span class="ref">server/manager-api/pkg/galaxy/handler.go:436</span>
+      </li>
+      <li>
+        <b>先挡住手滑和串台</b>
+        <p>
+          积分必须大于 0、单次不超过 100 万（挡的是多打几个 0）、实付金额不能是负数、账号必须存在且是使用端账号。
+          共享端账号没有积分这回事，充进去就成了一笔谁也解释不了的账。
+        </p>
+        <span class="ref">server/service/galaxy/points.go:145</span>
+      </li>
+      <li>
+        <b>加余额和写流水在同一个事务里</b>
+        <p>
+          <code>CreditPoints</code> 是一次 upsert（账户不存在就建，存在就 <code>balance + ?</code>），
+          紧接着插一行 <code>type=recharge</code> 的流水，<code>txn_id</code> 是 <code>recharge:&lt;请求号&gt;</code>。
+          流水行还记下 <code>balance_after</code>，事后对账不用重新累加。
+        </p>
+        <span class="ref">service/galaxy/points.go:203 · repository/points.go:31</span>
+      </li>
+      <li>
+        <b>插不进去就整个回滚</b>
+        <p>
+          流水表在 <code>(biz_line, txn_id)</code> 上有唯一索引，插入带 <code>ON CONFLICT DO NOTHING</code>。
+          影响 0 行意味着这个请求号已经充过了：事务回滚，余额一分没动，然后把原来那一行读出来<strong>原样返回成功</strong>。
+          报「重复」的话，运营会以为没充上，再充一遍才是真的多充。
+        </p>
+        <span class="ref">service/galaxy/points.go:175</span>
+      </li>
+      <li>
+        <b>同一个请求号换了人或数额，才是真错</b>
+        <p>
+          读回来的那一行如果主人、类型、积分数对不上，说明前端把请求号用串了。这时才报错：
+          「充值请求号已被另一笔充值用过，请关掉充值框重新打开」。
+        </p>
+        <span class="ref">service/galaxy/points.go:185</span>
+      </li>
+    </ol>
+
+    <div class="note">
+      <b>没有第二张「充值明细」表。</b>管理端看到的充值明细就是 <code>type=recharge</code> 的流水行。
+      两处各记一份的话，对不上的时候谁也说不清哪边是对的。
+    </div>
+  </section>
+
+  <!-- ============ 2 购买 ============ -->
+  <section id="purchase">
+    <div class="sec-head"><span class="sec-no">02</span><h2>使用者用积分买套餐</h2></div>
+    <div class="prose">
+      <p>
+        这是整套设计里最要紧的一段：<strong>扣积分、把订单推到已付、签发或充值，三件事在同一个事务里</strong>。
+        不存在「积分扣了、密钥没到」的中间态，也就不需要事后补偿。
+      </p>
+    </div>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 900 620" role="img" aria-label="积分购买的时序图">
+          <rect class="box" x="14" y="10" width="150" height="32" rx="6"></rect>
+          <text class="s-lane" x="89" y="31" text-anchor="middle">Orbit 购买页</text>
+          <rect class="box" x="214" y="10" width="150" height="32" rx="6"></rect>
+          <text class="s-lane" x="289" y="31" text-anchor="middle">galaxy-api</text>
+          <rect class="box" x="424" y="10" width="190" height="32" rx="6"></rect>
+          <text class="s-lane" x="519" y="31" text-anchor="middle">PurchaseWithPoints</text>
+          <rect class="box" x="700" y="10" width="180" height="32" rx="6"></rect>
+          <text class="s-lane" x="790" y="31" text-anchor="middle">MySQL</text>
+
+          <line class="lifeline" x1="89" y1="42" x2="89" y2="600"></line>
+          <line class="lifeline" x1="289" y1="42" x2="289" y2="600"></line>
+          <line class="lifeline" x1="519" y1="42" x2="519" y2="600"></line>
+          <line class="lifeline" x1="790" y1="42" x2="790" y2="600"></line>
+
+          <!-- 1 -->
+          <line class="flow" x1="89" y1="78" x2="285" y2="78" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="96" y="70">POST /consumer/points/purchase</text>
+          <text class="s-note" x="96" y="94">套餐码、目标密钥、告知版本、请求号</text>
+
+          <!-- 2 -->
+          <line class="flow" x1="289" y1="120" x2="515" y2="120" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="296" y="112">userId 取自令牌</text>
+
+          <!-- 3 预查 -->
+          <line class="flow" x1="519" y1="160" x2="786" y2="160" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="152">先查 purchase:&lt;请求号&gt; 这行流水</text>
+          <path class="flow-back" d="M 786 192 H 523" marker-end="url(#ah-points)"></path>
+          <text class="s-msg" x="530" y="184">查到 → 原样还回那一单，不建新单</text>
+
+          <!-- 4 建单 -->
+          <line class="flow" x1="519" y1="232" x2="786" y2="232" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="224">INSERT 订单 pending（额度与模型快照）</text>
+
+          <!-- 事务盒 -->
+          <rect class="txfill" x="404" y="256" width="482" height="204" rx="10"></rect>
+          <rect class="txbox" x="404" y="256" width="482" height="204" rx="10"></rect>
+          <text class="s-badge" x="418" y="275" fill="var(--quota)">一个事务</text>
+
+          <line class="flow" x1="519" y1="304" x2="786" y2="304" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="296">UPDATE 积分 −? WHERE balance ≥ ?</text>
+
+          <line class="flow" x1="519" y1="348" x2="786" y2="348" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="340">INSERT 流水 purchase:&lt;请求号&gt;</text>
+
+          <line class="flow" x1="519" y1="392" x2="786" y2="392" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="384">UPDATE 订单 pending → paid</text>
+
+          <line class="flow" x1="519" y1="436" x2="786" y2="436" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="526" y="428">签发密钥 / 充额度，订单 → fulfilled</text>
+
+          <!-- 回滚 -->
+          <path class="flow-fail" d="M 786 486 H 523" marker-end="url(#ah)"></path>
+          <text class="s-msg" x="530" y="478" fill="var(--danger)">任一步失败 → 整体回滚，再把这张单关掉</text>
+
+          <!-- 返现 -->
+          <rect class="box" x="424" y="506" width="190" height="34" rx="6"></rect>
+          <text class="s-msg" x="519" y="527" text-anchor="middle">事务之外：算返现</text>
+
+          <!-- 返回 -->
+          <path class="flow-back" d="M 515 578 H 93" marker-end="url(#ah-points)"></path>
+          <text class="s-msg" x="100" y="570">订单 + 明文（仅新签发那次，Cache-Control: no-store）</text>
+        </svg>
+      </div>
+      <figcaption>虚线是「什么都没发生」的两条路：一条是重放直接还回原单，一条是失败后把一切退回去。</figcaption>
+    </figure>
+
+    <ol class="steps">
+      <li>
+        <b>页面为每一单准备一个请求号</b>
+        <p>
+          请求号存在 <code>useRef</code> 里，<strong>买成了才换新的</strong>：失败的那次事务整个回滚了，原样重试不会被当成重复。
+          按钮在请求飞行期间是禁用的，双击也只会发出去一次。
+        </p>
+        <span class="ref">orbit/webview/…/store/components/StoreBoard.tsx:78</span>
+      </li>
+      <li>
+        <b>先按请求号查一次流水</b>
+        <p>
+          超时重试最常见的情况是「第一次其实已经成了」。先查 <code>purchase:&lt;请求号&gt;</code>，查到就直接把那一单还回去。
+          少了这一步，重试会先建出一张多余的待支付单，余额刚好够一单时还会被报成「积分不足」。
+        </p>
+        <span class="ref">service/galaxy/points.go:250</span>
+      </li>
+      <li>
+        <b>建单：校验和渠道支付共用一份</b>
+        <p>
+          套餐得在架上；充进已有密钥时，密钥必须是本人的且没吊销；要签发新密钥时，数据告知的确认是硬前置，下单时就挡住。
+          订单上还落两个快照：<strong>额度</strong>（套餐之后改量不影响已下的单）和<strong>绑定的模型</strong>（之后改绑不影响这一单的返现口径）。
+        </p>
+        <span class="ref">service/galaxy/order.go:146</span>
+      </li>
+      <li>
+        <b>扣积分：条件更新，不会扣成负数</b>
+        <p>
+          <code>UPDATE … SET balance = balance − ? WHERE balance ≥ ?</code>。影响 0 行就是余额不够，
+          直接 <code>errInsufficientPoints</code> 回滚 —— 不需要先读再判，也就没有「读到的时候够、写的时候不够」这种缝。
+        </p>
+        <span class="ref">repository/points.go:50</span>
+      </li>
+      <li>
+        <b>写流水：撞键就当作重放</b>
+        <p>
+          <code>txn_id</code> 优先用 <code>purchase:&lt;请求号&gt;</code>，老客户端不带请求号时退回 <code>order:&lt;订单号&gt;:pay</code>。
+          并发的两次提交会各建一张待支付单，但只有第一张能把这行流水写进去，后到的那次在事务里撞键、整体回滚。
+        </p>
+        <span class="ref">service/galaxy/points.go:268</span>
+      </li>
+      <li>
+        <b>订单推到已付，再履约</b>
+        <p>
+          <code>pending → paid</code> 是条件更新；履约要么签发一把新密钥（同时写入额度和一行 <code>topup</code> 账本），
+          要么把额度充进指定的那把密钥，最后 <code>paid → fulfilled</code>。两处都是条件更新，并发时只有一个能赢。
+        </p>
+        <span class="ref">service/galaxy/order.go:241 · order.go:304</span>
+      </li>
+      <li>
+        <b>失败的收尾：回滚 + 关单</b>
+        <p>
+          事务已经把积分和订单状态退回去了，但那张 <code>pending</code> 的单子还在，它已经付不了也不该留着，所以额外关一次。
+          重放那条路同样：把这次多建出来的单关掉，返回第一次的订单。对连点两下的人来说，他只买了一次。
+        </p>
+        <span class="ref">service/galaxy/points.go:300</span>
+      </li>
+      <li>
+        <b>明文只在这一次响应里出现</b>
+        <p>
+          新签发的密钥明文随这次响应回一次，响应带 <code>Cache-Control: no-store</code>。
+          重放返回的那一单<strong>不带明文</strong> —— 要拿密钥去密钥页取（那里有单独的取回接口，服务端存的是 AES-GCM 密文）。
+        </p>
+        <span class="ref">galaxy-api/pkg/consumers/handler.go:236</span>
+      </li>
+    </ol>
+
+    <div class="note">
+      <b>事务里的那个 service 是个副本。</b>履约要调 <code>IssueKey</code> 这些本来用普通连接的方法，
+      所以有个 <code>scopedTo(tx)</code> 把读写全部落在这个事务上。它只带 repository、配置、密钥加解密和 kind 定义，
+      不带放置、等待队列这些进程内状态 —— 那些东西不该在事务里碰。
+    </div>
+  </section>
+
+  <!-- ============ 3 返现 ============ -->
+  <section id="referral">
+    <div class="sec-head"><span class="sec-no">03</span><h2>分享返现</h2></div>
+    <div class="prose">
+      <p>
+        被邀请的人每完成一笔订单，<strong>平台按实付金额的一个比例返积分给邀请人</strong>，下单的人自己一分不少。
+        只返给分享人一层，返现本身不再产生返现。
+      </p>
+    </div>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 900 430" role="img" aria-label="返现的判断链">
+          <!-- 条件链 -->
+          <rect class="box" x="180" y="18" width="300" height="44" rx="8"></rect>
+          <text class="s-node" x="330" y="46" text-anchor="middle">订单已 fulfilled 且金额 &gt; 0？</text>
+          <line class="flow" x1="330" y1="62" x2="330" y2="94" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="342" y="84">是</text>
+
+          <rect class="box" x="180" y="94" width="300" height="44" rx="8"></rect>
+          <text class="s-node" x="330" y="122" text-anchor="middle">这个人是被谁邀请来的？</text>
+          <line class="flow" x1="330" y1="138" x2="330" y2="170" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="342" y="160">有邀请人</text>
+
+          <rect class="box" x="180" y="170" width="300" height="44" rx="8"></rect>
+          <text class="s-node" x="330" y="198" text-anchor="middle">取此刻的比例：模型的 → 默认的</text>
+          <line class="flow" x1="330" y1="214" x2="330" y2="246" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="342" y="236">比例 &gt; 0</text>
+
+          <rect class="box" x="180" y="246" width="300" height="44" rx="8"></rect>
+          <text class="s-node" x="330" y="274" text-anchor="middle">返现 = 实付 × bps ÷ 10000</text>
+          <line class="flow" x1="330" y1="290" x2="330" y2="322" marker-end="url(#ah)"></line>
+
+          <rect class="box-points" x="180" y="322" width="300" height="52" rx="8"></rect>
+          <text class="s-node" x="330" y="345" text-anchor="middle">给邀请人 +积分，记一行 referral</text>
+          <text class="s-sub" x="330" y="362" text-anchor="middle">order:&lt;订单号&gt;:referral</text>
+
+          <!-- 否分支 -->
+          <path class="flow-fail" d="M 480 40 H 640" marker-end="url(#ah)"></path>
+          <path class="flow-fail" d="M 480 116 H 640" marker-end="url(#ah)"></path>
+          <path class="flow-fail" d="M 480 192 H 640" marker-end="url(#ah)"></path>
+          <path class="flow-fail" d="M 480 268 H 640" marker-end="url(#ah)"></path>
+          <rect class="box" x="640" y="130" width="200" height="48" rx="8"></rect>
+          <text class="s-node" x="740" y="152" text-anchor="middle">什么都不做</text>
+          <text class="s-sub" x="740" y="169" text-anchor="middle">不是错，不报警</text>
+          <path class="flow-fail" d="M 640 40 V 130" ></path>
+          <path class="flow-fail" d="M 640 268 V 178"></path>
+
+          <!-- 左侧说明 -->
+          <text class="s-note" x="160" y="45" text-anchor="end">交付之后才谈得上返现</text>
+          <text class="s-note" x="160" y="121" text-anchor="end">注册时定死，之后不能改</text>
+          <text class="s-note" x="160" y="197" text-anchor="end">比例连同金额一起写进流水</text>
+          <text class="s-note" x="160" y="273" text-anchor="end">整数运算，不经过浮点</text>
+          <text class="s-note" x="160" y="349" text-anchor="end">失败只记日志，可按订单号补</text>
+
+          <!-- 事务外标注 -->
+          <rect class="box" x="180" y="396" width="480" height="26" rx="6"></rect>
+          <text class="s-msg" x="420" y="414" text-anchor="middle">整段跑在购买事务之外：返现失败不影响买的人</text>
+        </svg>
+      </div>
+      <figcaption>五道闸任何一道不通就安静地什么都不做 —— 没有邀请人、比例是 0，都是正常状态，不是错误。</figcaption>
+    </figure>
+
+    <ol class="steps">
+      <li>
+        <b>邀请关系在注册那一刻定死</b>
+        <p>
+          注册时填的邀请码会先解析成邀请人，<strong>账号和邀请关系在同一个事务里建</strong>。
+          事后不能改：改得动的话，返现归谁就成了谁先去找运营的问题。老账号没有这一行，第一次打开积分页时补一行，
+          但只补邀请码、邀请人留空 —— 自己注册的人事后认一个上家，等于白送一笔。
+        </p>
+        <span class="ref">service/galaxy/account/auth.go:91 · points.go:538</span>
+      </li>
+      <li>
+        <b>比例：模型的优先，其余走默认</b>
+        <p>
+          每个模型可以单独设一个比例（存在模型目录行上的 <code>referral_bps</code>），没单独设的跟着全局默认走
+          （存在 <code>zt_galaxy_setting</code> 的 <code>referral.default_bps</code>）。
+          <strong>默认值是 0</strong>：钱相关的默认只能是「不给」，比例由运营显式打开。
+        </p>
+        <span class="ref">service/galaxy/points.go:411</span>
+      </li>
+      <li>
+        <b>比例存的是万分之一，并且写进流水</b>
+        <p>
+          10% 存成 <span class="num">1000</span>，算式是 <code>实付 × bps ÷ 10000</code>，全程整数。
+          用到的比例连同「按什么算的」一起记进流水行（<code>rate_bps</code>、<code>base_amount</code>）：
+          运营之后改比例，已经返过的不跟着变，账上也看得出当时是按多少算的。
+        </p>
+        <span class="ref">service/galaxy/points.go:380</span>
+      </li>
+      <li>
+        <b>入账复用同一段加减</b>
+        <p>
+          返现走的还是「改余额 + 写流水」那一个事务，<code>txn_id</code> 是 <code>order:&lt;订单号&gt;:referral</code>。
+          一张订单最多返一次，重复调用插不进流水，余额也就不会动。
+        </p>
+        <span class="ref">service/galaxy/points.go:384</span>
+      </li>
+      <li>
+        <b>它跑在购买事务之外，而且允许失败</b>
+        <p>
+          买的人已经拿到东西了，返现不该反过来把他的购买拖垮。所以返现在交付之后单独跑，
+          出错<strong>只记一行日志</strong>（带订单号），不向用户报错。代价是：漏掉的不会自动补，得照日志补。
+        </p>
+        <span class="ref">service/galaxy/points.go:347</span>
+      </li>
+    </ol>
+
+    <div class="note points">
+      <b>渠道支付那条路也返。</b>返现挂在「订单交付」这件事上，不在「用积分付款」上 ——
+      <code>PayOrder</code> 履约完同样调一次。积分付的是积分、渠道付的是钱，而 1 积分 = ¥1，两者同一量纲，算式不用分叉。
+    </div>
+  </section>
+
+  <!-- ============ 4 运行时 ============ -->
+  <section id="runtime">
+    <div class="sec-head"><span class="sec-no">04</span><h2>额度在运行时怎么被烧掉</h2></div>
+    <div class="prose">
+      <p>
+        到这里钱已经变成密钥上的额度了。请求路径上有 Redis，但<strong>它一份钱也不管</strong> ——
+        Redis 负责的是「这次请求交给哪台机器、那台机器还有没有位置」，而余额从头到尾只在 MySQL 里，
+        并且是在<strong>节点报完成的那一刻</strong>同步扣的。
+      </p>
+    </div>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 900 540" role="img" aria-label="一次调用从鉴权到扣额度的时序图">
+          <rect class="box" x="14" y="10" width="132" height="32" rx="6"></rect>
+          <text class="s-lane" x="80" y="31" text-anchor="middle">Claude Code / Codex</text>
+          <rect class="box" x="186" y="10" width="130" height="32" rx="6"></rect>
+          <text class="s-lane" x="251" y="31" text-anchor="middle">galaxy-api</text>
+          <rect class="box" x="360" y="10" width="120" height="32" rx="6"></rect>
+          <text class="s-lane" x="420" y="31" text-anchor="middle">Redis</text>
+          <rect class="box" x="524" y="10" width="120" height="32" rx="6"></rect>
+          <text class="s-lane" x="584" y="31" text-anchor="middle">节点</text>
+          <rect class="box" x="715" y="10" width="130" height="32" rx="6"></rect>
+          <text class="s-lane" x="780" y="31" text-anchor="middle">MySQL</text>
+
+          <line class="lifeline" x1="80" y1="42" x2="80" y2="520"></line>
+          <line class="lifeline" x1="251" y1="42" x2="251" y2="520"></line>
+          <line class="lifeline" x1="420" y1="42" x2="420" y2="520"></line>
+          <line class="lifeline" x1="584" y1="42" x2="584" y2="520"></line>
+          <line class="lifeline" x1="780" y1="42" x2="780" y2="520"></line>
+
+          <line class="flow" x1="80" y1="78" x2="247" y2="78" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="86" y="70">带 sk-galaxy-… 的请求</text>
+
+          <line class="flow" x1="251" y1="116" x2="776" y2="116" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="258" y="108">SELECT 密钥 WHERE key_hash = sha256(明文) —— 每次都查库，没有缓存</text>
+
+          <path class="flow-back" d="M 776 152 H 255" marker-end="url(#ah-points)"></path>
+          <text class="s-msg" x="262" y="144">只回 status、expires_at、可用范围。<tspan font-weight="600">不读余额</tspan></text>
+
+          <line class="flow" x1="251" y1="190" x2="416" y2="190" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="258" y="182">找这把密钥的粘性绑定</text>
+          <text class="s-sub" x="258" y="206">galaxy:bind:{ck_…}:{lane}</text>
+
+          <line class="flow" x1="251" y1="240" x2="416" y2="240" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="258" y="232">place 脚本：机位 / 并发 / 提供者配额</text>
+          <text class="s-sub" x="258" y="256">一段 Lua 原子完成，最后入队 galaxy:q:{cid}</text>
+
+          <path class="flow" d="M 580 290 H 424" marker-end="url(#ah)"></path>
+          <text class="s-msg" x="432" y="282">节点 BLPOP 领活</text>
+
+          <path class="flow" d="M 580 328 H 255" marker-end="url(#ah)"></path>
+          <text class="s-msg" x="262" y="320">跑完上报 complete：用量、状态</text>
+
+          <!-- 结算 -->
+          <rect class="txfill" x="196" y="352" width="660" height="140" rx="10"></rect>
+          <rect class="txbox" x="196" y="352" width="660" height="140" rx="10"></rect>
+          <text class="s-badge" x="210" y="371" fill="var(--quota)">结算（同步，就在这次上报里）</text>
+
+          <line class="flow" x1="251" y1="398" x2="416" y2="398" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="258" y="390">settle 脚本：第一道重放闸</text>
+
+          <line class="flow" x1="251" y1="436" x2="776" y2="436" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="258" y="428">按 zt_galaxy_price 定价，写计量与消费账本（第二道闸）</text>
+
+          <line class="flow" x1="251" y1="474" x2="776" y2="474" marker-end="url(#ah)"></line>
+          <text class="s-msg" x="258" y="466">只对真的插进去的那些行：UPDATE 额度 balance − 用量</text>
+
+          <text class="s-note" x="196" y="516">扣不动（余额不足或压根没有这一行）只记账、不打断 —— 这是 P0 留下的口子，还没关。</text>
+        </svg>
+      </div>
+      <figcaption>Redis 上没有任何一个键装着钱。它装的是位置、队列、请求体和<strong>提供者</strong>那侧的配额计数。</figcaption>
+    </figure>
+
+    <ol class="steps">
+      <li>
+        <b>鉴权：每个请求一次 MySQL 点查，没有缓存</b>
+        <p>
+          网关从 <code>X-Galaxy-Key</code> / <code>Authorization: Bearer</code> / <code>x-api-key</code> 里取出明文，
+          算 sha256 之后按 <code>key_hash</code> 查一行。没有 Redis 缓存也没有进程内缓存 ——
+          代价是每个请求多一次点查，换来的是<strong>吊销立刻生效</strong>，而且没有任何一处缓存需要在签发、吊销、换发时去失效。
+        </p>
+        <span class="ref">service/galaxy/consumerkey.go:86 · repository/consumer.go:15</span>
+      </li>
+      <li>
+        <b>只看状态和有效期，不看余额</b>
+        <p>
+          鉴权检查的是：密钥存在、没被吊销、没到期。到期的顺手写成 <code>expired</code> 并进入冻结期。
+          之后的授权检查看的是 kind、provider、模型档。<strong>余额不在这条路上</strong> ——
+          所以一把余额为 0 的密钥照样能发起请求，欠的那部分在结算时扣不动，被静默吸收。
+        </p>
+        <p>
+          这也是「不能开放自助签发空密钥」的原因：签出来的空密钥是能用的。
+        </p>
+        <span class="ref">service/galaxy/consumerkey.go:98 · billing.go:104</span>
+      </li>
+      <li>
+        <b>放置：Redis 决定交给谁跑</b>
+        <p>
+          先看这把密钥有没有粘性绑定（<code>galaxy:bind:{ck_…}:{lane}</code>，默认 30 分钟不用就过期），
+          有就直接回原来那台机器 —— 命中的话提示词缓存还在，成本和延迟都低得多。没有就在车道里挑一台。
+          机位、并发、<strong>提供者</strong>的配额检查和入队是一段 Lua，原子完成。
+        </p>
+        <span class="ref">service/galaxy/unit.go:117 · redisctl/script.go:17</span>
+      </li>
+      <li>
+        <b>节点领活、跑完上报</b>
+        <p>
+          节点 <code>BLPOP</code> 队列拿到请求 id，再取请求体（单独一个 60 秒就过期的键）。
+          跑完调 <code>/agent/v1/units/:id/complete</code> 交回用量。Hub 自己能解析的用量以 Hub 的为准，
+          对不上超过阈值会记一条差异并扣信誉。
+        </p>
+        <span class="ref">galaxy-api/pkg/agent/handler.go · service/galaxy/unit.go:584</span>
+      </li>
+      <li>
+        <b>结算的两道闸</b>
+        <p>
+          第一道在 Redis：settle 脚本发现这次请求已经是 <code>settled</code> 就直接返回，重复上报到不了后面。
+          第二道在 MySQL：消费账本按 <code>&lt;rid&gt;:&lt;attempt&gt;:&lt;unit&gt;</code> 唯一，
+          <strong>账本一行一行写，只对真的插进去的那些行扣余额</strong>。批量写完再按总额扣一次的话，一次重放就是白发一笔钱。
+        </p>
+        <span class="ref">service/galaxy/unit.go:727 · billing.go:96</span>
+      </li>
+      <li>
+        <b>扣减本身：又是一次条件更新</b>
+        <p>
+          <code>UPDATE … SET balance = balance − ? WHERE key_id = ? AND unit = ? AND balance ≥ ?</code>。
+          扣不动返回 0 行，这个结果目前<strong>被忽略</strong>：P0 的内测密钥可能压根没有这个单位的余额行，
+          当时选择只记账不阻断。要把额度真正变成硬约束，得把这个返回值接起来，并且在请求路径上加一道余额检查。
+        </p>
+        <span class="ref">repository/consumer.go:83</span>
+      </li>
+      <li>
+        <b>没定价的单位不进账本，也就不扣额度</b>
+        <p>
+          <code>zt_galaxy_price</code> 里没有对应 <code>(kind, unit)</code> 的行，或者单价是 0，
+          这个单位就只记计量、不进账本、不扣余额。线上价格表目前是空的，所以现在实际上一分额度都没扣过。
+        </p>
+        <span class="ref">service/galaxy/billing.go:60</span>
+      </li>
+    </ol>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>这条链路上的 Redis 键</th><th>装的是什么</th><th>过期</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">galaxy:bind:{ck_…}:{lane}</td><td>这把密钥上次落在哪台机器（粘性）</td><td>默认 30 分钟不用即失效</td></tr>
+          <tr><td class="mono">galaxy:seats:{cid}</td><td>某台机器上正占着位置的密钥</td><td>按位置到期时间剔除</td></tr>
+          <tr><td class="mono">galaxy:q:{cid}</td><td>发给某台机器的待领队列</td><td>领走即出队</td></tr>
+          <tr><td class="mono">galaxy:req:{rid}</td><td>一次请求的运行状态（含是否已结算）</td><td>24 小时</td></tr>
+          <tr><td class="mono">galaxy:req:{rid}:body</td><td>请求体，给节点领活时取</td><td>60 秒</td></tr>
+          <tr><td class="mono">galaxy:quota:{cid}:{unit}:…</td><td><strong>提供者</strong>那侧的已用 / 预留计数</td><td>跟着计费窗口</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note warn">
+      <b>一个和账无关、但值得知道的副作用。</b>粘性绑定和机位是按<strong>密钥 id</strong> 记的，
+      吊销和换发都不会去清它们：被吊销的密钥下一个请求就会被挡在鉴权那一步，但它占着的那个机位
+      最长可能留到绑定过期（默认 30 分钟）才被回收。换发出来的新密钥则是「从头开始找机器」，会丢掉原来的机器亲和。
+    </div>
+  </section>
+
+
+  <!-- ============ 幂等键 ============ -->
+  <section id="idem">
+    <div class="sec-head"><span class="sec-no">05</span><h2>幂等键一览</h2></div>
+    <div class="prose">
+      <p>
+        每一次余额变动都对应一行流水，流水的 <code>txn_id</code> 就是这次变动的名字。
+        重放一次请求写不进第二行，也就不会多记一笔钱。谁生成这个名字，决定了它能挡住什么。
+      </p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>txn_id</th><th>哪本账</th><th>谁生成</th><th>挡住什么</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">recharge:&lt;请求号&gt;</td>
+            <td><span class="tag tag-points">积分</span></td>
+            <td>管理端前端，打开充值框时</td>
+            <td>运营连点、超时重发、网络重试</td>
+          </tr>
+          <tr>
+            <td class="mono">purchase:&lt;请求号&gt;</td>
+            <td><span class="tag tag-points">积分</span></td>
+            <td>使用端前端，每准备一单一个</td>
+            <td>连点两下、超时重试、并发提交</td>
+          </tr>
+          <tr>
+            <td class="mono">order:&lt;订单号&gt;:pay</td>
+            <td><span class="tag tag-points">积分</span></td>
+            <td>服务端（老客户端不带请求号时）</td>
+            <td>同一张单被付两次</td>
+          </tr>
+          <tr>
+            <td class="mono">order:&lt;订单号&gt;:referral</td>
+            <td><span class="tag tag-points">积分</span></td>
+            <td>服务端，按订单号</td>
+            <td>返现补跑、支付回调重推</td>
+          </tr>
+          <tr>
+            <td class="mono">&lt;订单号&gt;:topup:&lt;unit&gt;</td>
+            <td><span class="tag tag-quota">额度</span></td>
+            <td>服务端，按订单号和单位</td>
+            <td>同一张单重复充额度</td>
+          </tr>
+          <tr>
+            <td class="mono">&lt;新密钥&gt;:renew:in|out:&lt;unit&gt;</td>
+            <td><span class="tag tag-quota">额度</span></td>
+            <td>服务端，续期换发时</td>
+            <td>余额搬两遍</td>
+          </tr>
+          <tr>
+            <td class="mono">&lt;rid&gt;:&lt;attempt&gt;:&lt;unit&gt;</td>
+            <td><span class="tag tag-quota">额度</span></td>
+            <td>服务端，按这一次执行</td>
+            <td>同一次调用被结算两遍（换机重试算另一次 attempt）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <b>唯一索引是最后一道，不是唯一一道。</b>积分这边是「插得进流水才算数」：
+      先改余额、再插流水，插不进就连余额一起回滚。额度那边是「插进去了才动余额」：
+      账本一行一行写，只对真的插进去的那些行扣余额 —— 批量写完再按总额扣一次的话，一次重放就是白发一笔钱。
+    </div>
+  </section>
+
+  <!-- ============ 状态机 ============ -->
+  <section id="states">
+    <div class="sec-head"><span class="sec-no">06</span><h2>两条状态机</h2></div>
+    <div class="prose">
+      <p>
+        订单的状态推进全部是条件更新（<code>WHERE status = ?</code>），所以并发的两次履约只有一个能赢，
+        输的那个去读当前状态，不会再发一遍额度。
+      </p>
+    </div>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 900 300" role="img" aria-label="订单与密钥的状态机">
+          <text class="s-lane" x="20" y="24">订单 zt_galaxy_order</text>
+
+          <rect class="box" x="20" y="44" width="130" height="40" rx="8"></rect>
+          <text class="s-node" x="85" y="69" text-anchor="middle">pending</text>
+          <line class="flow" x1="150" y1="64" x2="256" y2="64" marker-end="url(#ah)"></line>
+          <text class="s-note" x="203" y="56" text-anchor="middle">扣积分 / 回调</text>
+
+          <rect class="box" x="256" y="44" width="130" height="40" rx="8"></rect>
+          <text class="s-node" x="321" y="69" text-anchor="middle">paid</text>
+          <line class="flow" x1="386" y1="64" x2="492" y2="64" marker-end="url(#ah)"></line>
+          <text class="s-note" x="439" y="56" text-anchor="middle">签发 / 充值</text>
+
+          <rect class="box-quota" x="492" y="44" width="150" height="40" rx="8"></rect>
+          <text class="s-node" x="567" y="69" text-anchor="middle">fulfilled</text>
+
+          <path class="flow-fail" d="M 85 84 V 124 H 256" marker-end="url(#ah)"></path>
+          <rect class="box" x="256" y="104" width="150" height="40" rx="8"></rect>
+          <text class="s-node" x="331" y="129" text-anchor="middle">cancelled</text>
+          <text class="s-note" x="98" y="140">用户取消 / 购买失败后收尾</text>
+
+          <line class="flow" x1="642" y1="64" x2="720" y2="64" marker-end="url(#ah)"></line>
+          <text class="s-note" x="730" y="60">交付之后</text>
+          <text class="s-note" x="730" y="78">才算返现</text>
+
+          <line x1="20" y1="168" x2="880" y2="168" stroke="var(--line)" stroke-width="1"></line>
+          <text class="s-lane" x="20" y="196">密钥 zt_galaxy_consumer_key</text>
+
+          <rect class="box-quota" x="20" y="216" width="130" height="40" rx="8"></rect>
+          <text class="s-node" x="85" y="241" text-anchor="middle">active</text>
+          <line class="flow" x1="150" y1="236" x2="256" y2="236" marker-end="url(#ah)"></line>
+          <text class="s-note" x="203" y="228" text-anchor="middle">到期</text>
+
+          <rect class="box" x="256" y="216" width="150" height="40" rx="8"></rect>
+          <text class="s-node" x="331" y="241" text-anchor="middle">expired / frozen</text>
+          <line class="flow" x1="406" y1="236" x2="512" y2="236" marker-end="url(#ah)"></line>
+          <text class="s-note" x="459" y="228" text-anchor="middle">冻结期内换发</text>
+
+          <rect class="box-quota" x="512" y="216" width="170" height="40" rx="8"></rect>
+          <text class="s-node" x="597" y="241" text-anchor="middle">新密钥 · 余额转移</text>
+          <text class="s-note" x="694" y="232">旧明文立刻作废；</text>
+          <text class="s-note" x="694" y="250">冻结期过了余额不再转移</text>
+        </svg>
+      </div>
+      <figcaption>额度永远跟着一把具体的密钥。续期是换发一把新的、把余额整体搬过去，而不是把到期时间往后推。</figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 设计取舍 ============ -->
+  <section id="why">
+    <div class="sec-head"><span class="sec-no">07</span><h2>为什么是这样</h2></div>
+
+    <div class="why">
+      <div>
+        <h3>为什么积分余额不放 Redis</h3>
+        <p>
+          积分是钱，它的权威值只能在一个地方。放 Redis 会带来两个新问题：缓存和库不一致时以谁为准，
+          以及「先扣缓存再落库」中间挂掉的那笔怎么办。而积分的读写频率很低 —— 一个人一天也充不了几次、买不了几单，
+          一次带索引的行更新完全扛得住。
+        </p>
+        <p>
+          额度那边不一样：它在请求路径上被高频消耗，所以那条路上有缓存和计数器，但<strong>余额本身仍然只在 MySQL</strong>。
+        </p>
+      </div>
+      <div>
+        <h3>为什么余额变动必须和流水同事务</h3>
+        <p>
+          「余额少了但查不到为什么」是账务上最不能出现的状态。放在一个事务里，账就只有两种结果：
+          要么钱和它的解释一起存在，要么两样都不存在。
+        </p>
+      </div>
+      <div>
+        <h3>为什么扣积分和履约也要同事务</h3>
+        <p>
+          分开的话就得处理「积分扣了、密钥没发出去」，那需要一套补偿：定时扫、自动退、人工兜底。
+          放在一个事务里，这类中间态压根不会产生，也就不用写那套补偿代码 —— 少写的代码是最可靠的代码。
+        </p>
+      </div>
+      <div>
+        <h3>为什么返现反而在事务之外</h3>
+        <p>
+          返现是给<strong>另一个人</strong>加钱，和这笔购买没有原子性要求。放进去只会让购买多一个失败原因：
+          邀请人的账户出点问题，下单的人就买不成了。放出来的代价是可能漏 —— 但它按订单号幂等，补起来是安全的。
+        </p>
+      </div>
+      <div>
+        <h3>为什么请求号由前端生成</h3>
+        <p>
+          服务端生成的话，它认不出「这是同一次点击的重试」还是「这是第二次购买」。请求号跟着那一次操作走：
+          同一个框、同一次点击就是同一个号，成功之后才换新的。
+        </p>
+      </div>
+      <div>
+        <h3>为什么订单要带模型和额度的快照</h3>
+        <p>
+          套餐随时可能改价、改量、改绑定的模型。已经下的单必须按下单那一刻的口径履约和返现，
+          否则运营改一次价，历史订单的账就全变了。
+        </p>
+      </div>
+      <div>
+        <h3>为什么金额都是整数</h3>
+        <p>
+          积分、价格、返现比例全部是整数：积分与金额按「微」存（<span class="num mono">1_000_000</span> = 1），
+          比例按万分之一存。钱不能有任何一步经过浮点 —— 连 SQL 里的 <code>SUM</code> 都显式转成整数，
+          因为不同引擎给出的类型不一样。
+        </p>
+      </div>
+      <div>
+        <h3>为什么邀请码单独一张表</h3>
+        <p>
+          邀请码要唯一索引，而账号表是两端共用的：共享端的人没有使用端的邀请码，一半是空串会直接撞唯一键。
+          两端也各有一套码，一端的码填到另一端会明确报「邀请码无效」，而不是悄悄把返现记到另一个人头上。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 出错处置 ============ -->
+  <section id="ops">
+    <div class="sec-head"><span class="sec-no">08</span><h2>会出错的地方，和该怎么办</h2></div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>现象</th><th>实际发生了什么</th><th>处置</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>运营充值点了两下，只多了一笔</td>
+            <td>第二次撞了同一个 <code>txn_id</code>，事务回滚，返回的是第一笔</td>
+            <td>正常，不用管</td>
+          </tr>
+          <tr>
+            <td>「充值请求号已被另一笔充值用过」</td>
+            <td>同一个请求号换了人或数额，前端把号用串了</td>
+            <td>关掉充值框重新打开再充</td>
+          </tr>
+          <tr>
+            <td>用户说买了但没看到密钥</td>
+            <td>购买成功的响应只回一次明文；重放那次不带</td>
+            <td>去密钥页用「查看密钥」取，服务端存的是密文</td>
+          </tr>
+          <tr>
+            <td>购买报「积分不足」，但余额看着是够的</td>
+            <td>这一单的金额大于余额，或者上一笔购买还没返回、余额已经被扣</td>
+            <td>刷新积分页看实际余额；扣了没交付的情况不存在，两件事同事务</td>
+          </tr>
+          <tr>
+            <td>邀请人没拿到返现</td>
+            <td>五道闸之一没过：没有邀请人、比例是 0、订单未交付、金额为 0，或者返现那一步真的报错了</td>
+            <td>先看管理端有没有设比例；确认设了就查日志里的<code>分享返现失败 order=…</code>，按订单号补跑是安全的</td>
+          </tr>
+          <tr>
+            <td>额度看着没被扣</td>
+            <td>只有定了价的单位才进账本、才扣额度；<code>zt_galaxy_price</code> 没有对应行时只记计量、不扣费</td>
+            <td>先看价格表有没有种子数据（<code>galaxy_seed.sql</code>）</td>
+          </tr>
+          <tr>
+            <td>老密钥看不到明文</td>
+            <td>这次改动之前签发的密钥，库里没有密文</td>
+            <td>续期换发一次，新密钥就能看了</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 代码地图 ============ -->
+  <section id="map">
+    <div class="sec-head"><span class="sec-no">09</span><h2>代码地图</h2></div>
+
+    <h3>表</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>表</th><th>一行是什么</th><th>关键列</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">zt_galaxy_points_account</td><td>一个使用者的积分余额</td><td class="mono">owner_user_id / balance</td></tr>
+          <tr><td class="mono">zt_galaxy_points_ledger</td><td>一次积分变动</td><td class="mono">txn_id / type / amount / balance_after / base_amount / rate_bps</td></tr>
+          <tr><td class="mono">zt_galaxy_referral</td><td>一个使用者的邀请码和上家</td><td class="mono">invite_code / invited_by</td></tr>
+          <tr><td class="mono">zt_galaxy_setting</td><td>一个运营开关</td><td class="mono">setting_key = referral.default_bps</td></tr>
+          <tr><td class="mono">zt_galaxy_order</td><td>一张订单</td><td class="mono">status / pay_method / model_id / units_json</td></tr>
+          <tr><td class="mono">zt_galaxy_consumer_key</td><td>一把密钥</td><td class="mono">key_hash / secret_cipher / model_id / status</td></tr>
+          <tr><td class="mono">zt_galaxy_consumer_balance</td><td>一把密钥的一个单位余额</td><td class="mono">key_id / unit / balance</td></tr>
+          <tr><td class="mono">zt_galaxy_consumer_ledger</td><td>一次额度变动</td><td class="mono">txn_id / type / unit / amount</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>文件</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>做什么</th><th>在哪儿</th></tr></thead>
+        <tbody>
+          <tr><td>积分、返现、邀请码的全部领域逻辑</td><td class="mono">server/service/galaxy/points.go</td></tr>
+          <tr><td>订单、履约、续期换发</td><td class="mono">server/service/galaxy/order.go</td></tr>
+          <tr><td>计量、定价、三本账与额度扣减</td><td class="mono">server/service/galaxy/billing.go</td></tr>
+          <tr><td>积分余额与流水的 SQL</td><td class="mono">server/service/galaxy/internal/repository/points.go</td></tr>
+          <tr><td>额度余额与消费账本的 SQL</td><td class="mono">server/service/galaxy/internal/repository/consumer.go</td></tr>
+          <tr><td>使用端接口（模型广场、积分、购买、分享、取密钥）</td><td class="mono">server/galaxy-api/pkg/consumers/handler.go</td></tr>
+          <tr><td>管理端接口（充值、流水、返现比例、密钥）</td><td class="mono">server/manager-api/pkg/galaxy/handler.go</td></tr>
+          <tr><td>建表迁移</td><td class="mono">server/migrations/20260912_galaxy_points_referral.sql</td></tr>
+          <tr><td>购买页（请求号、预选、目标密钥）</td><td class="mono">client/galaxy/orbit/webview/…/consumer/store/components/StoreBoard.tsx</td></tr>
+          <tr><td>积分页（余额、流水、邀请）</td><td class="mono">client/galaxy/orbit/webview/…/consumer/points/components/PointsBoard.tsx</td></tr>
+          <tr><td>管理端充值与密钥交接</td><td class="mono">client/manager/src/app/(console)/galaxy/components/PointsRecharge.tsx</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Galaxy · 使用端积分与额度设计 · 2026-09-12 —— 与 <code>doc/galaxy/设计.md</code> 第 6 节（计量与结算）配套阅读。
+  </footer>
+</div>

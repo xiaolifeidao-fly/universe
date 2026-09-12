@@ -9,3 +9,4 @@ pub mod runner;
 pub mod setup;
 pub mod token;
 pub mod tools;
+pub mod upgrade;

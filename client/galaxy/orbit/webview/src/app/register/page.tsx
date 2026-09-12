@@ -6,7 +6,10 @@
  * 这里注册的是使用端账号，只能登 Orbit：Nova（共享端）是另一批人，要出算力得在那边
  * 另注册一个，同一个用户名在两边可以各是一个账号。
  *
- * 新账号名下没有密钥：先去充值页买额度包，支付到账时才签发。
+ * 新账号名下没有密钥：积分由平台运营充值，用积分在「购买」页买套餐时才签发。
+ *
+ * 从分享链接（/register?invite=…）进来的，邀请码自动填上。码不对服务端会拒 ——
+ * 悄悄忽略的话注册是成了，邀请人的返现却无声无息地没了。
  */
 
 import { message } from "antd";
@@ -46,12 +49,24 @@ export default function RegisterPage() {
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [fromLink, setFromLink] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // 同登录页：已经登录就直接回首页。判断只能在挂载后做 —— 令牌在 localStorage 里。
   useEffect(() => {
     if (isAuthenticated()) router.replace(productConfig.home);
   }, [router]);
+
+  // 分享链接带来的邀请码。用 window.location 而不是 useSearchParams：后者要求外面套 <Suspense>，
+  // 为一个预填值让整页构建多一层约束不值当。
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("invite")?.trim() ?? "";
+    if (code) {
+      setInviteCode(code);
+      setFromLink(true);
+    }
+  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -62,7 +77,12 @@ export default function RegisterPage() {
     }
     setBusy(true);
     try {
-      const result = await register({ username: username.trim(), displayName: displayName.trim() || undefined, password });
+      const result = await register({
+        username: username.trim(),
+        displayName: displayName.trim() || undefined,
+        password,
+        inviteCode: inviteCode.trim() || undefined,
+      });
       // 注册页不摆「保持登录」：刚设好的密码，没理由下次打开就让人再输一遍。
       setAuthToken(result.token, true);
       setAuthUser(result.user, true);
@@ -114,6 +134,16 @@ export default function RegisterPage() {
           placeholder={t("register.confirmPlaceholder")}
           value={confirm}
           onChange={(event) => setConfirm(event.target.value)}
+        />
+      </Field>
+
+      <Field label={t("register.inviteCode")} hint={fromLink ? t("register.inviteFromLink") : t("register.inviteHint")}>
+        <input
+          className="gx-input gx-input--mono"
+          autoComplete="off"
+          placeholder={t("register.invitePlaceholder")}
+          value={inviteCode}
+          onChange={(event) => setInviteCode(event.target.value)}
         />
       </Field>
 

@@ -14,9 +14,11 @@
 `zt_identity_user`，只是操作它的人换成了管理端账号。同样地，业务线与项目管理
 背后还是 `service/bizline` / `service/delivery`。
 
-共享算力池（Galaxy）是第三套账号：共享端 / 使用端的用户在 `zt_galaxy_user`
-（`service/galaxy/account`），和前两套都不通。管理端通过 `/api/galaxy/admin/users*`
-翻账号、停用、重置密码，通过 `/api/galaxy/admin/provider/type` 把共享端账号设成工作室。
+共享算力池（Galaxy）是第三套账号，而且它自己两端各一张表：共享端在
+`zt_galaxy_provider_user`，使用端在 `zt_galaxy_consumer_user`（`service/galaxy/account`），
+和前两套都不通。管理端通过 `/api/galaxy/admin/users*` 翻账号、停用、重置密码，
+通过 `/api/galaxy/admin/provider/type` 把共享端账号设成工作室 ——
+这几条接口都要带 `side`：不说是哪一端，就不知道去哪张表上找人。
 **共享池的运营接口只在这里**：galaxy-api 上原来那组认任务宇宙管理员的 `/api/galaxy/admin/*`
 已经删掉，发内测密钥、人工确认到账、门户模型目录与线索一并挪了过来。
 

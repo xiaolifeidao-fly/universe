@@ -56,18 +56,22 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 	return views, nil
 }
 
-// ownerNames 这些机器的主人叫什么，按 ownerUserId 索引。批量查一次账号表，
-// 查不到的（账号被删、迁移前的老数据）不在结果里。
+// ownerNames 这些机器的主人叫什么，按 ownerUserId 索引。
 func (s *service) ownerNames(ctx context.Context, nodes []*repository.GalaxyNode) (map[string]string, error) {
 	owners := make([]string, 0, len(nodes))
-	seen := map[string]bool{}
 	for _, node := range nodes {
-		if node.OwnerUserID != "" && !seen[node.OwnerUserID] {
-			seen[node.OwnerUserID] = true
-			owners = append(owners, node.OwnerUserID)
-		}
+		owners = append(owners, node.OwnerUserID)
 	}
-	rows, err := s.repository.ListUsersByIDs(ctx, bizLine, owners)
+	return s.userNames(ctx, dto.SideProvider, owners)
+}
+
+// userNames 账号 id → 「昵称（用户名）」，昵称和用户名一样时只留用户名。批量查一次账号表，
+// 查不到的（账号被删、迁移前的老数据）不在结果里，界面退回显示 id。
+//
+// side 是这批 id 属于哪一端 —— 两端各一张账号表，机器的主人只可能在共享端那张，
+// 密钥和积分的主人只可能在使用端那张。传错端的结果是一个名字都查不到，界面上全是裸 id。
+func (s *service) userNames(ctx context.Context, side string, userIDs []string) (map[string]string, error) {
+	rows, err := s.repository.ListUsersByIDs(ctx, bizLine, side, uniqueStrings(userIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +83,19 @@ func (s *service) ownerNames(ctx context.Context, nodes []*repository.GalaxyNode
 		}
 	}
 	return names, nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 // AdminProbes 最近的抽检结果。只返回签名与判定，请求原文在比对完成时就已清掉。

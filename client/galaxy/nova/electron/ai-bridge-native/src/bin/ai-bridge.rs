@@ -20,17 +20,26 @@ use ai_bridge_native::credentials::CredentialRegistry;
 use ai_bridge_native::pool::client::{AccessDeclaration, HubClient, RegisteredNode};
 use ai_bridge_native::pool::export::normalize_public_url;
 use ai_bridge_native::pool::probe::probe;
-use ai_bridge_native::pool::runner::{create_pool_runner, resolve_access};
+use ai_bridge_native::pool::runner::{create_pool_runner_with, resolve_access, PoolRunner, RunnerOptions};
 use ai_bridge_native::pool::setup::{origin_of, write_pool_access, PoolAccessPatch};
 use ai_bridge_native::pool::token::{read_node_identity, resolve_node_token_file, write_node_identity, NodeIdentity};
-use ai_bridge_native::{log_info, log_warn};
+use ai_bridge_native::pool::upgrade::{
+    backup_path, compare_versions, current_platform, SelfUpdater, UpgradeCommand, Updater,
+};
+use ai_bridge_native::{log_error, log_info, log_warn};
 use serde_json::json;
+use std::cmp::Ordering;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 远程升级装好新版本之后，为重启排空最多等多久（契约 3.4 第 7 条）。
+/// 等不完的单元在 stop() 里按 node_shutdown 报给平台改派。
+const RESTART_DRAIN_TIMEOUT: Duration = Duration::from_secs(120);
 
 const USAGE: &str = "\
 ai-bridge — 把这台机器的 Claude / Codex 订阅算力接入 Galaxy 共享池
@@ -42,7 +51,8 @@ ai-bridge — 把这台机器的 Claude / Codex 订阅算力接入 Galaxy 共享
   init        生成配置文件（已存在时不覆盖，加 --force 覆盖）
   register    用接入密钥把这台机器注册到平台
   run         启动并加入共享池（配置里有接入密钥时，每次启动先自动重新注册）
-  status      查看配置、节点身份与本机探测到的能力
+  status      查看配置、节点身份、本机探测到的能力，以及能不能远程升级
+  upgrade     从平台下载最新版本并换上（不会重启正在运行的服务）
   version     打印版本
   help        打印这段说明
 
@@ -66,11 +76,16 @@ register 参数：
 status 参数：
   --json                  以 JSON 输出
 
+upgrade 参数：
+  --check                 只看有没有新版本，不下载
+  --hub <地址>            平台地址，默认用配置里的 hubURL
+
 示例：
   ai-bridge register --hub https://hub.example.com --key gpk-XXXX
   ai-bridge register --hub https://hub.example.com --key gpk-XXXX \\
       --mode export --public-url https://203.0.113.7:8788
   ai-bridge run
+  ai-bridge upgrade --check
 ";
 
 /// `init` 铺下的配置模板。
@@ -138,10 +153,11 @@ struct Args {
     force: bool,
     fresh: bool,
     json: bool,
+    check: bool,
     help: bool,
 }
 
-/// 不引参数解析库：命令一共五个，手写三十行比多一个依赖好审计 ——
+/// 不引参数解析库：命令就这么几个，手写三十行比多一个依赖好审计 ——
 /// 这个可执行文件要放在别人的服务器上长期跑，依赖树越短越好。
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut args = Args::default();
@@ -175,6 +191,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--force" => args.force = true,
             "--fresh" => args.fresh = true,
             "--json" => args.json = true,
+            "--check" => args.check = true,
             "-h" | "--help" => args.help = true,
             "-V" | "--version" => args.command = "version".into(),
             other if other.starts_with('-') => {
@@ -226,6 +243,7 @@ async fn main() -> ExitCode {
         "register" => register(&args, &env).await,
         "run" => run(&args, &env).await,
         "status" => status(&args, &env).await,
+        "upgrade" => upgrade(&args, &env).await,
         other => Err(format!("不认识的命令：{other}（ai-bridge help 查看用法）")),
     };
     match result {
@@ -419,6 +437,9 @@ async fn run(args: &Args, env: &Env) -> Result<(), String> {
         set_log_level(level);
     }
     let http = http_client()?;
+    // 可执行文件的路径必须在启动时就定下来：远程升级换掉文件之后再问，
+    // Linux 上拿到的就是 .old 或者带「(deleted)」的路径，exec 起来的会是旧版本。
+    let updater = Arc::new(SelfUpdater::for_current_exe(http.clone(), VERSION));
 
     // 有接入密钥就每次启动先注册一次。
     //
@@ -450,15 +471,25 @@ async fn run(args: &Args, env: &Env) -> Result<(), String> {
         return Err("本机还没有注册：运行 ai-bridge register --hub <平台地址> --key <接入密钥>".into());
     }
 
-    let runner = Arc::new(create_pool_runner(cfg, env.clone(), VERSION.into(), http).await?);
+    if let Some(blocker) = updater.blocker() {
+        // 启动时说一声：主人在 journalctl 里就能看到控制台上的升级按钮为什么不亮。
+        log_info!("cli_upgrade_unavailable", "reason": blocker);
+    }
+    let options = RunnerOptions {
+        distribution: "cli".into(),
+        updater: Some(Arc::clone(&updater) as Arc<dyn Updater>),
+    };
+    let runner = Arc::new(create_pool_runner_with(cfg, env.clone(), VERSION.into(), http, options).await?);
     let mut starting = {
         let runner = Arc::clone(&runner);
         tokio::spawn(async move { runner.start().await })
     };
     let mut started = false;
-    loop {
+    let restart = loop {
         tokio::select! {
-            () = shutdown_signal() => break,
+            () = shutdown_signal() => break false,
+            // 给了 updater 就必须接这一棒：升级装好之后 runner 已经不再领活，只等重启。
+            () = runner.restart_requested() => break true,
             joined = &mut starting, if !started => {
                 started = true;
                 let failure = match joined {
@@ -472,11 +503,37 @@ async fn run(args: &Args, env: &Env) -> Result<(), String> {
                 }
             }
         }
+    };
+    if restart {
+        return restart_into_new_version(&runner, &updater).await;
     }
     // 停机要走完整的 stop：它会把在跑的单元报给平台，平台立刻改派，
     // 消费者那边无感。直接退出进程的话，他们要干等一个超时。
     runner.stop().await;
     Ok(())
+}
+
+/// 远程升级已经把新版本换上了：排空 → 停机 → 原地换成新版本的进程。
+///
+/// stop 不能省：它把没跑完的单元报给平台改派。exec 不跑任何析构，
+/// 跳过 stop 的话，那些单元的消费者只能干等超时。
+async fn restart_into_new_version(runner: &PoolRunner, updater: &SelfUpdater) -> Result<(), String> {
+    log_info!("cli_upgrade_restarting",
+        "hint": "新版本已装好：不再接新活，等在跑的单元结束（最多 120 秒）后原地重启");
+    let interrupted = tokio::select! {
+        _ = runner.drain_for_restart(RESTART_DRAIN_TIMEOUT) => false,
+        () = shutdown_signal() => true,
+    };
+    runner.stop().await;
+    if interrupted {
+        // 排空时收到了停机信号：照常退出。新版本已经在磁盘上，下次启动的就是它。
+        return Ok(());
+    }
+    log_info!("cli_upgrade_exec", "path": updater.executable().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
+    let Err(message) = updater.restart();
+    log_error!("cli_upgrade_restart_failed", "message": message);
+    // 以失败退出：systemd 的 Restart=always、launchd 的 KeepAlive 会把磁盘上的新版本拉起来。
+    Err(format!("新版本已经装好，但原地重启失败：{message}。重新启动 ai-bridge 即可用上新版本"))
 }
 
 async fn shutdown_signal() {
@@ -513,16 +570,22 @@ async fn status(args: &Args, env: &Env) -> Result<(), String> {
         .ok()
         .flatten()
         .filter(|identity| pool.is_some_and(|p| origin_of(&p.hub_url) == origin_of(&identity.hub_url)));
-    let credentials = CredentialRegistry::new(http_client()?);
+    let http = http_client()?;
+    let credentials = CredentialRegistry::new(http.clone());
     let probed = probe(&cfg, &credentials, env).await;
     let export = pool.and_then(|p| p.export.clone()).unwrap_or_default();
     // 接入密钥只报「存没存」，永远不打印内容 —— status 的输出经常被贴进工单里。
     let key_saved = pool.and_then(|p| p.access_key.as_ref()).is_some();
+    // 和 run 报给平台的是同一个判断：status 说「可以」，控制台上的升级按钮就该亮。
+    let platform = current_platform();
+    let blocker = SelfUpdater::for_current_exe(http, VERSION).blocker();
 
     if args.json {
         let out = json!({
             "configPath": path.to_string_lossy(),
             "version": VERSION,
+            "platform": platform.unwrap_or_default(),
+            "upgradeBlocker": blocker.clone().unwrap_or_default(),
             "joined": pool.is_some(),
             "hubURL": pool.map(|p| p.hub_url.clone()),
             "accessMode": pool.map(|p| p.access_mode.label()),
@@ -540,6 +603,14 @@ async fn status(args: &Args, env: &Env) -> Result<(), String> {
 
     println!("配置文件    {}", path.display());
     println!("版本        {VERSION}");
+    match platform {
+        Some(platform) => println!("平台        {platform}"),
+        None => println!("平台        认不出来（{}/{}）", std::env::consts::OS, std::env::consts::ARCH),
+    }
+    match &blocker {
+        None => println!("远程升级    可以（控制台里点「升级」，或者 ai-bridge upgrade）"),
+        Some(blocker) => println!("远程升级    不行 —— {blocker}"),
+    }
     let Some(pool) = pool else {
         println!("共享池      未加入（运行 ai-bridge register）");
         return Ok(());
@@ -567,6 +638,125 @@ async fn status(args: &Args, env: &Env) -> Result<(), String> {
         println!("  {name:<14} {:<14} {state}  {}", capability.provider, capability.detail);
     }
     Ok(())
+}
+
+// ---------- upgrade ----------
+
+/// 手动升级：取平台上的发布清单，按本机平台挑包，下载、验签、验 sha256、试跑、替换。
+///
+/// **不重启**正在运行的服务：这个命令常常是在另一个终端里、甚至换了个用户（sudo）敲的，
+/// 它不知道服务是怎么托管的，也不该替主人决定什么时候打断在跑的单元。
+async fn upgrade(args: &Args, env: &Env) -> Result<(), String> {
+    let http = http_client()?;
+    // 和 run 一样，一开始就定下要换的是哪个文件。
+    let updater = SelfUpdater::for_current_exe(http.clone(), VERSION);
+    let hub = upgrade_hub(args, env)?;
+    let platform = current_platform().ok_or_else(|| {
+        format!("认不出这台机器的平台（{}/{}），平台上没有对应的安装包", std::env::consts::OS, std::env::consts::ARCH)
+    })?;
+
+    let manifest = HubClient::new(hub.clone(), 1, None, None, http)
+        .fetch_latest_release()
+        .await
+        .map_err(|e| format!("取发布清单失败：{e}"))?;
+    let Some(release) = manifest.platforms.iter().find(|item| item.platform == platform) else {
+        println!("平台上还没有适用于 {platform} 的安装包（本机是 {VERSION}）");
+        return Ok(());
+    };
+    match compare_versions(&release.version, VERSION) {
+        None => return Err(format!("发布清单里的版本号不合法：{}", release.version)),
+        Some(Ordering::Equal) => {
+            println!("已经是最新版本：{VERSION}（{platform}）");
+            return Ok(());
+        }
+        Some(Ordering::Less) => {
+            println!("本机的 {VERSION} 比平台上最新的 {} 还新，不降级", release.version);
+            return Ok(());
+        }
+        Some(Ordering::Greater) => {}
+    }
+
+    println!("发现新版本 {}（本机 {VERSION}，{platform}）", release.version);
+    if !release.published_at.is_empty() {
+        println!("  发布时间  {}", release.published_at);
+    }
+    for (index, line) in release.notes.trim().lines().enumerate() {
+        println!("  {}  {line}", if index == 0 { "更新说明" } else { "        " });
+    }
+    let blocker = updater.blocker();
+    if args.check {
+        match &blocker {
+            None => println!("运行 ai-bridge upgrade 下载并换上新版本（不会重启正在运行的服务）"),
+            Some(blocker) => println!("注意：这台机器现在升级不了 —— {blocker}"),
+        }
+        return Ok(());
+    }
+    if let Some(blocker) = blocker {
+        let hint = if cfg!(unix) {
+            format!("\n如果是目录权限的问题，也可以用对安装目录有写权限的用户手动升级：sudo ai-bridge upgrade --hub {hub}")
+        } else {
+            String::new()
+        };
+        return Err(format!("升级不了：{blocker}{hint}"));
+    }
+
+    // 清单里的 downloadUrl 是 Hub 上的稳定地址（302 到 OSS）。老一点的 Hub 不给时自己拼。
+    let url = if release.download_url.is_empty() {
+        format!("{}/agent/v1/bridge/download/{platform}?version={}", hub.trim_end_matches('/'), release.version)
+    } else {
+        release.download_url.clone()
+    };
+    let command = UpgradeCommand {
+        id: String::new(),
+        version: release.version.clone(),
+        platform: platform.to_string(),
+        url,
+        sha256: release.sha256.clone(),
+        size: release.size,
+        signature: release.signature.clone(),
+    };
+    // prepare 里还会再验一遍；提前验是为了签名不对时连「正在下载」都不打印。
+    updater.verify(&command).map_err(|e| format!("升级不了：{e}"))?;
+    let size = if release.size > 0 { format!("{:.1} MB", release.size as f64 / 1_048_576.0) } else { "大小未知".into() };
+    println!("正在下载 {}（{size}）…", release.file_name);
+    let prepared = updater.prepare(&command).await.map_err(|e| format!("升级失败：{e}"))?;
+    println!("签名与 sha256 校验通过，新版本在本机试跑正常");
+    let installed = updater.install(prepared).await.map_err(|e| format!("升级失败：{e}"))?;
+    println!("已换上 {}：{}", release.version, installed.display());
+    println!("  旧版本留在 {}", backup_path(&installed).display());
+    print_restart_hint();
+    Ok(())
+}
+
+/// upgrade 找哪个平台：--hub 优先，其次配置里的 hubURL。
+///
+/// 允许不带配置：sudo 下跑的是 root 的家目录，找不到服务用户的那份配置 ——
+/// 那种时候直接给地址比让人去拼 `-c /home/<用户>/.config/…` 顺手。
+fn upgrade_hub(args: &Args, env: &Env) -> Result<String, String> {
+    if let Some(hub) = &args.hub {
+        return validate_hub_url(hub);
+    }
+    let path = config_path(args, env);
+    let cfg = load_config(Some(&path), env)
+        .map_err(|e| format!("{e}\n也可以直接给平台地址：ai-bridge upgrade --hub <平台地址>"))?;
+    let pool = cfg.pool.ok_or_else(|| {
+        format!("{} 里没有平台地址：先 ai-bridge register，或者 ai-bridge upgrade --hub <平台地址>", path.display())
+    })?;
+    validate_hub_url(&pool.hub_url)
+}
+
+/// 换好之后怎么让正在跑的服务用上新版本。只列这个平台上会用到的托管方式。
+fn print_restart_hint() {
+    println!("正在运行的 ai-bridge 还是旧版本，重启之后才会用上新版本（这个命令不会替你重启）：");
+    if cfg!(target_os = "linux") {
+        println!("  systemd   sudo systemctl restart ai-bridge@<运行它的用户>");
+    } else if cfg!(target_os = "macos") {
+        println!("  launchd   launchctl kickstart -k gui/$(id -u)/com.galaxy.ai-bridge");
+    } else if cfg!(windows) {
+        println!("  计划任务  Stop-ScheduledTask -TaskName ai-bridge; Start-ScheduledTask -TaskName ai-bridge");
+    }
+    println!("  前台运行  Ctrl+C 停掉，再 ai-bridge run");
+    println!("或者在控制台的机器列表里点「升级」：那条路会等在跑的单元结束，再自己原地重启。");
 }
 
 // ---------- 小工具 ----------
@@ -686,6 +876,27 @@ mod tests {
     #[test]
     fn help_wins_over_any_command() {
         assert_eq!(parse_args(&argv(&["run", "--help"])).unwrap().command, "help");
+    }
+
+    #[test]
+    fn upgrade_takes_a_check_flag_and_an_optional_hub() {
+        let args = parse_args(&argv(&["upgrade", "--check"])).unwrap();
+        assert_eq!(args.command, "upgrade");
+        assert!(args.check);
+        assert_eq!(args.hub, None);
+
+        let args = parse_args(&argv(&["upgrade", "--hub=https://hub.example.com"])).unwrap();
+        assert!(!args.check, "不带 --check 就是真的要升级");
+        assert_eq!(args.hub.as_deref(), Some("https://hub.example.com"));
+        assert!(parse_args(&argv(&["upgrade", "--chek"])).unwrap_err().contains("--chek"));
+    }
+
+    /// 用法说明里要有 upgrade：服务器上的人多半是先敲 help 才知道有这个命令。
+    #[test]
+    fn usage_mentions_every_command() {
+        for command in ["init", "register", "run", "status", "upgrade", "version", "--check"] {
+            assert!(USAGE.contains(command), "USAGE 里缺了 {command}");
+        }
     }
 
     /// 拿错东西时要说清楚拿的是什么 —— 尤其是控制台列表里那个和密钥只差一个字符的 ID。

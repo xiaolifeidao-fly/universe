@@ -10,6 +10,9 @@
 //   node scripts/build-cli.cjs --target x86_64-unknown-linux-gnu --zig [--glibc 2.17]
 //                                                   在 macOS 上用 zig 交叉编译 Linux 包
 //
+// 设置了环境变量 AI_BRIDGE_RELEASE_KEY（发布签名私钥 PEM 的路径）时顺手签名，产出 <包>.sig。
+// 管理后台只收验得过签名的包，节点也只装验得过签名的包；私钥怎么来见 scripts/release-sign.cjs。
+//
 // 不加 --zig 时本机只能出本机那几片（macOS 上 arm64 与 x64 两片开箱即用），
 // Windows / Linux 靠 CI 对应的 runner 出：.github/workflows/ai-bridge-native.yml 的 cli 任务。
 'use strict';
@@ -105,6 +108,8 @@ fs.copyFileSync(path.join(root, 'deploy', 'README.md'), path.join(stage, 'README
 // tar 三个平台都有：Windows 10 起系统自带 bsdtar，它也能写 zip（-a 按扩展名选格式）。
 const archive = path.join(out, windows ? `${name}.zip` : `${name}.tar.gz`);
 fs.rmSync(archive, { force: true });
+// 上一次留下的签名一并删掉：包重新打过，旧的 .sig 一定对不上，留着只会被误传上去。
+fs.rmSync(`${archive}.sig`, { force: true });
 run('tar', windows ? ['-a', '-c', '-f', archive, name] : ['-czf', archive, name], { cwd: out });
 fs.rmSync(stage, { recursive: true, force: true });
 
@@ -118,3 +123,14 @@ const lines = fs.existsSync(sums)
 lines.push(`${digest}  ${file}`);
 fs.writeFileSync(sums, `${lines.sort((a, b) => a.slice(66).localeCompare(b.slice(66))).join('\n')}\n`);
 console.log(`ai-bridge: ${path.relative(process.cwd(), archive)} (${(fs.statSync(archive).size / 1048576).toFixed(1)} MB)`);
+
+const releaseKey = process.env.AI_BRIDGE_RELEASE_KEY;
+if (releaseKey) {
+  const { signArchive } = require('./release-sign.cjs');
+  const signed = signArchive(archive, path.resolve(releaseKey));
+  console.log(`ai-bridge: 已签名 → ${path.relative(process.cwd(), signed.sigFile)}（公钥 ${signed.publicKey}）`);
+  console.log('ai-bridge: 在管理后台上传时把包和 .sig 一起传；公钥要在 release-keys.txt 和 galaxy.bridge_release.public_keys 里');
+} else {
+  console.log('ai-bridge: 没有设置 AI_BRIDGE_RELEASE_KEY，这个包没有签名 —— 管理后台不收、节点也不装。');
+  console.log(`ai-bridge: 上传前签一次：node scripts/release-sign.cjs sign --key <私钥> ${path.relative(process.cwd(), archive)}`);
+}

@@ -1,5 +1,5 @@
 use ai_bridge_native::business::{inline_json, inline_text, model_match, Primitive, WorkUnit};
-use ai_bridge_native::pool::client::{CapabilityReport, HeartbeatResult, HelloResult};
+use ai_bridge_native::pool::client::{BridgeReleaseManifest, CapabilityReport, HeartbeatResult, HelloResult};
 use ai_bridge_native::pool::hub_address::{HubAddressCheck, HubAddressEvent};
 use ai_bridge_native::pool::lane::{Lane, LaneConfig};
 use ai_bridge_native::pool::models::{parse_codex_cache, parse_models};
@@ -335,6 +335,63 @@ fn heartbeat_result_tolerates_null_collections() {
     let result: HeartbeatResult = serde_json::from_value(payload).expect("心跳响应应当解得动");
     assert!(result.cancel.is_empty());
     assert_eq!(result.enabled.expect("enabled 不该丢").len(), 1);
+}
+
+/// 升级指令（契约 3.2）：形状对就解出来；形状不对只丢掉它自己，取消清单和生效配置照常 ——
+/// 一条坏掉的升级指令不能让「消费者走了立刻停手」跟着失效。
+#[test]
+fn heartbeat_upgrade_commands_parse_and_a_malformed_one_does_not_take_the_rest_down() {
+    let command = json!({
+        "id": "ug_01J8", "version": "0.2.0", "platform": "linux-x64",
+        "url": "https://bucket.oss-cn-hangzhou.aliyuncs.com/galaxy/ai-bridge/0.2.0/ai-bridge-0.2.0-linux-x64.tar.gz?Signature=x",
+        "sha256": "29497afb2668d3c372667f69ff807863db4201b937de100d7cb4826c05ee527e",
+        "size": 3072128, "signature": "c2ln",
+    });
+    let parsed: HeartbeatResult = serde_json::from_value(json!({ "cancel": ["u_1"], "upgrade": command })).unwrap();
+    let upgrade = parsed.upgrade.expect("升级指令要解出来");
+    assert_eq!((upgrade.id.as_str(), upgrade.version.as_str(), upgrade.size), ("ug_01J8", "0.2.0", 3072128));
+
+    for absent in [json!({ "cancel": ["u_1"] }), json!({ "cancel": ["u_1"], "upgrade": null })] {
+        let parsed: HeartbeatResult = serde_json::from_value(absent).unwrap();
+        assert!(parsed.upgrade.is_none());
+    }
+
+    let malformed = json!({
+        "cancel": ["u_1"],
+        "enabled": [{ "cid": "c", "kind": "llm.chat", "kindVersion": 1, "provider": "p", "seats": 1, "seatConcurrency": 1 }],
+        "upgrade": { "id": "ug_x", "size": "很大" },
+    });
+    let parsed: HeartbeatResult = serde_json::from_value(malformed).expect("坏掉的升级指令不能让整份心跳解析失败");
+    assert!(parsed.upgrade.is_none());
+    assert_eq!(parsed.cancel, vec!["u_1".to_string()]);
+    assert_eq!(parsed.enabled.expect("enabled 不该丢").len(), 1);
+}
+
+/// 发布清单按契约第 4 节的样例解析；一个包都没发布时是空版本、空列表，而不是解析失败。
+#[test]
+fn release_manifests_parse_the_contract_example_and_the_empty_case() {
+    let manifest: BridgeReleaseManifest = serde_json::from_value(json!({
+        "version": "0.2.0", "notes": "……", "publishedAt": "2026-09-12T08:00:00Z",
+        "hubUrl": "https://hub.example.com",
+        "installScript": "https://hub.example.com/agent/v1/bridge/install.sh",
+        "installPowerShell": "https://hub.example.com/agent/v1/bridge/install.ps1",
+        "platforms": [{
+            "platform": "linux-x64", "version": "0.2.0", "fileName": "ai-bridge-0.2.0-linux-x64.tar.gz",
+            "size": 3072128, "sha256": "29497afb", "signature": "base64...",
+            "downloadUrl": "https://hub.example.com/agent/v1/bridge/download/linux-x64",
+            "notes": "……", "publishedAt": "2026-09-12T08:00:00Z",
+        }],
+    }))
+    .unwrap();
+    assert_eq!(manifest.version, "0.2.0");
+    assert_eq!(manifest.install_power_shell, "https://hub.example.com/agent/v1/bridge/install.ps1");
+    let package = &manifest.platforms[0];
+    assert_eq!(package.file_name, "ai-bridge-0.2.0-linux-x64.tar.gz");
+    assert_eq!(package.download_url, "https://hub.example.com/agent/v1/bridge/download/linux-x64");
+    assert_eq!(package.size, 3072128);
+
+    let empty: BridgeReleaseManifest = serde_json::from_value(json!({ "version": "", "platforms": null })).unwrap();
+    assert!(empty.version.is_empty() && empty.platforms.is_empty());
 }
 
 /// 账户页每次打开都会拿平台地址来校准本机绑定，所以这条判定必须极其保守。

@@ -1,8 +1,14 @@
 # Registers ai-bridge as a scheduled task that starts when the current user logs on.
 #
-#   powershell -ExecutionPolicy Bypass -File install-task.ps1 -Exe C:\ai-bridge\ai-bridge.exe
+#   powershell -ExecutionPolicy Bypass -File install-task.ps1 -Exe "$env:LOCALAPPDATA\ai-bridge\ai-bridge.exe"
 #
 # Remove it again with:  Unregister-ScheduledTask -TaskName ai-bridge
+#
+# Keep the executable in a folder the current user can write to (the installer uses
+# %LOCALAPPDATA%\ai-bridge). A remote upgrade replaces the file in place; under
+# C:\Program Files it cannot, and the console will not offer the upgrade.
+# After a remote upgrade the new process is started by the old one, so this task may
+# show as finished while the node keeps running; stop it with Stop-Process -Name ai-bridge.
 #
 # Why a scheduled task and not a Windows service:
 #   * A service runs as LocalSystem by default and cannot see the current user's

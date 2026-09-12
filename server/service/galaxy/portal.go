@@ -406,6 +406,9 @@ func (s *service) ListPortalModels(ctx context.Context, listedOnly bool) ([]dto.
 	for _, row := range rows {
 		view := portalModelView(row)
 		// 运营目录要看见「这一行自己填了没填价」，所以不回落到 kind 统一价。
+		// 返现比例和上下架只给运营看：门户那条公开接口不走这里。
+		listed := row.Listed
+		view.ReferralBps, view.Listed = row.ReferralBps, &listed
 		views = append(views, view)
 	}
 	return views, nil
@@ -426,6 +429,9 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 	if req.Listed != nil {
 		listed = *req.Listed
 	}
+	if req.ReferralBps != nil && (*req.ReferralBps < 0 || *req.ReferralBps > maxReferralBps) {
+		return fmt.Errorf("返现比例要在 0%% 到 100%% 之间")
+	}
 	tags := ""
 	if len(req.Tags) > 0 {
 		encoded, err := json.Marshal(req.Tags)
@@ -443,9 +449,47 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 		ContextTokens: req.ContextTokens, MaxOutputTokens: req.MaxOutputTokens,
 		InputPrice: req.InputPrice, OutputPrice: req.OutputPrice, CachePrice: req.CachePrice,
 		Currency: clip(defaultString(req.Currency, "CNY"), 8),
-		TagsJSON: tags, Summary: clip(req.Summary, 256),
+		TagsJSON: tags, Summary: clip(req.Summary, 256), ReferralBps: req.ReferralBps,
 		Listed: listed, Featured: req.Featured, SortOrder: req.SortOrder,
 	})
+}
+
+// ConsumerCatalog 使用端的模型广场。
+//
+// 模型与单价和门户同源（PortalCatalog 那一套回落规则原样生效），差别只在组织方式：
+// 套餐挂到它绑定的模型下面，每个模型带着此刻生效的返现比例。
+// 绑定的模型不在上架目录里（下架了、删了）的套餐不跟着消失，落进「通用套餐」——
+// 商品还在卖，只是暂时没有模型卡片可挂。
+func (s *service) ConsumerCatalog(ctx context.Context, fallbackModels []string) (dto.ConsumerCatalog, error) {
+	overview, err := s.PortalCatalog(ctx, fallbackModels)
+	if err != nil {
+		return dto.ConsumerCatalog{}, err
+	}
+	rates, err := s.referralRates(ctx)
+	if err != nil {
+		return dto.ConsumerCatalog{}, err
+	}
+	catalog := dto.ConsumerCatalog{
+		Endpoint: overview.Endpoint, DefaultBps: rates.defaultBps, UpdatedAt: overview.UpdatedAt,
+		Models:   make([]dto.ConsumerModelView, 0, len(overview.Models)),
+		Packages: []dto.PackageView{},
+	}
+	index := make(map[string]int, len(overview.Models))
+	for _, model := range overview.Models {
+		index[model.ModelID] = len(catalog.Models)
+		catalog.Models = append(catalog.Models, dto.ConsumerModelView{
+			PortalModelView: model, Category: familyCategory(model.Family),
+			ReferralBps: rates.of(model.ModelID), Packages: []dto.PackageView{},
+		})
+	}
+	for _, item := range overview.Packages {
+		if position, ok := index[item.ModelID]; ok && item.ModelID != "" {
+			catalog.Models[position].Packages = append(catalog.Models[position].Packages, item)
+			continue
+		}
+		catalog.Packages = append(catalog.Packages, item)
+	}
+	return catalog, nil
 }
 
 func (s *service) DeletePortalModel(ctx context.Context, modelID string) error {

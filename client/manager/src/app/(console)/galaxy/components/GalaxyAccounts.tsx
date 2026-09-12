@@ -120,7 +120,8 @@ export function GalaxyAccounts({
 
   const changeStatus = async (row: GalaxyAccountView, next: GalaxyAccountStatus) => {
     try {
-      await setGalaxyUserStatus(row.id, next);
+      // 端取这一行自己的，不取页面上的筛选：这一行是哪一端的人，就去哪张账号表上改。
+      await setGalaxyUserStatus(row.side, row.id, next);
       message.success(t("galaxy.account.statusSaved"));
       void load();
     } catch (error) {
@@ -370,7 +371,7 @@ function ResetPasswordModal({
     const values = await form.validateFields();
     setSubmitting(true);
     try {
-      await resetGalaxyUserPassword(account.id, values.password);
+      await resetGalaxyUserPassword(account.side, account.id, values.password);
       message.success(t("galaxy.account.passwordReset"));
       onClose();
       // 重拉一次，「待改临时密码」的标记要出现在这一行上。

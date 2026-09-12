@@ -16,7 +16,7 @@ import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconRefresh, IconSearch } from "@/components/ui/icons";
 import { Card, DataTable, IconBtn, Kpi, Loading, Note, Pager, Pill, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatCompact, formatDateTime, formatDelta, formatInt, formatMillis, formatSignedInt } from "@/utils/format";
+import { formatCompact, formatDateTime, formatDelta, formatInt, formatMillis, formatSignedPoints } from "@/utils/format";
 import {
   fetchDashboard,
   fetchNodes,
@@ -267,7 +267,8 @@ export function ExecutionRecords() {
                   align: "right",
                   render: (row: ExecutionRecord) => (
                     <span className="gx-mono" style={{ color: row.credits > 0 ? "var(--gx-accent-ink)" : "var(--gx-faint)", fontWeight: row.credits > 0 ? 500 : 400 }}>
-                      {row.credits > 0 ? formatSignedInt(row.credits) : "0"}
+                      {/* 账本里的积分是微积分，一次调用往往不足 1 积分，按积分写才看得出来。 */}
+                      {row.credits > 0 ? formatSignedPoints(row.credits) : "0"}
                     </span>
                   ),
                 },
@@ -296,7 +297,7 @@ export function ExecutionRecords() {
 
         {stats && stats.calls > 0 ? (
           <Note>
-            {t("records.calls")} {formatInt(stats.calls)} · {t("today.col.credit")} {formatSignedInt(stats.credits)} ·{" "}
+            {t("records.calls")} {formatInt(stats.calls)} · {t("today.col.credit")} {formatSignedPoints(stats.credits)} ·{" "}
             {t("records.failed")} {formatInt(stats.failed)}
           </Note>
         ) : null}

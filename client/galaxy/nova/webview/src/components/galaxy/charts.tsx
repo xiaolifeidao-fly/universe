@@ -9,6 +9,7 @@
  */
 
 import { useMemo } from "react";
+import { formatPoints } from "@/utils/format";
 
 /**
  * 时段条。selected 是 24 个布尔，空数组表示全天共享。
@@ -95,7 +96,12 @@ export function HourBar({
   );
 }
 
-/** 一周积分柱。高度按这一周的峰值归一，全零时一律显示成底部那条灰线。 */
+/**
+ * 一周积分柱。高度按这一周的峰值归一，全零时一律显示成底部那条灰线。
+ *
+ * amount 是微积分（1,000,000 = 1 积分 = ¥1）：柱高只看相对大小、不受单位影响，
+ * 但悬停那行是给人读的，得按积分写。
+ */
 export function WeekBars({ points, labels }: { points: { date: string; amount: number }[]; labels: string[] }) {
   const max = useMemo(() => Math.max(1, ...points.map((point) => point.amount)), [points]);
   return (
@@ -105,7 +111,7 @@ export function WeekBars({ points, labels }: { points: { date: string; amount: n
           <span
             className={`gx-bars__bar${point.amount > 0 ? "" : " is-idle"}`}
             style={{ height: `${Math.max(3, Math.round((point.amount / max) * 100))}%` }}
-            title={`${point.date} · ${point.amount}`}
+            title={`${point.date} · ${formatPoints(point.amount)}`}
           />
           <span className="gx-bars__tick">{labels[index] ?? point.date.slice(5)}</span>
         </div>

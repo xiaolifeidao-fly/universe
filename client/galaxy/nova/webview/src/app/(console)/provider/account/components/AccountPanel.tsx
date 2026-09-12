@@ -3,10 +3,11 @@
 /**
  * 账户。
  *
- * 从上到下按「多常来看」排：这台电脑 → 其他机器 → 接入密钥 → 登录与安全。
+ * 从上到下按「多常来看」排：这台电脑 → 其他机器 → 安装 ai-bridge → 接入密钥 → 登录与安全。
  * 主人名下除了这台电脑，还可能有一排机房服务器。以前按「资料、机器、密钥、本机」平铺，
  * 机器一多，最常要确认的「这台接上没有」被挤到页面最底下；机器、密钥里作废的和在用的
  * 也搅在一起。现在这台电脑单独一块钉在最上面，机器和密钥各自分「在用 / 作废」两栏。
+ * 安装夹在机器和密钥中间，是照着接一台服务器的顺序：先装，再拿密钥注册。
  *
  * 改密码是单独一页（/password）：运营重置过密码的人登进来也被挡到那一页，两种人共用一套表单。
  * 原型上还画了改头像、设备列表 —— 设备列表要有会话表，这一版只做已经有真实数据支撑的部分。
@@ -26,24 +27,35 @@ import { isDesktop } from "@/utils/product";
 import { fetchCurrentAccount } from "../api/account.api";
 import { pingBridge } from "../../api/bridge.api";
 import {
+  fetchBridgeReleases,
   fetchNodes,
   fetchProviderEndpoint,
   fetchProviderKeys,
   fetchRetiredNodes,
   fetchTerms,
+  isUpgradeInProgress,
   nodeDisplayName,
   orderMachines,
+  requestNodeUpgrade,
   revokeNode,
+  type BridgeReleaseManifest,
   type NodeView,
   type ProviderKeyView,
   type TermsStatus,
 } from "../../api/provider.api";
 import { AccessKeyPanel } from "./AccessKeyPanel";
+import { BridgeInstallPanel } from "./BridgeInstallPanel";
 import { MachineList } from "./MachineList";
 import { ThisComputerPanel } from "./ThisComputerPanel";
 
 /** 和「今天」「共享设置」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
 const REFRESH_MS = 20_000;
+
+/**
+ * 有机器在升级时的节奏。进度是节点当场上报的，不等心跳：下载、安装、重启几步常常不到一分钟，
+ * 按 20 秒一刷，盯着看的那一台会从「等机器领取」直接跳到「已升级」，中间几步全看不见。
+ */
+const UPGRADE_REFRESH_MS = 5_000;
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -62,6 +74,8 @@ export function AccountPanel() {
   const [keys, setKeys] = useState<ProviderKeyView[]>([]);
   const [terms, setTerms] = useState<TermsStatus | null>(null);
   const [hubUrl, setHubUrl] = useState("");
+  const [releases, setReleases] = useState<BridgeReleaseManifest | null>(null);
+  const [releasesFailed, setReleasesFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   // 本机 bridge 报的自己。配着的那台不进下面的列表，摆在最上面那一块；
@@ -94,6 +108,16 @@ export function AccountPanel() {
     setHubUrl(endpoint.hubUrl);
   }, []);
 
+  const loadReleases = useCallback(async () => {
+    try {
+      setReleases(await fetchBridgeReleases());
+      setReleasesFailed(false);
+    } catch {
+      // 同「已解绑」那一栏：只影响安装那一块，不弹全局报错，那一块自己说没加载出来、给个重试。
+      setReleasesFailed(true);
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     setUser(getAuthUser());
@@ -114,17 +138,28 @@ export function AccountPanel() {
     // 整页一次画出来，而且等本机 bridge 报出自己是哪台再画（同今天、共享设置）：分几步到的话，
     // 这台电脑会先在「其他机器」里闪一下再挪到最上面，下面几块卡片也跟着一截一截往下跳。
     // 等不过 1.5 秒就先画，IPC 卡住不能把整页挡在加载圈上。
-    void Promise.all([loadNodes().catch(failed), loadKeys().catch(failed), loadRetired(), Promise.race([self, delay(1500)])]).finally(() => {
+    void Promise.all([
+      loadNodes().catch(failed),
+      loadKeys().catch(failed),
+      loadRetired(),
+      loadReleases(),
+      Promise.race([self, delay(1500)]),
+    ]).finally(() => {
       if (alive) setLoading(false);
     });
-    // 别的机器上下线、回连通不通都得看得见。刷新失败不弹：
-    // 断网时每 20 秒冒一条报错，比数据旧 20 秒更扰人。
-    const timer = setInterval(() => void loadNodes().catch(() => undefined), REFRESH_MS);
     return () => {
       alive = false;
-      clearInterval(timer);
     };
-  }, [loadKeys, loadNodes, loadRetired, t]);
+  }, [loadKeys, loadNodes, loadReleases, loadRetired, t]);
+
+  const upgrading = nodes.some((node) => isUpgradeInProgress(node.upgrade));
+
+  // 别的机器上下线、回连通不通、升级走到哪都得看得见。刷新失败不弹：
+  // 断网时每 20 秒冒一条报错，比数据旧 20 秒更扰人。
+  useEffect(() => {
+    const timer = setInterval(() => void loadNodes().catch(() => undefined), upgrading ? UPGRADE_REFRESH_MS : REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [loadNodes, upgrading]);
 
   const localNodeId = local?.nodeId ?? "";
   // 配着的这台电脑在最上面那一块，不在列表里重复一遍。没配、被解绑时本来就不在名下，没什么可剔的。
@@ -162,6 +197,37 @@ export function AccountPanel() {
     });
   };
 
+  // 确认框里把代价说清楚：升级不是后台悄悄装，那台机器会有一两分钟不接新活。
+  const upgrade = (node: NodeView) => {
+    void modal.confirm({
+      title: t("account.upgradeTitle", { name: nodeDisplayName(node), version: node.latestVersion }),
+      content: t("account.upgradeConfirm"),
+      okText: t("account.upgradeOk"),
+      cancelText: t("common.cancel"),
+      onOk: async () => {
+        try {
+          const started = await requestNodeUpgrade(node.nodeId);
+          // 先把这一台就地标成升级中再去刷新：列表回来之前按钮还亮着，手快再点一次只会被服务端拒回来。
+          // 这一改也立刻把轮询切到 5 秒。
+          if (started) {
+            setNodes((current) => current.map((item) => (item.nodeId === node.nodeId ? { ...item, upgrade: started } : item)));
+          }
+          message.success(t("account.upgradeRequested"));
+          await loadNodes().catch(() => undefined);
+        } catch (error) {
+          message.error((error as Error).message || t("common.actionFailed"));
+        }
+      },
+    });
+  };
+
+  // 签发弹窗里那条带密钥的一行安装命令用的是 sh 脚本：平台一个 Linux / macOS 的包都没发布时不给，
+  // 照着跑只会装到一半报「没有这个平台的包」。
+  const unixInstallScript =
+    releases?.installScript && (releases.platforms ?? []).some((item) => /^(linux|darwin)-/.test(item.platform ?? ""))
+      ? releases.installScript
+      : "";
+
   return (
     <>
       <PageHeader title={t("account.title")} meta={t("account.subtitle")} />
@@ -186,14 +252,18 @@ export function AccountPanel() {
               desktop={desktop}
               busy={busy}
               onUnbind={unbind}
+              onUpgrade={upgrade}
               onAddServer={() => setIssueOpen(true)}
               onRetryRetired={() => void loadRetired()}
             />
+
+            <BridgeInstallPanel manifest={releases} failed={releasesFailed} hubUrl={hubUrl} onRetry={() => void loadReleases()} />
 
             <AccessKeyPanel
               keys={keys}
               terms={terms}
               hubUrl={hubUrl}
+              installScript={unixInstallScript}
               nodeNames={nodeNames}
               issueOpen={issueOpen}
               onIssueOpenChange={setIssueOpen}

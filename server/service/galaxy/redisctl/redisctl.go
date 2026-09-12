@@ -674,7 +674,10 @@ func (c *ControlPlane) RecordHubUsage(ctx context.Context, rid string, usage con
 	return c.client.HSet(ctx, c.reqKey(rid), "hubUsage", encode(usage)).Err()
 }
 
-func (c *ControlPlane) Settle(ctx context.Context, command galaxy.SettleCommand) error {
+// Settle 脚本的返回值是「这次真的结了没有」：单元已经是 settled 时它直接回 0，
+// 不再动并发、额度与座位。以前这个结果被丢掉，调用方无从分辨重放 ——
+// 于是一次重发的 complete 会让提供者被重复入账（账本幂等，余额不是）。
+func (c *ControlPlane) Settle(ctx context.Context, command galaxy.SettleCommand) (bool, error) {
 	units := map[contract.MeterUnit]bool{}
 	for unit := range command.Estimate {
 		units[unit] = true
@@ -702,7 +705,11 @@ func (c *ControlPlane) Settle(ctx context.Context, command galaxy.SettleCommand)
 		c.contribKey(command.CID), c.seatsKey(command.CID),
 		c.bindKey(command.ConsumerKey, command.Lane), c.reqKey(command.RID),
 	}
-	return settleScript.Run(ctx, c.client, keys, argv...).Err()
+	settled, err := settleScript.Run(ctx, c.client, keys, argv...).Int64()
+	if err != nil {
+		return false, err
+	}
+	return settled == 1, nil
 }
 
 // ---------- 取消 ----------

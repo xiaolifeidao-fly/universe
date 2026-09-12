@@ -16,7 +16,7 @@ import (
 func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	handler := NewHandler(nil, auth.NewGate(nil))
+	handler := NewHandler(nil, auth.NewGate(nil), Options{})
 
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -39,6 +39,13 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 		"POST /api/galaxy/consumer/disputes/:disputeId/withdraw",
 		"GET /api/galaxy/consumer/payments/channels",
 		"POST /api/galaxy/consumer/orders/pay/sandbox",
+		"GET /api/galaxy/consumer/catalog",
+		"GET /api/galaxy/consumer/points",
+		"GET /api/galaxy/consumer/points/ledger",
+		"POST /api/galaxy/consumer/points/purchase",
+		"GET /api/galaxy/consumer/referral",
+		"GET /api/galaxy/consumer/referral/invitees",
+		"POST /api/galaxy/consumer/keys/secret",
 	}
 	// 运营动作一律不挂在使用端路由组上：商品目录、给人发密钥、人工确认到账都在
 	// manager-api 的 /api/galaxy/admin/* 下，认的是管理端账号。留在这儿的话，
@@ -47,6 +54,8 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 		"POST /api/galaxy/consumer/packages/save",
 		"POST /api/galaxy/consumer/keys/issue",
 		"POST /api/galaxy/consumer/orders/pay",
+		// 充积分是运营动作，使用端只能花。
+		"POST /api/galaxy/consumer/points/recharge",
 	}
 	registered := map[string]bool{}
 	for _, route := range engine.Routes() {
@@ -69,7 +78,7 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 func TestPaymentCallbackNotRegisteredWithoutVerifier(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	NewHandler(paymentDisabled{}, auth.NewGate(nil)).RegisterCallbacks(engine.Group("/galaxy"))
+	NewHandler(paymentDisabled{}, auth.NewGate(nil), Options{}).RegisterCallbacks(engine.Group("/galaxy"))
 
 	for _, route := range engine.Routes() {
 		if strings.Contains(route.Path, "/payments/") {
@@ -81,7 +90,7 @@ func TestPaymentCallbackNotRegisteredWithoutVerifier(t *testing.T) {
 func TestPaymentCallbackRegisteredWhenEnabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	NewHandler(paymentEnabled{}, auth.NewGate(nil)).RegisterCallbacks(engine.Group("/galaxy"))
+	NewHandler(paymentEnabled{}, auth.NewGate(nil), Options{}).RegisterCallbacks(engine.Group("/galaxy"))
 
 	found := false
 	for _, route := range engine.Routes() {
