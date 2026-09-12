@@ -33,6 +33,7 @@ import {
   type PackageView,
   type PointsSummary,
 } from "../../api/consumer.api";
+import { rememberKeySecret } from "../../api/keyvault.api";
 import { IssuedKeyModal } from "../../keys/components/IssuedKeyModal";
 import { OrderHistory } from "./OrderHistory";
 
@@ -74,6 +75,8 @@ export function StoreBoard() {
   const [target, setTarget] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [issued, setIssued] = useState<IssuedKeyView | null>(null);
+  // 这把新密钥有没有存进本机保险箱。存不下就得让用户当场自己存一份。
+  const [issuedSaved, setIssuedSaved] = useState(false);
   // 这一单的请求号。买成了才换新的：失败的那次事务整个回滚了，原样重试不会被当成重复。
   const requestId = useRef(newRequestId());
 
@@ -180,6 +183,8 @@ export function StoreBoard() {
       message.success(t("store.bought"));
       // 签发新密钥的那一单顺带回来明文；充进已有密钥的没有，不弹。
       if (order.issuedSecret) {
+        // 存本机要在弹框之前：框里那句「已存好」得是真的。
+        setIssuedSaved(await rememberKeySecret(order.keyId, order.packageCode, order.issuedSecret));
         setIssued({ keyId: order.keyId, secret: order.issuedSecret, alias: order.packageCode, expiresAt: "" });
       }
       await load();
@@ -344,7 +349,7 @@ export function StoreBoard() {
         </div>
       )}
 
-      <IssuedKeyModal issued={issued} onClose={() => setIssued(null)} />
+      <IssuedKeyModal issued={issued} savedLocally={issuedSaved} onClose={() => setIssued(null)} />
     </>
   );
 }

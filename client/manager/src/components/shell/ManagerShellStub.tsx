@@ -53,17 +53,53 @@ const FALLBACK_PAGE_TITLES: Record<string, [TranslationKey, TranslationKey]> = {
   "/business-lines": ["bizLines.title", "bizLines.subtitle"],
   "/programs": ["programs.title", "programs.subtitle"],
   "/galaxy": ["galaxy.title", "galaxy.subtitle"],
+  "/galaxy/pool": ["nav.galaxyPool", "galaxy.pool.subtitle"],
+  "/galaxy/nodes": ["nav.galaxyNodes", "galaxy.nodes.subtitle"],
+  "/galaxy/accounts": ["nav.galaxyAccounts", "galaxy.accounts.subtitle"],
+  "/galaxy/probes": ["nav.galaxyProbes", "galaxy.probes.subtitle"],
+  "/galaxy/disputes": ["nav.galaxyDisputes", "galaxy.disputes.subtitle"],
+  "/galaxy/packages": ["nav.galaxyPackages", "galaxy.packages.subtitle"],
+  "/galaxy/models": ["nav.galaxyModels", "galaxy.models.subtitle"],
+  "/galaxy/points": ["nav.galaxyPoints", "galaxy.points.subtitle"],
+  "/galaxy/keys": ["nav.galaxyKeys", "galaxy.keys.subtitle"],
+  "/galaxy/settlement": ["nav.galaxySettlement", "galaxy.settlement.subtitle"],
+  "/galaxy/bridge-releases": ["nav.galaxyBridgeReleases", "galaxy.bridgeReleases.subtitle"],
   "/settings/accounts": ["accounts.title", "accounts.subtitle"],
   "/settings/roles": ["roles.title", "roles.subtitle"],
 };
 
 // 后端资源接口不通时的静态导航。
-const FALLBACK_NAV: { key: string; icon: ReactNode; labelKey: TranslationKey }[] = [
+// 有 children 的是目录：它自己不是页面，key 不进 permittedPaths，点了只展开。
+type FallbackNavEntry = {
+  key: string;
+  icon?: ReactNode;
+  labelKey: TranslationKey;
+  children?: FallbackNavEntry[];
+};
+
+const FALLBACK_NAV: FallbackNavEntry[] = [
   { key: "/dashboard", icon: <DashboardOutlined />, labelKey: "nav.dashboard" },
   { key: "/users", icon: <TeamOutlined />, labelKey: "nav.users" },
   { key: "/business-lines", icon: <BranchesOutlined />, labelKey: "nav.businessLines" },
   { key: "/programs", icon: <FolderOutlined />, labelKey: "nav.programs" },
-  { key: "/galaxy", icon: <GlobalOutlined />, labelKey: "nav.galaxy" },
+  {
+    key: "group:galaxy",
+    icon: <GlobalOutlined />,
+    labelKey: "nav.galaxy",
+    children: [
+      { key: "/galaxy/pool", labelKey: "nav.galaxyPool" },
+      { key: "/galaxy/nodes", labelKey: "nav.galaxyNodes" },
+      { key: "/galaxy/accounts", labelKey: "nav.galaxyAccounts" },
+      { key: "/galaxy/probes", labelKey: "nav.galaxyProbes" },
+      { key: "/galaxy/disputes", labelKey: "nav.galaxyDisputes" },
+      { key: "/galaxy/packages", labelKey: "nav.galaxyPackages" },
+      { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
+      { key: "/galaxy/points", labelKey: "nav.galaxyPoints" },
+      { key: "/galaxy/keys", labelKey: "nav.galaxyKeys" },
+      { key: "/galaxy/settlement", labelKey: "nav.galaxySettlement" },
+      { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
+    ],
+  },
 ];
 
 /**
@@ -182,25 +218,26 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
   const menuItems = useMemo<MenuItem[]>(() => {
     if (menus.length === 0) {
       if (!menuUnavailable) return [];
-      return FALLBACK_NAV.map((entry) => ({
-        key: entry.key,
-        label: (
-          <span className="manager-nav-item-content">
-            <span className="manager-nav-item-icon">{entry.icon}</span>
-            <span className="manager-nav-item-label">{t(entry.labelKey)}</span>
-          </span>
-        ),
-      }));
+      return buildFallbackItems(FALLBACK_NAV, t);
     }
     return buildMenuItems(menus, resourceLabel);
   }, [menus, menuUnavailable, resourceLabel, t]);
 
   // 能进的页面。后端已经按角色过滤过了，这里只是别让点击把人送去一个必然 403 的页面。
+  // 目录本身不算页面：它没有 pageUrl，点了只该展开。
   const permittedPaths = useMemo(() => {
     if (menus.length === 0) {
-      return menuUnavailable ? new Set(FALLBACK_NAV.map((entry) => entry.key)) : new Set<string>();
+      return menuUnavailable ? new Set(fallbackPaths(FALLBACK_NAV)) : new Set<string>();
     }
     return new Set(menus.filter((item) => item.pageUrl).map((item) => item.pageUrl));
+  }, [menus, menuUnavailable]);
+
+  // 顶层目录默认展开。收起来的话，进来的人看不到自己正停在哪个子页面上。
+  const defaultOpenKeys = useMemo(() => {
+    if (menus.length === 0) {
+      return menuUnavailable ? FALLBACK_NAV.filter((entry) => entry.children?.length).map((entry) => entry.key) : [];
+    }
+    return menus.filter((item) => item.parentId === 0).map((item) => menuKey(item));
   }, [menus, menuUnavailable]);
 
   const [fallbackTitle, fallbackSubtitle] =
@@ -263,7 +300,7 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
                   className="manager-shell-menu"
                   mode="inline"
                   selectedKeys={[activePath]}
-                  defaultOpenKeys={menus.filter((item) => item.parentId === 0).map((item) => menuKey(item))}
+                  defaultOpenKeys={defaultOpenKeys}
                   items={menuItems}
                   onClick={({ key }) => {
                     // 只跳进得去的页面。后端才是真正的门，这里只是别把人送去必然 403 的地方。
@@ -350,6 +387,25 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
     </div>
     </WritePermissionProvider>
   );
+}
+
+/** 兜底导航拼成 antd 菜单树，形状和后端资源那条路径一致。 */
+function buildFallbackItems(entries: FallbackNavEntry[], t: (key: TranslationKey) => string): MenuItem[] {
+  return entries.map((entry) => {
+    const content = (
+      <span className="manager-nav-item-content">
+        {entry.icon ? <span className="manager-nav-item-icon">{entry.icon}</span> : null}
+        <span className="manager-nav-item-label">{t(entry.labelKey)}</span>
+      </span>
+    );
+    if (!entry.children?.length) return { key: entry.key, label: content };
+    return { key: entry.key, label: content, children: buildFallbackItems(entry.children, t) };
+  });
+}
+
+/** 兜底导航里真正能点进去的那些路由；目录的 key 不是路由，不进来。 */
+function fallbackPaths(entries: FallbackNavEntry[]): string[] {
+  return entries.flatMap((entry) => (entry.children?.length ? fallbackPaths(entry.children) : [entry.key]));
 }
 
 /** 菜单项的 key 就是它的前端路由；没有 pageUrl 的（纯目录）退回资源编码。 */

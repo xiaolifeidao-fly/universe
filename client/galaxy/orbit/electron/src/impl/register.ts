@@ -1,3 +1,4 @@
 import type { ElectronApi } from '@galaxy/common/eleapi/base';
 import { ClientConfigImpl } from './clientconfig.impl';
-export function registerApiImpl(): readonly ElectronApi[] { return [new ClientConfigImpl()]; }
+import { KeyVaultImpl } from './keyvault.impl';
+export function registerApiImpl(): readonly ElectronApi[] { return [new ClientConfigImpl(), new KeyVaultImpl()]; }

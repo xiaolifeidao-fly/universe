@@ -43,18 +43,11 @@ const PASSWORD_MAX_BYTES = 72;
  * 和「用户管理」里的业务用户、管理端账号都不是一套，这里的人只能登录 Nova / Orbit。
  * 运营在这里能做三件事：
  *
- * - **设工作室**：注册出来一律是散户，工作室只能由运营设（这里，或者节点那一栏的机器行上）。
+ * - **设工作室**：注册出来一律是散户，工作室只能由运营设（这里，或者「节点与贡献」页面的机器行上）。
  * - **停用 / 启用**：停用只挡登录控制台，名下在跑的机器、发出去的算力密钥不跟着停。
  * - **重置密码**：没有自助找回，忘了密码只能找运营。重置出来的是临时密码，本人下次登录必须先改掉。
  */
-export function GalaxyAccounts({
-  refreshKey = 0,
-  onProviderTypeChange,
-}: {
-  /** 节点那一栏改了身份时由外面加一，这边跟着重拉。 */
-  refreshKey?: number;
-  onProviderTypeChange?: () => void;
-}) {
+export function GalaxyAccounts() {
   const { t } = useLocale();
   // 停用会把人踢下线，重置密码等于让运营握着一串能登进去的密码 —— 只读角色一律看不到入口。
   const canWrite = useCanWrite();
@@ -104,15 +97,14 @@ export function GalaxyAccounts({
 
   useEffect(() => {
     void load();
-  }, [load, refreshKey]);
+  }, [load]);
 
-  // 身份挂在账号上，名下机器一起变，所以节点那一栏也要重拉。
+  // 身份挂在账号上，名下机器一起变。节点页面挂载时自己重拉，不用从这里通知它。
   const changeProviderType = async (row: GalaxyAccountView, next: ProviderType) => {
     try {
       await setProviderType(row.id, next);
       message.success(t("galaxy.provider.saved"));
       void load();
-      onProviderTypeChange?.();
     } catch (error) {
       message.error((error as Error).message || t("galaxy.actionFailed"));
     }

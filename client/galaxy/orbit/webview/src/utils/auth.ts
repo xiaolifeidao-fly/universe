@@ -3,9 +3,9 @@
 import { createAuthStore } from "@shared/auth/createAuthStore";
 
 /**
- * 控制台登录态。存的是**用户令牌**，不是 `sk-` 算力密钥 ——
- * 后者是给 SDK 用的，它带着余额、能直接花钱，不该进浏览器 localStorage。
- * 密钥明文只在签发那一刻显示一次，之后控制台也只看得到匿名标识与余额。
+ * 控制台登录态。存的是**用户令牌**，不是 `sk-` 算力密钥 —— 两者各有各的存法：
+ * 密钥明文归 consumer/api/keyvault.api.ts 管（桌面端进主进程的 SQLite，浏览器才落 localStorage），
+ * 键名、分区和清理规则都在那边，别顺手塞到这里来。
  *
  * 账号是 Galaxy 自己的，分共享端（Nova）和使用端（Orbit）两批人：各注册各的，
  * 同一个用户名在两端是两个账号，一端的令牌打到另一端就是 not login。

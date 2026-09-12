@@ -175,6 +175,38 @@ func (s *service) SaveResource(ctx context.Context, req dto.SaveResourceRequest)
 	return resourceViews([]*repository.ManagerResource{row})[0], nil
 }
 
+// EnsureResource 按 code 幂等写入一条页面或菜单资源，返回它的 id。
+//
+// 和 SaveResource 的区别是**身份取自哪里**：SaveResource 认自增 id（后台编辑
+// 已有的那一条），这个认 code。初始化脚本要反复跑，页面结构也会改（一个页面
+// 长出子页、于是自己变成菜单），认 id 的那条路走不通 —— 它只会撞上 code 的
+// 唯一索引。
+//
+// 按 code 更新而不是删了重建：重建会换掉资源 id，把角色授权连根拔掉。
+func (s *service) EnsureResource(ctx context.Context, req dto.SaveResourceRequest) (int64, error) {
+	status := req.Status
+	if status != StatusDisabled {
+		status = StatusActive
+	}
+	code := strings.TrimSpace(req.Code)
+	row := &repository.ManagerResource{
+		ParentID: req.ParentID, Code: code, Name: req.Name,
+		ResourceType: req.ResourceType, Method: normalizeMethod(req.Method),
+		ResourceURL: normalizePath(req.ResourceURL), PageURL: normalizePath(req.PageURL),
+		Icon: req.Icon, SortID: req.SortID, Status: status,
+	}
+	if err := s.repository.UpsertResourceByCode(ctx, row); err != nil {
+		return 0, err
+	}
+	// id 回查，不取 row.ID：冲突走的是 UPDATE 分支，那一路 GORM 填不回自增值。
+	ids, err := s.repository.ListResourceCodes(ctx, []string{code})
+	if err != nil {
+		return 0, err
+	}
+	s.invalidateACL(ctx)
+	return ids[code], nil
+}
+
 func (s *service) DeleteResource(ctx context.Context, id int64) error {
 	if _, err := s.repository.FindResource(ctx, id); repository.IsNotFound(err) {
 		return ErrNotFound

@@ -39,7 +39,20 @@ var pages = []struct {
 	{Code: "users", Name: "用户管理", PageURL: "/users", Icon: "TeamOutlined", Type: manager.ResourcePage, SortID: 20},
 	{Code: "businessLines", Name: "业务线管理", PageURL: "/business-lines", Icon: "BranchesOutlined", Type: manager.ResourcePage, SortID: 30},
 	{Code: "programs", Name: "项目管理", PageURL: "/programs", Icon: "FolderOutlined", Type: manager.ResourcePage, SortID: 40},
-	{Code: "galaxy", Name: "共享算力池", PageURL: "/galaxy", Icon: "GlobalOutlined", Type: manager.ResourcePage, SortID: 50},
+	// 共享算力池是菜单不是页面：原来那十一块内容挤在一个页面的页签条里，
+	// 现在一块一个页面挂在它底下 —— 页签排到第十一个就不是导航了。
+	{Code: "galaxy", Name: "共享算力池", Icon: "GlobalOutlined", Type: manager.ResourceMenu, SortID: 50},
+	{Code: "galaxyPool", Name: "池水位", Parent: "galaxy", PageURL: "/galaxy/pool", Type: manager.ResourcePage, SortID: 51},
+	{Code: "galaxyNodes", Name: "节点与贡献", Parent: "galaxy", PageURL: "/galaxy/nodes", Type: manager.ResourcePage, SortID: 52},
+	{Code: "galaxyAccounts", Name: "账号", Parent: "galaxy", PageURL: "/galaxy/accounts", Type: manager.ResourcePage, SortID: 53},
+	{Code: "galaxyProbes", Name: "抽检", Parent: "galaxy", PageURL: "/galaxy/probes", Type: manager.ResourcePage, SortID: 54},
+	{Code: "galaxyDisputes", Name: "争议工单", Parent: "galaxy", PageURL: "/galaxy/disputes", Type: manager.ResourcePage, SortID: 55},
+	{Code: "galaxyPackages", Name: "额度包", Parent: "galaxy", PageURL: "/galaxy/packages", Type: manager.ResourcePage, SortID: 56},
+	{Code: "galaxyModels", Name: "模型目录", Parent: "galaxy", PageURL: "/galaxy/models", Type: manager.ResourcePage, SortID: 57},
+	{Code: "galaxyPoints", Name: "积分充值", Parent: "galaxy", PageURL: "/galaxy/points", Type: manager.ResourcePage, SortID: 58},
+	{Code: "galaxyKeys", Name: "算力密钥", Parent: "galaxy", PageURL: "/galaxy/keys", Type: manager.ResourcePage, SortID: 59},
+	{Code: "galaxySettlement", Name: "结算汇总", Parent: "galaxy", PageURL: "/galaxy/settlement", Type: manager.ResourcePage, SortID: 60},
+	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", Parent: "galaxy", PageURL: "/galaxy/bridge-releases", Type: manager.ResourcePage, SortID: 61},
 	{Code: "settings", Name: "系统设置", Icon: "SettingOutlined", Type: manager.ResourceMenu, SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", Parent: "settings", PageURL: "/settings/accounts", Type: manager.ResourcePage, SortID: 91},
 	{Code: "settingsRoles", Name: "角色与权限", Parent: "settings", PageURL: "/settings/roles", Type: manager.ResourcePage, SortID: 92},
@@ -47,7 +60,14 @@ var pages = []struct {
 
 // operatorPages 运营看得到的页面：不含系统设置。
 // 一个能改角色授权的角色，和超级管理员就没有区别了。
-var operatorPages = []string{"dashboard", "users", "businessLines", "programs", "galaxy"}
+//
+// 只列叶子页面：共享算力池那个菜单由 CurrentMenus 的 withAncestors 自动带出来。
+var operatorPages = []string{
+	"dashboard", "users", "businessLines", "programs",
+	"galaxyPool", "galaxyNodes", "galaxyAccounts", "galaxyProbes", "galaxyDisputes",
+	"galaxyPackages", "galaxyModels", "galaxyPoints", "galaxyKeys", "galaxySettlement",
+	"galaxyBridgeReleases",
+}
 
 func main() {
 	username := flag.String("username", "admin", "超级管理员用户名")

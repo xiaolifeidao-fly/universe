@@ -158,7 +158,7 @@ export  Hub  ── POST {endpoint}/node/v1/execute ────▶ 节点    �
 | 领域逻辑 | `service/galaxy/bridgerelease.go`（发布、清单、签名校验、版本比较）与 `nodeupgrade.go`（指令、回报、超时、成功判定） |
 | 公开分发面 | `galaxy-api/pkg/bridge`：`/agent/v1/bridge/{releases/latest,download/:platform,checksum/:platform,install.sh,install.ps1}`，**不鉴权** |
 | 控制台 | `GET /api/galaxy/provider/bridge/releases`、`POST /api/galaxy/provider/node/upgrade`；Nova 账户页的「安装 ai-bridge」卡片与机器列表里的升级按钮 |
-| 运营 | `GET/POST /api/galaxy/admin/bridge/releases*`（manager-api），管理端「ai-bridge 版本」页签 |
+| 运营 | `GET/POST /api/galaxy/admin/bridge/releases*`（manager-api），管理端共享算力池下的「ai-bridge 版本」页面 |
 | 节点侧 | `ai-bridge-native/src/pool/upgrade.rs`；命令行 `ai-bridge upgrade`；签名工具 `scripts/release-sign.cjs` |
 
 几条要记住的规则：
@@ -248,7 +248,7 @@ A 哪天泄露 B 跟着失守。一个已验签渠道都没配时这条路由整
 带着 `sandbox: true`，界面必须把它标出来：不标的话，运营看着订单变成已到账，
 会以为钱真的进来了。
 
-额度商品的维护在运营后台的「额度包」页签，接口是 `GET /api/galaxy/admin/packages`
+额度商品的维护在运营后台共享算力池下的「额度包」页面，接口是 `GET /api/galaxy/admin/packages`
 （列**全部**，含已下架）与 `POST /api/galaxy/admin/packages/save`（只认平台管理员）。
 它原来挂在 `/api/galaxy/consumer/packages/save`，靠一个中间件在消费者路由组里把门 ——
 运营动作和封禁、裁决放在一起才对得上。消费者侧仍只有只读的
@@ -268,7 +268,7 @@ A 哪天泄露 B 跟着失守。一个已验签渠道都没配时这条路由整
 | 提供者（共享端） | **Nova**，`client/galaxy/nova`（:17898） | Galaxy 共享端账号 `pu_…` |
 | 消费者（使用端） | **Orbit**，`client/galaxy/orbit`（:17899） | Galaxy 使用端账号 `cu_…` |
 | 还没注册的访客 | Portal，`client/galaxy/portal`（:17900） | 不登录 |
-| 平台运营 | `client/manager` 的 `/galaxy` | 管理端账号 `mu_…` |
+| 平台运营 | `client/manager` 的 `/galaxy/*` | 管理端账号 `mu_…` |
 
 最早提供者和消费者合在一个应用里（理由是「同一个人的两副面孔」），后来拆成了 Nova / Orbit
 两个桌面端，2026-09-11 起账号也按端分开（见下一节「账号体系」）：两端的用户群、要做的事、
@@ -311,7 +311,7 @@ galaxy-api 上原来也有一组 `/api/galaxy/admin/*`（`galaxy-api/pkg/admin`�
 
 ```bash
 cd client/galaxy && npm install && npm run dev   # :7898
-cd client/manager && npm run dev                 # :7895，/galaxy 是运营页
+cd client/manager && npm run dev                 # :7895，侧栏「共享算力池」下的 /galaxy/* 是运营页
 ```
 
 测试：`go test ./...`（各模块）与 `npm test`（ai-bridge）。覆盖的关键路径是
@@ -353,7 +353,7 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
   查库失败回「认证服务暂不可用」—— 数据库抖一下不该把所有人踢回登录页。
 - **工作室只能运营设。** 注册出来一律是散户，没有「申请工作室」的入口：工作室的信誉按设备指纹记，
   指纹是客户端自报的，自选就等于让人自己挑一个更宽松的扣分口径。运营在管理端「节点与贡献」
-  的机器行上，或者「账号」页签里改；`SetProviderType` 只认存在的共享端账号。
+  的机器行上，或者「账号」页面里改；`SetProviderType` 只认存在的共享端账号。
 - **运营不在这套账号里。** 共享池的运营接口全在 manager-api，认管理端账号。停用 Galaxy 账号只挡
   登录控制台，名下在跑的机器和已经发出去的算力密钥各有各的开关（封禁机器、吊销密钥）。
 - **忘了密码找运营。** 没有自助找回（没有手机 / 邮箱验证）。运营重置出来的是临时密码，
@@ -383,7 +383,7 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 | 领域 | `service/galaxy/points.go`（积分、购买、返现、邀请码）、`keycipher.go`（明文加密存储）、`consumerkey.go` 的 `RevealKey` / `AdminKeys` |
 | 使用端接口 | `GET /api/galaxy/consumer/{catalog,points,points/ledger,referral,referral/invitees}`、`POST …/points/purchase`、`POST …/keys/secret`；注册 `POST …/auth/register` 多一个 `inviteCode` |
 | 运营接口 | `GET /api/galaxy/admin/{keys,points/ledger,points/summary,referral/settings}`、`POST …/keys/secret`、`POST …/points/recharge`、`POST …/referral/settings/save`；模型的返现比例随 `portal/models/save` 的 `referralBps` 保存，套餐绑模型随 `packages/save` 的 `modelId` |
-| 界面 | Orbit：密钥（有效 / 无效、「使用」、手动接入命令）、模型广场、购买、积分；管理端「共享算力池」多了模型目录、积分充值、算力密钥三个页签 |
+| 界面 | Orbit：密钥（有效 / 无效、「使用」、手动接入命令）、模型广场、购买、积分；管理端「共享算力池」多了模型目录、积分充值、算力密钥三个页面 |
 
 几条要记住的规则：
 

@@ -74,6 +74,9 @@ type Service interface {
 	// ---------- 初始化与自检 ----------
 	EnsureDefaultAdmin(ctx context.Context, username, displayName, password string) error
 	EnsureRole(ctx context.Context, code, name string, writable bool) (int64, error)
+	// EnsureResource 按 code 幂等登记一条页面或菜单资源，返回它的 id。
+	// 页面结构是手写的（路由表里推不出来），但和接口资源一样要经得起反复跑。
+	EnsureResource(ctx context.Context, req dto.SaveResourceRequest) (int64, error)
 	// SyncAPIResources 按真实路由表登记接口资源。手写清单和路由迟早对不上，
 	// 而对不上的后果是登录用户一律 403。
 	SyncAPIResources(ctx context.Context, routes []RouteRef) (int, error)

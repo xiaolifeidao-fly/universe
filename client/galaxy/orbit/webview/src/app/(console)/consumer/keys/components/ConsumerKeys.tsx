@@ -8,15 +8,16 @@
  * 默认只摆有效的密钥：过期、冻结、吊销的那些大多只剩「换发」或「看一眼」这两件事，
  * 和能用的混在一起，找能用的那把要先跳过一堆灰卡片。
  *
- * 明文平台取得回（加密存着）。列表里仍然只有掩码 —— 要明文的三件事（桌面端「使用」、
- * 复制密钥、复制带密钥的命令）各自在点下去的那一刻取一次，拿到就用、用完就丢。
+ * 明文在签发那一刻就存进了本机保险箱（桌面端 SQLite / 浏览器 localStorage，见 api/keyvault.api.ts）。
+ * 列表里仍然只有掩码 —— 要明文的四件事（查看、桌面端「使用」、复制密钥、复制带密钥的命令）
+ * 各自在点下去的那一刻取一次：先问本机，本机没有才回服务端要，要到了顺手补存一份。
  */
 
 import { Dropdown, Modal, message } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconAlert, IconCopy, IconKey, IconMonitor, IconPlus, IconRefresh } from "@/components/ui/icons";
+import { IconAlert, IconCopy, IconEye, IconEyeOff, IconKey, IconMonitor, IconPlus, IconRefresh } from "@/components/ui/icons";
 import { Btn, Card, CardHead, CopyBtn, EmptyState, IconBtn, Loading, Note, Pill, Seg, Tabs } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { copyText, formatCompact, formatDay, formatInt, unitLabel } from "@/utils/format";
@@ -40,6 +41,7 @@ import {
   type ClientConfigStatus,
   type ClientTool,
 } from "../../api/clientconfig.api";
+import { forgetKeySecret, listLocalKeyIds, readKeySecret, rememberKeySecret } from "../../api/keyvault.api";
 import { IssuedKeyModal } from "./IssuedKeyModal";
 import { apiBase, buildSnippet, defaultSnippetTab, hostRoot, SECRET_PLACEHOLDER, type SnippetTab } from "./snippets";
 
@@ -70,6 +72,8 @@ export function ConsumerKeys() {
   const [keys, setKeys] = useState<ConsumerKeyView[]>([]);
   const [notice, setNotice] = useState<NoticeStatus | null>(null);
   const [issued, setIssued] = useState<IssuedKeyView | null>(null);
+  // 这把新密钥有没有存进本机保险箱。存不下就得让用户当场自己存一份。
+  const [issuedSaved, setIssuedSaved] = useState(false);
   const [tab, setTab] = useState<KeyTab>("valid");
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
@@ -81,9 +85,17 @@ export function ConsumerKeys() {
   const [desktop, setDesktop] = useState(false);
   const [clientStatus, setClientStatus] = useState<ClientConfigStatus | null>(null);
   const [applying, setApplying] = useState("");
+  // 本机保险箱里存着哪几把。只存 keyId —— 明文要用的时候再单独取一条。
+  const [localKeys, setLocalKeys] = useState<ReadonlySet<string>>(() => new Set());
+  // 「查看」展开的是哪一把、看到的是什么。切到别的密钥就收起来。
+  const [revealed, setRevealed] = useState<{ keyId: string; secret: string } | null>(null);
 
   const refreshClientStatus = useCallback(async () => {
     setClientStatus(await fetchClientStatus());
+  }, []);
+
+  const refreshLocalKeys = useCallback(async () => {
+    setLocalKeys(new Set(await listLocalKeyIds()));
   }, []);
 
   const load = useCallback(async () => {
@@ -97,7 +109,8 @@ export function ConsumerKeys() {
       setLoading(false);
     }
     void refreshClientStatus();
-  }, [refreshClientStatus, t]);
+    void refreshLocalKeys();
+  }, [refreshClientStatus, refreshLocalKeys, t]);
 
   useEffect(() => {
     setDesktop(canApplyLocally());
@@ -124,6 +137,11 @@ export function ConsumerKeys() {
 
   const current = useMemo(() => shown.find((key) => key.keyId === selected) ?? null, [shown, selected]);
 
+  // 换了一把密钥就把展开的明文收起来，别让上一把的明文挂在屏幕上。
+  useEffect(() => {
+    setRevealed((previous) => (previous && previous.keyId === selected ? previous : null));
+  }, [selected]);
+
   /** 这把密钥此刻接在本机哪几个客户端上。只认 Orbit 自己写进去、而且文件里现在还是它的。 */
   const inUse = useCallback(
     (key: ConsumerKeyView): ClientTool[] =>
@@ -131,13 +149,34 @@ export function ConsumerKeys() {
     [clientStatus],
   );
 
+  /** 这把密钥现在还拿不拿得到明文：本机存着，或者服务端那份密文解得开。 */
+  const hasSecret = useCallback(
+    (key: ConsumerKeyView) => localKeys.has(key.keyId) || key.revealable,
+    [localKeys],
+  );
+
+  /**
+   * 取这把密钥的明文。先问本机保险箱，没有才回服务端要 —— 要到了顺手补存一份，
+   * 换过机器、或者这把是本次改动之前买的，都只用回服务端这一次。
+   */
+  const secretFor = useCallback(
+    async (key: ConsumerKeyView): Promise<{ secret: string; baseUrl: string }> => {
+      const local = await readKeySecret(key.keyId);
+      if (local) return { secret: local, baseUrl };
+      const remote = await revealKey(key.keyId);
+      if (await rememberKeySecret(key.keyId, key.alias, remote.secret)) void refreshLocalKeys();
+      return { secret: remote.secret, baseUrl: remote.baseUrl || baseUrl };
+    },
+    [baseUrl, refreshLocalKeys],
+  );
+
   const applyKey = async (key: ConsumerKeyView, tool: ClientTool) => {
     setApplying(key.keyId);
     try {
-      const secret = await revealKey(key.keyId);
-      if (!secret.baseUrl) throw new Error(t("keys.use.noBaseUrl"));
+      const { secret, baseUrl: target } = await secretFor(key);
+      if (!target) throw new Error(t("keys.use.noBaseUrl"));
       // 写哪个文件、写什么由主进程在系统确认框里摆给用户看，页面只递过去这三样。
-      const result = await clientConfigApi.applyKey({ tool, baseUrl: secret.baseUrl, secret: secret.secret, keyId: key.keyId });
+      const result = await clientConfigApi.applyKey({ tool, baseUrl: target, secret, keyId: key.keyId });
       if (result.applied) message.success(t("keys.use.applied", { tool: TOOL_LABELS[tool] }));
       await refreshClientStatus();
     } catch (error) {
@@ -149,9 +188,23 @@ export function ConsumerKeys() {
 
   const copySecret = async (key: ConsumerKeyView) => {
     try {
-      const secret = await revealKey(key.keyId);
-      if (await copyText(secret.secret)) message.success(t("keys.secretCopied"));
+      const { secret } = await secretFor(key);
+      if (await copyText(secret)) message.success(t("keys.secretCopied"));
       else message.error(t("keys.copyFailed"));
+    } catch (error) {
+      message.error((error as Error).message || t("common.actionFailed"));
+    }
+  };
+
+  /** 「查看」：把明文摆在详情里。再点一次收起来 —— 屏幕上多留一秒就是多一秒被看见的机会。 */
+  const toggleReveal = async (key: ConsumerKeyView) => {
+    if (revealed?.keyId === key.keyId) {
+      setRevealed(null);
+      return;
+    }
+    try {
+      const { secret } = await secretFor(key);
+      setRevealed({ keyId: key.keyId, secret });
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
     }
@@ -166,7 +219,11 @@ export function ConsumerKeys() {
       onOk: async () => {
         setBusy(true);
         try {
-          setIssued(await renewKey(key.keyId));
+          const fresh = await renewKey(key.keyId);
+          setIssuedSaved(await rememberKeySecret(fresh.keyId, fresh.alias, fresh.secret));
+          // 旧的这一刻就作废了，本机那份留着也用不了。
+          await forgetKeySecret(key.keyId);
+          setIssued(fresh);
           message.success(t("keys.reissued"));
           setTab("valid");
           await load();
@@ -190,6 +247,7 @@ export function ConsumerKeys() {
         setBusy(true);
         try {
           await revokeKey(key.keyId);
+          await forgetKeySecret(key.keyId);
           message.success(t("keys.revoked"));
           await load();
         } catch (error) {
@@ -241,6 +299,7 @@ export function ConsumerKeys() {
     <UseButton
       keyView={key}
       desktop={desktop}
+      available={hasSecret(key)}
       applying={applying === key.keyId}
       disabled={Boolean(applying)}
       small={small}
@@ -316,10 +375,20 @@ export function ConsumerKeys() {
                 hint={`${current.keyId} · ${t("keys.created", { value: formatDay(current.issuedAt) })}`}
                 action={
                   <span style={{ display: "flex", gap: 8 }}>
-                    {current.revealable && current.status !== "revoked" ? (
-                      <Btn tone="ghost" small icon={<IconCopy size={14} />} onClick={() => void copySecret(current)}>
-                        {t("keys.copySecret")}
-                      </Btn>
+                    {hasSecret(current) && current.status !== "revoked" ? (
+                      <>
+                        <Btn
+                          tone="ghost"
+                          small
+                          icon={revealed?.keyId === current.keyId ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                          onClick={() => void toggleReveal(current)}
+                        >
+                          {revealed?.keyId === current.keyId ? t("keys.hideSecret") : t("keys.showSecret")}
+                        </Btn>
+                        <Btn tone="ghost" small icon={<IconCopy size={14} />} onClick={() => void copySecret(current)}>
+                          {t("keys.copySecret")}
+                        </Btn>
+                      </>
                     ) : null}
                     {current.status !== "revoked" ? (
                       <Btn tone="ghost" small disabled={busy} title={t("keys.reissueHint")} onClick={() => reissue(current)}>
@@ -335,7 +404,9 @@ export function ConsumerKeys() {
                 }
               />
               <div style={{ padding: "0 18px 18px", display: "flex", flexDirection: "column", gap: 16 }}>
-                {!current.revealable && current.status !== "revoked" ? <Note>{t("keys.notRevealable")}</Note> : null}
+                {!hasSecret(current) && current.status !== "revoked" ? <Note>{t("keys.noSecret")}</Note> : null}
+
+                {revealed?.keyId === current.keyId ? <SecretRow key={current.keyId} secret={revealed.secret} /> : null}
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
@@ -392,13 +463,15 @@ export function ConsumerKeys() {
               keyView={current}
               baseUrl={baseUrl}
               desktop={desktop}
+              available={hasSecret(current)}
+              loadSecret={secretFor}
             />
           </div>
         ) : null}
         {valid.length > 0 && tab === "valid" ? <Note>{t("keys.newHint")}</Note> : null}
       </div>
 
-      <IssuedKeyModal issued={issued} onClose={() => setIssued(null)} />
+      <IssuedKeyModal issued={issued} savedLocally={issuedSaved} onClose={() => setIssued(null)} />
     </>
   );
 }
@@ -505,13 +578,26 @@ function KeyCard({
   );
 }
 
+/** 展开的明文。复制状态归它自己管 —— 换一把密钥这个组件整个换掉，勾也跟着没了。 */
+function SecretRow({ secret }: { secret: string }) {
+  const { t } = useLocale();
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="gx-secret">
+      <span style={{ flex: 1 }}>{secret}</span>
+      <CopyBtn value={secret} label={t("common.copy")} copied={copied} onCopied={() => setCopied(true)} />
+    </div>
+  );
+}
+
 /**
- * 「使用」按钮。桌面壳里才画；取不回明文的老密钥给一个灰按钮，悬停说原因 ——
+ * 「使用」按钮。桌面壳里才画；本机和服务端都拿不到明文的老密钥给一个灰按钮，悬停说原因 ——
  * 直接不画的话，用户会以为这把密钥和别的不一样是出了什么问题。
  */
 function UseButton({
   keyView,
   desktop,
+  available,
   applying,
   disabled,
   small,
@@ -519,6 +605,8 @@ function UseButton({
 }: {
   keyView: ConsumerKeyView;
   desktop: boolean;
+  /** 明文取得到（本机存着，或者服务端解得开）。取不到时按钮是灰的。 */
+  available: boolean;
   applying: boolean;
   disabled: boolean;
   small: boolean;
@@ -527,9 +615,9 @@ function UseButton({
   const { t } = useLocale();
   const tools = toolsFor(keyView);
   if (!desktop || tools.length === 0) return null;
-  if (!keyView.revealable) {
+  if (!available) {
     return (
-      <Btn tone="soft" small={small} disabled title={t("keys.notRevealable")}>
+      <Btn tone="soft" small={small} disabled title={t("keys.noSecret")}>
         {t("keys.use.button")}
       </Btn>
     );
@@ -598,7 +686,20 @@ function LocalClients({ status, keys }: { status: ClientConfigStatus; keys: Cons
  * 手动接入。三段各一份，因为「改哪个文件、填哪个地址」在每个客户端里都不一样，
  * 而这一步是新用户最容易卡住的地方。屏幕上显示的是占位符，「复制（含密钥）」那一下才去取明文。
  */
-function ConnectCard({ keyView, baseUrl, desktop }: { keyView: ConsumerKeyView; baseUrl: string; desktop: boolean }) {
+function ConnectCard({
+  keyView,
+  baseUrl,
+  desktop,
+  available,
+  loadSecret,
+}: {
+  keyView: ConsumerKeyView;
+  baseUrl: string;
+  desktop: boolean;
+  /** 明文取得到。取不到就只给不含密钥的那份命令。 */
+  available: boolean;
+  loadSecret: (key: ConsumerKeyView) => Promise<{ secret: string; baseUrl: string }>;
+}) {
   const { t } = useLocale();
   const [tab, setTab] = useState<SnippetTab>(defaultSnippetTab(keyView.category));
   const [copied, setCopied] = useState("");
@@ -606,7 +707,7 @@ function ConnectCard({ keyView, baseUrl, desktop }: { keyView: ConsumerKeyView; 
 
   const copyWithSecret = async () => {
     try {
-      const secret = await revealKey(keyView.keyId);
+      const secret = await loadSecret(keyView);
       const ok = await copyText(buildSnippet(tab, secret.baseUrl || baseUrl, secret.secret, keyView.category, keyView.modelId));
       if (ok) message.success(t("keys.snippetCopied"));
       else message.error(t("keys.copyFailed"));
@@ -653,7 +754,7 @@ function ConnectCard({ keyView, baseUrl, desktop }: { keyView: ConsumerKeyView; 
             copied={copied === tab}
             onCopied={() => setCopied(tab)}
           />
-          {keyView.revealable && keyView.status !== "revoked" ? (
+          {available && keyView.status !== "revoked" ? (
             <Btn tone="ghost" small icon={<IconCopy size={14} />} onClick={() => void copyWithSecret()}>
               {t("keys.copySnippetWithSecret")}
             </Btn>

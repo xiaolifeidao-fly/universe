@@ -35,21 +35,53 @@ var pages = []managerdto.SaveResourceRequest{
 	{Code: "users", Name: "用户管理", ResourceType: manager.ResourcePage, PageURL: "/users", Icon: "TeamOutlined", SortID: 20},
 	{Code: "businessLines", Name: "业务线管理", ResourceType: manager.ResourcePage, PageURL: "/business-lines", Icon: "BranchesOutlined", SortID: 30},
 	{Code: "programs", Name: "项目管理", ResourceType: manager.ResourcePage, PageURL: "/programs", Icon: "FolderOutlined", SortID: 40},
-	{Code: "galaxy", Name: "共享算力池", ResourceType: manager.ResourcePage, PageURL: "/galaxy", Icon: "GlobalOutlined", SortID: 50},
+	// 共享算力池是菜单不是页面：原来那十一块内容挤在一个页面的页签条里，
+	// 现在一块一个页面挂在它底下 —— 页签排到第十一个就不是导航了。
+	{Code: "galaxy", Name: "共享算力池", ResourceType: manager.ResourceMenu, Icon: "GlobalOutlined", SortID: 50},
+	{Code: "galaxyPool", Name: "池水位", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pool", SortID: 51},
+	{Code: "galaxyNodes", Name: "节点与贡献", ResourceType: manager.ResourcePage, PageURL: "/galaxy/nodes", SortID: 52},
+	{Code: "galaxyAccounts", Name: "账号", ResourceType: manager.ResourcePage, PageURL: "/galaxy/accounts", SortID: 53},
+	{Code: "galaxyProbes", Name: "抽检", ResourceType: manager.ResourcePage, PageURL: "/galaxy/probes", SortID: 54},
+	{Code: "galaxyDisputes", Name: "争议工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/disputes", SortID: 55},
+	{Code: "galaxyPackages", Name: "额度包", ResourceType: manager.ResourcePage, PageURL: "/galaxy/packages", SortID: 56},
+	{Code: "galaxyModels", Name: "模型目录", ResourceType: manager.ResourcePage, PageURL: "/galaxy/models", SortID: 57},
+	{Code: "galaxyPoints", Name: "积分充值", ResourceType: manager.ResourcePage, PageURL: "/galaxy/points", SortID: 58},
+	{Code: "galaxyKeys", Name: "算力密钥", ResourceType: manager.ResourcePage, PageURL: "/galaxy/keys", SortID: 59},
+	{Code: "galaxySettlement", Name: "结算汇总", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settlement", SortID: 60},
+	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bridge-releases", SortID: 61},
 	{Code: "settings", Name: "系统设置", ResourceType: manager.ResourceMenu, Icon: "SettingOutlined", SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", ResourceType: manager.ResourcePage, PageURL: "/settings/accounts", SortID: 91},
 	{Code: "settingsRoles", Name: "角色与权限", ResourceType: manager.ResourcePage, PageURL: "/settings/roles", SortID: 92},
 }
 
-// settings 下的两个页面挂在 settings 菜单下面。
+// 挂在菜单下面的子页面。父节点在 pages 里排在子页面前面，下面那个循环才查得到它的 id。
 var pageParents = map[string]string{
-	"settingsAccounts": "settings",
-	"settingsRoles":    "settings",
+	"galaxyPool":           "galaxy",
+	"galaxyNodes":          "galaxy",
+	"galaxyAccounts":       "galaxy",
+	"galaxyProbes":         "galaxy",
+	"galaxyDisputes":       "galaxy",
+	"galaxyPackages":       "galaxy",
+	"galaxyModels":         "galaxy",
+	"galaxyPoints":         "galaxy",
+	"galaxyKeys":           "galaxy",
+	"galaxySettlement":     "galaxy",
+	"galaxyBridgeReleases": "galaxy",
+	"settingsAccounts":     "settings",
+	"settingsRoles":        "settings",
 }
 
 // operatorPages 日常运营看得到的页面：不含系统设置。
 // 一个能改权限的角色和超级管理员就没有区别了。
-var operatorPages = []string{"dashboard", "users", "businessLines", "programs", "galaxy"}
+//
+// 只列叶子页面：共享算力池那个菜单由 CurrentMenus 的 withAncestors 自动带出来，
+// 单独授权它没有意义 —— 一个点开是空的目录比没有更糟。
+var operatorPages = []string{
+	"dashboard", "users", "businessLines", "programs",
+	"galaxyPool", "galaxyNodes", "galaxyAccounts", "galaxyProbes", "galaxyDisputes",
+	"galaxyPackages", "galaxyModels", "galaxyPoints", "galaxyKeys", "galaxySettlement",
+	"galaxyBridgeReleases",
+}
 
 func main() {
 	gin.SetMode(gin.ReleaseMode)
@@ -92,16 +124,18 @@ func main() {
 	log.Printf("角色就绪（超级管理员 id=%d）", superAdminID)
 
 	// 页面资源。先建菜单再建它的子页面，否则 parent_id 查不到。
+	// 按 code 幂等：这份清单会变（页面长出子页、于是自己变成菜单），
+	// 认自增 id 的那条路只会撞上 code 的唯一索引。
 	codeToID := map[string]int64{}
 	for _, page := range pages {
 		if parent, ok := pageParents[page.Code]; ok {
 			page.ParentID = codeToID[parent]
 		}
-		view, err := service.SaveResource(ctx, page)
+		id, err := service.EnsureResource(ctx, page)
 		if err != nil {
 			log.Fatalf("写入页面资源 %s 失败: %v", page.Code, err)
 		}
-		codeToID[page.Code] = view.ID
+		codeToID[page.Code] = id
 	}
 	log.Printf("页面资源就绪：%d 条", len(pages))
 

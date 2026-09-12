@@ -257,3 +257,19 @@ export const IconWallet = (props: IconProps) => (
     <path d="M16 11h5v4h-5a2 2 0 0 1 0-4z" />
   </Svg>
 );
+
+export const IconEye = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
+
+export const IconEyeOff = (props: IconProps) => (
+  <Svg {...props}>
+    <path d="M10 6a9 9 0 0 1 2-.2c6 0 9.5 6.2 9.5 6.2a17 17 0 0 1-3 3.6" />
+    <path d="M6.6 7.3A16.6 16.6 0 0 0 2.5 12S6 18.5 12 18.5a9.6 9.6 0 0 0 4-.8" />
+    <path d="M10.2 10.2a3 3 0 0 0 4.1 4.2" />
+    <path d="M4 4l16 16" />
+  </Svg>
+);
