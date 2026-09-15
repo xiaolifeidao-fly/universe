@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"common/middleware/httpx"
-	"galaxy-api/pkg/auth"
+	"galaxy-common/auth"
 	"service/galaxy"
 	"service/galaxy/dto"
 )

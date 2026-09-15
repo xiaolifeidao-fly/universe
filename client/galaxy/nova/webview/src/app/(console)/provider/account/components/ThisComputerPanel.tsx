@@ -69,7 +69,9 @@ export function ThisComputerPanel({
       setError((loadError as Error).message);
     }
     try {
-      setTools(await fetchTools());
+      // ai-bridge 不摆进「本机工具」：它随 Nova 分发，没有自己的升级通道，
+      // 列出来只是多一个看着要人管、实际按不动的东西。这一行只留真要主人自己升的外部工具。
+      setTools((await fetchTools()).filter((tool) => tool.name !== "ai-bridge"));
     } catch {
       // 工具版本要问 npm 拿最新版，网络不通就没有。拿不到不显示这一行，
       // 比显示一排「未知」有用 —— 后者会让人以为工具坏了。
@@ -222,7 +224,6 @@ export function ThisComputerPanel({
               <>
                 {node ? (
                   <span className="gx-mono" style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 4, ...ellipsis }}>
-                    ai-bridge {node.bridgeVersion || "-"} ·{" "}
                     {node.lastBeatAt ? t("share.machineBeat", { value: formatRelative(node.lastBeatAt) }) : t("share.machineNeverSeen")}
                   </span>
                 ) : null}
@@ -279,17 +280,14 @@ export function ThisComputerPanel({
           </div>
         ) : null}
 
-        {/* 解绑挨着「暂停请用共享总开关」那句话放：想歇一晚的人看到这句，就不会去点一个回不了头的按钮。 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 12, borderTop: "1px solid var(--gx-line)" }}>
-          <span className="gx-card__hint" style={{ flex: 1, lineHeight: 1.6 }}>
-            {t("bridge.builtin")}
-          </span>
-          {node ? (
+        {/* 没配对、平台上找不着这台时整行不画：只剩一条分隔线的空格子比没有更碍眼。 */}
+        {node ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", paddingTop: 12, borderTop: "1px solid var(--gx-line)" }}>
             <Btn tone="danger" small disabled={busy} onClick={() => onUnbind(node)}>
               {t("account.unbindLocal")}
             </Btn>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
     </Card>
   );

@@ -8,9 +8,8 @@ use (
 	./manager-api
 	./service
 	./galaxy-api
-	./galaxy-api/adapters/core
-	./galaxy-api/adapters/delivery
-	./galaxy-api/adapters/relay
-	./galaxy-api/adapters/videofarm
+	./galaxy-common
+	./galaxy-consumer-api
+	./galaxy-hub-api
 	./web-api
 )

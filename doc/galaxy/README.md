@@ -106,7 +106,7 @@ export  Hub  ── POST {endpoint}/node/v1/execute ────▶ 节点    �
 | 接入方式与回连信息 | `zt_galaxy_node.{access_mode, endpoint_url, endpoint_secret, endpoint_status, endpoint_error, endpoint_checked_at}`，迁移 `server/migrations/20260911_galaxy_node_access_mode.sql` |
 | 接入密钥 | `zt_galaxy_provider_key`、`service/galaxy/providerkey.go`；控制台 `GET/POST /api/galaxy/provider/access-keys`、`POST …/access-keys/revoke` |
 | 自助注册 | `POST /agent/v1/register` → `service/galaxy/access.go` 的 `RegisterNodeByKey` |
-| Hub 回连派单器 | `galaxy-api/pkg/exportdispatch`：每台 export 机器一个领活循环，外加每分钟一次回连探测 |
+| Hub 回连派单器 | `galaxy-hub-api/pkg/exportdispatch`：每台 export 机器一个领活循环，外加每分钟一次回连探测 |
 | 节点 export 服务 | `ai-bridge-native/src/pool/export.rs`：`/node/v1/{health, execute, cancel}` |
 | 命令行 | `ai-bridge-native/src/bin/ai-bridge.rs`：`init / register / run / status`；发布包 `scripts/build-cli.cjs`，CI 的 `cli` 任务出五个平台 |
 | 控制台 | Nova「账户」页：机器列表显示接入方式与回连状态；「接入密钥」卡片签发 / 吊销并给出命令 |
@@ -156,7 +156,7 @@ export  Hub  ── POST {endpoint}/node/v1/execute ────▶ 节点    �
 |---|---|
 | 发布记录 | `zt_galaxy_bridge_release`，迁移 `server/migrations/20260912_galaxy_bridge_release.sql`（同一份迁移给 `zt_galaxy_node` 加了十个升级相关的列） |
 | 领域逻辑 | `service/galaxy/bridgerelease.go`（发布、清单、签名校验、版本比较）与 `nodeupgrade.go`（指令、回报、超时、成功判定） |
-| 公开分发面 | `galaxy-api/pkg/bridge`：`/agent/v1/bridge/{releases/latest,download/:platform,checksum/:platform,install.sh,install.ps1}`，**不鉴权** |
+| 公开分发面 | `galaxy-hub-api/pkg/bridge`：`/agent/v1/bridge/{releases/latest,download/:platform,checksum/:platform,install.sh,install.ps1}`，**不鉴权** |
 | 控制台 | `GET /api/galaxy/provider/bridge/releases`、`POST /api/galaxy/provider/node/upgrade`；Nova 账户页的「安装 ai-bridge」卡片与机器列表里的升级按钮 |
 | 运营 | `GET/POST /api/galaxy/admin/bridge/releases*`（manager-api），管理端共享算力池下的「ai-bridge 版本」页面 |
 | 节点侧 | `ai-bridge-native/src/pool/upgrade.rs`；命令行 `ai-bridge upgrade`；签名工具 `scripts/release-sign.cjs` |

@@ -46,6 +46,20 @@ export const {
   user: "galaxy_provider_auth_user",
 });
 
+/**
+ * 是不是工作室（机房）。
+ *
+ * 两种身份看到的是两个控制台：散户只管自己坐着的这一台，机房那一套 ——
+ * 别的机器、装 ai-bridge、接入密钥 —— 整块不给；工作室才有。
+ * 注册出来一律是散户，只有平台运营能改。
+ *
+ * 判不出来（本地快照是老版本、还没登录）时按散户算：少给的那一套在取回账号之后
+ * 自己会回来，多给出来的却是一整套跟自己无关的入口。
+ */
+export function isStudio(user: AuthUser | null): boolean {
+  return user?.providerType === "studio";
+}
+
 /* ---------- 账号规则 ---------- */
 
 // 和服务端 service/galaxy/account 同一套。注册、改密码两页先在前端拦一道，

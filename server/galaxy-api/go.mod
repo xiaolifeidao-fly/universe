@@ -5,10 +5,7 @@ go 1.21
 require (
 	common v0.0.0
 	contract v0.0.0
-	galaxy-api/adapters/core v0.0.0
-	galaxy-api/adapters/delivery v0.0.0
-	galaxy-api/adapters/relay v0.0.0
-	galaxy-api/adapters/videofarm v0.0.0-00010101000000-000000000000
+	galaxy-common v0.0.0
 	github.com/gin-gonic/gin v1.10.0
 	gorm.io/gorm v1.23.8
 	service v0.0.0
@@ -56,10 +53,4 @@ replace contract => ../contract
 
 replace service => ../service
 
-replace galaxy-api/adapters/core => ./adapters/core
-
-replace galaxy-api/adapters/delivery => ./adapters/delivery
-
-replace galaxy-api/adapters/relay => ./adapters/relay
-
-replace galaxy-api/adapters/videofarm => ./adapters/videofarm
+replace galaxy-common => ../galaxy-common

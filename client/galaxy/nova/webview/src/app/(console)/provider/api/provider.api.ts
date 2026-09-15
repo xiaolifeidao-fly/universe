@@ -270,6 +270,21 @@ export function orderMachines(nodes: NodeView[], localNodeId: string): NodeView[
   });
 }
 
+/**
+ * 界面上该出现哪几台机器。
+ *
+ * 散户只管自己坐着的这一台。名下万一还挂着别的（早先是工作室、或者拿接入密钥注册过服务器），
+ * 也不摆出来 —— 散户的控制台就是「这台电脑」的控制台，机房那一套整块不给；
+ * 另一台自家电脑在它自己的 Nova 里管，本来也不必从这台遥控。
+ *
+ * 认不出本机是哪一台时（纯浏览器里没有 bridge 可问）不筛：筛出来是空的，
+ * 整页会变成「还没有机器」，比多列一台更误导。
+ */
+export function visibleNodes(nodes: NodeView[], studio: boolean, local: { nodeId: string } | null): NodeView[] {
+  if (studio || !local) return nodes;
+  return nodes.filter((node) => node.nodeId === local.nodeId);
+}
+
 /* ---------- 接入密钥（独立部署的 ai-bridge 用） ---------- */
 
 /**

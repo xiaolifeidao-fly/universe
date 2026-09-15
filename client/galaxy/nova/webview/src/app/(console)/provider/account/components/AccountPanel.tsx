@@ -12,7 +12,11 @@
  * 改密码是单独一页（/password）：运营重置过密码的人登进来也被挡到那一页，两种人共用一套表单。
  * 原型上还画了改头像、设备列表 —— 设备列表要有会话表，这一版只做已经有真实数据支撑的部分。
  *
- * 散户 / 工作室只展示不能改：注册出来一律是散户，工作室由平台运营在管理端设。
+ * 身份一个字都不露：散户 / 工作室是平台内部的分法，注册出来一律是散户、只有运营能改，
+ * 本人看见了也做不了什么，反而要问「怎么才能变成工作室」。
+ * 中间三块（其他机器、安装 ai-bridge、接入密钥）是机房那一套，只有工作室看得到：
+ * 散户名下就自己坐着的这一台，给他一排「怎么接服务器」只是在教他做一件他不会做的事。
+ * 于是散户的账户页就剩两块 —— 这台电脑，和登录与安全。
  */
 
 import { Modal, message } from "antd";
@@ -20,11 +24,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconLock, IconLogout } from "@/components/ui/icons";
-import { Btn, Card, CardHead, Loading, Pill, Seg } from "@/components/ui/kit";
+import { Btn, Card, CardHead, Loading, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { clearAuthToken, getAuthUser, isAuthTokenRemembered, setAuthUser, type AuthUser } from "@/utils/auth";
+import { clearAuthToken, isStudio } from "@/utils/auth";
 import { isDesktop } from "@/utils/product";
-import { fetchCurrentAccount } from "../api/account.api";
 import { pingBridge } from "../../api/bridge.api";
 import {
   fetchBridgeReleases,
@@ -43,6 +46,7 @@ import {
   type ProviderKeyView,
   type TermsStatus,
 } from "../../api/provider.api";
+import { useCurrentAccount } from "../../useAccount";
 import { AccessKeyPanel } from "./AccessKeyPanel";
 import { BridgeInstallPanel } from "./BridgeInstallPanel";
 import { MachineList } from "./MachineList";
@@ -64,7 +68,9 @@ export function AccountPanel() {
   const router = useRouter();
   // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
   const [modal, modalHolder] = Modal.useModal();
-  const [user, setUser] = useState<AuthUser | null>(null);
+  // 身份决定中间三块给不给，所以取的是库里最新的那份（见 useCurrentAccount），不是登录时的快照。
+  const user = useCurrentAccount();
+  const studio = isStudio(user);
   const [nodes, setNodes] = useState<NodeView[]>([]);
   // 列表真拿到过才算数：「这台电脑」要拿它判断自己还在不在名下，
   // 加载失败时的空列表会让它误报「已解绑」。
@@ -120,16 +126,6 @@ export function AccountPanel() {
 
   useEffect(() => {
     let alive = true;
-    setUser(getAuthUser());
-    // 本地那份是登录那一刻的快照：运营后来把人改成工作室，得现取一次才看得到。
-    // 取不到就先用快照，不弹报错 —— 这一块只是展示，不该让整页看起来坏了。
-    void fetchCurrentAccount()
-      .then((fresh) => {
-        if (!alive) return;
-        setUser(fresh);
-        setAuthUser(fresh, isAuthTokenRemembered());
-      })
-      .catch(() => undefined);
     const self = pingBridge().then((ping) => (ping ? { nodeId: ping.nodeId ?? "", paired: Boolean(ping.paired && ping.nodeId) } : null));
     void self.then((value) => {
       if (alive) setLocal(value);
@@ -230,7 +226,8 @@ export function AccountPanel() {
 
   return (
     <>
-      <PageHeader title={t("account.title")} meta={t("account.subtitle")} />
+      {/* 副标题报的是这一页有哪几块，散户少了中间三块，就不能再报「名下机器与接入密钥」。 */}
+      <PageHeader title={t("account.title")} meta={t(studio ? "account.subtitle" : "account.subtitleIndividual")} />
       {modalHolder}
       <div className="gx-body">
         {loading ? (
@@ -244,60 +241,56 @@ export function AccountPanel() {
               onRefresh={() => void loadNodes().catch(() => undefined)}
             />
 
-            <MachineList
-              machines={machines}
-              retired={retired}
-              retiredFailed={retiredFailed}
-              localNodeId={localNodeId}
-              desktop={desktop}
-              busy={busy}
-              onUnbind={unbind}
-              onUpgrade={upgrade}
-              onAddServer={() => setIssueOpen(true)}
-              onRetryRetired={() => void loadRetired()}
-            />
+            {/* 机房那一套，只给工作室。三块是一整条路（先看机器、再装、再拿密钥注册），拆开给没有意义。 */}
+            {studio ? (
+              <>
+                <MachineList
+                  machines={machines}
+                  retired={retired}
+                  retiredFailed={retiredFailed}
+                  localNodeId={localNodeId}
+                  desktop={desktop}
+                  busy={busy}
+                  onUnbind={unbind}
+                  onUpgrade={upgrade}
+                  onAddServer={() => setIssueOpen(true)}
+                  onRetryRetired={() => void loadRetired()}
+                />
 
-            <BridgeInstallPanel manifest={releases} failed={releasesFailed} hubUrl={hubUrl} onRetry={() => void loadReleases()} />
+                <BridgeInstallPanel manifest={releases} failed={releasesFailed} hubUrl={hubUrl} onRetry={() => void loadReleases()} />
 
-            <AccessKeyPanel
-              keys={keys}
-              terms={terms}
-              hubUrl={hubUrl}
-              installScript={unixInstallScript}
-              nodeNames={nodeNames}
-              issueOpen={issueOpen}
-              onIssueOpenChange={setIssueOpen}
-              onChanged={() =>
-                loadKeys().catch((error) => {
-                  message.error((error as Error).message || t("common.loadFailed"));
-                })
-              }
-            />
+                <AccessKeyPanel
+                  keys={keys}
+                  terms={terms}
+                  hubUrl={hubUrl}
+                  installScript={unixInstallScript}
+                  nodeNames={nodeNames}
+                  issueOpen={issueOpen}
+                  onIssueOpenChange={setIssueOpen}
+                  onChanged={() =>
+                    loadKeys().catch((error) => {
+                      message.error((error as Error).message || t("common.loadFailed"));
+                    })
+                  }
+                />
+              </>
+            ) : null}
 
             {/* 资料和登录合成一块放到底：左栏底部已经挂着头像和名字，这里再单占一张大卡什么也没多说。 */}
-            <Card className="gx-rise gx-rise--3">
+            {/* 入场延迟按它实际排第几块算：散户那里中间三块没有，它就是第二块。 */}
+            <Card className={`gx-rise gx-rise--${studio ? 3 : 1}`}>
               <CardHead title={t("account.security")} hint={t("account.securityHint")} />
               <div style={{ display: "flex", alignItems: "center", gap: "12px 16px", padding: "4px 18px 18px", flexWrap: "wrap" }}>
                 <span className="gx-avatar" style={{ width: 40, height: 40, fontSize: 16 }}>
                   {(user?.displayName || user?.username || "·").slice(0, 1)}
                 </span>
                 <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 14, fontWeight: 600 }}>{user?.displayName || user?.username || "—"}</span>
-                    {user?.providerType ? (
-                      <Pill tone={user.providerType === "studio" ? "accent" : "default"}>
-                        {t(user.providerType === "studio" ? "account.identityStudio" : "account.identityIndividual")}
-                      </Pill>
-                    ) : null}
-                  </span>
+                  {/* 名字旁边不挂身份标：身份改不了，标出来只是个答不上来的问题。
+                      两种人看到的界面差多少，上面那几块已经说清楚了。 */}
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{user?.displayName || user?.username || "—"}</span>
                   <span className="gx-mono" style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>
                     {user?.username}
                   </span>
-                  {user?.providerType ? (
-                    <span style={{ fontSize: 12, lineHeight: 1.6, color: "var(--gx-faint)" }}>
-                      {t(user.providerType === "studio" ? "account.identityStudioHint" : "account.identityIndividualHint")}
-                    </span>
-                  ) : null}
                 </span>
                 <span style={{ flex: 1 }} />
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>

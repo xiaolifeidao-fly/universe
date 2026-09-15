@@ -7,8 +7,9 @@
  * 那台机器就换过来了。主人不需要回到那台机器上做任何事。
  *
  * 按机器分开看：左边挑一台，右边只摆这一台的能力和设置，默认选中这台电脑。
- * 主人名下除了这台电脑，还可能有机房里用接入密钥注册的一排服务器 —— 每台都有
+ * 工作室名下除了这台电脑，还可能有机房里用接入密钥注册的一排服务器 —— 每台都有
  * 一条同名的 relay_claude，平铺在一张表里分不清改的是哪一台。
+ * 散户只有这台电脑：名下就算还挂着别的机器也不列（见 visibleNodes）。
  *
  * 仍然不能在这里**凭空造**一条贡献：能力是节点探测出来上报的，
  * 「这台机器上有没有 Claude」只有那台机器知道。控制台管的是「要不要、给多少」。
@@ -39,6 +40,7 @@ import {
   Switch,
 } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { isStudio } from "@/utils/auth";
 import { formatRelative, unitLabel } from "@/utils/format";
 import { isDesktop } from "@/utils/product";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
@@ -46,14 +48,17 @@ import {
   fetchNodes,
   isNodeOnline,
   nodeDisplayName,
+  orderMachines,
   saveContributionLimits,
   setContributionStatus,
   visibleContributions,
+  visibleNodes,
   type ContributionView,
   type NodeView,
   type QuotaGrantInput,
 } from "../../api/provider.api";
 import { pingBridge, startUpstreamLogin } from "../../api/bridge.api";
+import { useCurrentAccount } from "../../useAccount";
 import { MachineRail } from "./MachineRail";
 
 /** llm.chat 的常用三维。别的 kind 自己加行。 */
@@ -95,20 +100,6 @@ function countChanges(draft: Draft, row: ContributionView): number {
   return changes;
 }
 
-/**
- * 这台电脑钉在第一个，其余按名字排（机房-2 排在机房-10 前面）。
- *
- * 刻意不按在线状态排：列表 20 秒刷一次，机器一上下线就挪位置，
- * 鼠标正要点的那一行会从手底下跑掉。在不在线看状态点。
- */
-function orderMachines(nodes: NodeView[], localNodeId: string): NodeView[] {
-  return [...nodes].sort((left, right) => {
-    const local = Number(right.nodeId === localNodeId) - Number(left.nodeId === localNodeId);
-    if (local !== 0) return local;
-    return nodeDisplayName(left).localeCompare(nodeDisplayName(right), undefined, { numeric: true });
-  });
-}
-
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** 列表里补上的「这台电脑」那一项的选中键。节点 id 都是 n_ 开头，撞不上。 */
@@ -120,6 +111,8 @@ type LocalGap = "unpaired" | "detached";
 export function ShareSettings() {
   const { t } = useLocale();
   const router = useRouter();
+  // 散户的左栏只摆这台电脑：机房那一排服务器是工作室才有的东西。
+  const studio = isStudio(useCurrentAccount());
   // 用 hook 版而不是 Modal.confirm：静态方法拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色。
   const [modal, modalHolder] = Modal.useModal();
   const [nodes, setNodes] = useState<NodeView[]>([]);
@@ -171,7 +164,7 @@ export function ShareSettings() {
   }, [reload, t]);
 
   const localNodeId = local?.nodeId ?? "";
-  const machines = useMemo(() => orderMachines(nodes, localNodeId), [nodes, localNodeId]);
+  const machines = useMemo(() => orderMachines(visibleNodes(nodes, studio, local), localNodeId), [nodes, studio, local, localNodeId]);
   // 这台电脑不在名下机器里（还没配过，或者在控制台解绑过）时，列表顶上补一项「这台电脑」。
   //
   // 不补的话它在控制台里连个入口都没有：解绑过的电脑本机还拿着旧令牌，自认为配着，

@@ -367,6 +367,7 @@ const messages = {
 
     "account.title": "账户",
     "account.subtitle": "这台电脑、名下机器与接入密钥",
+    "account.subtitleIndividual": "这台电脑与登录安全",
     "account.node": "我的机器",
     "account.security": "登录与安全",
     "account.securityHint": "登录令牌保存在这台电脑上，退出登录会一并清掉。",
@@ -380,10 +381,6 @@ const messages = {
     "account.unbound": "已解绑",
     "account.logout": "退出登录",
     "account.locale": "界面语言",
-    "account.identityIndividual": "散户",
-    "account.identityStudio": "工作室",
-    "account.identityIndividualHint": "散户：信誉跟着账号走，名下几台机器共用一份。要开通工作室请联系平台。",
-    "account.identityStudioHint": "工作室：信誉按每台机器各算各的。身份由平台设置。",
     "account.changePassword": "修改密码",
     "account.machinesOther": "其他机器",
     "account.machinesOnline": "{online}/{total} 台在线",
@@ -486,7 +483,6 @@ const messages = {
     "install.manualUnix": "没有 sudo 就解压到 ~/.local/share/ai-bridge、软链到 ~/.local/bin。要常驻运行，用安装目录 deploy/ 下的 systemd / launchd 模板；服务要以安装目录的属主运行，远程升级才替换得了可执行文件。",
     "install.manualWindows": "装在 %LOCALAPPDATA% 是为了当前用户可写，远程升级才替换得了；目录记得加进 PATH。开机自启用安装目录里的 deploy\\windows\\install-task.ps1。",
 
-    "bridge.builtin": "Nova 自带 ai-bridge，配对后打开 Nova 就自动接入。暂停接单请用「今天」页的共享总开关。",
     "bridge.runtime": "这台电脑",
     "bridge.identity": "节点 {node} · 平台 {hub}",
     "bridge.unpaired": "这台电脑还没加入共享池",
@@ -867,6 +863,7 @@ const messages = {
 
     "account.title": "Account",
     "account.subtitle": "This computer, your machines and access keys",
+    "account.subtitleIndividual": "This computer and sign-in security",
     "account.node": "My machines",
     "account.security": "Sign-in and security",
     "account.securityHint": "The session token lives on this computer; signing out clears it.",
@@ -880,10 +877,6 @@ const messages = {
     "account.unbound": "Unpaired",
     "account.logout": "Sign out",
     "account.locale": "Interface language",
-    "account.identityIndividual": "Individual",
-    "account.identityStudio": "Studio",
-    "account.identityIndividualHint": "Individual: reputation follows the account and is shared by all your machines. Contact the platform to become a studio.",
-    "account.identityStudioHint": "Studio: reputation is kept per machine. Set by the platform.",
     "account.changePassword": "Change password",
     "account.machinesOther": "Other machines",
     "account.machinesOnline": "{online}/{total} online",
@@ -986,7 +979,6 @@ const messages = {
     "install.manualUnix": "No sudo? Extract to ~/.local/share/ai-bridge and link it into ~/.local/bin. To keep it running, use the systemd / launchd templates under deploy/ in the install folder; run the service as the folder's owner so remote upgrades can replace the binary.",
     "install.manualWindows": "%LOCALAPPDATA% is writable by the current user, which remote upgrades need to replace the binary; add the folder to PATH. To start at login, use deploy\\windows\\install-task.ps1 in the install folder.",
 
-    "bridge.builtin": "ai-bridge ships inside Nova and connects by itself once paired. To pause work, use the sharing switch on Today.",
     "bridge.runtime": "This computer",
     "bridge.identity": "node {node} · platform {hub}",
     "bridge.unpaired": "This computer hasn't joined the pool",

@@ -15,7 +15,7 @@ interface Envelope<T> {
 }
 
 function endpointURL(path: string): string {
-  const target = (process.env.SERVER_TARGET ?? "http://127.0.0.1:10004").replace(/\/+$/, "");
+  const target = (process.env.SERVER_TARGET ?? "http://127.0.0.1:10005").replace(/\/+$/, "");
   const prefix = process.env.APP_URL_PREFIX ?? "/api";
   return `${target}${prefix}${path}`;
 }

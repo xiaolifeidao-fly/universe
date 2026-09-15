@@ -10,6 +10,7 @@
  * 名下不止一台机器时（这台电脑之外，还有机房里用接入密钥注册的服务器），能力按机器分组，
  * 顺序和「共享设置」一样：这台电脑在前。每台都可能有一条「Claude 订阅」，平铺在一起
  * 分不清开关拨的是哪一台。只有一台时还是平铺，不为它多摆一行机器名。
+ * 散户就只有这台电脑一台（见 visibleNodes），所以这一页对散户永远是平铺的。
  */
 
 import { message } from "antd";
@@ -20,6 +21,7 @@ import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconAlert, IconBell, IconGpu, IconMonitor, IconMoon, IconSparkle } from "@/components/ui/icons";
 import { Btn, Card, CardHead, EmptyState, Figure, IconBtn, LinkBtn, Loading, LiveDot, Meter, Note, Pill, Switch } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { isStudio } from "@/utils/auth";
 import {
   formatClock,
   formatCny,
@@ -43,11 +45,13 @@ import {
   orderMachines,
   setContributionStatus,
   visibleContributions,
+  visibleNodes,
   type ContributionView,
   type ExecutionRecord,
   type NodeView,
   type ProviderDashboard,
 } from "../../api/provider.api";
+import { useCurrentAccount } from "../../useAccount";
 
 /**
  * 额度条的列宽。
@@ -68,9 +72,12 @@ export function TodayBoard() {
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  // 本机 bridge 的 nodeId：哪台排第一、哪台标「这台电脑」、两张概括卡同等情况下先挑谁。
-  // 纯浏览器里没有 bridge，是空串 —— 那就没有哪台是「这台电脑」。
-  const [localNodeId, setLocalNodeId] = useState("");
+  // 本机 bridge 报的自己：哪台排第一、哪台标「这台电脑」、两张概括卡同等情况下先挑谁，
+  // 散户还靠它认出「只该显示的那一台」。纯浏览器里是 null —— 浏览器不是任何一台机器，
+  // 那就没有哪台是「这台电脑」，也就无从只留一台。
+  const [local, setLocal] = useState<{ nodeId: string } | null>(null);
+  // 散户只有这台电脑：机房那一排服务器是工作室才有的东西。
+  const studio = isStudio(useCurrentAccount());
 
   const load = useCallback(async () => {
     try {
@@ -87,13 +94,13 @@ export function TodayBoard() {
   // 更新得还勤没有意义，也不值得为此多开一条长连接。
   useEffect(() => {
     let alive = true;
-    const local = pingBridge().then((ping) => ping?.nodeId ?? "");
-    void local.then((nodeId) => {
-      if (alive) setLocalNodeId(nodeId);
+    const self = pingBridge().then((ping) => (ping ? { nodeId: ping.nodeId ?? "" } : null));
+    void self.then((value) => {
+      if (alive) setLocal(value);
     });
     // 第一屏等本机 bridge 报出自己是哪台再画（和共享设置一样）：分两步到的话，机器先按名字排、
     // 再把这台电脑跳到最上面，额度卡也跟着换一台。等不过 1.5 秒就先画，IPC 卡住不能挡住整页。
-    void Promise.all([load(), Promise.race([local, delay(1500)])]).finally(() => {
+    void Promise.all([load(), Promise.race([self, delay(1500)])]).finally(() => {
       if (alive) setLoading(false);
     });
     const timer = setInterval(() => void load(), 20_000);
@@ -103,12 +110,13 @@ export function TodayBoard() {
     };
   }, [load]);
 
-  const machines = useMemo(() => orderMachines(nodes, localNodeId), [nodes, localNodeId]);
+  const localNodeId = local?.nodeId ?? "";
+  const machines = useMemo(() => orderMachines(visibleNodes(nodes, studio, local), localNodeId), [nodes, studio, local, localNodeId]);
   const contributions = useMemo(
     () => machines.flatMap((node) => visibleContributions(node.contributions)),
     [machines],
   );
-  const online = nodes.some(isNodeOnline);
+  const online = machines.some(isNodeOnline);
   // 「正在共享」得落在同一台机器上：在线的机器上开着的能力。在线和开着分开算的话，
   // 一台在线但全关了、另一台开着却离线，拼起来就成了「正在共享」，其实哪台都没在接单。
   const sharingRows = machines
@@ -160,7 +168,7 @@ export function TodayBoard() {
     );
   }
 
-  if (!dashboard || dashboard.nodes === 0) {
+  if (!dashboard || dashboard.nodes === 0 || machines.length === 0) {
     return (
       <>
         <PageHeader title={t("today.title")} meta={formatToday(locale)} />
@@ -391,7 +399,7 @@ export function TodayBoard() {
                 </span>
               ) : (
                 <span className="gx-mono" style={{ fontSize: 11, color: "var(--gx-faint)" }}>
-                  bridge {nodes.find(isNodeOnline)?.bridgeVersion || "-"}
+                  bridge {machines.find(isNodeOnline)?.bridgeVersion || "-"}
                 </span>
               )}
             </div>
