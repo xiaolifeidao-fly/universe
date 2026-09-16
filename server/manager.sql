@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS `zt_manager_resource` (
   `parent_id`     bigint DEFAULT 0,
   `code`          varchar(96),                     -- 稳定标识，前端按它取 i18n 文案
   `name`          varchar(64),
-  `resource_type` varchar(16),                     -- menu/page/api
+  `resource_type` varchar(16),                     -- menu/group/page/api；group 是菜单里的分组标题，不是页面
   `method`        varchar(8),                      -- 接口资源的 HTTP 方法；菜单与页面为空
   `resource_url`  varchar(200),                    -- gin 路由模板，如 /api/users/:id
   `page_url`      varchar(200),                    -- 前端路由，菜单项的 key 就是它

@@ -141,11 +141,11 @@ func (s *service) RegisterNodeByKey(ctx context.Context, req dto.RegisterRequest
 	if err != nil {
 		return dto.RegisterResult{}, err
 	}
-	if req.Contract > 0 && req.Contract != s.config.ContractVersion {
+	if req.Contract > 0 && req.Contract != s.cfg().ContractVersion {
 		return dto.RegisterResult{}, contract.NewUnitError(contract.ErrorClassProtocol, contract.CodeContractMismatch, false,
-			fmt.Sprintf("节点契约版本 %d 与 Hub 的 %d 不一致，请升级 ai-bridge", req.Contract, s.config.ContractVersion))
+			fmt.Sprintf("节点契约版本 %d 与 Hub 的 %d 不一致，请升级 ai-bridge", req.Contract, s.cfg().ContractVersion))
 	}
-	agreed, err := s.HasConsent(ctx, subjectProvider, key.OwnerUserID, s.config.ProviderTermsVersion)
+	agreed, err := s.HasConsent(ctx, subjectProvider, key.OwnerUserID, s.cfg().ProviderTermsVersion)
 	if err != nil {
 		return dto.RegisterResult{}, err
 	}
@@ -200,7 +200,7 @@ func (s *service) RegisterNodeByKey(ctx context.Context, req dto.RegisterRequest
 		DisplayName:     truncate(defaultString(req.DisplayName, nodeID), 128),
 		TokenHash:       HashSecret(secret),
 		BridgeVersion:   truncate(req.BridgeVersion, 32),
-		ContractVersion: s.config.ContractVersion,
+		ContractVersion: s.cfg().ContractVersion,
 		AccessMode:      mode,
 		EndpointURL:     endpointURL,
 		EndpointSecret:  endpointSecret,
@@ -224,7 +224,7 @@ func (s *service) RegisterNodeByKey(ctx context.Context, req dto.RegisterRequest
 
 	return dto.RegisterResult{
 		NodeID: nodeID, Token: secret, AccessMode: mode,
-		HubURL: s.config.ProviderHubURL, Notice: notice,
+		HubURL: s.cfg().ProviderHubURL, Notice: notice,
 	}, nil
 }
 

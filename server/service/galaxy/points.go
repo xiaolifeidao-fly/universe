@@ -334,7 +334,12 @@ func (s *service) purchasedOrder(ctx context.Context, userID string, paid *repos
 // scopedTo 一个把全部读写都落在给定事务里的 service 副本，只给账务流程用。
 // 放置、等待队列这些进程内状态它没有，也不该在事务里碰。
 func (s *service) scopedTo(tx *repository.GalaxyRepository) *service {
-	return &service{repository: tx, config: s.config, cipher: s.cipher, kinds: s.kinds, metrics: s.metrics}
+	// settings 传的是**同一个指针**：副本要是自己去回查，那次查询会落在
+	// 正开着的事务里 —— 一个账务事务因为读了一遍运营开关而变长，没有任何道理。
+	return &service{
+		repository: tx, config: s.config, settings: s.settings,
+		cipher: s.cipher, kinds: s.kinds, metrics: s.metrics,
+	}
 }
 
 // ---------- 分享返现 ----------
@@ -438,10 +443,16 @@ func (s *service) ReferralSettings(ctx context.Context) (dto.ReferralSettings, e
 	return dto.ReferralSettings{DefaultBps: clampBps(bps), UpdatedBy: row.UpdatedBy, UpdatedAt: &updatedAt}, nil
 }
 
+// SaveReferralSettings 改使用端的默认返现比例。
+//
+// 这一项同时也在「运行参数」那张表里（referral.default_bps）——
+// 同一行、同一个键，两个入口写的是同一个地方。这里保存完要让本进程的参数快照
+// 立刻失效，否则运营在这一页改完，下一页还显示旧值。
 func (s *service) SaveReferralSettings(ctx context.Context, req dto.SaveReferralSettingsRequest) error {
 	if req.DefaultBps < 0 || req.DefaultBps > maxReferralBps {
 		return fmt.Errorf("返现比例要在 0%% 到 100%% 之间")
 	}
+	defer s.invalidateSettings()
 	return s.repository.SaveSetting(ctx, &repository.GalaxySetting{
 		BizLine: bizLine, SettingKey: settingReferralDefaultBps,
 		Value: strconv.FormatInt(req.DefaultBps, 10), UpdatedBy: clip(req.UpdatedBy, 64),

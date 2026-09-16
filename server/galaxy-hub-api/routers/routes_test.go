@@ -26,8 +26,8 @@ func TestOwnedRoutes(t *testing.T) {
 	base := &bootstrap.Assembly{Galaxy: service, Metrics: metrics.New()}
 	exchange := corepkg.NewExchange()
 	journal := corepkg.NewJournal(8, nil)
-	assembly := &Assembly{Assembly: base, Exchange: exchange, Journal: journal, Registry: corepkg.NewRegistry(relay.New(&corepkg.Deps{}, relay.Options{})), Agent: agent.NewHandler(service, exchange, journal, 0, nil), Bridge: bridge.NewHandler(service), Native: native.NewHandler(service)}
-	engine := route(assembly)
+	assembly := &Assembly{Assembly: base, Exchange: exchange, Journal: journal, Deps: &corepkg.Deps{}, Registry: corepkg.NewRegistry(relay.New(&corepkg.Deps{}, relay.Options{})), Agent: agent.NewHandler(service, exchange, journal, 0, nil, nil), Bridge: bridge.NewHandler(service), Native: native.NewHandler(service)}
+	engine := route(assembly, nil)
 	registered := map[string]bool{}
 	absent := []string{"/api/galaxy", "/galaxy/payments"}
 	for _, r := range engine.Routes() {

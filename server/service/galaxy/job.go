@@ -82,7 +82,7 @@ func (s *service) jobView(ctx context.Context, row *repository.GalaxyUnit) (dto.
 	// 产物引用现签：对象键不含身份信息，签名地址短期有效，不入库。
 	if s.signer != nil {
 		for index := range view.Outputs {
-			if url, err := s.signer.SignGet(ctx, view.Outputs[index].Key, s.config.PresignGetTTL); err == nil {
+			if url, err := s.signer.SignGet(ctx, view.Outputs[index].Key, s.cfg().PresignGetTTL); err == nil {
 				view.Outputs[index].URL = url
 			}
 		}

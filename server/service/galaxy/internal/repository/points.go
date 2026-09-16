@@ -228,6 +228,24 @@ func (r *GalaxyRepository) SaveSetting(ctx context.Context, row *GalaxySetting) 
 	}).Create(row).Error
 }
 
+// ListSettings 全部运营开关。表很小（几十行），一次取完 ——
+// 逐个 FindSetting 会让「把配置读一遍」变成几十次往返，而这件事每隔十几秒就要做一次。
+func (r *GalaxyRepository) ListSettings(ctx context.Context, bizLine string) ([]*GalaxySetting, error) {
+	var rows []*GalaxySetting
+	err := r.Db.WithContext(ctx).Where("biz_line = ?", bizLine).Order("setting_key").Find(&rows).Error
+	return rows, err
+}
+
+// DeleteSetting 删掉一行开关，让这一项退回配置文件里的值。
+//
+// 「改回默认」不能靠写一个默认值进去：默认值是配置文件给的，各环境不一样，
+// 而且它还会随版本变。删掉那一行，读的时候自然就落回底下那一层。
+func (r *GalaxyRepository) DeleteSetting(ctx context.Context, bizLine, key string) error {
+	return r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).Where("setting_key = ?", key).
+		Delete(&GalaxySetting{}).Error
+}
+
 // ---------- 运营的密钥列表 ----------
 
 // ConsumerKeyPageQuery 管理端翻全站的算力密钥。Keyword 匹配密钥 id、别名，或者主人的用户名 / 昵称 / 账号 id。

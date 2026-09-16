@@ -24,7 +24,7 @@ const (
 // IssueKey 签发密钥。数据告知的确认是硬前置（C-13）：
 // 请求数据会经第三方提供者机器处理，消费者必须先确认。
 func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.IssuedKeyView, error) {
-	if req.NoticeVersion != s.config.ConsumerNoticeVersion {
+	if req.NoticeVersion != s.cfg().ConsumerNoticeVersion {
 		return dto.IssuedKeyView{}, fmt.Errorf("数据告知版本已更新，请重新确认")
 	}
 	agreed, err := s.HasConsent(ctx, subjectConsumer, req.OwnerUserID, req.NoticeVersion)
@@ -36,7 +36,7 @@ func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Is
 	}
 
 	now := time.Now()
-	ttl := s.config.KeyTTL
+	ttl := s.cfg().KeyTTL
 	if req.TTLDays > 0 {
 		ttl = time.Duration(req.TTLDays) * 24 * time.Hour
 	}
@@ -50,8 +50,8 @@ func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Is
 		AllowedKindsJSON:     encodeJSON(req.AllowedKinds),
 		AllowedProvidersJSON: encodeJSON(req.AllowedProviders),
 		ModelTierJSON:        encodeJSON(req.ModelTier),
-		Concurrency:          defaultInt(req.Concurrency, s.config.KeyConcurrency),
-		RPM:                  defaultInt(req.RPM, s.config.KeyRPM),
+		Concurrency:          defaultInt(req.Concurrency, s.cfg().KeyConcurrency),
+		RPM:                  defaultInt(req.RPM, s.cfg().KeyRPM),
 		Status:               keyStatusActive,
 		IssuedAt:             now,
 		ExpiresAt:            now.Add(ttl),
@@ -104,7 +104,7 @@ func (s *service) AuthenticateKey(ctx context.Context, secret string) (dto.Calle
 	if !row.ExpiresAt.IsZero() && !time.Now().Before(row.ExpiresAt) {
 		// 到期还没被巡检扫到：请求路径上顺手把状态改过来，语义与巡检一致。
 		_ = s.repository.UpdateConsumerKey(ctx, bizLine, row.KeyID, map[string]any{
-			"status": keyStatusExpired, "frozen_until": time.Now().Add(s.config.KeyFreeze),
+			"status": keyStatusExpired, "frozen_until": time.Now().Add(s.cfg().KeyFreeze),
 		})
 		return dto.Caller{}, contract.NewUnitError(contract.ErrorClassBilling, contract.CodeKeyExpired, false, "密钥已过期，请续期或换发")
 	}
@@ -214,7 +214,7 @@ func (s *service) RevealKey(ctx context.Context, ownerUserID, keyID string) (dto
 	if HashSecret(secret) != row.KeyHash {
 		return dto.KeySecretView{}, errKeyCipherMismatch
 	}
-	return dto.KeySecretView{KeyID: row.KeyID, Secret: secret, BaseURL: s.config.ConsumerBaseURL}, nil
+	return dto.KeySecretView{KeyID: row.KeyID, Secret: secret, BaseURL: s.cfg().ConsumerBaseURL}, nil
 }
 
 // AdminKeys 运营翻全站密钥。主人一页查一次，不按行查。

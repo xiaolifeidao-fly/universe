@@ -90,7 +90,7 @@ func (s *service) creditSummary(ctx context.Context, ownerUserID string, scope r
 	// 邀请奖励同样要过争议期：它跟着被邀请人的那笔收益走，那笔被追回时奖励也要退。
 	// 让它一到账就能提，等于把追回的风险留给平台。
 	hold.Types = append([]string{ledgerSettle}, referralTypes...)
-	hold.From = now.AddDate(0, 0, -s.config.PayoutHoldDays)
+	hold.From = now.AddDate(0, 0, -s.cfg().PayoutHoldDays)
 	pending, err := s.repository.SumProviderLedger(ctx, hold)
 	if err != nil {
 		return summary, err
@@ -352,12 +352,12 @@ func (s *service) CreatePayout(ctx context.Context, req dto.CreatePayoutRequest)
 	}
 	// 下面两条都按**微积分**算（1,000,000 = 1 积分 = ¥1），报错时换成积分说，
 	// 界面上显示的就是积分 —— 拿微积分的原始数字去提示，用户看到的是一串读不懂的零。
-	if req.Credits < s.config.PayoutMinCredits {
-		return dto.PayoutView{}, fmt.Errorf("单次提现不少于 %s 积分", formatPoints(s.config.PayoutMinCredits))
+	if req.Credits < s.cfg().PayoutMinCredits {
+		return dto.PayoutView{}, fmt.Errorf("单次提现不少于 %s 积分", formatPoints(s.cfg().PayoutMinCredits))
 	}
-	if req.Credits%int64(s.config.PayoutRate) != 0 {
+	if req.Credits%int64(s.cfg().PayoutRate) != 0 {
 		// 不整除会在折算时留下不足一分的零头，那笔零头既打不出去也退不回来。
-		return dto.PayoutView{}, fmt.Errorf("提现金额需为整数积分（%s 积分的整数倍）", formatPoints(int64(s.config.PayoutRate)))
+		return dto.PayoutView{}, fmt.Errorf("提现金额需为整数积分（%s 积分的整数倍）", formatPoints(int64(s.cfg().PayoutRate)))
 	}
 
 	scope, err := s.ledgerScope(ctx, req.OwnerUserID)
@@ -383,7 +383,7 @@ func (s *service) CreatePayout(ctx context.Context, req dto.CreatePayoutRequest)
 	now := time.Now()
 	row := &repository.GalaxyPayout{
 		BizLine: bizLine, PayoutID: "po_" + NewULID(now), OwnerUserID: req.OwnerUserID,
-		Credits: req.Credits, Amount: req.Credits / int64(s.config.PayoutRate) * priceScale,
+		Credits: req.Credits, Amount: req.Credits / int64(s.cfg().PayoutRate) * priceScale,
 		Currency: "CNY", Method: method, Account: account, Status: payoutPending,
 	}
 	if err := s.repository.CreatePayout(ctx, row); err != nil {

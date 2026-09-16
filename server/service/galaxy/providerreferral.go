@@ -98,7 +98,7 @@ func (s *service) ProviderReferral(ctx context.Context, ownerUserID string) (dto
 		return dto.ProviderReferralOverview{}, err
 	}
 	hold := scope
-	hold.From = now.AddDate(0, 0, -s.config.PayoutHoldDays)
+	hold.From = now.AddDate(0, 0, -s.cfg().PayoutHoldDays)
 	pending, err := s.repository.SumProviderLedger(ctx, hold)
 	if err != nil {
 		return dto.ProviderReferralOverview{}, err
@@ -108,8 +108,8 @@ func (s *service) ProviderReferral(ctx context.Context, ownerUserID string) (dto
 	}
 	return dto.ProviderReferralOverview{
 		Code: row.InviteCode, Link: s.providerInviteLink(row.InviteCode),
-		Rate: s.config.ReferralRate, Days: s.config.ReferralDays,
-		Enabled:  s.config.ReferralRate > 0,
+		Rate: s.cfg().ReferralRate, Days: s.cfg().ReferralDays,
+		Enabled:  s.cfg().ReferralRate > 0,
 		Invitees: invitees, RewardTotal: total, RewardWeek: recent, RewardPending: pending,
 	}, nil
 }
@@ -154,8 +154,8 @@ func (s *service) ListProviderInvitees(ctx context.Context, ownerUserID string, 
 				item.LastRewardAt = &last
 			}
 		}
-		if s.config.ReferralDays > 0 {
-			expires := row.CreatedTime.AddDate(0, 0, s.config.ReferralDays)
+		if s.cfg().ReferralDays > 0 {
+			expires := row.CreatedTime.AddDate(0, 0, s.cfg().ReferralDays)
 			item.ExpiresAt = &expires
 		}
 		page.Items = append(page.Items, item)
@@ -166,7 +166,7 @@ func (s *service) ListProviderInvitees(ctx context.Context, ownerUserID string, 
 // providerInviteLink 拼出分享出去的注册地址。平台没配注册页地址时返回空串 ——
 // 页面据此只显示邀请码，而不是给出一个打不开的链接。
 func (s *service) providerInviteLink(code string) string {
-	base := strings.TrimSpace(s.config.ReferralRegisterURL)
+	base := strings.TrimSpace(s.cfg().ReferralRegisterURL)
 	if base == "" || code == "" {
 		return ""
 	}
@@ -186,7 +186,7 @@ func (s *service) providerInviteLink(code string) string {
 // 失败一律不影响结算本身：结算已经落账了，奖励算不出来是另一回事 ——
 // 让一次奖励失败把提供者的收益一起回滚，是这里最不该做的事。
 func (s *service) rewardProviderReferrer(ctx context.Context, runtime UnitRuntime, contribution *repository.GalaxyContribution, credit int64) {
-	bps := referralBps(s.config.ReferralRate)
+	bps := referralBps(s.cfg().ReferralRate)
 	if bps <= 0 || credit <= 0 || contribution == nil || contribution.OwnerUserID == "" {
 		return
 	}
@@ -194,8 +194,8 @@ func (s *service) rewardProviderReferrer(ctx context.Context, runtime UnitRuntim
 	if err != nil || referral.InvitedBy == "" {
 		return
 	}
-	if s.config.ReferralDays > 0 {
-		if time.Since(referral.CreatedTime) > time.Duration(s.config.ReferralDays)*24*time.Hour {
+	if s.cfg().ReferralDays > 0 {
+		if time.Since(referral.CreatedTime) > time.Duration(s.cfg().ReferralDays)*24*time.Hour {
 			return
 		}
 	}

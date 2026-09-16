@@ -26,13 +26,39 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 
 分别将各服务的 `configs/application.example.properties` 复制为同目录的 `application.properties`，填入部署环境配置。三个进程必须从各自服务目录启动，配置加载器按工作目录读取配置。
 
-- 三份配置使用同一 MySQL、Redis 地址和 `galaxy.redis_namespace`，以及一致的 `galaxy.adapters`、`galaxy.models`、计费与额度配置。
-- 保持 `galaxy.auth.token_secret`、`galaxy.key_cipher_secret` 一致；manager-api 中有关 Galaxy 密钥的配置也需要一致。
-- `server.address` 分别为 `:10004`、`:10005`、`:10006`。
-- `galaxy.consumer_base_url`：SDK 访问 Hub 的地址，例如 `https://hub.example.com/v1`。
-- `galaxy.provider_hub_url`：bridge 直连 Hub 的地址，例如 `https://hub.example.com`。三份配置都应明确填写，提供端页面由此展示正确的安装、配对和接入地址。
-- `galaxy.instance`：Hub 的具体实例地址。Hub 创建的任务会将此地址写入 `streamURL`，必须能从 bridge 所在机器访问。
-- Hub 配置对象存储、bridge 发布下载与抽检账号；使用端服务配置支付渠道和回调验签。SDK 自助订单也使用支付配置，需要在 Hub 保持一致。
+三份示例配置只列本服务真正读取的键，各自末尾有一段「故意不在这里的配置」说明哪些键归别的服务，不要互相拷贝补全。
+
+公共段（三份必须填成同一份）：`sqlconn`、`redis.*`、`galaxy.redis_namespace`、`galaxy.adapters`。`server.address` 分别为 `:10004`、`:10005`、`:10006`。
+
+只在部分服务里出现、但取值必须一致的键：
+
+| 键 | 在哪几份配置里 | 不一致的后果 |
+| --- | --- | --- |
+| `galaxy.auth.token_secret` / `token_ttl_seconds` | galaxy-api、galaxy-consumer-api | 两端控制台各自登录，Hub 不认账号令牌 |
+| `galaxy.key_cipher_secret` | galaxy-consumer-api、galaxy-hub-api（manager-api 同值） | 有的密钥取得回明文、有的取不回 |
+| `galaxy.models` | galaxy-consumer-api、galaxy-hub-api | 控制台能选的模型 SDK 拿不到 |
+| `galaxy.provider_hub_url` | galaxy-api、galaxy-hub-api | 接入页展示的地址与节点实际该打的地址不一致 |
+| `galaxy.provider_terms_version` | galaxy-api、galaxy-hub-api | 同意记录版本对不上，节点反复被要求重新同意 |
+| `galaxy.consumer_notice_version` | galaxy-consumer-api、galaxy-hub-api | 同上，发生在签发新密钥时 |
+| `galaxy.key_ttl_days` / `key_freeze_days` | galaxy-consumer-api、galaxy-hub-api | 控制台签发与 SDK 换发算出不同有效期 |
+| `galaxy.bind_idle_ttl_ms` / `heartbeat_timeout_ms` | galaxy-api、galaxy-hub-api | 控制台的座位与在线灯和派单结果对不上 |
+| `galaxy.reputation_recovery_per_day` | galaxy-api、galaxy-hub-api | 页面显示的回血速度不是实际的 |
+| `galaxy.referral.rate` / `.days` | galaxy-api、galaxy-hub-api | 页面写着返现比例，结算时按另一个值发 |
+| `oss.*` | galaxy-consumer-api、galaxy-hub-api | 一边传上去、另一边签不出下载地址 |
+
+各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
+
+`galaxy.instance` 是多实例部署里**唯一必须逐个实例配不同值**的键。派单时它被写进 `req:{rid}.instance`，节点领活拿到的 `streamURL` 由它拼成，而消费者的连接活在某个进程的内存里（响应字节不进 Redis），上行必须打回同一个进程。**填负载均衡入口会让上行随机落到别的实例**，表现为概率性的节点掉线与 `no_capacity`，两边日志都正常；`ip_hash` 之类的粘滞也救不了 —— 要钉住的是「哪条请求」，而消费者和节点是两个不同的客户端、两个不同的 IP。其余接口（`/v1/*`、节点的 register / hello / heartbeat / next）落到哪个实例都行，照常走统一入口。
+
+推荐的多实例写法是**统一域名 + 一段实例标识**，让 nginx 按那一段精确转发，而不是给每台机器各开一个域名：
+
+```properties
+galaxy.instance = https://www.example.com/instance/{hostname}
+```
+
+`{hostname}` 由 Hub 启动时替换成本机主机名的短名，所以这一行三台照抄即可，配置文件不必逐台修改；也可以用环境变量 `GALAXY_INSTANCE` 覆盖这一项（优先级高于配置文件），容器与编排直接注入。nginx 侧是一条 `map` + 一条正则 `location`，加机器就是表里加一行，见 [nginx/www.galaxy.rodeo.conf](nginx/www.galaxy.rodeo.conf) 的「实例定向路由」段。
+
+注意这条路由**只能是精确映射，不能是哈希**。`hash ... consistent` 由 nginx 自己的算法挑 peer，而这里需要的是「送到 Hub 指定的那一台」；而且 unitId 是消费者请求落到某台之后才生成的，拿它去哈希和当初的选择没有任何关系。路由信息必须由 Hub 写进 URL，nginx 只负责照着送。
 
 监听地址环境变量依次为 `GALAXY_API_ADDR`、`GALAXY_CONSUMER_API_ADDR`、`GALAXY_HUB_API_ADDR`，优先于 `server.address`。
 
@@ -47,6 +73,46 @@ cd server/galaxy-hub-api
 ```
 
 另外两个服务在各自目录执行相同命令。`package.sh` 生成独立 Linux 发布包，只包含示例配置，不覆盖部署机密钥。
+
+## 进程生命周期与发版
+
+三个服务都接管 SIGTERM / SIGINT，收到之后按固定顺序收尾，不再是「收到信号当场死」：
+
+1. **翻就绪、停止领新活**。`/readyz` 立刻返回 503；Hub 的 `/agent/v1/next` 当场回 204，已经挂在长轮询上的那些也会被叫醒（同样回 204，节点换一台再来）。这一步必须在关监听之前 —— 否则节点会在最后一刻领到一个单元，回头却发现推不回来。
+2. **等上游摘流量**（`galaxy.shutdown.drain_delay_ms`，默认 5 秒）。nginx reload 和 K8s 更新 Endpoints 都不是瞬时的。
+3. **关监听，等在途请求跑完**（`galaxy.shutdown.timeout_ms`，Hub 默认 630 秒，两个控制台 30 秒）。
+4. **退出**。
+
+时限只为**不可中断**的连接而设 —— relay 的消费者请求和它对应的节点上行，那上面已经有字节流出去了，掐掉就是一次收不回的失败。可中断的连接在第 1 步就各自收线：节点长轮询回 204；session / job 的 SSE 订阅主动发一个 `end`（事件先落库后广播，客户端按 seq 重连能补齐）。所以平时退出是秒级的，630 秒只是上限。
+
+再按一次 Ctrl-C（或编排升级信号强度）会跳过等待直接关闭。
+
+### /healthz 与 /readyz 是两件事
+
+| 端点 | 含义 | 退出期间 |
+| --- | --- | --- |
+| `/healthz` | 存活，进程还在就 200 | **仍是 200** |
+| `/readyz` | 就绪，能不能接新请求 | 503 |
+
+别把存活探针接到 `/readyz` 上：优雅退出期间进程是健康的（它正在把在途请求送完），接错了编排会在收尾中途把它重启掉，等于没有优雅退出。
+
+### systemd（非 K8s）
+
+单元文件在 [systemd/](systemd/)，三个服务各一份，`Restart=always` 负责自愈 —— 在这之前进程是 `nohup` 裸跑的，panic 挂掉没人拉。装之前改 `User` 与 `WorkingDirectory`（配置加载器按**工作目录**读 `configs/application.properties`，这一条不能省）。
+
+`TimeoutStopSec` 必须大于 `galaxy.shutdown.timeout_ms + drain_delay_ms`，否则 systemd 会在收尾到一半时补一刀 SIGKILL。各服务的 `stop.sh` 同理，等待时长可用 `GALAXY_STOP_WAIT_SECONDS` 覆盖。
+
+多实例发版用 [systemd/galaxy-drain.sh](systemd/galaxy-drain.sh)：`./galaxy-drain.sh restart hub-1` 会摘出轮转 → 停 → 起 → 放回。注意它摘的是**轮转入口**（`upstream galaxy_hub` 里那台的 server 行），**不动** `/instance/<名>` 那条定向路由——在途单元的 streamURL 指向的就是这台，节点还要回来把字节推完。
+
+单实例部署用不上这个脚本：没有别的机器接管，摘出去就是停服，直接 `systemctl stop` 即可。优雅退出在单实例下**仍然有价值**——它保证的是「正在跑的请求跑完再退出」，只是停机窗口里的新请求没人接。
+
+### K8s
+
+示例在 [k8s/galaxy-hub-api.yaml](k8s/galaxy-hub-api.yaml)：`livenessProbe` 接 `/healthz`、`readinessProbe` 接 `/readyz`、`terminationGracePeriodSeconds` 设到 700。**不需要 preStop sleep**——通常加它是为了等 Endpoints 收敛，而进程自己用 `drain_delay_ms` 做了同一件事，两边都睡只会让每次滚动白等一轮。
+
+Hub 上 K8s 要用 StatefulSet：节点的上行必须回到持有消费者连接的那个 pod，而 Deployment 的 pod 名每次滚动都变，没法稳定寻址。
+
+上多 pod 之前还有两件事没做完：`sweep` / `audit` 两个后台循环每个 pod 各跑一份（缺 leader election，抽检的每日配额在 Redis 里是准的，但重放取样没有原子占用，会重复重放同一批）；export 接入的派单器要求消费者连接就在本 pod 上，多 pod 下过半请求会失败。只用长轮询接入、且能接受巡检重复跑的话，可以先上。
 
 ## 从旧聚合服务迁移
 

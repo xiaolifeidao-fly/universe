@@ -422,6 +422,25 @@ func (r *GalaxyRepository) ListEffectivePrices(ctx context.Context, bizLine stri
 	return rows, err
 }
 
+// ListAllPrices 价目表的全部行，含还没到生效时间的。运营要在生效前就把下一档价
+// 排进去并看得见它，ListEffectivePrices 按 effective_from <= now 过滤，排进去的那行
+// 在界面上会凭空消失 —— 运营只能反复保存同一行，直到某天发现价格被改过两遍。
+func (r *GalaxyRepository) ListAllPrices(ctx context.Context, bizLine string) ([]*GalaxyPrice, error) {
+	var rows []*GalaxyPrice
+	err := r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).
+		Order("kind, unit, effective_from desc").Find(&rows).Error
+	return rows, err
+}
+
+// DeletePrice 删掉一行价目。按四元组定位，和唯一键一致。
+func (r *GalaxyRepository) DeletePrice(ctx context.Context, bizLine, kind, unit string, effectiveFrom time.Time) error {
+	return r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).Where("kind = ?", kind).
+		Where("unit = ?", unit).Where("effective_from = ?", effectiveFrom).
+		Delete(&GalaxyPrice{}).Error
+}
+
 func (r *GalaxyRepository) SavePrice(ctx context.Context, row *GalaxyPrice) error {
 	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "biz_line"}, {Name: "kind"}, {Name: "unit"}, {Name: "effective_from"}},
@@ -445,4 +464,94 @@ func (r *GalaxyRepository) FindArtifact(ctx context.Context, bizLine, objectKey 
 		return nil, err
 	}
 	return &row, nil
+}
+
+// ---------- 用量偏差：运营侧 ----------
+
+// MismatchQuery 用量偏差的过滤条件。
+type MismatchQuery struct {
+	BizLine string
+	CID     string
+	Unit    string
+	// MinRatio 只看偏差不小于它的。0 表示不筛。
+	MinRatio float64
+	From     time.Time
+	Offset   int
+	Limit    int
+}
+
+func (r *GalaxyRepository) mismatchScope(query MismatchQuery) *gorm.DB {
+	tx := r.Db.Model(&GalaxyUsageMismatch{}).Where("biz_line = ?", query.BizLine)
+	if query.CID != "" {
+		tx = tx.Where("cid = ?", query.CID)
+	}
+	if query.Unit != "" {
+		tx = tx.Where("unit = ?", query.Unit)
+	}
+	if query.MinRatio > 0 {
+		tx = tx.Where("ratio >= ?", query.MinRatio)
+	}
+	if !query.From.IsZero() {
+		tx = tx.Where("created_at >= ?", query.From)
+	}
+	return tx
+}
+
+// ListUsageMismatches 节点自报与 Hub 解析对不上的那些记录。
+//
+// 这张表此前**只写不读**：超过阈值就落一行，然后没有任何地方看得见它。
+// 于是「某台机器一直在虚报用量」这件事，在库里有据可查，在管理端查不出来。
+func (r *GalaxyRepository) ListUsageMismatches(ctx context.Context, query MismatchQuery) ([]*GalaxyUsageMismatch, int64, error) {
+	var total int64
+	if err := r.mismatchScope(query).WithContext(ctx).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := r.mismatchScope(query).WithContext(ctx).Order("created_at desc, id desc")
+	if query.Limit > 0 {
+		tx = tx.Limit(query.Limit).Offset(query.Offset)
+	}
+	var rows []*GalaxyUsageMismatch
+	err := tx.Find(&rows).Error
+	return rows, total, err
+}
+
+// CountMismatchesByCID 每条贡献各有多少次偏差，按次数从多到少。
+//
+// 逐条记录说明不了问题 —— 偶发一次是解析抖动，同一条贡献反复上榜才是虚报。
+// 排行在 SQL 里做：捞回内存里数，等于为了一个计数把几万行拉过来。
+func (r *GalaxyRepository) CountMismatchesByCID(ctx context.Context, query MismatchQuery, limit int) ([]MismatchCount, error) {
+	var rows []MismatchCount
+	tx := r.mismatchScope(query).WithContext(ctx).
+		Select("cid, COUNT(*) AS times, MAX(ratio) AS worst_ratio").
+		Group("cid").Order("times desc")
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	err := tx.Scan(&rows).Error
+	return rows, err
+}
+
+// MismatchCount 一条贡献的偏差次数与最大偏差。
+type MismatchCount struct {
+	CID        string
+	Times      int64
+	WorstRatio float64
+}
+
+// CountUnitsByState 各状态各有多少单元。运营总览那一排数字用它。
+func (r *GalaxyRepository) CountUnitsByState(ctx context.Context, bizLine string, since time.Time) (map[string]int64, error) {
+	var rows []struct {
+		State string
+		Total int64
+	}
+	tx := r.Db.WithContext(ctx).Model(&GalaxyUnit{}).Where("biz_line = ?", bizLine)
+	if !since.IsZero() {
+		tx = tx.Where("created_time >= ?", since)
+	}
+	err := tx.Select("state, COUNT(*) AS total").Group("state").Scan(&rows).Error
+	counts := map[string]int64{}
+	for _, row := range rows {
+		counts[row.State] = row.Total
+	}
+	return counts, err
 }

@@ -65,9 +65,9 @@ func (s *service) HasConsent(ctx context.Context, subjectType, userID, termsVers
 func (s *service) IssuePairingCode(ctx context.Context, req dto.IssuePairingCodeRequest) (dto.PairingCodeView, error) {
 	terms := req.TermsVersion
 	if terms == "" {
-		terms = s.config.ProviderTermsVersion
+		terms = s.cfg().ProviderTermsVersion
 	}
-	if terms != s.config.ProviderTermsVersion {
+	if terms != s.cfg().ProviderTermsVersion {
 		return dto.PairingCodeView{}, fmt.Errorf("条款版本已更新，请重新阅读并同意")
 	}
 	agreed, err := s.HasConsent(ctx, subjectProvider, req.OwnerUserID, terms)
@@ -104,7 +104,7 @@ func (s *service) Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult
 	if err != nil {
 		return dto.PairResult{}, err
 	}
-	agreed, err := s.HasConsent(ctx, subjectProvider, code.OwnerUserID, s.config.ProviderTermsVersion)
+	agreed, err := s.HasConsent(ctx, subjectProvider, code.OwnerUserID, s.cfg().ProviderTermsVersion)
 	if err != nil {
 		return dto.PairResult{}, err
 	}
@@ -123,7 +123,7 @@ func (s *service) Pair(ctx context.Context, req dto.PairRequest) (dto.PairResult
 		DisplayName:     truncate(req.DisplayName, 128),
 		TokenHash:       HashSecret(secret),
 		BridgeVersion:   truncate(req.BridgeVersion, 32),
-		ContractVersion: s.config.ContractVersion,
+		ContractVersion: s.cfg().ContractVersion,
 		Status:          statusActive,
 		LastBeatAt:      &now,
 	}
@@ -248,11 +248,11 @@ func (s *service) AuthenticateNode(ctx context.Context, token string) (NodeIdent
 // 平台就必须先知道有什么可勾。代价是平台在主人同意共享之前就知道这台机器上
 // 装了 Claude 还是 Codex —— 这是明确的产品决定，条款正文也要跟着改。
 func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloResult, error) {
-	if req.Contract != s.config.ContractVersion {
+	if req.Contract != s.cfg().ContractVersion {
 		return dto.HelloResult{}, contract.NewUnitError(contract.ErrorClassProtocol, contract.CodeContractMismatch, false,
-			fmt.Sprintf("节点契约版本 %d 与 Hub 的 %d 不一致，请升级 ai-bridge", req.Contract, s.config.ContractVersion))
+			fmt.Sprintf("节点契约版本 %d 与 Hub 的 %d 不一致，请升级 ai-bridge", req.Contract, s.cfg().ContractVersion))
 	}
-	agreed, err := s.HasConsent(ctx, subjectProvider, req.OwnerUserID, s.config.ProviderTermsVersion)
+	agreed, err := s.HasConsent(ctx, subjectProvider, req.OwnerUserID, s.cfg().ProviderTermsVersion)
 	if err != nil {
 		return dto.HelloResult{}, err
 	}
@@ -328,7 +328,7 @@ func (s *service) Hello(ctx context.Context, req dto.HelloRequest) (dto.HelloRes
 		BridgeVersion: req.BridgeVersion,
 		Contract:      req.Contract,
 		Resources:     req.Resources,
-		Instance:      s.config.Instance,
+		Instance:      s.cfg().Instance,
 		LastBeatAt:    now,
 	}); err != nil {
 		return dto.HelloResult{}, err
@@ -485,7 +485,7 @@ func (s *service) validateContribution(input dto.ContributionInput) (contract.Ki
 		units = append(units, quota.Unit)
 	}
 	seats := defaultInt(input.Seats, 3)
-	spec, err := s.kinds.ValidateContribution(input.Kind, input.KindVersion, input.Provider, units, seats, s.config.PlatformSeatLimit)
+	spec, err := s.kinds.ValidateContribution(input.Kind, input.KindVersion, input.Provider, units, seats, s.cfg().PlatformSeatLimit)
 	if err != nil {
 		return contract.KindSpec{}, nil, err
 	}
@@ -556,7 +556,7 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	if err != nil {
 		return dto.HeartbeatResult{}, err
 	}
-	result := dto.HeartbeatResult{HubURL: s.config.ProviderHubURL, Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
+	result := dto.HeartbeatResult{HubURL: s.cfg().ProviderHubURL, Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
 	for _, snapshot := range snapshots {
 		s.observeLane(snapshot, now)
 		local := unscopedCID(req.NodeID, snapshot.CID)
@@ -735,7 +735,7 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
 		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status, Reputation: reputation,
-		Online:    Online(snapshot, now, s.config.HeartbeatTimeout),
+		Online:    Online(snapshot, now, s.cfg().HeartbeatTimeout),
 		SeatsUsed: snapshot.SeatsUsed, Inflight: snapshot.Inflight,
 		SeatsEffective: EffectiveSeats(snapshot, plan, now, nil),
 		Schedule:       orEmpty(decodeSchedule(row.ScheduleJSON)),
@@ -885,7 +885,7 @@ func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, nodeID
 		if found && snapshot.SeatsUsed > 0 {
 			return fmt.Errorf("还有 %d 个消费者绑在这条贡献上，现在不能下线；"+
 				"他们的会话结束（或空闲 %s 后自动释放）就能关。想立刻少给一点的话，额度和挂机时段随时可以改",
-				snapshot.SeatsUsed, s.config.BindIdleTTL)
+				snapshot.SeatsUsed, s.cfg().BindIdleTTL)
 		}
 	}
 	if err := s.repository.SetContributionStatus(ctx, bizLine, row.CID, status); err != nil {
@@ -918,7 +918,7 @@ func (s *service) registerNodeFromRow(ctx context.Context, nodeID string, now ti
 		BridgeVersion: row.BridgeVersion,
 		Contract:      row.ContractVersion,
 		Resources:     decodeResources(row.ResourcesJSON),
-		Instance:      s.config.Instance,
+		Instance:      s.cfg().Instance,
 		LastBeatAt:    now,
 	})
 }
@@ -1208,8 +1208,8 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 		return fmt.Errorf("贡献必须至少保留一个额度上限")
 	}
 	seats := defaultInt(req.Seats, row.Seats)
-	if s.config.PlatformSeatLimit > 0 && seats > s.config.PlatformSeatLimit {
-		return fmt.Errorf("座位数 %d 超过平台上限 %d", seats, s.config.PlatformSeatLimit)
+	if s.cfg().PlatformSeatLimit > 0 && seats > s.cfg().PlatformSeatLimit {
+		return fmt.Errorf("座位数 %d 超过平台上限 %d", seats, s.cfg().PlatformSeatLimit)
 	}
 
 	if err := s.repository.SaveContributionLimits(ctx, bizLine, row.CID, map[string]any{

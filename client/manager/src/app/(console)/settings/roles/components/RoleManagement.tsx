@@ -319,7 +319,9 @@ function mergeChecked(all: number[], checkedInTree: number[], tree: DataNode[]):
 
 function buildResourceTree(resources: ResourceRecord[]): DataNode[] {
   const pages = resources
-    .filter((item) => item.resourceType === "menu" || item.resourceType === "page")
+    // group 是菜单里的分组标题。它不是页面，但**必须留在这棵树里** ——
+    // 漏掉它，挂在它底下的页面就找不到父节点，整段权限在这里凭空消失。
+    .filter((item) => item.resourceType === "menu" || item.resourceType === "group" || item.resourceType === "page")
     .sort((a, b) => a.sortId - b.sortId || a.id - b.id);
   const childrenByParent = new Map<number, ResourceRecord[]>();
   for (const item of pages) {

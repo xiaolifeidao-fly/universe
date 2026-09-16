@@ -84,3 +84,37 @@ func clampScore(value float64) float64 {
 	}
 	return value
 }
+
+// ---------- 信誉：运营侧 ----------
+
+// ListLowReputations 分数低于 threshold 的主体，最低的在前。
+//
+// **注意这里的分数是「结算时刻的分数」**，不是此刻的 —— 此刻的要按回升速率现算
+// （galaxy.EffectiveReputation）。所以这里放宽一点取，让上层现算完再过一遍滤。
+// 直接拿库里的数当此刻的分，会把早就自然回满的主体一直挂在名单上。
+func (r *GalaxyRepository) ListLowReputations(ctx context.Context, bizLine string, threshold float64, limit int) ([]*GalaxyReputation, error) {
+	tx := r.Db.WithContext(ctx).Model(&GalaxyReputation{}).
+		Where("biz_line = ?", bizLine).Where("reputation < ?", threshold).
+		Order("reputation asc, updated_time desc")
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	var rows []*GalaxyReputation
+	err := tx.Find(&rows).Error
+	return rows, err
+}
+
+// SetReputation 把一个主体的信誉直接设成某个值，并把结算时刻推到 at。
+//
+// 和 AdjustReputation 的区别是**它不叠加**：人工处置要的是「设成 1」这种确定结果，
+// 而叠加式的 +0.3 在一个已经被扣到 0.2 的主体上给出的是 0.5 —— 运营想的是「恢复」，
+// 拿到的却是「再扣一点点回来一点」，而且下一次点又是另一个数。
+func (r *GalaxyRepository) SetReputation(ctx context.Context, bizLine, subject string, value float64, at time.Time) error {
+	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "biz_line"}, {Name: "subject"}},
+		DoUpdates: clause.AssignmentColumns([]string{"reputation", "reputation_at", "updated_time"}),
+	}).Create(&GalaxyReputation{
+		BizLine: bizLine, Subject: subject,
+		Reputation: value, ReputationAt: at, UpdatedTime: at,
+	}).Error
+}

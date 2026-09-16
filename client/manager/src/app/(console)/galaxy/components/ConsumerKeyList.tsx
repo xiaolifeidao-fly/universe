@@ -1,12 +1,19 @@
 "use client";
 
-import { EyeOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { EyeOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
+import { Alert, Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Tooltip, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useCanWrite } from "@/components/permission/WritePermission";
-import { fetchAdminKeys, revealAdminKey, type AdminKeyView, type KeySecretView } from "../api/galaxy.api";
+import {
+  fetchAdminKeys,
+  issueKey,
+  revealAdminKey,
+  type AdminKeyView,
+  type IssuedKeyView,
+  type KeySecretView,
+} from "../api/galaxy.api";
 
 const PAGE_SIZE = 20;
 
@@ -75,6 +82,8 @@ export function ConsumerKeyList() {
   const [loading, setLoading] = useState(true);
   const [revealing, setRevealing] = useState("");
   const [shown, setShown] = useState<{ key: AdminKeyView; secret: KeySecretView } | null>(null);
+  const [issuing, setIssuing] = useState(false);
+  const [issued, setIssued] = useState<IssuedKeyView | null>(null);
   const latest = useRef(0);
 
   const load = useCallback(async () => {
@@ -227,6 +236,12 @@ export function ConsumerKeyList() {
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
+        {/* 代签密钥的接口一直都在（内测、补发、线下成交都靠它），只是从来没有入口。 */}
+        {canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setIssuing(true)}>
+            {t("galaxy.keys.issue")}
+          </Button>
+        ) : null}
       </Space>
 
       <Table<AdminKeyView>
@@ -277,6 +292,144 @@ export function ConsumerKeyList() {
           </Space>
         ) : null}
       </Modal>
+
+      <IssueKeyModal
+        open={issuing}
+        onClose={() => setIssuing(false)}
+        onIssued={(view) => {
+          setIssued(view);
+          void load();
+        }}
+      />
+
+      {/* 明文**只在签发这一次**返回，关掉就再也取不回同一串（之后要走「查看密钥」）。 */}
+      <Modal
+        open={Boolean(issued)}
+        title={t("galaxy.keys.issuedTitle")}
+        onCancel={() => setIssued(null)}
+        footer={[
+          <Button key="close" onClick={() => setIssued(null)}>
+            {t("galaxy.keys.close")}
+          </Button>,
+          <Button key="copy" type="primary" onClick={() => issued && void copy(issued.secret, t)}>
+            {t("galaxy.keys.copyKey")}
+          </Button>,
+        ]}
+        width={560}
+        destroyOnClose
+      >
+        {issued ? (
+          <Space direction="vertical" size={12} style={{ display: "flex" }}>
+            <Alert type="success" showIcon message={t("galaxy.keys.issuedHint")} />
+            <Space.Compact style={{ width: "100%" }}>
+              <Input readOnly className="manager-mono" value={issued.secret} />
+              <Button onClick={() => void copy(issued.secret, t)}>{t("galaxy.keys.copyKey")}</Button>
+            </Space.Compact>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <span className="manager-mono">{issued.keyId}</span>
+              {issued.expiresAt ? ` · ${t("galaxy.keys.expiresAt")} ${new Date(issued.expiresAt).toLocaleString()}` : ""}
+            </Typography.Text>
+          </Space>
+        ) : null}
+      </Modal>
     </div>
+  );
+}
+
+type IssueForm = {
+  ownerUserId: string;
+  alias?: string;
+  ttlDays?: number;
+  outputTokens?: number;
+  concurrency?: number;
+  rpm?: number;
+};
+
+/**
+ * 运营代签一把密钥：内测、补发、线下成交都走它。不生成订单，也不扣积分。
+ *
+ * **对方必须先确认过数据告知**（C-13：请求数据会经第三方提供者的机器处理）。
+ * 没确认过的账号在这里签不出来，服务端会直接拒 —— 那不是故障，是那道前置条件，
+ * 所以表单上先把这句话说在前面，而不是等它报一个读不懂的错。
+ */
+function IssueKeyModal({
+  open,
+  onClose,
+  onIssued,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onIssued: (view: IssuedKeyView) => void;
+}) {
+  const { t } = useLocale();
+  const [form] = Form.useForm<IssueForm>();
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (open) form.resetFields();
+  }, [open, form]);
+
+  const submit = async () => {
+    const values = await form.validateFields();
+    setSubmitting(true);
+    try {
+      const view = await issueKey({
+        ownerUserId: values.ownerUserId.trim(),
+        alias: values.alias?.trim(),
+        ttlDays: values.ttlDays,
+        concurrency: values.concurrency,
+        rpm: values.rpm,
+        // 额度按计量单位给。头条是输出 token —— 计费按它走。
+        grants: values.outputTokens ? { "llm.output_tokens": values.outputTokens } : undefined,
+      });
+      onClose();
+      onIssued(view);
+    } catch (error) {
+      message.error((error as Error).message || t("galaxy.actionFailed"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      title={t("galaxy.keys.issue")}
+      okText={t("galaxy.confirm")}
+      cancelText={t("galaxy.cancel")}
+      confirmLoading={submitting}
+      onOk={() => void submit()}
+      onCancel={onClose}
+      destroyOnClose
+    >
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t("galaxy.keys.issueConsentHint")} />
+      <Form form={form} layout="vertical">
+        <Form.Item
+          name="ownerUserId"
+          label={t("galaxy.keys.issueOwner")}
+          extra={t("galaxy.keys.issueOwnerHint")}
+          rules={[{ required: true }]}
+        >
+          <Input className="manager-mono" placeholder="cu_01J…" />
+        </Form.Item>
+        <Form.Item name="alias" label={t("galaxy.keys.issueAlias")}>
+          <Input maxLength={64} placeholder={t("galaxy.keys.issueAliasPlaceholder")} />
+        </Form.Item>
+        <Form.Item name="outputTokens" label={t("galaxy.keys.issueGrant")} extra={t("galaxy.keys.issueGrantHint")}>
+          <InputNumber min={0} step={100000} style={{ width: "100%" }} />
+        </Form.Item>
+        <Space size={12} style={{ display: "flex" }}>
+          <Form.Item name="ttlDays" label={t("galaxy.keys.issueTtl")} extra={t("galaxy.keys.issueDefaultHint")}>
+            <InputNumber min={1} max={3650} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="concurrency" label={t("galaxy.keys.issueConcurrency")} extra={t("galaxy.keys.issueDefaultHint")}>
+            <InputNumber min={1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="rpm" label={t("galaxy.keys.issueRpm")} extra={t("galaxy.keys.issueDefaultHint")}>
+            <InputNumber min={1} style={{ width: "100%" }} />
+          </Form.Item>
+        </Space>
+      </Form>
+    </Modal>
   );
 }

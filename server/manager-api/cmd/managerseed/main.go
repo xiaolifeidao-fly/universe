@@ -39,20 +39,46 @@ var pages = []struct {
 	{Code: "users", Name: "用户管理", PageURL: "/users", Icon: "TeamOutlined", Type: manager.ResourcePage, SortID: 20},
 	{Code: "businessLines", Name: "业务线管理", PageURL: "/business-lines", Icon: "BranchesOutlined", Type: manager.ResourcePage, SortID: 30},
 	{Code: "programs", Name: "项目管理", PageURL: "/programs", Icon: "FolderOutlined", Type: manager.ResourcePage, SortID: 40},
-	// 共享算力池是菜单不是页面：原来那十一块内容挤在一个页面的页签条里，
+	// 共享算力池是菜单不是页面：原来那十几块内容挤在一个页面的页签条里，
 	// 现在一块一个页面挂在它底下 —— 页签排到第十一个就不是导航了。
+	// 中间隔着一层分组标题（group）：不用点开，只是把一长条切成几段。
 	{Code: "galaxy", Name: "共享算力池", Icon: "GlobalOutlined", Type: manager.ResourceMenu, SortID: 50},
-	{Code: "galaxyPool", Name: "池水位", Parent: "galaxy", PageURL: "/galaxy/pool", Type: manager.ResourcePage, SortID: 51},
-	{Code: "galaxyNodes", Name: "节点与贡献", Parent: "galaxy", PageURL: "/galaxy/nodes", Type: manager.ResourcePage, SortID: 52},
-	{Code: "galaxyAccounts", Name: "账号", Parent: "galaxy", PageURL: "/galaxy/accounts", Type: manager.ResourcePage, SortID: 53},
-	{Code: "galaxyProbes", Name: "抽检", Parent: "galaxy", PageURL: "/galaxy/probes", Type: manager.ResourcePage, SortID: 54},
-	{Code: "galaxyDisputes", Name: "争议工单", Parent: "galaxy", PageURL: "/galaxy/disputes", Type: manager.ResourcePage, SortID: 55},
-	{Code: "galaxyPackages", Name: "额度包", Parent: "galaxy", PageURL: "/galaxy/packages", Type: manager.ResourcePage, SortID: 56},
-	{Code: "galaxyModels", Name: "模型目录", Parent: "galaxy", PageURL: "/galaxy/models", Type: manager.ResourcePage, SortID: 57},
-	{Code: "galaxyPoints", Name: "积分充值", Parent: "galaxy", PageURL: "/galaxy/points", Type: manager.ResourcePage, SortID: 58},
-	{Code: "galaxyKeys", Name: "算力密钥", Parent: "galaxy", PageURL: "/galaxy/keys", Type: manager.ResourcePage, SortID: 59},
-	{Code: "galaxySettlement", Name: "结算汇总", Parent: "galaxy", PageURL: "/galaxy/settlement", Type: manager.ResourcePage, SortID: 60},
-	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", Parent: "galaxy", PageURL: "/galaxy/bridge-releases", Type: manager.ResourcePage, SortID: 61},
+
+	{Code: "galaxyOverview", Name: "总览", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 51},
+	{Code: "galaxyHome", Name: "运营总览", Parent: "galaxyOverview", PageURL: "/galaxy/overview", Type: manager.ResourcePage, SortID: 52},
+	{Code: "galaxyPool", Name: "池水位", Parent: "galaxyOverview", PageURL: "/galaxy/pool", Type: manager.ResourcePage, SortID: 53},
+	{Code: "galaxyUnits", Name: "运行工单", Parent: "galaxyOverview", PageURL: "/galaxy/units", Type: manager.ResourcePage, SortID: 54},
+	{Code: "galaxySettlement", Name: "结算汇总", Parent: "galaxyOverview", PageURL: "/galaxy/settlement", Type: manager.ResourcePage, SortID: 55},
+	{Code: "galaxyLedger", Name: "账本流水", Parent: "galaxyOverview", PageURL: "/galaxy/ledger", Type: manager.ResourcePage, SortID: 56},
+
+	{Code: "galaxySupply", Name: "算力供给", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 57},
+	{Code: "galaxyNodes", Name: "节点与贡献", Parent: "galaxySupply", PageURL: "/galaxy/nodes", Type: manager.ResourcePage, SortID: 58},
+	{Code: "galaxyPayouts", Name: "提现审批", Parent: "galaxySupply", PageURL: "/galaxy/payouts", Type: manager.ResourcePage, SortID: 59},
+
+	// 风控单成一组：抽检与用量偏差是「发现」，信誉与封禁是「处置」。
+	{Code: "galaxyRisk", Name: "风控与审计", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 60},
+	{Code: "galaxyProbes", Name: "抽检", Parent: "galaxyRisk", PageURL: "/galaxy/probes", Type: manager.ResourcePage, SortID: 61},
+	{Code: "galaxyMismatches", Name: "用量偏差", Parent: "galaxyRisk", PageURL: "/galaxy/mismatches", Type: manager.ResourcePage, SortID: 62},
+	{Code: "galaxyReputation", Name: "信誉", Parent: "galaxyRisk", PageURL: "/galaxy/reputation", Type: manager.ResourcePage, SortID: 63},
+	{Code: "galaxyBans", Name: "封禁名单", Parent: "galaxyRisk", PageURL: "/galaxy/bans", Type: manager.ResourcePage, SortID: 64},
+
+	{Code: "galaxyDemand", Name: "使用与计费", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 65},
+	{Code: "galaxyKeys", Name: "算力密钥", Parent: "galaxyDemand", PageURL: "/galaxy/keys", Type: manager.ResourcePage, SortID: 66},
+	{Code: "galaxyOrders", Name: "订单", Parent: "galaxyDemand", PageURL: "/galaxy/orders", Type: manager.ResourcePage, SortID: 67},
+	{Code: "galaxyPoints", Name: "积分充值", Parent: "galaxyDemand", PageURL: "/galaxy/points", Type: manager.ResourcePage, SortID: 68},
+	{Code: "galaxyPackages", Name: "额度包", Parent: "galaxyDemand", PageURL: "/galaxy/packages", Type: manager.ResourcePage, SortID: 69},
+	{Code: "galaxyPricing", Name: "价目表", Parent: "galaxyDemand", PageURL: "/galaxy/pricing", Type: manager.ResourcePage, SortID: 70},
+
+	{Code: "galaxyCustomer", Name: "客户与增长", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 71},
+	{Code: "galaxyAccounts", Name: "账号", Parent: "galaxyCustomer", PageURL: "/galaxy/accounts", Type: manager.ResourcePage, SortID: 72},
+	{Code: "galaxyDisputes", Name: "争议工单", Parent: "galaxyCustomer", PageURL: "/galaxy/disputes", Type: manager.ResourcePage, SortID: 73},
+	{Code: "galaxyLeads", Name: "销售线索", Parent: "galaxyCustomer", PageURL: "/galaxy/leads", Type: manager.ResourcePage, SortID: 74},
+	{Code: "galaxyReferrals", Name: "邀请返现", Parent: "galaxyCustomer", PageURL: "/galaxy/referrals", Type: manager.ResourcePage, SortID: 75},
+
+	{Code: "galaxyPlatform", Name: "平台设置", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 80},
+	{Code: "galaxySettings", Name: "运行参数", Parent: "galaxyPlatform", PageURL: "/galaxy/settings", Type: manager.ResourcePage, SortID: 81},
+	{Code: "galaxyModels", Name: "模型目录", Parent: "galaxyPlatform", PageURL: "/galaxy/models", Type: manager.ResourcePage, SortID: 82},
+	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", Parent: "galaxyPlatform", PageURL: "/galaxy/bridge-releases", Type: manager.ResourcePage, SortID: 83},
 	{Code: "settings", Name: "系统设置", Icon: "SettingOutlined", Type: manager.ResourceMenu, SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", Parent: "settings", PageURL: "/settings/accounts", Type: manager.ResourcePage, SortID: 91},
 	{Code: "settingsRoles", Name: "角色与权限", Parent: "settings", PageURL: "/settings/roles", Type: manager.ResourcePage, SortID: 92},
@@ -64,9 +90,12 @@ var pages = []struct {
 // 只列叶子页面：共享算力池那个菜单由 CurrentMenus 的 withAncestors 自动带出来。
 var operatorPages = []string{
 	"dashboard", "users", "businessLines", "programs",
-	"galaxyPool", "galaxyNodes", "galaxyAccounts", "galaxyProbes", "galaxyDisputes",
-	"galaxyPackages", "galaxyModels", "galaxyPoints", "galaxyKeys", "galaxySettlement",
-	"galaxyBridgeReleases",
+	"galaxyHome", "galaxyPool", "galaxyUnits", "galaxySettlement", "galaxyLedger",
+	"galaxyNodes", "galaxyPayouts",
+	"galaxyProbes", "galaxyMismatches", "galaxyReputation", "galaxyBans",
+	"galaxyKeys", "galaxyOrders", "galaxyPoints", "galaxyPackages", "galaxyPricing",
+	"galaxyAccounts", "galaxyDisputes", "galaxyLeads", "galaxyReferrals",
+	"galaxySettings", "galaxyModels", "galaxyBridgeReleases",
 }
 
 func main() {

@@ -6,6 +6,7 @@
 package agent
 
 import (
+	gocontext "context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"contract"
+	"galaxy-common/bootstrap"
 	corepkg "galaxy-hub-api/adapters/core"
 	"service/galaxy"
 	"service/galaxy/dto"
@@ -39,16 +41,20 @@ type Handler struct {
 	streamIdleTimeout time.Duration
 	// metrics 观测上行的静默分布，用来回答 streamIdleTimeout 该设多少。可以为 nil。
 	metrics galaxy.Metrics
+	// drain 进程开始优雅退出的信号。只有领活那条路看它：这台正在退出就别再发新活，
+	// 否则节点刚领走一个单元，回头推上行时监听已经关了，那条请求白跑。
+	// 已经派出去的单元照常收上行 —— 停止发新活和拒绝收尾是两回事。
+	drain *bootstrap.Drain
 }
 
 func NewHandler(service galaxy.Service, exchange *corepkg.Exchange, journal *corepkg.Journal,
-	streamIdleTimeout time.Duration, metrics galaxy.Metrics) *Handler {
+	streamIdleTimeout time.Duration, metrics galaxy.Metrics, drain *bootstrap.Drain) *Handler {
 	if streamIdleTimeout <= 0 {
 		streamIdleTimeout = 60 * time.Second
 	}
 	return &Handler{
 		service: service, exchange: exchange, journal: journal,
-		streamIdleTimeout: streamIdleTimeout, metrics: metrics,
+		streamIdleTimeout: streamIdleTimeout, metrics: metrics, drain: drain,
 	}
 }
 
@@ -231,8 +237,35 @@ func (h *Handler) next(context *gin.Context) {
 	req.NodeID = nodeFrom(context).NodeID
 	req.WaitSeconds, _ = strconv.Atoi(context.DefaultQuery("waitSeconds", "25"))
 
-	result, err := h.service.Next(context.Request.Context(), req)
+	// 这台在退出：直接回 204，节点立刻换一台再来，不要把它按在这儿等 25 秒。
+	if h.drain.Active() {
+		context.Status(http.StatusNoContent)
+		return
+	}
+	// 已经挂在 BLPOP 上的那些也要叫醒，否则监听关掉之前它们还可能领走一个单元 ——
+	// 领了却推不回来，对消费者就是一次失败。取消 ctx 是唯一能打断 BLPOP 的手段。
+	ctx := context.Request.Context()
+	if begun := h.drain.Begun(); begun != nil {
+		var cancel gocontext.CancelFunc
+		ctx, cancel = gocontext.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-begun:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+	result, err := h.service.Next(ctx, req)
 	if err != nil {
+		// 退出把长轮询叫醒的那次取消不是故障：让节点拿 204 去别的实例重试，
+		// 而不是收一条 500 再进重试退避。
+		if h.drain.Active() {
+			context.Status(http.StatusNoContent)
+			return
+		}
 		fail(context, http.StatusInternalServerError, contract.ErrorClassHub, "internal_error", err.Error())
 		return
 	}

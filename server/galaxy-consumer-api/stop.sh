@@ -25,9 +25,16 @@ if [[ ! -f "${PID_FILE}" ]]; then
 fi
 
 pid="$(cat "${PID_FILE}")"
+# SIGTERM 之后要等多久。进程收到信号会先停止领新活、等在途请求跑完再退出，
+# 所以这里等的是「它把手上的活干完」，不是「它反应过来」。
+# 控制台没有长连接，在途请求都是秒级的，等一分钟绰绰有余。
+# 急着重启就设小一点：没跑完的连接会被强制关掉，代价是那些请求当场失败。
+wait_seconds="${GALAXY_STOP_WAIT_SECONDS:-60}"
+
 if kill -0 "${pid}" 2>/dev/null; then
   kill "${pid}"
-  for _ in {1..10}; do
+  echo "sent SIGTERM to galaxy-consumer-api (pid ${pid}); waiting up to ${wait_seconds}s for in-flight requests"
+  for _ in $(seq 1 "${wait_seconds}"); do
     if ! kill -0 "${pid}" 2>/dev/null; then
       break
     fi

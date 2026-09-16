@@ -90,12 +90,30 @@ func DefaultKinds() (*galaxy.KindRegistry, error) {
 	}
 	return registry, nil
 }
-func Engine(metrics *metrics.Registry) *gin.Engine {
+
+// Engine 装配三个服务共用的那层：日志、恢复、指标、存活与就绪。
+//
+// healthz 与 readyz 是两件事，别合并：
+//   - healthz 是**存活**，进程还在就 200。它翻成失败等于让编排重启这个进程，
+//     而优雅退出期间进程恰恰是健康的 —— 它正在把在途请求送完。
+//   - readyz 是**就绪**，一宣布退出就 503，为的是让上游把这台摘出轮转。
+//
+// K8s 直接把两者接到 liveness / readiness 探针上。开源 nginx 没有主动健康检查，
+// 那边靠 drain 脚本把这台标 down 再 reload，readyz 用来确认它确实开始退出了。
+func Engine(metrics *metrics.Registry, drain *Drain) *gin.Engine {
 	engine := gin.New()
 	engine.Use(gin.Logger(), gin.Recovery())
 	_ = engine.SetTrustedProxies(nil)
 	engine.GET("/metrics", metrics.Handler())
 	engine.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"success": true, "code": 0, "data": "ok", "message": "ok", "error": nil})
+	})
+	engine.GET("/readyz", func(c *gin.Context) {
+		if drain.Active() {
+			c.JSON(503, gin.H{"success": false, "code": 503, "data": "draining",
+				"message": "正在优雅退出，请把这台摘出轮转", "error": nil})
+			return
+		}
 		c.JSON(200, gin.H{"success": true, "code": 0, "data": "ok", "message": "ok", "error": nil})
 	})
 	return engine

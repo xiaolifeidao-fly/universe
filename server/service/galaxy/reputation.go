@@ -128,7 +128,7 @@ func (s *service) nodeReputations(ctx context.Context, nodes []*repository.Galax
 	for _, node := range nodes {
 		out[node.NodeID] = 1
 		if row, ok := bySubject[reputationSubject(node, types[node.OwnerUserID])]; ok {
-			out[node.NodeID] = EffectiveReputation(row.Reputation, row.ReputationAt, s.config.ReputationRecoveryPerDay, now)
+			out[node.NodeID] = EffectiveReputation(row.Reputation, row.ReputationAt, s.cfg().ReputationRecoveryPerDay, now)
 		}
 	}
 	return out, types, nil
@@ -156,7 +156,7 @@ func (s *service) adjustReputation(ctx context.Context, cid string, delta float6
 		return err
 	}
 	subjects := []string{accountSubject(node.OwnerUserID), deviceSubject(node)}
-	return s.repository.AdjustReputation(ctx, bizLine, subjects, delta, s.config.ReputationRecoveryPerDay, time.Now())
+	return s.repository.AdjustReputation(ctx, bizLine, subjects, delta, s.cfg().ReputationRecoveryPerDay, time.Now())
 }
 
 // SetProviderType 管理端改账号身份。立刻生效在库里；派单读到的分数随下一次心跳（15 秒内）换过去。

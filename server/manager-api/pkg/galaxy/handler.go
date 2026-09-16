@@ -96,6 +96,310 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 门户「联系我们」收到的线索，里面是陌生人留下的联系方式 —— 资源表里别给只读角色。
 	admin.GET("/portal/leads", h.portalLeads)
 	admin.POST("/portal/leads/handle", h.handlePortalLead)
+
+	// 提现审批。申请那一刻积分就从账户里扣走了 —— 单子停在 pending，
+	// 那笔钱既不在用户手上也没打出去，这里是它唯一的出口。
+	admin.GET("/payouts", h.payouts)
+	admin.POST("/payouts/handle", h.handlePayout)
+	// 收款账号明文。列表里只给打码的，真要打款时单独取一次 ——
+	// 用 POST：只读角色只授 GET，别人的银行卡号天然就不在它的授权范围里。
+	admin.POST("/payouts/account", h.revealPayoutAccount)
+
+	// 价目表。没有价可查时扣费与分成静默算 0 —— 账单永远是 0 而系统不报错，
+	// 所以这张表必须在这里维护得动。
+	admin.GET("/prices", h.prices)
+	admin.POST("/prices/save", h.savePrice)
+	admin.POST("/prices/delete", h.deletePrice)
+
+	// 订单。上面那条 /orders/pay 一直都在，但没有地方列得出订单 ——
+	// 补单时运营手上是一个渠道流水号，而那条接口要的是单号。这条按流水号也找得到。
+	admin.GET("/orders", h.orders)
+
+	// 封禁名单。封禁记在设备指纹上，而 /node/ban 是按 node_id 找机器的：
+	// 机器从节点表里消失之后，那个指纹再也没有入口碰得到，封禁就成了永久的。
+	admin.GET("/bans", h.bannedMachines)
+	admin.POST("/bans/set", h.banMachine)
+
+	// 运营总览：各页的待办计数一次取回。共享池的运营散在十几个页面上，
+	// 没有它，判断「有没有事要处理」只能一页页翻。
+	admin.GET("/overview", h.overview)
+
+	// 用量偏差。这张表此前只写不读：节点自报和 Hub 解析对不上就落一行，
+	// 然后没有任何地方看得见它 —— 虚报在库里有据可查，在管理端查不出来。
+	admin.GET("/mismatches", h.mismatches)
+
+	// 运行工单。按人查的那条在消费者控制台上，运营没有跨租户的 ——
+	// 「现在池子里在跑什么」「刚才那批为什么全失败了」此前只能进库 SELECT。
+	admin.GET("/units", h.units)
+	admin.POST("/units/cancel", h.cancelUnit)
+
+	// 邀请返现。此前只有上面那个「默认比例」开关，返出去的钱一分都看不见 ——
+	// 一个开着的活动，钱在流出而没人看得见流向。
+	admin.GET("/referrals", h.referrals)
+
+	// 信誉。此前只在节点列表旁边露一个派生分数：被扣分的主体不一定还在那张列表上
+	// （机器撤销、重装之后 device: 那份就没入口了），而且没有任何地方能把分数改回去。
+	admin.GET("/reputations", h.reputations)
+	admin.POST("/reputations/set", h.setReputation)
+
+	// 三本账的逐笔流水。结算汇总回答「这个月一共多少」，这条回答「那一笔怎么记的」。
+	// 平台侧那本账此前完全没有读的路：毛利与坏账一直在写，管理端任何一页都看不到。
+	admin.GET("/ledger", h.ledger)
+
+	// 运行参数：原本只在 application.properties 里的那批可调值。
+	// 改完不用重启 —— 各进程按 TTL 回查同一张表，界面上把这个秒数显示出来。
+	// 部署事实（本机地址、加密密钥、契约版本、心跳超时）不在其中。
+	admin.GET("/settings", h.settings)
+	admin.POST("/settings/save", h.saveSetting)
+}
+
+// ---------- 运行参数 ----------
+
+func (h *Handler) settings(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	page, err := h.service.AdminSettings(context.Request.Context())
+	httpx.JSON(context, page, err)
+}
+
+// saveSetting 改一项参数。谁改的只取自凭证，同 resolveDispute。
+func (h *Handler) saveSetting(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SaveSettingRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UpdatedBy = httpx.CallerID(context)
+	httpx.JSON(context, req.Key, h.service.SaveAdminSetting(context.Request.Context(), req))
+}
+
+// ---------- 三本账 ----------
+
+func (h *Handler) ledger(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.AdminLedgerQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminLedger(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// ---------- 邀请返现与信誉 ----------
+
+func (h *Handler) referrals(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.AdminReferralQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminReferrals(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) reputations(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	threshold, _ := strconv.ParseFloat(context.DefaultQuery("threshold", "0"), 64)
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "100"))
+	page, err := h.service.AdminReputations(context.Request.Context(), threshold, limit)
+	httpx.JSON(context, page, err)
+}
+
+// setReputation 人工设定信誉。谁改的只取自凭证，同 resolveDispute。
+func (h *Handler) setReputation(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SetReputationRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UpdatedBy = httpx.CallerID(context)
+	httpx.JSON(context, req.Subject, h.service.SetReputation(context.Request.Context(), req))
+}
+
+// ---------- 总览与排障 ----------
+
+func (h *Handler) overview(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	view, err := h.service.AdminOverview(context.Request.Context())
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) mismatches(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.MismatchQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminMismatches(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+func (h *Handler) units(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.AdminUnitQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminUnits(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// cancelUnit 强制取消一条还在跑的工单。谁取消的只取自凭证，同 resolveDispute。
+func (h *Handler) cancelUnit(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.CancelUnitRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.CancelledBy = httpx.CallerID(context)
+	httpx.JSON(context, req.UnitID, h.service.AdminCancelUnit(context.Request.Context(), req))
+}
+
+// ---------- 订单 ----------
+
+func (h *Handler) orders(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.AdminOrderQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminOrders(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// ---------- 封禁名单 ----------
+
+func (h *Handler) bannedMachines(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "100"))
+	// 默认只列还封着的。解封过的那些是历史，要看得显式要。
+	bannedOnly := context.DefaultQuery("bannedOnly", "true") != "false"
+	views, err := h.service.AdminBannedMachines(context.Request.Context(), bannedOnly, limit)
+	httpx.JSON(context, views, err)
+}
+
+// banMachine 按设备指纹封禁 / 解封。谁操作的只取自凭证，同 resolveDispute。
+func (h *Handler) banMachine(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.BanMachineRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UpdatedBy = httpx.CallerID(context)
+	httpx.JSON(context, req.Fingerprint, h.service.BanMachine(context.Request.Context(), req))
+}
+
+// ---------- 提现审批 ----------
+
+func (h *Handler) payouts(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var query dto.AdminPayoutQuery
+	if err := context.ShouldBindQuery(&query); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	page, err := h.service.AdminPayouts(context.Request.Context(), query)
+	httpx.JSON(context, page, err)
+}
+
+// handlePayout 打款完成 / 驳回。谁处置的只取自凭证，同 resolveDispute。
+func (h *Handler) handlePayout(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.HandlePayoutRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.HandledBy = httpx.CallerID(context)
+	view, err := h.service.HandlePayout(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) revealPayoutAccount(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req struct {
+		PayoutID string `json:"payoutId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.RevealPayoutAccount(context.Request.Context(), req.PayoutID)
+	httpx.JSON(context, view, err)
+}
+
+// ---------- 价目表 ----------
+
+func (h *Handler) prices(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	view, err := h.service.AdminPrices(context.Request.Context())
+	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) savePrice(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SavePriceRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, req.Kind+"/"+req.Unit, h.service.SaveAdminPrice(context.Request.Context(), req))
+}
+
+func (h *Handler) deletePrice(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.DeletePriceRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, req.Kind+"/"+req.Unit, h.service.DeleteAdminPrice(context.Request.Context(), req))
 }
 
 // bridgeReleases 全部安装包，含已下架的 —— 那是历史，机器上报的版本要对得上它。

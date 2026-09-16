@@ -371,6 +371,12 @@ func (a *Adapter) turnEvents(ginContext *gin.Context) {
 		select {
 		case <-ginContext.Request.Context().Done():
 			return
+		case <-a.deps.Drain:
+			// 这台在优雅退出。订阅是可以中断的：事件先落库后广播，客户端拿着
+			// 最后一个 seq 重连就能补齐，而挂着不放会把整个退出拖到超时强关。
+			// 明确发一个 end 出去，别让客户端把干净的收线当成网络抖动。
+			_ = writeSSE(ginContext, 0, "end", []byte(`{"reason":"hub_draining"}`))
+			return
 		case <-guard.C:
 			if a.terminal(ginContext, turn.UnitID) {
 				_ = writeSSE(ginContext, 0, "end", []byte(`{"reason":"unit_terminated"}`))

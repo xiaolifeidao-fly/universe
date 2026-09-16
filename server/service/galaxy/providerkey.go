@@ -35,7 +35,7 @@ func (s *service) IssueProviderKey(ctx context.Context, req dto.IssueProviderKey
 	if strings.TrimSpace(req.OwnerUserID) == "" {
 		return dto.IssuedProviderKey{}, fmt.Errorf("缺少用户")
 	}
-	terms := s.config.ProviderTermsVersion
+	terms := s.cfg().ProviderTermsVersion
 	agreed, err := s.HasConsent(ctx, subjectProvider, req.OwnerUserID, terms)
 	if err != nil {
 		return dto.IssuedProviderKey{}, err

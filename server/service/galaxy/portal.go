@@ -88,7 +88,7 @@ func (s *service) PortalCatalog(ctx context.Context, fallbackModels []string) (d
 	}
 
 	return dto.PortalOverview{
-		Endpoint:  s.config.ConsumerBaseURL,
+		Endpoint:  s.cfg().ConsumerBaseURL,
 		Stats:     s.portalStats(models, packages),
 		Families:  portalFamilies(models),
 		Models:    models,
@@ -157,11 +157,11 @@ func (s *service) portalStats(models []dto.PortalModelView, packages []dto.Packa
 		Models:       len(models),
 		Packages:     len(packages),
 		Currency:     "CNY",
-		KeyTTLDays:   wholeDays(s.config.KeyTTL),
-		FreezeDays:   wholeDays(s.config.KeyFreeze),
-		Concurrency:  s.config.KeyConcurrency,
-		RPM:          s.config.KeyRPM,
-		Availability: strings.TrimSpace(s.config.PortalAvailability),
+		KeyTTLDays:   wholeDays(s.cfg().KeyTTL),
+		FreezeDays:   wholeDays(s.cfg().KeyFreeze),
+		Concurrency:  s.cfg().KeyConcurrency,
+		RPM:          s.cfg().KeyRPM,
+		Availability: strings.TrimSpace(s.cfg().PortalAvailability),
 	}
 	vendors, families := map[string]bool{}, map[string]bool{}
 	for _, model := range models {

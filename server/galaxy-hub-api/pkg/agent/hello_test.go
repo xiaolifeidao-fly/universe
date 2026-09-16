@@ -38,7 +38,7 @@ func (bannedGalaxy) Hello(context.Context, dto.HelloRequest) (dto.HelloResult, e
 // 是客户端版本不对，去升级、重装，而机器早就被封了。
 func TestHelloOnBannedMachineAnswersLikeTheAuthGate(t *testing.T) {
 	engine := gin.New()
-	agent.NewHandler(bannedGalaxy{}, nil, nil, time.Second, nil).RegisterHandler(engine.Group("/agent/v1"))
+	agent.NewHandler(bannedGalaxy{}, nil, nil, time.Second, nil, nil).RegisterHandler(engine.Group("/agent/v1"))
 
 	request := httptest.NewRequest(http.MethodPost, "/agent/v1/hello", strings.NewReader(`{"contract":1}`))
 	request.Header.Set("Authorization", "Bearer gnt_repaired")

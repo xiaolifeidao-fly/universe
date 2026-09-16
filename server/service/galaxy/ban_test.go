@@ -265,10 +265,17 @@ func banHarness(t *testing.T, tables map[string]scriptedTable) (*service, *scrip
 type banPlane struct {
 	ControlPlane
 	dropped []string
+	// cancelled 强制取消工单时写进来的单号（adminaudit_test.go 用）。
+	cancelled []string
 }
 
 func (p *banPlane) DropNode(_ context.Context, nodeID string) error {
 	p.dropped = append(p.dropped, nodeID)
+	return nil
+}
+
+func (p *banPlane) RequestCancel(_ context.Context, rid, _ string) error {
+	p.cancelled = append(p.cancelled, rid)
 	return nil
 }
 

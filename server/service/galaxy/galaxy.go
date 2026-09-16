@@ -110,6 +110,13 @@ type Config struct {
 	// 配了就直接拼地址，不再逐次签名；不配走 OSS 签名地址。
 	BridgeDownloadBaseURL string
 
+	// ConsumerReferralBps 使用端通用套餐的默认返现比例（万分之一）。
+	//
+	// 它和下面那两个共享端的值不一样：**它的源头一直是数据库**（zt_galaxy_setting 的
+	// referral.default_bps），配置文件里没有它。放进 Config 只是为了让运行参数那套
+	// 叠加机制有个落点 —— 读它仍然读的是同一行。
+	ConsumerReferralBps int64
+
 	// ReferralRate 共享端邀请返现的比例：0.1 表示被邀请人赚到的积分，平台额外给
 	// 邀请人 10%。0 表示这个活动没开。被邀请人自己的收益不受影响 —— 这笔钱是平台出的。
 	ReferralRate float64
@@ -491,6 +498,65 @@ type Service interface {
 	AdminProbes(ctx context.Context, cid string, limit int) ([]dto.AuditProbeView, error)
 	AdminUsage(ctx context.Context, query dto.UsageQuery) (dto.UsageReport, error)
 
+	// ---------- 平台运营：提现审批 ----------
+	// 积分在申请那一刻就扣走了，单子停在 pending 等于钱既不在用户手上也没打出去 ——
+	// 这三个方法是那笔钱唯一的出口。
+	AdminPayouts(ctx context.Context, query dto.AdminPayoutQuery) (dto.AdminPayoutPage, error)
+	// HandlePayout 打款完成 / 驳回。驳回会把积分原路退回并记一笔反向流水。
+	HandlePayout(ctx context.Context, req dto.HandlePayoutRequest) (dto.AdminPayoutView, error)
+	// RevealPayoutAccount 收款账号明文。列表里只给打码的，真要打款时单独取一次。
+	RevealPayoutAccount(ctx context.Context, payoutID string) (dto.PayoutAccountView, error)
+
+	// ---------- 平台运营：总览与排障 ----------
+	// AdminOverview 「今天要做什么」：各页的待办计数一次取回。
+	AdminOverview(ctx context.Context) (dto.AdminOverview, error)
+	// AdminMismatches 用量偏差。这张表此前只写不读 —— 落了行，没人看得见。
+	AdminMismatches(ctx context.Context, query dto.MismatchQuery) (dto.MismatchPage, error)
+	// AdminUnits 跨租户的运行工单，排障用。按人查的那条在 OwnedJobs。
+	AdminUnits(ctx context.Context, query dto.AdminUnitQuery) (dto.AdminUnitPage, error)
+	// AdminCancelUnit 强制取消一条还在跑的工单。取消是请求不是命令（原则 8）。
+	AdminCancelUnit(ctx context.Context, req dto.CancelUnitRequest) error
+
+	// ---------- 平台运营：运行参数 ----------
+	// 原本只在 application.properties 里的那批可调值。改完按 TTL 在各进程生效，
+	// 不用重启 —— 见 settings.go。部署事实（地址、密钥、契约版本）不在其中。
+	AdminSettings(ctx context.Context) (dto.AdminSettingsPage, error)
+	// SaveAdminSetting 改一项，或把它改回配置文件里的默认值。
+	SaveAdminSetting(ctx context.Context, req dto.SaveSettingRequest) error
+
+	// ---------- 平台运营：三本账 ----------
+	// AdminLedger 逐笔流水。结算汇总回答「这个月一共多少」，它回答「那一笔怎么记的」。
+	// 平台侧那本账此前完全没有读的路 —— 毛利与坏账一直在写，没人看得见。
+	AdminLedger(ctx context.Context, query dto.AdminLedgerQuery) (dto.AdminLedgerPage, error)
+
+	// ---------- 平台运营：邀请返现与信誉 ----------
+	// AdminReferrals 两端的邀请关系与拉人排行。此前只有一个「默认比例」开关，
+	// 返出去的钱一分都看不见 —— 一个开着的活动，钱在流出而没人看得见流向。
+	AdminReferrals(ctx context.Context, query dto.AdminReferralQuery) (dto.AdminReferralPage, error)
+	// AdminReputations 分数没满的主体。按此刻的分数筛，不是按库里那个结算值。
+	AdminReputations(ctx context.Context, threshold float64, limit int) (dto.ReputationPage, error)
+	// SetReputation 人工设定一个主体的信誉。设成，不是加减。
+	SetReputation(ctx context.Context, req dto.SetReputationRequest) error
+
+	// ---------- 平台运营：订单 ----------
+	// PayOrder（人工确认到账）一直都在，但没有任何地方列得出订单 ——
+	// 运营手上是一个渠道流水号，而那条接口要的是单号，两者之间没有桥。
+	AdminOrders(ctx context.Context, query dto.AdminOrderQuery) (dto.AdminOrderPage, error)
+
+	// ---------- 平台运营：封禁名单 ----------
+	// 封禁记在设备指纹上，而 BanNode 是按 node_id 找机器的 —— 机器不在了，
+	// 那个指纹就再也没有入口碰得到。这两个方法是它唯一的去处。
+	AdminBannedMachines(ctx context.Context, bannedOnly bool, limit int) ([]dto.BannedMachineView, error)
+	// BanMachine 按指纹封禁 / 解封，机器在不在册都办得了。
+	BanMachine(ctx context.Context, req dto.BanMachineRequest) error
+
+	// ---------- 平台运营：价目表 ----------
+	// 没有价可查时扣费与分成静默算 0，所以这张表必须在管理端维护得动，
+	// 而且要把「有用量却没有价」的单位直接列出来。
+	AdminPrices(ctx context.Context) (dto.PriceTableView, error)
+	SaveAdminPrice(ctx context.Context, req dto.SavePriceRequest) error
+	DeleteAdminPrice(ctx context.Context, req dto.DeletePriceRequest) error
+
 	// ---------- 运维 ----------
 	PoolStatus(ctx context.Context) (dto.PoolStatus, error)
 	Sweep(ctx context.Context) error
@@ -532,7 +598,13 @@ type service struct {
 	audit      AuditConfig
 	metrics    Metrics
 	kinds      *KindRegistry
-	config     Config
+	// config 是**配置文件给的那份**，只当默认值用。
+	// 读参数一律走 cfg() —— 它叠加了后台改过的项，见 settings.go。
+	config Config
+	// settings 后台可调参数的进程内快照。用指针是为了让事务里的那个副本
+	// （scopedTo）和本体共用同一份 —— 副本自己再去查一遍，那次查询会落在
+	// 正开着的事务里。
+	settings *settingsCache
 	// cipher 加密存储密钥明文。没配 KeyCipherSecret 时是 nil，取回明文的接口会明说原因。
 	cipher *keyCipher
 
@@ -576,6 +648,7 @@ func New(database *gorm.DB, ports Ports, kinds *KindRegistry, config Config) Ser
 		audit:      audit,
 		kinds:      kinds,
 		config:     config.withDefaults(),
+		settings:   &settingsCache{},
 		cipher:     newKeyCipher(config.KeyCipherSecret),
 	}
 	svc.waiting.byKind = map[string]int{}
@@ -590,7 +663,9 @@ func Migrate(database *gorm.DB) error {
 }
 
 func (s *service) Kinds() []contract.KindSpec { return s.kinds.List() }
-func (s *service) Config() Config             { return s.config }
+// Config 当前生效的参数，**含后台改过的那些**。
+// 回 s.config（配置文件那份）会让门户和控制台显示一套和实际执行不一样的值。
+func (s *service) Config() Config { return s.cfg() }
 
 const bizLine = string(contract.GalaxyBizLine)
 

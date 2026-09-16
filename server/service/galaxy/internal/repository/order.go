@@ -150,3 +150,65 @@ func (r *GalaxyRepository) TransferBalances(ctx context.Context, bizLine, fromKe
 	})
 	return moved, err
 }
+
+// ---------- 订单：运营侧 ----------
+
+// AdminOrderQuery 运营翻全站订单的过滤条件。
+//
+// 和 ListOrders 的「只看某个人」是两件事，所以另起一个查询而不是给它加参数：
+// 一个必填的过滤维度变成可选，调用方漏填就会静默地把全站的单子都列出来。
+type AdminOrderQuery struct {
+	BizLine string
+	Status  string
+	UserID  string
+	// Keyword 按单号、下单人、渠道流水号模糊找。人工确认到账时手上只有一个流水号，
+	// 而单号在对方那边 —— 不能按流水号找，那笔钱就对不回任何一张单。
+	Keyword string
+	Offset  int
+	Limit   int
+}
+
+func (r *GalaxyRepository) adminOrderScope(query AdminOrderQuery) *gorm.DB {
+	tx := r.Db.Model(&GalaxyOrder{}).Where("biz_line = ?", query.BizLine)
+	if query.Status != "" {
+		tx = tx.Where("status = ?", query.Status)
+	}
+	if query.UserID != "" {
+		tx = tx.Where("user_id = ?", query.UserID)
+	}
+	if query.Keyword != "" {
+		like := "%" + query.Keyword + "%"
+		tx = tx.Where("order_id LIKE ? OR user_id LIKE ? OR payment_ref LIKE ?", like, like, like)
+	}
+	return tx
+}
+
+func (r *GalaxyRepository) ListAdminOrders(ctx context.Context, query AdminOrderQuery) ([]*GalaxyOrder, int64, error) {
+	var total int64
+	if err := r.adminOrderScope(query).WithContext(ctx).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := r.adminOrderScope(query).WithContext(ctx).Order("created_time desc, id desc")
+	if query.Limit > 0 {
+		tx = tx.Limit(query.Limit).Offset(query.Offset)
+	}
+	var rows []*GalaxyOrder
+	err := tx.Find(&rows).Error
+	return rows, total, err
+}
+
+// CountOrdersByStatus 各状态各有多少单。列表顶上那排数字用它，一次查完。
+func (r *GalaxyRepository) CountOrdersByStatus(ctx context.Context, bizLine string) (map[string]int64, error) {
+	var rows []struct {
+		Status string
+		Total  int64
+	}
+	err := r.Db.WithContext(ctx).Model(&GalaxyOrder{}).
+		Where("biz_line = ?", bizLine).
+		Select("status, COUNT(*) AS total").Group("status").Scan(&rows).Error
+	counts := map[string]int64{}
+	for _, row := range rows {
+		counts[row.Status] = row.Total
+	}
+	return counts, err
+}

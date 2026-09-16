@@ -53,16 +53,28 @@ const FALLBACK_PAGE_TITLES: Record<string, [TranslationKey, TranslationKey]> = {
   "/business-lines": ["bizLines.title", "bizLines.subtitle"],
   "/programs": ["programs.title", "programs.subtitle"],
   "/galaxy": ["galaxy.title", "galaxy.subtitle"],
+  "/galaxy/overview": ["nav.galaxyHome", "galaxy.home.subtitle"],
   "/galaxy/pool": ["nav.galaxyPool", "galaxy.pool.subtitle"],
+  "/galaxy/units": ["nav.galaxyUnits", "galaxy.units.subtitle"],
+  "/galaxy/mismatches": ["nav.galaxyMismatches", "galaxy.mismatches.subtitle"],
+  "/galaxy/reputation": ["nav.galaxyReputation", "galaxy.reputation.subtitle"],
+  "/galaxy/referrals": ["nav.galaxyReferrals", "galaxy.referrals.subtitle"],
+  "/galaxy/settings": ["nav.galaxySettings", "galaxy.settings.subtitle"],
   "/galaxy/nodes": ["nav.galaxyNodes", "galaxy.nodes.subtitle"],
+  "/galaxy/payouts": ["nav.galaxyPayouts", "galaxy.payouts.subtitle"],
+  "/galaxy/bans": ["nav.galaxyBans", "galaxy.bans.subtitle"],
+  "/galaxy/orders": ["nav.galaxyOrders", "galaxy.orders.subtitle"],
   "/galaxy/accounts": ["nav.galaxyAccounts", "galaxy.accounts.subtitle"],
   "/galaxy/probes": ["nav.galaxyProbes", "galaxy.probes.subtitle"],
   "/galaxy/disputes": ["nav.galaxyDisputes", "galaxy.disputes.subtitle"],
+  "/galaxy/leads": ["nav.galaxyLeads", "galaxy.leads.subtitle"],
   "/galaxy/packages": ["nav.galaxyPackages", "galaxy.packages.subtitle"],
+  "/galaxy/pricing": ["nav.galaxyPricing", "galaxy.pricing.subtitle"],
   "/galaxy/models": ["nav.galaxyModels", "galaxy.models.subtitle"],
   "/galaxy/points": ["nav.galaxyPoints", "galaxy.points.subtitle"],
   "/galaxy/keys": ["nav.galaxyKeys", "galaxy.keys.subtitle"],
   "/galaxy/settlement": ["nav.galaxySettlement", "galaxy.settlement.subtitle"],
+  "/galaxy/ledger": ["nav.galaxyLedger", "galaxy.ledger.subtitle"],
   "/galaxy/bridge-releases": ["nav.galaxyBridgeReleases", "galaxy.bridgeReleases.subtitle"],
   "/settings/accounts": ["accounts.title", "accounts.subtitle"],
   "/settings/roles": ["roles.title", "roles.subtitle"],
@@ -74,6 +86,8 @@ type FallbackNavEntry = {
   key: string;
   icon?: ReactNode;
   labelKey: TranslationKey;
+  /** 分组标题：不用点开，只是把一长条切成几段。和后端资源里的 group 一一对应。 */
+  group?: boolean;
   children?: FallbackNavEntry[];
 };
 
@@ -87,17 +101,71 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <GlobalOutlined />,
     labelKey: "nav.galaxy",
     children: [
-      { key: "/galaxy/pool", labelKey: "nav.galaxyPool" },
-      { key: "/galaxy/nodes", labelKey: "nav.galaxyNodes" },
-      { key: "/galaxy/accounts", labelKey: "nav.galaxyAccounts" },
-      { key: "/galaxy/probes", labelKey: "nav.galaxyProbes" },
-      { key: "/galaxy/disputes", labelKey: "nav.galaxyDisputes" },
-      { key: "/galaxy/packages", labelKey: "nav.galaxyPackages" },
-      { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
-      { key: "/galaxy/points", labelKey: "nav.galaxyPoints" },
-      { key: "/galaxy/keys", labelKey: "nav.galaxyKeys" },
-      { key: "/galaxy/settlement", labelKey: "nav.galaxySettlement" },
-      { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
+      {
+        key: "group:galaxyOverview",
+        labelKey: "nav.galaxyOverview",
+        group: true,
+        children: [
+          { key: "/galaxy/overview", labelKey: "nav.galaxyHome" },
+          { key: "/galaxy/pool", labelKey: "nav.galaxyPool" },
+          { key: "/galaxy/units", labelKey: "nav.galaxyUnits" },
+          { key: "/galaxy/settlement", labelKey: "nav.galaxySettlement" },
+          { key: "/galaxy/ledger", labelKey: "nav.galaxyLedger" },
+        ],
+      },
+      {
+        key: "group:galaxySupply",
+        labelKey: "nav.galaxySupply",
+        group: true,
+        children: [
+          { key: "/galaxy/nodes", labelKey: "nav.galaxyNodes" },
+          { key: "/galaxy/payouts", labelKey: "nav.galaxyPayouts" },
+        ],
+      },
+      {
+        key: "group:galaxyRisk",
+        labelKey: "nav.galaxyRisk",
+        group: true,
+        children: [
+          { key: "/galaxy/probes", labelKey: "nav.galaxyProbes" },
+          { key: "/galaxy/mismatches", labelKey: "nav.galaxyMismatches" },
+          { key: "/galaxy/reputation", labelKey: "nav.galaxyReputation" },
+          { key: "/galaxy/bans", labelKey: "nav.galaxyBans" },
+        ],
+      },
+      {
+        key: "group:galaxyDemand",
+        labelKey: "nav.galaxyDemand",
+        group: true,
+        children: [
+          { key: "/galaxy/keys", labelKey: "nav.galaxyKeys" },
+          { key: "/galaxy/orders", labelKey: "nav.galaxyOrders" },
+          { key: "/galaxy/points", labelKey: "nav.galaxyPoints" },
+          { key: "/galaxy/packages", labelKey: "nav.galaxyPackages" },
+          { key: "/galaxy/pricing", labelKey: "nav.galaxyPricing" },
+        ],
+      },
+      {
+        key: "group:galaxyCustomer",
+        labelKey: "nav.galaxyCustomer",
+        group: true,
+        children: [
+          { key: "/galaxy/accounts", labelKey: "nav.galaxyAccounts" },
+          { key: "/galaxy/disputes", labelKey: "nav.galaxyDisputes" },
+          { key: "/galaxy/leads", labelKey: "nav.galaxyLeads" },
+          { key: "/galaxy/referrals", labelKey: "nav.galaxyReferrals" },
+        ],
+      },
+      {
+        key: "group:galaxyPlatform",
+        labelKey: "nav.galaxyPlatform",
+        group: true,
+        children: [
+          { key: "/galaxy/settings", labelKey: "nav.galaxySettings" },
+          { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
+          { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
+        ],
+      },
     ],
   },
 ];
@@ -155,7 +223,10 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
         const resources = user.mustChangePassword ? [] : await fetchCurrentUserMenus();
         if (cancelled) return;
         setProfile(user);
-        setMenus(resources);
+        // ?? []：菜单为空时后端回的是 []，但 JSON 里的 null 也能走到这里
+        // （Go 的 nil 切片序列化成 null）。直接存进去，下面 menus.length 一读就整页崩，
+        // 而它崩在外壳里 —— 连登录页都回不去。
+        setMenus(resources ?? []);
         // 带着初始密码的账号除了改密什么都调不动（后端挡在资源判断之前），
         // 所以不等用户去找入口，直接弹出来。
         if (user.mustChangePassword) setPasswordOpen(true);
@@ -399,6 +470,10 @@ function buildFallbackItems(entries: FallbackNavEntry[], t: (key: TranslationKey
       </span>
     );
     if (!entry.children?.length) return { key: entry.key, label: content };
+    if (entry.group) {
+      // 分组标题走 antd 的 group：底下的页面一直摊着，不用先点开一层。
+      return { key: entry.key, type: "group", label: t(entry.labelKey), children: buildFallbackItems(entry.children, t) };
+    }
     return { key: entry.key, label: content, children: buildFallbackItems(entry.children, t) };
   });
 }
@@ -445,6 +520,13 @@ function buildMenuItems(resources: ResourceItem[], label: (item: ResourceItem) =
       .map(build)
       .filter((item): item is MenuItem => item !== null);
     if (children.length === 0) return null;
+    if (resource.resourceType === "group") {
+      // 分组标题：一行小标题，底下的页面一直摊着。和 menu 的差别只在这里 ——
+      // 「共享算力池」底下十几个页面，平铺找不到东西，再套一层要点开的目录
+      // 又等于给每天都用的页面加一次点击，分组标题两头都不占。
+      // label 用纯文本：antd 的分组标题不渲染图标，塞进去只会多一个空盒子。
+      return { key: menuKey(resource), type: "group", label: label(resource), children };
+    }
     return { key: menuKey(resource), label: content, children };
   };
 

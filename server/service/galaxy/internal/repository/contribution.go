@@ -240,3 +240,25 @@ func (r *GalaxyRepository) SaveContributionLimits(ctx context.Context, bizLine, 
 		return nil
 	})
 }
+
+// ContributionOwnersByCIDs 这些贡献各自的主人，按 cid 索引。
+//
+// 一次 IN 查完，不是逐个 FindContribution —— 偏差列表一页二十行、排行再十行，
+// 逐个查就是三十次往返，而这三十次问的是同一张表的同一列。
+func (r *GalaxyRepository) ContributionOwnersByCIDs(ctx context.Context, bizLine string, cids []string) (map[string]string, error) {
+	owners := map[string]string{}
+	if len(cids) == 0 {
+		return owners, nil
+	}
+	var rows []struct {
+		CID         string
+		OwnerUserID string
+	}
+	err := r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
+		Select("cid", "owner_user_id").
+		Where("biz_line = ?", bizLine).Where("cid IN ?", cids).Scan(&rows).Error
+	for _, row := range rows {
+		owners[row.CID] = row.OwnerUserID
+	}
+	return owners, err
+}

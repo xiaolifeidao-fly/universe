@@ -24,7 +24,7 @@ func TestOwnedRoutes(t *testing.T) {
 	base := &bootstrap.Assembly{Galaxy: service, Metrics: metrics.New()}
 	gate := shared.NewGate(nil)
 	assembly := &Assembly{Assembly: base, Auth: auth.NewHandler(nil, gate), Providers: providers.NewHandler(service, gate)}
-	engine := route(assembly)
+	engine := route(assembly, nil)
 	registered := map[string]bool{}
 	absent := []string{"/agent", "/v1", "/api/galaxy/consumer", "/api/galaxy/portal", "/galaxy/payments"}
 	for _, r := range engine.Routes() {

@@ -55,7 +55,7 @@ func (s *service) Submit(ctx context.Context, unit contract.WorkUnit) (Placement
 		Kind: unit.Kind, KindVersion: unit.KindVersion, Family: unit.Family,
 		Provider: unit.Provider, Model: unit.Model, AffinityKey: unit.AffinityKey, HardPin: unit.HardPin,
 	}
-	deadline := now.Add(s.config.MaxWait)
+	deadline := now.Add(s.cfg().MaxWait)
 	s.enterWaitQueue(unit.Kind)
 	defer s.leaveWaitQueue(unit.Kind)
 	if unit.Attempt > 1 {
@@ -126,7 +126,7 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 		if err != nil {
 			return nil, false, err
 		}
-		if !found || !Online(snapshot, now, s.config.HeartbeatTimeout) {
+		if !found || !Online(snapshot, now, s.cfg().HeartbeatTimeout) {
 			return nil, false, contract.NewUnitError(contract.ErrorClassNode, contract.CodeNodeUnavailable, false,
 				"原节点已离线，带 previous_response_id 的请求无法改派")
 		}
@@ -163,7 +163,7 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 			if err != nil {
 				return nil, false, err
 			}
-			if exists && Online(snapshot, now, s.config.HeartbeatTimeout) && !snapshot.Draining && !snapshot.Paused {
+			if exists && Online(snapshot, now, s.cfg().HeartbeatTimeout) && !snapshot.Draining && !snapshot.Paused {
 				grants, err := s.loadGrants(ctx, []string{cid})
 				if err != nil {
 					return nil, false, err
@@ -217,7 +217,7 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 	}
 	input := FilterInput{
 		Route: route, Spec: spec, Estimate: unit.Metering.Estimate, Plans: plans, Now: now,
-		HeartbeatTimeout: s.config.HeartbeatTimeout, Weights: s.config.Weights,
+		HeartbeatTimeout: s.cfg().HeartbeatTimeout, Weights: s.cfg().Weights,
 		LocalityKeys: localityKeys(unit), FallbackBurn: poolBurn(snapshots, plans, now),
 	}
 	candidates := Rank(Filter(snapshots, input), input)
@@ -226,7 +226,7 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 	}
 
 	// 4 依次尝试：被别的请求抢走座位就换下一个，最多 maxPlaceAttempts 次。
-	attempts := s.config.MaxPlaceAttempts
+	attempts := s.cfg().MaxPlaceAttempts
 	for index, candidate := range candidates {
 		if index >= attempts {
 			break
@@ -261,8 +261,8 @@ func (s *service) commit(ctx context.Context, unit contract.WorkUnit, snapshot C
 		RID: unit.ID, CID: snapshot.CID, ConsumerKey: affinity, Lane: lane,
 		Estimate: unit.Metering.Estimate, QuotaLimits: plan.Limits, WindowKeys: plan.Windows, WindowExpiry: plan.Expiry,
 		Seats: snapshot.Seats, SeatConcurrency: snapshot.SeatConcurrency,
-		ReuseBinding: reuseBinding, BindTTL: s.config.BindIdleTTL, SeatTTL: s.config.BindIdleTTL,
-		Instance: s.config.Instance, Unit: payload, Body: body, BodyTTL: s.config.BodyTTL,
+		ReuseBinding: reuseBinding, BindTTL: s.cfg().BindIdleTTL, SeatTTL: s.cfg().BindIdleTTL,
+		Instance: s.cfg().Instance, Unit: payload, Body: body, BodyTTL: s.cfg().BodyTTL,
 		Deadline: time.UnixMilli(unit.Deadline),
 	})
 	if err != nil {
@@ -364,7 +364,7 @@ func (s *service) persistUnit(ctx context.Context, unit contract.WorkUnit, now t
 		ConsumerKey: unit.ConsumerKey, Space: unit.Space, SID: unit.SID, Op: unit.Op,
 		Seq: unit.Seq, Attempt: unit.Attempt,
 		State: string(contract.UnitQueued), EstimateJSON: encodeJSON(unit.Metering.Estimate),
-		Instance: s.config.Instance, CreatedTime: now,
+		Instance: s.cfg().Instance, CreatedTime: now,
 	}, &repository.GalaxyUnitEvent{
 		BizLine: bizLine, UnitID: unit.ID, Kind: "submitted", Message: "已提交",
 		DataJSON: encodeJSON(map[string]any{"kind": unit.Kind, "model": unit.Model}),
@@ -463,7 +463,7 @@ func (s *service) Next(ctx context.Context, req dto.NextRequest) (*dto.NextResul
 			if ref == nil || ref.Key == "" {
 				continue
 			}
-			if url, err := s.signer.SignGet(ctx, ref.Key, s.config.PresignGetTTL); err == nil {
+			if url, err := s.signer.SignGet(ctx, ref.Key, s.cfg().PresignGetTTL); err == nil {
 				ref.URL = url
 			}
 		}
@@ -489,7 +489,7 @@ func (s *service) Next(ctx context.Context, req dto.NextRequest) (*dto.NextResul
 	}
 	instance := claimed.Instance
 	if instance == "" {
-		instance = s.config.Instance
+		instance = s.cfg().Instance
 	}
 	return &dto.NextResult{
 		Unit: payload,
@@ -647,7 +647,7 @@ func (s *service) reconcileUsage(ctx context.Context, runtime UnitRuntime, spec 
 			if value, ok := hubUsage[unit]; ok {
 				actual[unit] = value
 				if nodeValue, reported := nodeUsage[unit]; reported && value > 0 {
-					if ratio := math.Abs(float64(nodeValue-value)) / float64(value); ratio > s.config.UsageMismatchRatio {
+					if ratio := math.Abs(float64(nodeValue-value)) / float64(value); ratio > s.cfg().UsageMismatchRatio {
 						_ = s.repository.SaveUsageMismatch(ctx, &repository.GalaxyUsageMismatch{
 							BizLine: bizLine, UnitID: runtime.RID, CID: runtime.CID, Unit: unit,
 							HubValue: value, NodeValue: nodeValue, Ratio: ratio,
@@ -847,7 +847,7 @@ func (s *service) ContributionAlive(ctx context.Context, cid string) bool {
 	if !found {
 		return false
 	}
-	return Online(snapshot, time.Now(), s.config.HeartbeatTimeout)
+	return Online(snapshot, time.Now(), s.cfg().HeartbeatTimeout)
 }
 
 func (s *service) RememberResponse(ctx context.Context, responseID, cid string) error {

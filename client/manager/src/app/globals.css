@@ -404,6 +404,42 @@
   padding-left: 47px !important;
 }
 
+/*
+ * ─── 分组标题（menu > group > page 的中间那一层）───
+ *
+ * 「共享算力池」底下十几个页面，平铺成一长条找不到东西，再套一层要点开的目录
+ * 又等于给每天都用的页面加一次点击。分组标题两头都不占：一行小标题，
+ * 底下的页面一直摊着。
+ *
+ * 两条都必须写，少一条层级就会**反过来读**：
+ *
+ * 1. 标题比它底下的页面**更靠左**。antd 默认给它一个和菜单项差不多的缩进，
+ *    看上去像是页面的下级，而不是它们的抬头。
+ * 2. 分组里的页面要和别的子页面一样缩进到 47px。上面那条
+ *    `.ant-menu-sub.ant-menu-inline > .ant-menu-item` 用的是直接子选择器，
+ *    而分组里的项多隔了一层 .ant-menu-item-group-list —— 选不中它，
+ *    于是它们退回 .ant-menu-item 那条带 !important 的 padding，
+ *    和顶层菜单左对齐，整段层级就塌了。
+ */
+.manager-shell-menu.ant-menu .ant-menu-item-group-title {
+  margin-top: 6px;
+  padding: 0 10px 2px 34px;
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 24px;
+}
+
+/* 第一组紧接着父项，不需要那道分隔用的上间距。 */
+.manager-shell-menu.ant-menu .ant-menu-item-group:first-child > .ant-menu-item-group-title {
+  margin-top: 2px;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item-group-list > .ant-menu-item {
+  padding-left: 47px !important;
+}
+
 /* 父项在子页面被选中时也要有在场感，否则折叠起来就完全看不出自己在哪。 */
 .manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title {
   color: var(--manager-text) !important;

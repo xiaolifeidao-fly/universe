@@ -25,11 +25,11 @@ func (s *service) SignUpload(ctx context.Context, kind, name, contentType string
 		return contract.ArtifactRef{}, fmt.Errorf("缺少产物大小")
 	}
 	objectKey := fmt.Sprintf("galaxy/%s/%s/%s", sanitizeSegment(kind), NewULID(time.Now()), sanitizeSegment(name))
-	url, err := s.signer.SignPut(ctx, objectKey, contentType, size, s.config.PresignPutTTL)
+	url, err := s.signer.SignPut(ctx, objectKey, contentType, size, s.cfg().PresignPutTTL)
 	if err != nil {
 		return contract.ArtifactRef{}, err
 	}
-	expires := time.Now().Add(s.config.PresignPutTTL)
+	expires := time.Now().Add(s.cfg().PresignPutTTL)
 	if err := s.repository.SaveArtifact(ctx, &repository.GalaxyArtifact{
 		BizLine: bizLine, ObjectKey: objectKey, OwnerKey: ownerKey, Kind: kind,
 		Size: size, ContentType: contentType, ExpiresAt: &expires,
@@ -82,13 +82,13 @@ func (s *service) SignDownload(ctx context.Context, objectKey string) (contract.
 	if row.Deleted {
 		return contract.ArtifactRef{}, contract.NewUnitError(contract.ErrorClassInput, contract.CodeArtifactMissing, false, "产物已按保留期清理")
 	}
-	url, err := s.signer.SignGet(ctx, objectKey, s.config.PresignGetTTL)
+	url, err := s.signer.SignGet(ctx, objectKey, s.cfg().PresignGetTTL)
 	if err != nil {
 		return contract.ArtifactRef{}, err
 	}
 	return contract.ArtifactRef{
 		Store: "oss", Key: objectKey, Size: row.Size, SHA256: row.SHA256, ContentType: row.ContentType,
-		ExpiresAt: time.Now().Add(s.config.PresignGetTTL).UTC().Format(time.RFC3339), URL: url,
+		ExpiresAt: time.Now().Add(s.cfg().PresignGetTTL).UTC().Format(time.RFC3339), URL: url,
 	}, nil
 }
 
@@ -157,7 +157,7 @@ func (s *service) PoolStatus(ctx context.Context) (dto.PoolStatus, error) {
 		if !found {
 			continue
 		}
-		if Online(snapshot, now, s.config.HeartbeatTimeout) {
+		if Online(snapshot, now, s.cfg().HeartbeatTimeout) {
 			status.Online++
 		}
 		status.SeatsUsed += snapshot.SeatsUsed
@@ -195,7 +195,7 @@ func (s *service) PoolStatus(ctx context.Context) (dto.PoolStatus, error) {
 // Sweep 巡检：密钥到期转冻结、掉线节点摘除、额度计数器快照。
 // 定时跑，不依赖请求触发 —— 一把长期不用的密钥也必须按时失效。
 func (s *service) Sweep(ctx context.Context) error {
-	if _, err := s.repository.ExpireConsumerKeys(ctx, bizLine, time.Now(), s.config.KeyFreeze); err != nil {
+	if _, err := s.repository.ExpireConsumerKeys(ctx, bizLine, time.Now(), s.cfg().KeyFreeze); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -205,7 +205,7 @@ func (s *service) Sweep(ctx context.Context) error {
 	// 有贡献的机器。刚配对、还没 hello 的机器一条贡献都没有，于是 status 永远
 	// 停在 pair 时写下的 active —— 界面上就是一台「在线」了半小时、
 	// 却一次心跳都没有过的机器。
-	if _, err := s.repository.MarkStaleNodesOffline(ctx, bizLine, now.Add(-s.config.HeartbeatTimeout)); err != nil {
+	if _, err := s.repository.MarkStaleNodesOffline(ctx, bizLine, now.Add(-s.cfg().HeartbeatTimeout)); err != nil {
 		return err
 	}
 	rows, err := s.repository.ListActiveContributions(ctx, bizLine)
@@ -220,7 +220,7 @@ func (s *service) Sweep(ctx context.Context) error {
 	offline := map[string]bool{}
 	for _, row := range rows {
 		snapshot, found, _ := s.control.GetContribution(ctx, row.CID)
-		if !found || !Online(snapshot, now, s.config.HeartbeatTimeout) {
+		if !found || !Online(snapshot, now, s.cfg().HeartbeatTimeout) {
 			offline[row.NodeID] = true
 			continue
 		}
@@ -247,7 +247,7 @@ func (s *service) Sweep(ctx context.Context) error {
 // sweepSessions 关掉长期没有回合的会话。座位是稀缺资源：
 // 一个被遗忘的会话钉着不放，等于让整台机器只服务一个不再回来的人。
 func (s *service) sweepSessions(ctx context.Context, now time.Time) error {
-	rows, err := s.repository.SweepIdleSessions(ctx, bizLine, now.Add(-s.config.SessionIdleTTL))
+	rows, err := s.repository.SweepIdleSessions(ctx, bizLine, now.Add(-s.cfg().SessionIdleTTL))
 	if err != nil {
 		return err
 	}

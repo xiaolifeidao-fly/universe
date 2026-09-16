@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -117,4 +118,118 @@ func (r *GalaxyRepository) OwnerHasMachine(ctx context.Context, bizLine, ownerUs
 		Where("machine_fingerprint = ?", fingerprint).
 		Limit(1).Count(&total).Error
 	return total > 0, err
+}
+
+// ---------- 邀请返现：运营侧 ----------
+
+// InviterStat 一个邀请人的战绩：拉来几个人、平台为此付出多少。
+type InviterStat struct {
+	InviterID string `gorm:"column:invited_by"`
+	Invitees  int64  `gorm:"column:invitees"`
+}
+
+// TopInviters 按拉来的人数排的邀请人。side 决定查哪一端的关系表。
+//
+// 排行在 SQL 里做：这张表一行一个注册账号，为了数一下拉回内存等于把全站账号拉一遍。
+// invited_by 为空的是自己注册的，不算邀请人 —— 不排除的话排第一的永远是那个空字符串。
+func (r *GalaxyRepository) TopInviters(ctx context.Context, bizLine, side string, limit int) ([]InviterStat, error) {
+	var rows []InviterStat
+	tx := r.Db.WithContext(ctx).Model(referralModel(side)).
+		Where("biz_line = ?", bizLine).Where("invited_by <> ?", "").
+		Select("invited_by, COUNT(*) AS invitees").
+		Group("invited_by").Order("invitees desc")
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	err := tx.Scan(&rows).Error
+	return rows, err
+}
+
+// ReferralRow 一行邀请关系，两端同构。
+type ReferralRow struct {
+	UserID      string    `gorm:"column:user_id"`
+	InviteCode  string    `gorm:"column:invite_code"`
+	InvitedBy   string    `gorm:"column:invited_by"`
+	CreatedTime time.Time `gorm:"column:created_time"`
+}
+
+// AdminReferralQuery 运营翻邀请关系的过滤条件。
+type AdminReferralQuery struct {
+	BizLine string
+	// Side consumer / provider。两端是两张表、两套码，码不通用。
+	Side string
+	// InviterID 只看这个人拉来的。
+	InviterID string
+	// Keyword 按账号 id 或邀请码模糊找。
+	Keyword string
+	// InvitedOnly 只看「被人邀请来的」，滤掉自己注册的那一大批。
+	InvitedOnly bool
+	Offset      int
+	Limit       int
+}
+
+// referralModel side 决定查哪张表。两端是两批人、两张表，混查会把
+// 共享端的 pu_ 和使用端的 cu_ 拌在一起 —— 那两个 id 空间本来就没有关系。
+func referralModel(side string) any {
+	if side == "provider" {
+		return &GalaxyProviderReferral{}
+	}
+	return &GalaxyReferral{}
+}
+
+func (r *GalaxyRepository) adminReferralScope(query AdminReferralQuery) *gorm.DB {
+	tx := r.Db.Model(referralModel(query.Side)).Where("biz_line = ?", query.BizLine)
+	if query.InviterID != "" {
+		tx = tx.Where("invited_by = ?", query.InviterID)
+	} else if query.InvitedOnly {
+		tx = tx.Where("invited_by <> ?", "")
+	}
+	if query.Keyword != "" {
+		like := "%" + query.Keyword + "%"
+		tx = tx.Where("user_id LIKE ? OR invite_code LIKE ? OR invited_by LIKE ?", like, like, like)
+	}
+	return tx
+}
+
+// ListAdminReferrals 分页列邀请关系。
+func (r *GalaxyRepository) ListAdminReferrals(ctx context.Context, query AdminReferralQuery) ([]ReferralRow, int64, error) {
+	var total int64
+	if err := r.adminReferralScope(query).WithContext(ctx).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := r.adminReferralScope(query).WithContext(ctx).
+		Select("user_id", "invite_code", "invited_by", "created_time").
+		Order("created_time desc, id desc")
+	if query.Limit > 0 {
+		tx = tx.Limit(query.Limit).Offset(query.Offset)
+	}
+	var rows []ReferralRow
+	err := tx.Scan(&rows).Error
+	return rows, total, err
+}
+
+// SumReferralPayouts 这些邀请人各自总共被返了多少。
+//
+// 使用端记在积分账本、共享端记在供给侧账本 —— 两本账两张表，按 side 分叉。
+// 共享端把 ref_clawback（申诉成立时的反向流水，负数）一起加进来，求和就是净额。
+func (r *GalaxyRepository) SumReferralPayouts(ctx context.Context, bizLine, side string, inviterIDs []string) (map[string]int64, error) {
+	sums := map[string]int64{}
+	if len(inviterIDs) == 0 {
+		return sums, nil
+	}
+	var rows []struct {
+		OwnerUserID string
+		Amount      int64
+	}
+	tx := r.Db.WithContext(ctx).Where("biz_line = ?", bizLine).Where("owner_user_id IN ?", inviterIDs)
+	if side == "provider" {
+		tx = tx.Model(&GalaxyProviderLedger{}).Where("type IN ?", []string{"referral", "ref_clawback"})
+	} else {
+		tx = tx.Model(&GalaxyPointsLedger{}).Where("type = ?", "referral")
+	}
+	err := tx.Select("owner_user_id, SUM(amount) AS amount").Group("owner_user_id").Scan(&rows).Error
+	for _, row := range rows {
+		sums[row.OwnerUserID] = row.Amount
+	}
+	return sums, err
 }

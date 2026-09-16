@@ -713,3 +713,873 @@ export async function setBridgeReleaseStatus(releaseId: string, status: BridgeRe
   });
   return unwrapApiResponse(response.data);
 }
+
+/* ---------- 提现审批 ---------- */
+
+export type PayoutStatus = "pending" | "paid" | "rejected";
+
+export type PayoutMethod = "alipay" | "wechat" | "bank";
+
+/**
+ * 一张提现申请单。
+ *
+ * **积分在申请那一刻就从账户里扣走了** —— 单子停在 pending 等于那笔钱既不在
+ * 用户手上、也没打出去。所以这一页不是「可以有」，是那笔钱唯一的出口。
+ */
+export class AdminPayoutView {
+  payoutId = "";
+
+  ownerUserId = "";
+
+  /** 申请人的共享端账号「昵称（用户名）」。查不到时是空串，界面退回显示 ownerUserId。 */
+  ownerName = "";
+
+  /** 提现的微积分数。界面按 ÷1,000,000 显示成积分，1 积分 = ¥1。 */
+  credits = 0;
+
+  /** 折算出来的钱（微分）。下单那一刻快照进来，之后改兑换比不影响已受理的申请。 */
+  amount = 0;
+
+  currency = "CNY";
+
+  fee = 0;
+
+  method: PayoutMethod | "" = "";
+
+  /** 打码后的收款账号。要打款时点「查看收款账号」单独取明文。 */
+  account = "";
+
+  status: PayoutStatus | "" = "";
+
+  note = "";
+
+  handledBy = "";
+
+  handledAt?: string;
+
+  createdTime = "";
+}
+
+export class AdminPayoutPage {
+  total = 0;
+
+  payouts: AdminPayoutView[] = [];
+
+  /** 各状态的计数。不随分页变 —— 它回答「还剩多少笔要处理」。 */
+  counts: Record<string, number> = {};
+
+  /** 起提金额（微积分）。界面上解释「为什么这个人提不了」。 */
+  minCredits = 0;
+
+  /** 争议期天数：这段时间内结算的积分算待结算，提不出来。 */
+  holdDays = 0;
+}
+
+export class PayoutAccountView {
+  payoutId = "";
+
+  method = "";
+
+  account = "";
+}
+
+export async function fetchPayouts(query: {
+  status?: PayoutStatus | "";
+  ownerUserId?: string;
+  keyword?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  return getData(AdminPayoutPage, "/galaxy/admin/payouts", {
+    status: query.status || undefined,
+    ownerUserId: query.ownerUserId || undefined,
+    keyword: query.keyword || undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+/** 打款完成 / 驳回。驳回会把积分原路退回申请人账户，所以 note 必填。 */
+export async function handlePayout(payoutId: string, status: Exclude<PayoutStatus, "pending">, note: string) {
+  const response = await instance.post<ApiResponse<AdminPayoutView>>("/galaxy/admin/payouts/handle", {
+    payoutId,
+    status,
+    note,
+  });
+  return plainToInstance(AdminPayoutView, unwrapApiResponse(response.data));
+}
+
+/**
+ * 取收款账号明文。用 POST 和 revealAdminKey 同一个理由：只读角色只授 GET，
+ * 别人的银行卡号天然就不在它的授权范围里。
+ */
+export async function revealPayoutAccount(payoutId: string) {
+  const response = await instance.post<ApiResponse<PayoutAccountView>>("/galaxy/admin/payouts/account", { payoutId });
+  return plainToInstance(PayoutAccountView, unwrapApiResponse(response.data));
+}
+
+/* ---------- 价目表 ---------- */
+
+/**
+ * 价目表的一行。
+ *
+ * price 是**每百万单位的微分**：1,000,000 微分 = ¥1，所以「¥3 / 百万 token」
+ * 存进来是 3,000,000。界面上按元显示，别把这两个量纲混了。
+ */
+export class PriceView {
+  kind = "";
+
+  unit = "";
+
+  price = 0;
+
+  currency = "CNY";
+
+  providerShare = 0.7;
+
+  effectiveFrom = "";
+
+  /** 此刻正在生效的那一行。历史价与还没到点的未来价都是 false。 */
+  effective = false;
+}
+
+export class PriceTableView {
+  prices: PriceView[] = [];
+
+  /** 界面上的候选值，来自已有的价与真实跑过的用量 —— 不用运营去背单位字符串。 */
+  kinds: string[] = [];
+
+  units: string[] = [];
+
+  /**
+   * 近 30 天产生过用量、却查不到价的 (kind, unit)。
+   * 这些用量的扣费与分成会**静默算 0**，不报错 —— 这一列就是那个告警。
+   */
+  unpriced: PriceView[] = [];
+}
+
+export async function fetchPrices() {
+  return getData(PriceTableView, "/galaxy/admin/prices");
+}
+
+export async function savePrice(payload: {
+  kind: string;
+  unit: string;
+  price: number;
+  currency?: string;
+  providerShare: number;
+  effectiveFrom?: string;
+}) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/prices/save", payload);
+  return unwrapApiResponse(response.data);
+}
+
+export async function deletePrice(payload: { kind: string; unit: string; effectiveFrom: string }) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/prices/delete", payload);
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 门户线索 ---------- */
+
+export type LeadStatus = "new" | "handled" | "closed";
+
+/** 门户「联系我们」留下的一条线索。里面是陌生人的手机、邮箱 —— 别往别处复制。 */
+export class LeadRecord {
+  leadId = "";
+
+  name = "";
+
+  contact = "";
+
+  company = "";
+
+  topic = "";
+
+  scale = "";
+
+  message = "";
+
+  source = "";
+
+  status: LeadStatus | "" = "";
+
+  handledBy = "";
+
+  handledAt?: string;
+
+  createdTime = "";
+}
+
+export class LeadPage {
+  total = 0;
+
+  leads: LeadRecord[] = [];
+}
+
+export async function fetchLeads(query: { status?: LeadStatus | ""; offset?: number; limit?: number }) {
+  return getData(LeadPage, "/galaxy/admin/portal/leads", {
+    status: query.status || undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+export async function handleLead(leadId: string, status: LeadStatus) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/portal/leads/handle", { leadId, status });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 订单 ---------- */
+
+export type OrderStatus = "pending" | "paid" | "fulfilled" | "cancelled";
+
+/** 怎么付的：points=用积分买；channel=走支付渠道（含沙箱与人工确认到账）。 */
+export type OrderPayMethod = "points" | "channel";
+
+export class AdminOrderView {
+  orderId = "";
+
+  userId = "";
+
+  /** 下单人的使用端账号「昵称（用户名）」。查不到时是空串，界面退回显示 userId。 */
+  userName = "";
+
+  packageCode = "";
+
+  /** 下单那一刻的额度快照。套餐之后改了不影响这一单。 */
+  units: Record<string, number> = {};
+
+  /** 微分，÷1,000,000 是元。 */
+  amount = 0;
+
+  currency = "CNY";
+
+  status: OrderStatus | "" = "";
+
+  payMethod: OrderPayMethod | "" = "";
+
+  modelId = "";
+
+  /** 非空表示给这把已有密钥充值，空表示履约时签发新密钥。 */
+  targetKeyId = "";
+
+  /** 履约后落到哪把密钥。 */
+  keyId = "";
+
+  /** 渠道流水号。人工确认到账时运营填的就是它，所以它也在搜索范围里。 */
+  paymentRef = "";
+
+  paidAt?: string;
+
+  fulfilledAt?: string;
+
+  createdTime = "";
+}
+
+export class AdminOrderPage {
+  total = 0;
+
+  orders: AdminOrderView[] = [];
+
+  /** 各状态的计数，不随分页变。 */
+  counts: Record<string, number> = {};
+}
+
+export async function fetchOrders(query: {
+  status?: OrderStatus | "";
+  userId?: string;
+  keyword?: string;
+  offset?: number;
+  limit?: number;
+}) {
+  return getData(AdminOrderPage, "/galaxy/admin/orders", {
+    status: query.status || undefined,
+    userId: query.userId || undefined,
+    keyword: query.keyword || undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+/**
+ * 人工确认到账：线下转账、或者渠道回调丢了要补单。
+ *
+ * paymentRef 同时是幂等键 —— 同一个流水号补两次，第二次不会重复履约。
+ * 渠道回调那条验签的路仍在 galaxy-api，不走这里。
+ */
+export async function payOrder(orderId: string, paymentRef: string) {
+  const response = await instance.post<ApiResponse<AdminOrderView>>("/galaxy/admin/orders/pay", {
+    orderId,
+    paymentRef,
+  });
+  return plainToInstance(AdminOrderView, unwrapApiResponse(response.data));
+}
+
+/* ---------- 封禁名单 ---------- */
+
+/** 封禁名单上一台设备底下还留着的节点记录，含已撤销的。 */
+export class BannedMachineNode {
+  nodeId = "";
+
+  displayName = "";
+
+  ownerUserId = "";
+
+  ownerName = "";
+
+  status = "";
+}
+
+/**
+ * 一条封禁记录。
+ *
+ * 封禁记在**设备指纹**上，而「节点与贡献」那页的解封是按 node_id 找机器的 ——
+ * 机器一旦从节点表里消失（撤销、重装、换了 node_id），那个指纹就再也没有入口碰得到。
+ * 这张名单是它唯一看得见、也解得开的地方。
+ */
+export class BannedMachineView {
+  fingerprint = "";
+
+  banned = false;
+
+  reason = "";
+
+  updatedBy = "";
+
+  updatedTime = "";
+
+  nodes: BannedMachineNode[] = [];
+}
+
+export async function fetchBannedMachines(bannedOnly = true, limit = 100) {
+  return getDataList(BannedMachineView, "/galaxy/admin/bans", { bannedOnly: String(bannedOnly), limit });
+}
+
+/** 按设备指纹封禁 / 解封。机器在不在册都办得了。 */
+export async function banMachine(fingerprint: string, banned: boolean, reason = "") {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/bans/set", {
+    fingerprint,
+    banned,
+    reason,
+  });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 代签密钥 ---------- */
+
+export class IssuedKeyView {
+  keyId = "";
+
+  /** 明文**只在签发这一次**返回，之后再也查不到 —— 要当场转交。 */
+  secret = "";
+
+  alias = "";
+
+  expiresAt = "";
+}
+
+/**
+ * 运营直接给一个使用端账号签一把密钥（内测、补发、线下成交）。
+ *
+ * 不走订单，也不扣积分。grants 是初始额度余额，按计量单位填。
+ */
+export async function issueKey(payload: {
+  ownerUserId: string;
+  alias?: string;
+  ttlDays?: number;
+  concurrency?: number;
+  rpm?: number;
+  modelId?: string;
+  grants?: Record<string, number>;
+}) {
+  const response = await instance.post<ApiResponse<IssuedKeyView>>("/galaxy/admin/keys/issue", {
+    ...payload,
+    // 后端要求 noticeVersion 非空；不传就由 manager-api 填成当前版本。
+    noticeVersion: "",
+  });
+  return plainToInstance(IssuedKeyView, unwrapApiResponse(response.data));
+}
+
+/* ---------- 运营总览 ---------- */
+
+export class OverviewPool {
+  lanes = 0;
+
+  contributions = 0;
+
+  online = 0;
+
+  seatsTotal = 0;
+
+  seatsUsed = 0;
+
+  inflight = 0;
+
+  waitQueue = 0;
+}
+
+export class OverviewToday {
+  units = 0;
+
+  failed = 0;
+
+  running = 0;
+}
+
+/**
+ * 「今天要做什么」。
+ *
+ * 每一项都是一个待办计数，点进去就是对应那一页。里面有几件是**有人在等**：
+ * 提现停在待处理，就是有人的钱既不在手上也没打出去。
+ */
+export class AdminOverview {
+  pendingPayouts = 0;
+
+  pendingOrders = 0;
+
+  openDisputes = 0;
+
+  newLeads = 0;
+
+  /** 有用量却查不到价的计量单位数。不是零就意味着有一部分钱正在被静默算成 0。 */
+  unpricedUnits = 0;
+
+  recentMismatches = 0;
+
+  bannedMachines = 0;
+
+  pool: OverviewPool = new OverviewPool();
+
+  today: OverviewToday = new OverviewToday();
+
+  /** 取不到的那几块。控制面没配 Redis 时池水位取不到 —— 那和「池子空了」不是一回事。 */
+  degraded: string[] = [];
+}
+
+export async function fetchOverview() {
+  return getData(AdminOverview, "/galaxy/admin/overview");
+}
+
+/* ---------- 用量偏差 ---------- */
+
+/**
+ * 一次「节点自报和 Hub 解析对不上」。
+ *
+ * hubValue 是平台侧计量（平台侧优先），nodeValue 是节点自报的。
+ * 单看一行说明不了问题 —— 偶发一次是解析抖动，同一条贡献反复上榜才是虚报。
+ */
+export class UsageMismatchView {
+  unitId = "";
+
+  cid = "";
+
+  ownerName = "";
+
+  unit = "";
+
+  hubValue = 0;
+
+  nodeValue = 0;
+
+  ratio = 0;
+
+  createdAt = "";
+}
+
+export class MismatchOffender {
+  cid = "";
+
+  ownerName = "";
+
+  times = 0;
+
+  worstRatio = 0;
+}
+
+export class MismatchPage {
+  total = 0;
+
+  records: UsageMismatchView[] = [];
+
+  /** 这段时间里偏差次数最多的几条贡献。逐行看看不出规律，这份排行才是结论。 */
+  offenders: MismatchOffender[] = [];
+
+  /** 当前告警阈值（galaxy.usage_mismatch_ratio）。 */
+  threshold = 0;
+
+  days = 0;
+}
+
+export async function fetchMismatches(query: { cid?: string; minRatio?: number; days?: number; offset?: number; limit?: number }) {
+  return getData(MismatchPage, "/galaxy/admin/mismatches", {
+    cid: query.cid || undefined,
+    minRatio: query.minRatio || undefined,
+    days: query.days || undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+/* ---------- 运行工单 ---------- */
+
+export type UnitState = "queued" | "placed" | "running" | "streaming" | "completed" | "failed" | "cancelled" | "expired";
+
+/** 已经结束的状态。结束了的工单取消不了 —— 写一个取消标记只会误导后来人。 */
+export const TERMINAL_UNIT_STATES = new Set<string>(["completed", "failed", "cancelled", "expired"]);
+
+/** 一条工单。**不含任何请求内容** —— 工单表上本来就不存它。 */
+export class AdminUnitView {
+  unitId = "";
+
+  kind = "";
+
+  primitive = "";
+
+  provider = "";
+
+  model = "";
+
+  consumerKey = "";
+
+  keyAlias = "";
+
+  cid = "";
+
+  state: UnitState | "" = "";
+
+  errorClass = "";
+
+  errorCode = "";
+
+  errorMessage = "";
+
+  /** 持有消费者连接的 Hub 实例。多实例部署时排障第一步就是它。 */
+  instance = "";
+
+  attempt = 1;
+
+  startedAt?: string;
+
+  finishedAt?: string;
+
+  durationMs = 0;
+
+  createdTime = "";
+}
+
+export class AdminUnitPage {
+  total = 0;
+
+  units: AdminUnitView[] = [];
+
+  /** 这段时间里各状态各有多少，不随分页变。 */
+  counts: Record<string, number> = {};
+
+  days = 0;
+}
+
+export async function fetchUnits(query: {
+  state?: UnitState | "";
+  kind?: string;
+  cid?: string;
+  consumerKey?: string;
+  days?: number;
+  offset?: number;
+  limit?: number;
+}) {
+  return getData(AdminUnitPage, "/galaxy/admin/units", {
+    state: query.state || undefined,
+    kind: query.kind || undefined,
+    cid: query.cid || undefined,
+    consumerKey: query.consumerKey || undefined,
+    days: query.days || undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+/** 强制取消一条还在跑的工单。取消是**请求**不是命令：真正 abort 上游的是节点。 */
+export async function cancelUnit(unitId: string, reason: string) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/units/cancel", { unitId, reason });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 邀请返现 ---------- */
+
+/** 一行邀请关系。invitedBy 空表示自己注册的，没有邀请人。 */
+export class ReferralRecord {
+  userId = "";
+
+  userName = "";
+
+  inviteCode = "";
+
+  invitedBy = "";
+
+  inviterName = "";
+
+  createdTime = "";
+}
+
+/** 一个邀请人的战绩。payout 是微积分，共享端已扣掉申诉追回的部分，是净额。 */
+export class InviterRank {
+  inviterId = "";
+
+  inviterName = "";
+
+  invitees = 0;
+
+  payout = 0;
+}
+
+export class AdminReferralPage {
+  total = 0;
+
+  records: ReferralRecord[] = [];
+
+  /** 拉人最多的几位。逐行翻看不出谁在真的带量，这份排行才是结论。 */
+  top: InviterRank[] = [];
+
+  /** 使用端通用套餐的默认返现比例（万分之一）。各模型自己的比例在模型目录上。 */
+  defaultBps = 0;
+
+  /** 共享端返现比例（0.1 = 10%），0 表示这个活动没开。它在配置文件里，不在后台。 */
+  providerRate = 0;
+
+  /** 共享端返现期限（天），0 表示长期有效。 */
+  providerDays = 0;
+
+  side: GalaxySide | "" = "";
+}
+
+export async function fetchReferrals(query: {
+  side: GalaxySide;
+  inviterId?: string;
+  keyword?: string;
+  invitedOnly?: boolean;
+  offset?: number;
+  limit?: number;
+}) {
+  return getData(AdminReferralPage, "/galaxy/admin/referrals", {
+    side: query.side,
+    inviterId: query.inviterId || undefined,
+    keyword: query.keyword || undefined,
+    invitedOnly: query.invitedOnly ? "true" : undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+/* ---------- 信誉 ---------- */
+
+export type ReputationKind = "account" | "device" | "node";
+
+/**
+ * 一份信誉记录。
+ *
+ * settled 是结算那一刻的分数，effective 是按回升速率算出来的**此刻**的分数 ——
+ * 界面上要看 effective，显示 settled 会把早就自然回满的主体说成还在低分。
+ */
+export class ReputationView {
+  subject = "";
+
+  /** account:<账号> / device:<设备指纹> / node:<nodeId> 拆出来的前缀。 */
+  kind: ReputationKind | "" = "";
+
+  /** 冒号后面那一段。 */
+  ref = "";
+
+  ownerName = "";
+
+  settled = 1;
+
+  effective = 1;
+
+  settledAt = "";
+
+  updatedAt = "";
+
+  /** 这个主体对应的机器，帮运营认出「这是谁的哪台」。 */
+  nodes: BannedMachineNode[] = [];
+}
+
+export class ReputationPage {
+  records: ReputationView[] = [];
+
+  threshold = 1;
+
+  /** 每天回升多少，封顶 1。解释「为什么过几天自己就好了」。 */
+  recoveryPerDay = 0;
+}
+
+export async function fetchReputations(threshold = 0, limit = 100) {
+  return getData(ReputationPage, "/galaxy/admin/reputations", { threshold: threshold || undefined, limit });
+}
+
+/** 人工设定信誉。**设成，不是加减** —— 点两次和点一次结果一样。 */
+export async function setReputation(subject: string, value: number, reason: string) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/reputations/set", {
+    subject,
+    value,
+    reason,
+  });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 三本账 ---------- */
+
+export type LedgerSide = "consumer" | "provider" | "platform";
+
+/**
+ * amount 是什么量纲。**三侧不一样**，界面必须按它分开渲染 ——
+ * 拿同一套「÷1,000,000 显示成元」去画消费侧那一列，会得到一个荒唐的小数，
+ * 而看的人不会意识到自己在读一个错的数。
+ *
+ * - metering：计量数（token 之类），原样显示
+ * - credit：微积分，÷1,000,000 是积分，1 积分 = ¥1
+ * - money：微分，÷1,000,000 是元
+ */
+export type LedgerAmountUnit = "metering" | "credit" | "money";
+
+/** 一行账本。三侧共用一个形状，各自没有的字段是空的。 */
+export class LedgerEntry {
+  txnId = "";
+
+  type = "";
+
+  unit = "";
+
+  amount = 0;
+
+  price = 0;
+
+  /** 对应的工单号，排障时拿它去「运行工单」里查。 */
+  unitId = "";
+
+  keyId = "";
+
+  balanceAfter = 0;
+
+  cid = "";
+
+  ownerUserId = "";
+
+  ownerName = "";
+
+  relatedUserId = "";
+
+  createdAt = "";
+}
+
+/** 某一类流水的笔数与合计。按整个筛选条件算，不随分页变。 */
+export class LedgerTypeTotal {
+  type = "";
+
+  count = 0;
+
+  amount = 0;
+}
+
+export class AdminLedgerPage {
+  total = 0;
+
+  entries: LedgerEntry[] = [];
+
+  totals: LedgerTypeTotal[] = [];
+
+  side: LedgerSide | "" = "";
+
+  days = 0;
+
+  amountUnit: LedgerAmountUnit | "" = "";
+
+  /** 这一侧会出现的流水类型，供下拉用 —— 别让运营去背 ref_clawback 这种字符串。 */
+  types: string[] = [];
+}
+
+export async function fetchLedger(query: {
+  side: LedgerSide;
+  type?: string;
+  keyword?: string;
+  days?: number;
+  offset?: number;
+  limit?: number;
+}) {
+  return getData(AdminLedgerPage, "/galaxy/admin/ledger", {
+    side: query.side,
+    type: query.type || undefined,
+    keyword: query.keyword || undefined,
+    days: query.days || undefined,
+    offset: query.offset ?? 0,
+    limit: query.limit ?? 20,
+  });
+}
+
+/* ---------- 运行参数 ---------- */
+
+export type SettingKind = "int" | "float" | "duration" | "text";
+
+export type SettingGroup =
+  | "placement"
+  | "score"
+  | "key"
+  | "artifact"
+  | "risk"
+  | "payout"
+  | "referral"
+  | "compliance";
+
+/**
+ * 一项可调参数。
+ *
+ * value 是此刻生效的值，default 是配置文件里的那份。overridden 为假表示这一项
+ * 还跟着配置文件走 —— 「改回默认」做的是**删掉后台那一行**，不是写一个默认值进去。
+ *
+ * kind 为 duration 时，value 与 default 都是**毫秒**。
+ */
+export class SettingView {
+  key = "";
+
+  group: SettingGroup | "" = "";
+
+  kind: SettingKind | "" = "";
+
+  value = "";
+
+  default = "";
+
+  overridden = false;
+
+  min = 0;
+
+  max = 0;
+
+  /** 单位提示：second / minute / hour / day / ratio / bps / seat / time / credit。 */
+  unit = "";
+
+  updatedBy = "";
+
+  updatedAt?: string;
+}
+
+export class AdminSettingsPage {
+  settings: SettingView[] = [];
+
+  /**
+   * 改完最多多少秒在全部进程上生效。
+   *
+   * 必须显示给运营看：各进程按自己的节奏回查，改完刷新页面没立刻看到效果是正常的。
+   * 不说这句话，运营会以为没保存上，然后再改一遍。
+   */
+  propagationSeconds = 0;
+}
+
+export async function fetchSettings() {
+  return getData(AdminSettingsPage, "/galaxy/admin/settings");
+}
+
+/** 改一项参数。reset 为真表示改回配置文件里的默认值。 */
+export async function saveSetting(payload: { key: string; value?: string; reset?: boolean }) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/settings/save", payload);
+  return unwrapApiResponse(response.data);
+}

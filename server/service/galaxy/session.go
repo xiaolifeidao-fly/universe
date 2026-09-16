@@ -195,7 +195,7 @@ func (s *service) BeginTurn(ctx context.Context, req dto.BeginTurnRequest) (dto.
 		if err != nil {
 			return dto.TurnPlan{}, err
 		}
-		healthy := found && Online(snapshot, now, s.config.HeartbeatTimeout) && !snapshot.Draining && !snapshot.Paused
+		healthy := found && Online(snapshot, now, s.cfg().HeartbeatTimeout) && !snapshot.Draining && !snapshot.Paused
 		if healthy {
 			plan.Op = contract.OpTurn
 			plan.HardPin = row.CID
@@ -230,7 +230,7 @@ func (s *service) buildResume(ctx context.Context, row *repository.GalaxyLedgerS
 	if checkpoint, err := s.repository.LatestCheckpoint(ctx, bizLine, row.SID); err == nil && checkpoint != nil {
 		ref := contract.ArtifactRef{Store: "oss", Key: checkpoint.ObjectKey, Size: checkpoint.Size}
 		if s.signer != nil {
-			if url, err := s.signer.SignGet(ctx, checkpoint.ObjectKey, s.config.PresignGetTTL); err == nil {
+			if url, err := s.signer.SignGet(ctx, checkpoint.ObjectKey, s.cfg().PresignGetTTL); err == nil {
 				ref.URL = url
 			}
 		}

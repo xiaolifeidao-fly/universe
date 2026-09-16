@@ -364,7 +364,11 @@ type IssueKeyRequest struct {
 	Concurrency      int      `json:"concurrency"`
 	RPM              int      `json:"rpm"`
 	TTLDays          int      `json:"ttlDays"`
-	NoticeVersion    string   `json:"noticeVersion" binding:"required"`
+	// NoticeVersion 当前生效的告知版本。**不能标 binding:"required"** ——
+	// 唯一从 JSON 绑它的地方（manager-api 的 issueKey）在绑定之后会用配置里的当前版本
+	// 兜底，而 required 会在那一步之前就把空串打回去，兜底成了永远走不到的死代码。
+	// 结果是运营代签密钥必须自己报一个版本号，报错了还没人拦。
+	NoticeVersion string `json:"noticeVersion"`
 	// Grants 初始额度余额，P0 由后台直接给内测额度。
 	Grants contract.Metering `json:"grants"`
 	// ModelID 来源套餐绑定的模型，只用来认类别与展示。

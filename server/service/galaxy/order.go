@@ -126,8 +126,8 @@ func (s *service) SavePackage(ctx context.Context, req dto.SavePackageRequest) e
 		UnitsJSON: encodeJSON(req.Units), Amount: req.Amount,
 		Currency: defaultString(req.Currency, "CNY"), TTLDays: defaultInt(req.TTLDays, 30),
 		AllowedKindsJSON: encodeJSON(req.AllowedKinds), ModelTierJSON: encodeJSON(req.ModelTier),
-		Concurrency: defaultInt(req.Concurrency, s.config.KeyConcurrency),
-		RPM:         defaultInt(req.RPM, s.config.KeyRPM),
+		Concurrency: defaultInt(req.Concurrency, s.cfg().KeyConcurrency),
+		RPM:         defaultInt(req.RPM, s.cfg().KeyRPM),
 		ModelID:     modelID,
 		Listed:      listed, SortOrder: req.SortOrder,
 	})
@@ -193,9 +193,9 @@ func (s *service) createOrder(ctx context.Context, req dto.CreateOrderRequest, p
 
 func (s *service) requireConsumerNotice(ctx context.Context, userID, version string) error {
 	if version == "" {
-		version = s.config.ConsumerNoticeVersion
+		version = s.cfg().ConsumerNoticeVersion
 	}
-	if version != s.config.ConsumerNoticeVersion {
+	if version != s.cfg().ConsumerNoticeVersion {
 		return fmt.Errorf("数据告知版本已更新，请重新确认")
 	}
 	agreed, err := s.HasConsent(ctx, subjectConsumer, userID, version)
@@ -264,7 +264,7 @@ func (s *service) fulfilOrder(ctx context.Context, orderID string) (dto.OrderVie
 		}
 		issue := dto.IssueKeyRequest{
 			OwnerUserID: row.UserID, Alias: row.PackageCode,
-			Grants: units, NoticeVersion: s.config.ConsumerNoticeVersion,
+			Grants: units, NoticeVersion: s.cfg().ConsumerNoticeVersion,
 			ModelID: row.ModelID,
 		}
 		if item != nil {
@@ -383,7 +383,7 @@ func (s *service) RenewKey(ctx context.Context, req dto.RenewKeyRequest) (dto.Is
 		}
 	}
 
-	ttl := s.config.KeyTTL
+	ttl := s.cfg().KeyTTL
 	if req.TTLDays > 0 {
 		ttl = time.Duration(req.TTLDays) * 24 * time.Hour
 	}

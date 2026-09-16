@@ -25,6 +25,9 @@ import (
 type Assembly struct {
 	*bootstrap.Assembly
 	Registry *corepkg.Registry
+	// Deps 是适配器与消费者侧路由共用的那一份依赖。存在这里是为了让 route()
+	// 直接复用，而不是重拼一个把 AttachTimeout 之类的配置丢掉。
+	Deps     *corepkg.Deps
 	Exchange *corepkg.Exchange
 	Journal  *corepkg.Journal
 	Export   *exportdispatch.Dispatcher
@@ -33,9 +36,11 @@ type Assembly struct {
 	Native   *native.Handler
 }
 
-func Build(database *gorm.DB) (*Assembly, error) {
+func Build(database *gorm.DB, drain *bootstrap.Drain) (*Assembly, error) {
 	exchange := corepkg.NewExchange()
-	deps := &corepkg.Deps{Exchange: exchange}
+	// Drain 传给适配器：session / job 的 SSE 订阅要能在退出时自己收线，
+	// 否则一条挂两小时的订阅会把整个优雅退出拖到超时强关。
+	deps := &corepkg.Deps{Exchange: exchange, Drain: drain.Begun()}
 	journal := corepkg.NewJournal(bootstrap.IntProperty("galaxy.journal_buffer", 512), func(unitID string, event corepkg.JournalEvent) {
 		if deps.Galaxy == nil {
 			return
@@ -70,9 +75,10 @@ func Build(database *gorm.DB) (*Assembly, error) {
 		return nil, err
 	}
 	deps.Galaxy = base.Galaxy
-	return &Assembly{Assembly: base, Registry: adapters, Exchange: exchange, Journal: journal,
+	return &Assembly{Assembly: base, Registry: adapters, Deps: deps, Exchange: exchange, Journal: journal,
 		Export: exportdispatch.New(base.Galaxy, exchange, base.Metrics),
-		Agent:  agent.NewHandler(base.Galaxy, exchange, journal, bootstrap.DurationProperty("galaxy.stream_idle_timeout_ms", 60000), base.Metrics),
+		Agent: agent.NewHandler(base.Galaxy, exchange, journal,
+			bootstrap.DurationProperty("galaxy.stream_idle_timeout_ms", 60000), base.Metrics, drain),
 		Bridge: bridge.NewHandler(base.Galaxy), Native: native.NewHandler(base.Galaxy)}, nil
 }
 func buildRegistry(deps *corepkg.Deps) (*corepkg.Registry, error) {

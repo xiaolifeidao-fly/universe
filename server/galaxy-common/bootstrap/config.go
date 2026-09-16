@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 // 没配的项一律走默认值，部署方只需要覆盖真正想改的那几个。
 func LoadConfig() galaxy.Config {
 	config := galaxy.DefaultConfig()
-	config.Instance = DefaultString(httpx.Property("galaxy.instance"), "http://127.0.0.1:10006")
+	config.Instance = InstanceAddress()
 	config.ContractVersion = IntProperty("galaxy.contract_version", config.ContractVersion)
 	config.PlatformSeatLimit = IntProperty("galaxy.platform_seat_limit", config.PlatformSeatLimit)
 	config.BindIdleTTL = DurationProperty("galaxy.bind_idle_ttl_ms", int(config.BindIdleTTL.Milliseconds()))
@@ -69,6 +70,42 @@ func LoadConfig() galaxy.Config {
 	config.ReferralRegisterURL = strings.TrimSpace(httpx.Property("galaxy.referral.register_url"))
 	return config
 }
+
+// InstanceAddress Hub 这一台的专属地址（galaxy.instance）。
+//
+// 它是多实例部署里唯一必须逐台不同的值：派单时写进 req:{rid}.instance，
+// 节点领活拿到的 streamURL 由它拼成，上行必须打回**这一个进程**。
+// 为了不让三台机器因此各留一份只差一行的配置文件，这里多给两条注入途径：
+//
+//   - 环境变量 GALAXY_INSTANCE 优先于配置项，容器/编排直接注入即可；
+//   - 值里的 {hostname} 换成本机主机名的短名（去掉域名部分）。
+//
+// 于是 galaxy.instance = https://hub.example.com/s/{hostname} 这一行可以三台照抄，
+// 各自渲染成 /s/hub-1、/s/hub-2……前面的 nginx 按这一段精确转发到对应实例。
+//
+// 取不到主机名时**保留占位符原样**，不做任何兜底：一个打不通的地址会让节点立刻报错，
+// 而悄悄换成一个能连上的错地址，只会让上行送到别的实例去等超时。
+func InstanceAddress() string {
+	value := strings.TrimSpace(os.Getenv("GALAXY_INSTANCE"))
+	if value == "" {
+		value = strings.TrimSpace(httpx.Property("galaxy.instance"))
+	}
+	if value == "" {
+		return "http://127.0.0.1:10006"
+	}
+	if !strings.Contains(value, instanceHostnamePlaceholder) {
+		return value
+	}
+	host, err := os.Hostname()
+	if host = strings.TrimSpace(host); err != nil || host == "" {
+		log.Printf("galaxy.instance 含 %s 但取不到主机名（%v）：节点将拿到一个打不通的 streamURL",
+			instanceHostnamePlaceholder, err)
+		return value
+	}
+	return strings.ReplaceAll(value, instanceHostnamePlaceholder, strings.SplitN(host, ".", 2)[0])
+}
+
+const instanceHostnamePlaceholder = "{hostname}"
 
 // LoadAuditConfig 抽检参数。比例在 service 里再封一次 1% 上限 ——
 // 那是对提供者的承诺，不该由一行配置就能改掉。

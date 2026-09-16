@@ -181,3 +181,89 @@ func (r *GalaxyRepository) SumProviderCreditByUnit(ctx context.Context, bizLine 
 	}
 	return credits, nil
 }
+
+// ---------- 提现：运营侧 ----------
+
+// AdminPayoutQuery 运营翻全站提现单的过滤条件。OwnerUserID 为空表示不限人 ——
+// 和 ListPayouts 的「只看某个人」正好相反，所以另起一个查询而不是给它加参数：
+// 一个必填的过滤维度变成可选，调用方漏填就会静默地把全站的钱都列出来。
+type AdminPayoutQuery struct {
+	BizLine     string
+	Status      string
+	OwnerUserID string
+	Keyword     string
+	Offset      int
+	Limit       int
+}
+
+func (r *GalaxyRepository) adminPayoutScope(query AdminPayoutQuery) *gorm.DB {
+	tx := r.Db.Model(&GalaxyPayout{}).Where("biz_line = ?", query.BizLine)
+	if query.Status != "" {
+		tx = tx.Where("status = ?", query.Status)
+	}
+	if query.OwnerUserID != "" {
+		tx = tx.Where("owner_user_id = ?", query.OwnerUserID)
+	}
+	if query.Keyword != "" {
+		like := "%" + query.Keyword + "%"
+		tx = tx.Where("payout_id LIKE ? OR owner_user_id LIKE ?", like, like)
+	}
+	return tx
+}
+
+// ListAdminPayouts 分页列全站提现单，同时回总数 —— 待办队列要显示「还剩多少笔」，
+// 分两次调用去数会在两次之间漏掉刚进来的那一笔。
+func (r *GalaxyRepository) ListAdminPayouts(ctx context.Context, query AdminPayoutQuery) ([]*GalaxyPayout, int64, error) {
+	var total int64
+	if err := r.adminPayoutScope(query).WithContext(ctx).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	tx := r.adminPayoutScope(query).WithContext(ctx).Order("created_time desc, id desc")
+	if query.Limit > 0 {
+		tx = tx.Limit(query.Limit).Offset(query.Offset)
+	}
+	var rows []*GalaxyPayout
+	err := tx.Find(&rows).Error
+	return rows, total, err
+}
+
+// CountPayoutsByStatus 各状态各有多少笔。队列页顶上那排数字用它，一次查完。
+func (r *GalaxyRepository) CountPayoutsByStatus(ctx context.Context, bizLine string) (map[string]int64, error) {
+	var rows []struct {
+		Status string
+		Total  int64
+	}
+	err := r.Db.WithContext(ctx).Model(&GalaxyPayout{}).
+		Where("biz_line = ?", bizLine).
+		Select("status, COUNT(*) AS total").Group("status").Scan(&rows).Error
+	counts := map[string]int64{}
+	for _, row := range rows {
+		counts[row.Status] = row.Total
+	}
+	return counts, err
+}
+
+func (r *GalaxyRepository) FindPayout(ctx context.Context, bizLine, payoutID string) (*GalaxyPayout, error) {
+	var row GalaxyPayout
+	err := r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).Where("payout_id = ?", payoutID).First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// HandlePayout 把一张 pending 的单子改成 paid / rejected。
+//
+// **条件写在 WHERE 里，不先查后改**：驳回要连带把积分退回账户，两个运营同时点驳回，
+// 先查后改会各自读到 pending、各自退一次钱。这里返回 false 表示这一次没改动任何行 ——
+// 单子已经被别人处置过了，调用方据此不退款。
+func (r *GalaxyRepository) HandlePayout(ctx context.Context, bizLine, payoutID, status, note, handledBy string, at time.Time) (bool, error) {
+	result := r.Db.WithContext(ctx).Model(&GalaxyPayout{}).
+		Where("biz_line = ?", bizLine).Where("payout_id = ?", payoutID).Where("status = ?", "pending").
+		Updates(map[string]any{
+			"status": status, "note": note, "handled_by": handledBy,
+			"handled_at": at, "updated_time": at,
+		})
+	return result.RowsAffected > 0, result.Error
+}

@@ -79,3 +79,77 @@ func (r *GalaxyRepository) MachineBanned(ctx context.Context, bizLine, fingerpri
 		Count(&count).Error
 	return count > 0, err
 }
+
+// ListMachineBans 封禁名单。bannedOnly 为真只列还在封着的，否则连解封过的历史一起列。
+//
+// 有这张名单才谈得上「解封」：封禁记在指纹上，而解封那条路（BanNode）是按 node_id 找机器的 ——
+// 机器一旦从 zt_galaxy_node 里消失（撤销、重装、换了 node_id），那个指纹就再也没有入口能碰到，
+// 封禁变成永久的，而且在管理端任何一页上都看不见。
+func (r *GalaxyRepository) ListMachineBans(ctx context.Context, bizLine string, bannedOnly bool, limit int) ([]*GalaxyMachineBan, error) {
+	tx := r.Db.WithContext(ctx).Model(&GalaxyMachineBan{}).Where("biz_line = ?", bizLine)
+	if bannedOnly {
+		tx = tx.Where("banned = ?", true)
+	}
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	var rows []*GalaxyMachineBan
+	err := tx.Order("banned desc, updated_time desc, id desc").Find(&rows).Error
+	return rows, err
+}
+
+// NodesByFingerprints 这些指纹下还有哪些节点记录，按指纹归组。
+//
+// 封禁名单上光有一串指纹哈希没法用：运营要认出「这是谁的哪台机器」才敢解封。
+// 含已撤销的 —— 一台被封之后又撤销的机器，恰恰是最需要在名单上解释清楚的那种。
+func (r *GalaxyRepository) NodesByFingerprints(ctx context.Context, bizLine string, fingerprints []string) (map[string][]*GalaxyNode, error) {
+	grouped := map[string][]*GalaxyNode{}
+	if len(fingerprints) == 0 {
+		return grouped, nil
+	}
+	// 只取要显示的那几列：这张表上存着回连密钥的明文，用不着的列别往内存里捞（同 NodeIDsByFingerprint）。
+	var rows []*GalaxyNode
+	err := r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Select("node_id", "display_name", "owner_user_id", "status", "machine_fingerprint", "last_beat_at").
+		Where("biz_line = ?", bizLine).Where("machine_fingerprint IN ?", fingerprints).
+		Order("last_beat_at desc").Find(&rows).Error
+	if err != nil {
+		return grouped, err
+	}
+	for _, row := range rows {
+		grouped[row.MachineFingerprint] = append(grouped[row.MachineFingerprint], row)
+	}
+	return grouped, nil
+}
+
+// CountBannedMachines 此刻还封着的机器数。运营总览那一排数字用它。
+func (r *GalaxyRepository) CountBannedMachines(ctx context.Context, bizLine string) (int64, error) {
+	var total int64
+	err := r.Db.WithContext(ctx).Model(&GalaxyMachineBan{}).
+		Where("biz_line = ?", bizLine).Where("banned = ?", true).Count(&total).Error
+	return total, err
+}
+
+// NodesByOwners 这些账号名下的节点记录，按 owner_user_id 归组。
+//
+// 信誉名单要用：account: 那一类的信誉管的是这个人名下**所有**机器，
+// 而设备指纹查不到它们 —— 按指纹查会一台都查不到，界面上就成了
+// 「节点记录已不在」，而那台机器其实好端端地在线。
+func (r *GalaxyRepository) NodesByOwners(ctx context.Context, bizLine string, ownerIDs []string) (map[string][]*GalaxyNode, error) {
+	grouped := map[string][]*GalaxyNode{}
+	if len(ownerIDs) == 0 {
+		return grouped, nil
+	}
+	var rows []*GalaxyNode
+	err := r.Db.WithContext(ctx).Model(&GalaxyNode{}).
+		Select("node_id", "display_name", "owner_user_id", "status", "machine_fingerprint", "last_beat_at").
+		Where("biz_line = ?", bizLine).Where("owner_user_id IN ?", ownerIDs).
+		Order("last_beat_at desc").Find(&rows).Error
+	if err != nil {
+		return grouped, err
+	}
+	for _, row := range rows {
+		grouped[row.OwnerUserID] = append(grouped[row.OwnerUserID], row)
+	}
+	return grouped, nil
+}

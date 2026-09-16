@@ -37,6 +37,16 @@ type Deps struct {
 	// NodeProbeInterval relay 在首字节之前多久探一次节点心跳。给 0 走 DefaultNodeProbeInterval。
 	// 别调太密：这是每个在途请求各自一条的 Redis 查询。
 	NodeProbeInterval time.Duration
+	// Drain 进程开始优雅退出时会被关掉。
+	//
+	// 只有**可以中断**的那些连接该看它：session / job 的 SSE 订阅挂着可达两小时，
+	// 但事件是先落库后广播的，客户端按 seq 重连就能补齐 —— 主动收线是安全的，
+	// 挂着不放才会把整个退出流程拖到超时强关。
+	// relay 那条连接反过来：字节已经流给消费者了，中断就是一次收不回的失败请求，
+	// 所以它不看 Drain，只由退出时限兜底。
+	//
+	// nil（没接生命周期的调用方、测试）时 select 到它永远阻塞，等于这条分支不存在。
+	Drain <-chan struct{}
 }
 
 // Route 一条消费者侧路由。

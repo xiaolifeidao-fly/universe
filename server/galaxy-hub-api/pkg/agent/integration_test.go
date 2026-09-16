@@ -155,7 +155,7 @@ func newHubWith(t *testing.T, tune func(*corepkg.Deps)) (*httptest.Server, *fake
 	engine := gin.New()
 	consumer := engine.Group("/v1", corepkg.RequireConsumerKey(service))
 	corepkg.Register(consumer, adapter, *deps)
-	agent.NewHandler(service, exchange, corepkg.NewJournal(64, nil), 2*time.Second, nil).RegisterHandler(engine.Group("/agent/v1"))
+	agent.NewHandler(service, exchange, corepkg.NewJournal(64, nil), 2*time.Second, nil, nil).RegisterHandler(engine.Group("/agent/v1"))
 
 	server := httptest.NewServer(engine)
 	// 先断开客户端连接再 Close：这些用例里消费者连接本来就挂着等节点，

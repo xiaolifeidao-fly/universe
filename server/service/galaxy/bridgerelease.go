@@ -186,7 +186,7 @@ func (s *service) PublishBridgeRelease(ctx context.Context, req dto.PublishBridg
 	digest := hex.EncodeToString(sum[:])
 	// 签名里可能夹着换行（从 .sig 文件读出来的），去掉所有空白再验。
 	signature := strings.Join(strings.Fields(req.Signature), "")
-	if err := verifyBridgeSignature(s.config.BridgeReleaseKeys, version, platform, digest, signature); err != nil {
+	if err := verifyBridgeSignature(s.cfg().BridgeReleaseKeys, version, platform, digest, signature); err != nil {
 		return dto.BridgeReleaseView{}, err
 	}
 
@@ -267,7 +267,7 @@ func (s *service) BridgeManifest(ctx context.Context) (dto.BridgeReleaseManifest
 	if err != nil {
 		return dto.BridgeReleaseManifest{}, err
 	}
-	hub := strings.TrimRight(strings.TrimSpace(s.config.ProviderHubURL), "/")
+	hub := strings.TrimRight(strings.TrimSpace(s.cfg().ProviderHubURL), "/")
 	manifest := dto.BridgeReleaseManifest{
 		HubURL:    hub,
 		Platforms: make([]dto.BridgeReleaseAsset, 0, len(latest)),
@@ -306,14 +306,14 @@ func (s *service) BridgeDownloadURL(ctx context.Context, platform, version strin
 	if err != nil {
 		return "", err
 	}
-	if base := strings.TrimRight(strings.TrimSpace(s.config.BridgeDownloadBaseURL), "/"); base != "" {
+	if base := strings.TrimRight(strings.TrimSpace(s.cfg().BridgeDownloadBaseURL), "/"); base != "" {
 		// 桶是公开读或者前面挂了 CDN 时走这条：省掉签名，地址也能被缓存。
 		return base + "/" + strings.TrimLeft(row.ObjectKey, "/"), nil
 	}
 	if s.signer == nil {
 		return "", errors.New("对象存储未配置，安装包下载不可用（oss.*）")
 	}
-	return s.signer.SignGet(ctx, row.ObjectKey, s.config.PresignGetTTL)
+	return s.signer.SignGet(ctx, row.ObjectKey, s.cfg().PresignGetTTL)
 }
 
 // BridgeChecksum 给安装脚本用的校验值，sha256sum 的格式。
