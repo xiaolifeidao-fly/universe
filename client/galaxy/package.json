@@ -21,6 +21,7 @@
     "test:desktop": "node scripts/test-electron.cjs",
     "test:standalone": "node scripts/smoke-desktop.cjs",
     "build:electron": "node scripts/build-electron.cjs nova && node scripts/build-electron.cjs orbit",
+    "icons": "node scripts/build-icons.cjs",
     "test:bridge": "npm run test --workspace @galaxy/ai-bridge-native && npm run test --workspace ai-bridge",
     "build:bridge-native": "npm run build --workspace @galaxy/ai-bridge-native",
     "verify:bridge": "node scripts/verify-bridge-packaging.cjs",

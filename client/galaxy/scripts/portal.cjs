@@ -9,7 +9,6 @@
 // 那里面装的一直是「要部署到远端服务器的 Next standalone 包」，
 // 不改是因为可能已经有部署脚本指着它。
 const { spawn } = require("node:child_process");
-const fs = require("node:fs");
 const path = require("node:path");
 
 const [action] = process.argv.slice(2);
@@ -39,34 +38,10 @@ async function main() {
     return;
   }
 
-  await run(["build"]);
-
-  const dist = path.join(app, ".next");
-  const output = path.join(root, ".desktop", "portal");
-  fs.rmSync(output, { recursive: true, force: true });
-  fs.cpSync(path.join(dist, "standalone"), output, { recursive: true });
-  // standalone 把应用放在它在仓库里的相对路径下，static 与 public 要自己补进去。
-  const appRoot = path.join(output, "client", "galaxy", "portal");
-  fs.cpSync(path.join(dist, "static"), path.join(appRoot, ".next", "static"), { recursive: true });
-  fs.cpSync(path.join(app, "public"), path.join(appRoot, "public"), { recursive: true });
-  // 本地 .env 可能带密钥，部署那份只认运行环境变量。
-  for (const name of fs.readdirSync(appRoot)) {
-    if (name.startsWith(".env")) fs.rmSync(path.join(appRoot, name));
-  }
-  require("@next/env").loadEnvConfig(app, false);
-  fs.writeFileSync(
-    path.join(output, "runtime.json"),
-    JSON.stringify(
-      {
-        SERVER_TARGET: process.env.SERVER_TARGET || "http://127.0.0.1:10004",
-        APP_URL_PREFIX: process.env.APP_URL_PREFIX || "/api",
-        NEXT_PUBLIC_CONSOLE_URL: process.env.NEXT_PUBLIC_CONSOLE_URL || "",
-      },
-      null,
-      2,
-    ),
-  );
-  console.log(`[portal] 构建完成：${output}`);
+  // 构建与打包的那几步（拷 standalone、压平目录、补 static/public、删 .env、
+  // 写 runtime.json）和两个端完全一样，走同一个 build-webview.cjs ——
+  // 门户不走 desktop.cjs 是因为它没有壳，不是因为它的界面要另起一套。
+  require("./build-webview.cjs").buildWebview("portal");
 }
 
 main().catch((error) => {

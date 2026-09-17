@@ -36,14 +36,8 @@ const (
 
 const (
 	ResourceMenu = "menu"
-	// ResourceGroup 菜单里的一条分组标题。它和 menu 的差别只在前端怎么画：
-	// menu 是要点一下才展开的目录，group 是一行小标题，底下的页面一直摊着。
-	//
-	// 有它是因为「共享算力池」底下已经十几个页面 —— 平铺成一长条找不到东西，
-	// 而再套一层要点开的目录，等于让每天都用的页面多一次点击。分组标题两头都不占。
-	ResourceGroup = "group"
-	ResourcePage  = "page"
-	ResourceAPI   = "api"
+	ResourcePage = "page"
+	ResourceAPI  = "api"
 )
 
 type Service interface {

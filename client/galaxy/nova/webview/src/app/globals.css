@@ -9,6 +9,8 @@
  */
 
 @import "../../../../../shared/styles/tokens.css";
+/* 字体地址要带 basePath，只能由端自己声明；必须排在 tokens.css 后面，见 fonts.css 顶注。 */
+@import "./fonts.css";
 @import "../../../../../shared/styles/galaxy.css";
 
 :root {

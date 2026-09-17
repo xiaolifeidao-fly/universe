@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Product } from '../index';
-import { products } from '../index';
+import { defaultOrigin } from '../index';
 
 /**
  * 桌面壳要加载哪个地址。
@@ -17,8 +17,9 @@ import { products } from '../index';
  * 页面来自网络之后，能控制那台服务器的人就能驱动这台机器。于是：
  *
  *   1. 非本机地址必须 https —— 明文 http 谁都能改包；
- *   2. 只认打包时冻结的默认值与启动环境变量，界面里不给改；
- *   3. 未打包（开发态）才回落到本机 next dev。
+ *   2. 只认三处：编译进壳的 defaultOrigin、打包时冻结的 desktop.json、
+ *      启动环境变量。界面里不给改；
+ *   3. 想连本机 next dev 也得走环境变量，没有「开发态就自动用本机」这条暗门。
  */
 export interface OriginSource {
   product: Product;
@@ -30,23 +31,31 @@ export interface OriginSource {
   readFile?: (file: string) => string | null;
 }
 
+/**
+ * 地址来源，从高到低：
+ *
+ *   GALAXY_<端>_APP_ORIGIN    单端覆盖 —— 一台机器上两个端连不同环境是常态
+ *   GALAXY_APP_ORIGIN         两端共用的覆盖
+ *   resources/desktop.json    打包时由 APP_ORIGIN 冻结进安装包的值
+ *   defaultOrigin             编译进壳的正式部署地址（@galaxy/common）
+ *
+ * 每一级都用 `||` 往下落，空串和只有空白的值一律当「没配」而不是一个合法的空地址：
+ * 运维把变量导出成空值（`GALAXY_APP_ORIGIN=` 这种）比不导出常见得多，那时候
+ * 该用的是下一级，不是报错。
+ *
+ * 最后一级是常量，所以这个函数没有「没配地址」这个失败态；也因此开发态不再
+ * 隐式回落到 127.0.0.1 —— 对着本机 next dev 调壳时由 scripts/desktop.cjs 的
+ * dev 分支显式注入 GALAXY_<端>_APP_ORIGIN。「壳连的是本机还是线上」于是永远
+ * 写在环境里，看一眼 env 就知道，不用去猜 app.isPackaged 当时是什么。
+ */
 export function resolveOrigin(source: OriginSource): string {
   const { product, packaged, env } = source;
   const upper = product.toUpperCase();
-  // 单端覆盖优先于共用覆盖：一台机器上两个端连不同环境是常态。
-  const configured = (
-    env[`GALAXY_${upper}_APP_ORIGIN`] ??
-    env.GALAXY_APP_ORIGIN ??
-    (packaged ? frozenOrigin(source) : '')
-  ).trim();
-
-  if (!configured) {
-    if (!packaged) return `http://127.0.0.1:${products[product].port}`;
-    throw new Error(
-      `没有配置控制台地址。打包时把 APP_ORIGIN 写进 resources/desktop.json，` +
-        `或启动前设 GALAXY_${upper}_APP_ORIGIN。`,
-    );
-  }
+  const configured =
+    env[`GALAXY_${upper}_APP_ORIGIN`]?.trim() ||
+    env.GALAXY_APP_ORIGIN?.trim() ||
+    (packaged ? frozenOrigin(source).trim() : '') ||
+    defaultOrigin;
 
   let parsed: URL;
   try {
@@ -63,7 +72,7 @@ export function resolveOrigin(source: OriginSource): string {
   return parsed.origin;
 }
 
-/** 打包时冻结进 resources/desktop.json 的默认地址。拿不到就是空串，由上面报错。 */
+/** 打包时冻结进 resources/desktop.json 的默认地址。拿不到就是空串，由上面往下落。 */
 function frozenOrigin(source: OriginSource): string {
   const read = source.readFile ?? ((file: string) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null));
   const raw = read(path.join(source.resourcesPath, 'desktop.json'));

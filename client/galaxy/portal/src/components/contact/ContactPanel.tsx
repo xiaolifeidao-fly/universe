@@ -20,13 +20,15 @@ import { Card, LinkBtn, Section, TextLink } from "@/components/site/kit";
 import { IconArrowRight, IconChat, IconCheck, IconMail } from "@/components/site/icons";
 import { PageHero } from "@/components/home/HomeSections";
 import { submitLead, type SubmitLeadRequest } from "@/app/(site)/contact/api/contact.api";
-import { orPlaceholder, siteConfig } from "@/utils/site";
+import { orPlaceholder } from "@/utils/site";
+import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalOverview } from "@/utils/portal";
 
 const TOPICS = ["enterprise", "support", "business", "other"] as const;
 
 export function ContactPanel({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
+  const siteConfig = useSiteConfig();
   const [form] = Form.useForm<SubmitLeadRequest>();
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);

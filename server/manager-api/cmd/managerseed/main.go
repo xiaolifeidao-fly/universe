@@ -34,51 +34,58 @@ var pages = []struct {
 	Code, Name, Parent, PageURL, Icon string
 	Type                              string
 	SortID                            int
+	// Status 留空按 active 处理。只有被结构调整淘汰掉的老菜单会显式置 disabled。
+	Status string
 }{
 	{Code: "dashboard", Name: "仪表盘", PageURL: "/dashboard", Icon: "DashboardOutlined", Type: manager.ResourcePage, SortID: 10},
 	{Code: "users", Name: "用户管理", PageURL: "/users", Icon: "TeamOutlined", Type: manager.ResourcePage, SortID: 20},
 	{Code: "businessLines", Name: "业务线管理", PageURL: "/business-lines", Icon: "BranchesOutlined", Type: manager.ResourcePage, SortID: 30},
 	{Code: "programs", Name: "项目管理", PageURL: "/programs", Icon: "FolderOutlined", Type: manager.ResourcePage, SortID: 40},
-	// 共享算力池是菜单不是页面：原来那十几块内容挤在一个页面的页签条里，
-	// 现在一块一个页面挂在它底下 —— 页签排到第十一个就不是导航了。
-	// 中间隔着一层分组标题（group）：不用点开，只是把一长条切成几段。
-	{Code: "galaxy", Name: "共享算力池", Icon: "GlobalOutlined", Type: manager.ResourceMenu, SortID: 50},
+	// 共享算力池：**六个一级菜单**，页面挂在各自底下做二级。
+	//
+	// 原来是「共享算力池」一个一级菜单 → 六个分组标题 → 二十三个页面，三层。
+	// 现在和「系统设置」一样是标准的两层，跟整个控制台对齐。
+	//
+	// 名字都带「算力」前缀：这些一级菜单和「系统设置」「用户管理」并排站着。
+	//
+	// 老的 galaxy 那一行留着、置 disabled：CurrentMenus 只取 active，它不再出现在侧栏。
+	{Code: "galaxy", Name: "共享算力池", Icon: "GlobalOutlined", Type: manager.ResourceMenu, SortID: 50, Status: manager.StatusDisabled},
 
-	{Code: "galaxyOverview", Name: "总览", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 51},
-	{Code: "galaxyHome", Name: "运营总览", Parent: "galaxyOverview", PageURL: "/galaxy/overview", Type: manager.ResourcePage, SortID: 52},
-	{Code: "galaxyPool", Name: "池水位", Parent: "galaxyOverview", PageURL: "/galaxy/pool", Type: manager.ResourcePage, SortID: 53},
-	{Code: "galaxyUnits", Name: "运行工单", Parent: "galaxyOverview", PageURL: "/galaxy/units", Type: manager.ResourcePage, SortID: 54},
-	{Code: "galaxySettlement", Name: "结算汇总", Parent: "galaxyOverview", PageURL: "/galaxy/settlement", Type: manager.ResourcePage, SortID: 55},
-	{Code: "galaxyLedger", Name: "账本流水", Parent: "galaxyOverview", PageURL: "/galaxy/ledger", Type: manager.ResourcePage, SortID: 56},
+	{Code: "galaxyOverview", Name: "算力总览", Icon: "GlobalOutlined", Type: manager.ResourceMenu, SortID: 50},
+	{Code: "galaxyHome", Name: "运营总览", Parent: "galaxyOverview", PageURL: "/galaxy/overview", Type: manager.ResourcePage, SortID: 51},
+	{Code: "galaxyPool", Name: "池水位", Parent: "galaxyOverview", PageURL: "/galaxy/pool", Type: manager.ResourcePage, SortID: 52},
+	{Code: "galaxyUnits", Name: "运行工单", Parent: "galaxyOverview", PageURL: "/galaxy/units", Type: manager.ResourcePage, SortID: 53},
+	{Code: "galaxySettlement", Name: "结算汇总", Parent: "galaxyOverview", PageURL: "/galaxy/settlement", Type: manager.ResourcePage, SortID: 54},
+	{Code: "galaxyLedger", Name: "账本流水", Parent: "galaxyOverview", PageURL: "/galaxy/ledger", Type: manager.ResourcePage, SortID: 55},
 
-	{Code: "galaxySupply", Name: "算力供给", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 57},
-	{Code: "galaxyNodes", Name: "节点与贡献", Parent: "galaxySupply", PageURL: "/galaxy/nodes", Type: manager.ResourcePage, SortID: 58},
-	{Code: "galaxyPayouts", Name: "提现审批", Parent: "galaxySupply", PageURL: "/galaxy/payouts", Type: manager.ResourcePage, SortID: 59},
+	{Code: "galaxySupply", Name: "算力供给", Icon: "ClusterOutlined", Type: manager.ResourceMenu, SortID: 56},
+	{Code: "galaxyNodes", Name: "节点与贡献", Parent: "galaxySupply", PageURL: "/galaxy/nodes", Type: manager.ResourcePage, SortID: 57},
+	{Code: "galaxyPayouts", Name: "提现审批", Parent: "galaxySupply", PageURL: "/galaxy/payouts", Type: manager.ResourcePage, SortID: 58},
 
-	// 风控单成一组：抽检与用量偏差是「发现」，信誉与封禁是「处置」。
-	{Code: "galaxyRisk", Name: "风控与审计", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 60},
-	{Code: "galaxyProbes", Name: "抽检", Parent: "galaxyRisk", PageURL: "/galaxy/probes", Type: manager.ResourcePage, SortID: 61},
-	{Code: "galaxyMismatches", Name: "用量偏差", Parent: "galaxyRisk", PageURL: "/galaxy/mismatches", Type: manager.ResourcePage, SortID: 62},
-	{Code: "galaxyReputation", Name: "信誉", Parent: "galaxyRisk", PageURL: "/galaxy/reputation", Type: manager.ResourcePage, SortID: 63},
-	{Code: "galaxyBans", Name: "封禁名单", Parent: "galaxyRisk", PageURL: "/galaxy/bans", Type: manager.ResourcePage, SortID: 64},
+	{Code: "galaxyRisk", Name: "风控与审计", Icon: "SafetyCertificateOutlined", Type: manager.ResourceMenu, SortID: 59},
+	{Code: "galaxyProbes", Name: "抽检", Parent: "galaxyRisk", PageURL: "/galaxy/probes", Type: manager.ResourcePage, SortID: 60},
+	{Code: "galaxyMismatches", Name: "用量偏差", Parent: "galaxyRisk", PageURL: "/galaxy/mismatches", Type: manager.ResourcePage, SortID: 61},
+	{Code: "galaxyReputation", Name: "信誉", Parent: "galaxyRisk", PageURL: "/galaxy/reputation", Type: manager.ResourcePage, SortID: 62},
+	{Code: "galaxyBans", Name: "封禁名单", Parent: "galaxyRisk", PageURL: "/galaxy/bans", Type: manager.ResourcePage, SortID: 63},
 
-	{Code: "galaxyDemand", Name: "使用与计费", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 65},
-	{Code: "galaxyKeys", Name: "算力密钥", Parent: "galaxyDemand", PageURL: "/galaxy/keys", Type: manager.ResourcePage, SortID: 66},
-	{Code: "galaxyOrders", Name: "订单", Parent: "galaxyDemand", PageURL: "/galaxy/orders", Type: manager.ResourcePage, SortID: 67},
-	{Code: "galaxyPoints", Name: "积分充值", Parent: "galaxyDemand", PageURL: "/galaxy/points", Type: manager.ResourcePage, SortID: 68},
-	{Code: "galaxyPackages", Name: "额度包", Parent: "galaxyDemand", PageURL: "/galaxy/packages", Type: manager.ResourcePage, SortID: 69},
-	{Code: "galaxyPricing", Name: "价目表", Parent: "galaxyDemand", PageURL: "/galaxy/pricing", Type: manager.ResourcePage, SortID: 70},
+	{Code: "galaxyDemand", Name: "使用与计费", Icon: "WalletOutlined", Type: manager.ResourceMenu, SortID: 64},
+	{Code: "galaxyKeys", Name: "算力密钥", Parent: "galaxyDemand", PageURL: "/galaxy/keys", Type: manager.ResourcePage, SortID: 65},
+	{Code: "galaxyOrders", Name: "订单", Parent: "galaxyDemand", PageURL: "/galaxy/orders", Type: manager.ResourcePage, SortID: 66},
+	{Code: "galaxyPoints", Name: "积分充值", Parent: "galaxyDemand", PageURL: "/galaxy/points", Type: manager.ResourcePage, SortID: 67},
+	{Code: "galaxyPackages", Name: "额度包", Parent: "galaxyDemand", PageURL: "/galaxy/packages", Type: manager.ResourcePage, SortID: 68},
+	{Code: "galaxyPricing", Name: "价目表", Parent: "galaxyDemand", PageURL: "/galaxy/pricing", Type: manager.ResourcePage, SortID: 69},
 
-	{Code: "galaxyCustomer", Name: "客户与增长", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 71},
-	{Code: "galaxyAccounts", Name: "账号", Parent: "galaxyCustomer", PageURL: "/galaxy/accounts", Type: manager.ResourcePage, SortID: 72},
-	{Code: "galaxyDisputes", Name: "争议工单", Parent: "galaxyCustomer", PageURL: "/galaxy/disputes", Type: manager.ResourcePage, SortID: 73},
-	{Code: "galaxyLeads", Name: "销售线索", Parent: "galaxyCustomer", PageURL: "/galaxy/leads", Type: manager.ResourcePage, SortID: 74},
-	{Code: "galaxyReferrals", Name: "邀请返现", Parent: "galaxyCustomer", PageURL: "/galaxy/referrals", Type: manager.ResourcePage, SortID: 75},
+	{Code: "galaxyCustomer", Name: "客户与增长", Icon: "RiseOutlined", Type: manager.ResourceMenu, SortID: 70},
+	{Code: "galaxyAccounts", Name: "账号", Parent: "galaxyCustomer", PageURL: "/galaxy/accounts", Type: manager.ResourcePage, SortID: 71},
+	{Code: "galaxyDisputes", Name: "争议工单", Parent: "galaxyCustomer", PageURL: "/galaxy/disputes", Type: manager.ResourcePage, SortID: 72},
+	{Code: "galaxyLeads", Name: "销售线索", Parent: "galaxyCustomer", PageURL: "/galaxy/leads", Type: manager.ResourcePage, SortID: 73},
+	{Code: "galaxyReferrals", Name: "邀请返现", Parent: "galaxyCustomer", PageURL: "/galaxy/referrals", Type: manager.ResourcePage, SortID: 74},
 
-	{Code: "galaxyPlatform", Name: "平台设置", Parent: "galaxy", Type: manager.ResourceGroup, SortID: 80},
-	{Code: "galaxySettings", Name: "运行参数", Parent: "galaxyPlatform", PageURL: "/galaxy/settings", Type: manager.ResourcePage, SortID: 81},
-	{Code: "galaxyModels", Name: "模型目录", Parent: "galaxyPlatform", PageURL: "/galaxy/models", Type: manager.ResourcePage, SortID: 82},
-	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", Parent: "galaxyPlatform", PageURL: "/galaxy/bridge-releases", Type: manager.ResourcePage, SortID: 83},
+	{Code: "galaxyPlatform", Name: "算力平台", Icon: "ControlOutlined", Type: manager.ResourceMenu, SortID: 75},
+	{Code: "galaxySettings", Name: "运行参数", Parent: "galaxyPlatform", PageURL: "/galaxy/settings", Type: manager.ResourcePage, SortID: 76},
+	{Code: "galaxyModels", Name: "模型目录", Parent: "galaxyPlatform", PageURL: "/galaxy/models", Type: manager.ResourcePage, SortID: 77},
+	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", Parent: "galaxyPlatform", PageURL: "/galaxy/bridge-releases", Type: manager.ResourcePage, SortID: 78},
+
 	{Code: "settings", Name: "系统设置", Icon: "SettingOutlined", Type: manager.ResourceMenu, SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", Parent: "settings", PageURL: "/settings/accounts", Type: manager.ResourcePage, SortID: 91},
 	{Code: "settingsRoles", Name: "角色与权限", Parent: "settings", PageURL: "/settings/roles", Type: manager.ResourcePage, SortID: 92},
@@ -192,14 +199,14 @@ func writePages(out *strings.Builder) {
 		if page.Parent != "" {
 			continue
 		}
-		writeResourceInsert(out, page.Code, page.Name, page.Type, "", "", page.PageURL, page.Icon, page.SortID, "")
+		writeResourceUpsert(out, page.Code, page.Name, page.Type, page.PageURL, page.Icon, page.SortID, "", page.Status)
 	}
 	out.WriteString("\n-- 子页面：parent_id 按 code 反查，不写死自增 id。\n\n")
 	for _, page := range pages {
 		if page.Parent == "" {
 			continue
 		}
-		writeResourceInsert(out, page.Code, page.Name, page.Type, "", "", page.PageURL, page.Icon, page.SortID, page.Parent)
+		writeResourceUpsert(out, page.Code, page.Name, page.Type, page.PageURL, page.Icon, page.SortID, page.Parent, page.Status)
 	}
 	out.WriteString("\n")
 }
@@ -249,7 +256,7 @@ func writeAPIs(out *strings.Builder, routes []manager.RouteRef) []apiResource {
 `, len(items))
 	for _, item := range items {
 		writeResourceInsert(out, item.Code, item.Method+" "+item.Path, manager.ResourceAPI,
-			item.Method, item.Path, "", "", 0, "")
+			item.Method, item.Path, "", "", 0, "", "")
 	}
 	out.WriteString("\n")
 	return items
@@ -349,14 +356,44 @@ func writeGrant(out *strings.Builder, roleCode string, pageCodes, apiCodes []str
 //
 // 存在性判断套了一层派生表（AS t）：MySQL 不允许 INSERT ... SELECT 的 WHERE 直接
 // 引用目标表，会报 1093。多这一层强制子查询先物化，绕开它。父节点 id 同理。
-func writeResourceInsert(out *strings.Builder, code, name, resourceType, method, resourceURL, pageURL, icon string, sortID int, parent string) {
+// writeResourceInsert 建一行资源，已经在就跳过。接口资源用它就够了：
+// 接口的 code 是由 method + path 算出来的，code 在就说明那一行的内容一字不差。
+func writeResourceInsert(out *strings.Builder, code, name, resourceType, method, resourceURL, pageURL, icon string, sortID int, parent, status string) {
+	if status == "" {
+		status = manager.StatusActive
+	}
 	parentExpr := "0"
 	if parent != "" {
 		parentExpr = fmt.Sprintf("(SELECT id FROM (SELECT id FROM zt_manager_resource WHERE code = %s) AS p)", quote(parent))
 	}
-	fmt.Fprintf(out, "INSERT INTO zt_manager_resource\n  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)\nSELECT %s, %s, %s, %s, %s, %s, %s, %s, %d, 'active', NOW(3), NOW(3)\nFROM DUAL\nWHERE NOT EXISTS (SELECT 1 FROM (SELECT 1 FROM zt_manager_resource WHERE code = %s) AS t);\n",
+	fmt.Fprintf(out, "INSERT INTO zt_manager_resource\n  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)\nSELECT %s, %s, %s, %s, %s, %s, %s, %s, %d, %s, NOW(3), NOW(3)\nFROM DUAL\nWHERE NOT EXISTS (SELECT 1 FROM (SELECT 1 FROM zt_manager_resource WHERE code = %s) AS t);\n",
 		parentExpr, quote(code), quote(name), quote(resourceType), quote(method),
-		quote(resourceURL), quote(pageURL), quote(icon), sortID, quote(code))
+		quote(resourceURL), quote(pageURL), quote(icon), sortID, quote(status), quote(code))
+
+}
+
+// writeResourceUpsert 菜单与页面用它：先建（没有才建），再无条件覆盖一次。
+//
+// 光 INSERT ... WHERE NOT EXISTS 不够 —— 老库上这些 code 早就在了，整条会被跳过，
+// 于是结构调整（挪父节点、改名、改排序、停用）一个都落不下去，而现象是
+// 「SQL 跑完没报错，菜单一点没变」。两步合起来等价于按 code 的 upsert，
+// 而自增 id 自始至终没动过 —— zt_manager_role_resource 里指向它的授权不会断。
+func writeResourceUpsert(out *strings.Builder, code, name, resourceType, pageURL, icon string, sortID int, parent, status string) {
+	if status == "" {
+		status = manager.StatusActive
+	}
+	writeResourceInsert(out, code, name, resourceType, "", "", pageURL, icon, sortID, parent, status)
+
+	// 用 JOIN 反查父节点，不用子查询 —— MySQL 不允许 UPDATE 的子查询读同一张表（1093）。
+	if parent != "" {
+		fmt.Fprintf(out, "UPDATE zt_manager_resource child\nJOIN zt_manager_resource parent ON parent.code = %s\nSET child.parent_id = parent.id, child.name = %s, child.resource_type = %s, child.page_url = %s,\n    child.icon = %s, child.sort_id = %d, child.status = %s, child.updated_time = NOW(3)\nWHERE child.code = %s;\n\n",
+			quote(parent), quote(name), quote(resourceType), quote(pageURL),
+			quote(icon), sortID, quote(status), quote(code))
+		return
+	}
+	fmt.Fprintf(out, "UPDATE zt_manager_resource\nSET parent_id = 0, name = %s, resource_type = %s, page_url = %s,\n    icon = %s, sort_id = %d, status = %s, updated_time = NOW(3)\nWHERE code = %s;\n\n",
+		quote(name), quote(resourceType), quote(pageURL),
+		quote(icon), sortID, quote(status), quote(code))
 }
 
 type apiResource struct{ Code, Method, Path string }

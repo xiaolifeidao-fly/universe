@@ -76,6 +76,7 @@ client/galaxy/
 │       ├── main.ts                通用窗口、Next 生命周期、来源校验
 │       ├── preload.ts             根据契约自动 exposeInMainWorld
 │       └── rpc.ts                 自动注册 IPC 与暴露方法
+├── assets/icons/                   两个端的应用图标母版（nova.svg / orbit.svg）
 ├── scripts/                        工作区构建、启动、验证工具
 └── package.json
 ```
@@ -100,7 +101,7 @@ Nova 不包含 consumer 路由，Orbit 不包含 provider 路由，访问另一�
 | Portal | 门户站，纯网页 | **还没注册的陌生人** | 17900 |
 
 门户不接管控制台的任何功能：它回答「你们卖什么、多少钱、怎么接」，
-顶栏那个「控制台」按钮把人送去 Orbit（地址由 `NEXT_PUBLIC_CONSOLE_URL` 配）。
+顶栏那个「控制台」按钮把人送去 Orbit（地址由 `GALAXY_CONSOLE_URL` 配，运行时读）。
 门户只打服务端的一组公开路由 `/api/galaxy/portal/*`，不带鉴权、不碰用户维度的数据。
 
 ## 视觉与交互
@@ -114,6 +115,29 @@ Nova 不包含 consumer 路由，Orbit 不包含 provider 路由，访问另一�
 | `<端>/webview/src/app/globals.css` | 这个端的 `--gx-*` 调色板。改色只改这里 |
 | `<端>/webview/src/styles/theme.ts` | antd 主题。antd 只负责浮层（Modal / Select / message / Popconfirm），表格与表单都是原生件 —— 原型的密度靠改 antd token 拉不过来 |
 | `<端>/webview/src/components/ui/` | 设计系统的 React 层。两端各一份拷贝，和 `utils/format.ts`、`i18n` 一样按端维护 |
+
+### 应用图标
+
+两枚图标是一对：同一块圆角底板、同一颗白色核心，只差一个动作。Nova 是向外发光的新星
+（把算力发出去），Orbit 是绕着核心转的卫星（绕过来取用）。颜色直接取各端 `globals.css`
+里的 `--gx-accent` 一族 —— Nova 暖铜、Orbit 青绿，隔着 Dock 也能一眼分开。
+
+母版只有 `assets/icons/<端>.svg` 这一份，别的全是它的产物。改图标只改这份 SVG，然后：
+
+```bash
+npm run icons
+```
+
+`scripts/build-icons.cjs` 借工作区里已有的 Electron 光栅化（不引图形库、不依赖本机装没装
+ImageMagick），一次生出下面这些；产物都进版本库，打包机不必再跑一遍。
+
+| 产物 | 给谁 |
+|---|---|
+| `<端>/electron/build/icon.icns` | macOS 安装包。这份是内缩到 824 见方 + 落影的变体，满幅方块进 Dock 会比邻居大一圈 |
+| `<端>/electron/build/icon.ico` | Windows 安装包与 exe |
+| `<端>/electron/build/icons/*.png` | Linux AppImage |
+| `<端>/electron/assets/icon.png` | Windows/Linux 的窗口与任务栏图标（macOS 用的是安装包里的 .icns） |
+| `<端>/webview/src/app/icon.svg`、`apple-icon.png` | 浏览器页签、加到手机主屏（后者满幅直角，圆角由系统自己切） |
 
 字体（Instrument Serif 衬线大数字 + JetBrains Mono 表格数字）自托管在各端
 `public/fonts/`，声明在 `client/shared/styles/tokens.css`，不连 CDN —— 桌面应用可能离线。
@@ -143,22 +167,126 @@ Nova 启动时创建独立 UtilityProcess，退出时停止任务并回收子进
 
 ## 界面部署与桌面壳
 
+三个成员共用一个域名，所以各占一段路径：门户在根上，两个控制台挂在自己的 `basePath` 下。
+
+| | 地址 | 本机 |
+|---|---|---|
+| Portal | `https://<域名>/` | 17900（无 basePath，探活 `/api/health`） |
+| Nova | `https://<域名>/nova` | 17898，`http://127.0.0.1:17898/nova` |
+| Orbit | `https://<域名>/orbit` | 17899，`http://127.0.0.1:17899/orbit` |
+
+`basePath` 的唯一数据源是 `common/index.js`，next.config.mjs 从那里读，桌面壳与
+Webview 也从那里读。nginx 那两条 `location ^~ /nova/`、`/orbit/` **不改写路径**，
+所以应用自己必须知道自己挂在哪 —— 这不是可选项。
+
+跟着 basePath 走的东西里，只有三样要手工带前缀，其余（页面跳转、`_next` 静态资源、
+`public/` 下的文件）Next 自己会加：
+
+- `<端>/webview/src/utils/axios.ts`：业务请求的 `baseURL` 和未登录跳转，是界面里仅有的两处手拼绝对路径；
+- `<端>/webview/src/app/fonts.css`：CSS 的 `url()` 不认 basePath，Next 也不会帮你改写它，
+  所以自托管字体要由端自己再声明一遍（**必须排在 tokens.css 之后**，靠「同族最后一条生效」把根路径那组盖掉）；
+- 桌面壳：`loadURL` 与健康探测打的是 `origin + basePath`，而「允许跳到哪里」仍按 origin 判断。
+
+门户上那个「控制台」按钮指向 `/orbit/consumer/keys`（`GALAXY_CONSOLE_URL` 可覆盖），
+前面那段不能省。这个地址是**运行时**读的：改部署机上的 `runtime.json` 再重启就生效，
+不用重新构建（早先它叫 `NEXT_PUBLIC_CONSOLE_URL`，那种写法是构建期内联，
+线上出过按钮指着打包机 `127.0.0.1` 的事）。
+
 界面（`<端>/webview`）部署在**远端服务器**上，桌面壳只负责加载它的地址：
 
 ```
 npm run build:nova      →  .desktop/nova/          要部署到服务器的 Next standalone 包
                            nova/electron/desktop.json  这个安装包默认连哪个地址
+                                                       （不给 APP_ORIGIN 就是 defaultOrigin）
 npm run package:nova    →  release/nova/           安装包，不含 Next 服务
 ```
+
+界面那份包自己带了一套发布脚本（`<端>/webview/`，门户是 `portal/`），和 `server/galaxy-api` 那套同形：
+
+| 脚本 | 做什么 |
+|---|---|
+| `build.sh` | 只构建界面，产出 `.desktop/<端>/`。不编 Electron、不编 Rust 桥接 —— 只跑界面的服务器不该为发一个前端装 Rust 工具链 |
+| `package.sh` | 构建 + 打成 `<端>-webview-linux-x64.tar.gz`（含 `start.sh` / `stop.sh`） |
+| `unpack-release.sh` | 在服务器上解包。**放在 tar.gz 旁边跑**，把目录整个换掉、只留 `runtime.json` 与 `logs/`；服务还在跑就拒绝动手 |
+| `start.sh` / `stop.sh` | 起停那份 standalone。pid 在 `run/`，日志在 `logs/`。写的是 POSIX sh，`sh start.sh` 掉进 dash 也不会炸 |
+
+解包后就是这几样，没有多余的层级：
+
+```text
+<端>-webview-linux-x64/
+├── webview/          server.js、.next、public —— 真正跑起来的那个 Next 应用
+├── common/           @galaxy/common（代码已经编进 .next，这里只剩包声明）
+├── node_modules/     运行时依赖
+├── runtime.json      这台机器打哪台 Galaxy API（解包时从 example 生成）
+├── README.txt        起停、日志、别 npm install —— 运维只需要看这一页
+├── start.sh
+└── stop.sh
+```
+
+`unpack-release.sh` 是**整个换掉**而不是覆盖解包：tar 只写包里有的文件，上一次留下的
+多余文件它一个都不删。踩过的那次是有人在包里 `npm install`，npm 按清单把「多余的」
+依赖裁了（包括 `next` —— 它是 Next 自己追踪进来的、清单里没写），再解一次也回不来，
+最后表现成 `Cannot find module 'next'`，看上去像包坏了。`start.sh` 现在启动前先看一眼
+`node_modules/next` 在不在，不在就直接说「这个目录不是一次干净的解包」。
+
+**部署机上不要 `npm install`。** 依赖已经随包发好了，包根也刻意不带 `package.json` ——
+Next 会把工作区那份清单顺带追进 standalone，而它带着 `postinstall`（部署机上没有 `scripts/`）
+和 `workspaces`（指向不存在的 `nova/`、`orbit/`），照着它装一次会崩在 postinstall 上，
+还会把包里备好的 `node_modules` 搅乱。`build-webview.cjs` 出包时把那份清单删掉了。
+
+Next 的 standalone 本来是按应用在仓库里的相对路径摆的（`client/galaxy/<端>/webview`），
+`build-webview.cjs` 把那四层压掉了 —— 包名已经写明是哪个端，部署机上再背着仓库结构
+只会让 cd 和看日志多绕路。压平不影响解析：`server.js` 用 `__dirname` 定位自己，
+node 找依赖仍是从应用目录逐级往上走，`webview/` → 包根 的层级关系和压平前一样。
+
+`start.sh` 一个文件管两处：解包后的发布目录里 standalone 就在它身边，源码树里则回落到
+`../../.desktop/<端>`（门户是 `../.desktop/portal`）。两边跑的都是**要部署上去的那份包**，
+不是 `next start` —— 本机验的和线上发的必须是同一个东西。
+
+门户那套完全同形，只有三处不同：包里的应用目录叫 `portal/` 而不是 `webview/`；
+它挂在站点根上没有 basePath，所以探活打的是 `/api/health`；默认端口 17900。
+构建入口也是同一个 `scripts/build-webview.cjs`（`portal.cjs` 只剩 dev/start 和转调）——
+门户不走 `desktop.cjs` 是因为它没有壳，不是因为它的界面要另起一套构建。
+
+默认监听 `127.0.0.1:17898`（Nova）/ `127.0.0.1:17899`（Orbit），正是
+`doc/deployment/nginx/www.galaxy.rodeo.conf` 里 `galaxy_nova` / `galaxy_orbit` 两个 upstream
+指着的地址 —— 单实例部署不用给任何环境变量。要改用 `PORT` 与 `WEBVIEW_HOST`
+（不叫 `HOSTNAME`：bash 自己有个同名变量是机器名，被它顶掉会变成「绑不上」）。
+
+业务代理打哪台 Galaxy API 由 `SERVER_TARGET` / `APP_URL_PREFIX` 决定，`runtime.json` 给默认值、
+启动环境的同名变量优先。**发布包里只有 `runtime.example.json`**：真配置留在部署机上，
+重新解包不会被打包机的值覆盖。
+
+三个成员打的**不是同一台**服务，兜底值也就不一样：Nova 只调 `/api/galaxy/provider/*`
+（galaxy-api `:10004`），Orbit 的 `/api/galaxy/consumer/*` 和门户的 `/api/galaxy/portal/*`
+都在 galaxy-consumer-api `:10005` 上。指错了不会 502、也不报错，是后端回一句 Go 默认的
+`404 page not found`，看上去像页面丢了 —— 这个坑踩过一次。
+
+注意和工作区根目录那套同名脚本区分：根目录的 `start.sh nova` 是「用装好的壳打开已部署的控制台」，
+`<端>/webview/start.sh` 是「在这台机器上把界面跑起来」。
+
+两个壳默认加载的就是线上那两段：**Nova → `https://www.galaxy.rodeo/nova`，
+Orbit → `https://www.galaxy.rodeo/orbit`**。域名写在 `common/index.js` 的 `defaultOrigin`
+（和 `basePath` 放在一起 —— 它们是同一个地址的两半，抄成两份换域名只会改到一处），
+壳加载的地址就是 `defaultOrigin + basePath`。装好就能开，不配任何东西。
 
 地址的来源，从高到低：
 
 | 来源 | 用途 |
 |---|---|
-| `GALAXY_NOVA_APP_ORIGIN` / `GALAXY_ORBIT_APP_ORIGIN` | 单端覆盖，运维换域名不用重新打包 |
+| `GALAXY_NOVA_APP_ORIGIN` / `GALAXY_ORBIT_APP_ORIGIN` | 单端覆盖，运维换域名不用重新打包；一台机器上两个端连不同环境也靠它 |
 | `GALAXY_APP_ORIGIN` | 两端共用的覆盖 |
-| 安装包里的 `resources/desktop.json` | 打包时由 `APP_ORIGIN` 冻结进去的默认值 |
-| `http://127.0.0.1:<端口>` | **只在未打包的开发态**回落到本机 `next dev` |
+| 安装包里的 `resources/desktop.json` | 打包时由 `APP_ORIGIN` 冻结进去的值，发测试环境的包时给它 |
+| `common/index.js` 的 `defaultOrigin` | 编译进壳的正式部署地址 `https://www.galaxy.rodeo` |
+
+每一级的空串都当「没配」往下落 —— `export GALAXY_APP_ORIGIN=` 这种导成空值的写法
+比不导出常见得多，那时候该用下一级而不是报错。
+
+**开发态连本机 `next dev` 也走环境变量**：`npm run dev:nova` 由 `scripts/desktop.cjs`
+注入 `GALAXY_NOVA_APP_ORIGIN=http://127.0.0.1:17898`（已经手动指过的不覆盖）。
+这里刻意没有「未打包就自动用本机端口」那条暗门 —— 它会让 `bash start.sh nova`
+（壳在本机、界面在远端）也悄悄指向一个没人监听的端口，症状是一个看不懂的连不上。
+壳连的是本机还是线上，永远写在环境变量里。
 
 **非本机地址必须是 https，证书错误一律拒绝，界面里不提供改地址的入口。** 这不是洁癖：
 Nova 把 `BridgeApi` 整个暴露给渲染进程（`pair` 能把节点绑到任意 Hub、
@@ -172,7 +300,8 @@ Claude Code / Codex 的两个固定配置文件，而且每一次写都要用户
 跑的确实是这个端的控制台（防的是配错地址，不是防攻击 —— 挡攻击的是上面那三条）；
 连不上给「重试 / 退出」，不直接闪退。
 
-`bash start.sh nova|orbit` 就是「用装好的壳打开已部署的控制台」，本机不起任何服务。
+`bash start.sh nova|orbit` 就是「用装好的壳打开已部署的控制台」，本机不起任何服务 ——
+不给环境变量时打开的就是 `https://www.galaxy.rodeo/nova`（或 `/orbit`）。
 
 ## 安装与开发
 

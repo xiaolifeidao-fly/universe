@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppLocaleProvider } from "@/i18n/LocaleProvider";
+import { SiteConfigProvider } from "@/components/site/SiteConfigProvider";
+import { readSiteConfig } from "@/utils/site.server";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -23,11 +25,17 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
+  // 站点配置在这一层读一次就够：它在根布局上，四个页面都在它下面。
+  // 读的是**本进程的环境变量**，不是构建时烙进去的常量（见 utils/site.server.ts）。
+  const siteConfig = readSiteConfig();
+
   return (
     <html lang="zh-CN">
       <body>
         <AntdRegistry>
-          <AppLocaleProvider>{children}</AppLocaleProvider>
+          <SiteConfigProvider value={siteConfig}>
+            <AppLocaleProvider>{children}</AppLocaleProvider>
+          </SiteConfigProvider>
         </AntdRegistry>
       </body>
     </html>

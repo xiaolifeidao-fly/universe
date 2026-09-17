@@ -17,12 +17,12 @@ import { resolveOrigin } from './origin';
  * 连不上时给一个「重试 / 退出」，而不是直接退：远端部署碰上网络抖动是常态，
  * 为此让用户重开一次应用太粗暴。
  */
-async function probe(origin: string, product: Product, title: string): Promise<boolean> {
+async function probe(base: string, product: Product, title: string): Promise<boolean> {
   for (;;) {
     let detail = '';
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const response = await fetch(`${origin}/api/desktop-health`, { signal: AbortSignal.timeout(4000) });
+        const response = await fetch(`${base}/api/desktop-health`, { signal: AbortSignal.timeout(4000) });
         const health = (await response.json()) as { product?: string };
         if (health.product !== product) {
           throw new Error(`该地址上跑的是 ${health.product ?? '未知应用'}，不是 ${product}`);
@@ -36,7 +36,7 @@ async function probe(origin: string, product: Product, title: string): Promise<b
     const { response } = await dialog.showMessageBox({
       type: 'error',
       title,
-      message: `连不上控制台 ${origin}`,
+      message: `连不上控制台 ${base}`,
       detail,
       buttons: ['重试', '退出'],
       defaultId: 0,
@@ -76,16 +76,24 @@ export function start(product: Product, { preload, implementations, onReady, onS
       resourcesPath: process.resourcesPath,
       env: process.env,
     });
-    if (!(await probe(origin, product, config.name))) { app.quit(); return; }
+    // 三个成员共用一个域名，门户占着 `/`，控制台各挂在自己那一段下（见
+    // common/index.js 的 basePath）。所以「加载哪个地址」是 origin + basePath，
+    // 而「允许跳到哪里」仍然按 origin 判断 —— 同一个部署里的跳转本来就该放行，
+    // 收紧到 basePath 只会把登录后回跳这类站内流程误伤掉。
+    const base = origin + config.basePath;
+    if (!(await probe(base, product, config.name))) { app.quit(); return; }
     window = new BrowserWindow({
       title: config.name, width: 1440, height: 960, minWidth: 960, minHeight: 640,
       // macOS 上把标题栏收进内容区：左栏顶部那条 34px 的空白就是给三颗按钮留的，
       // 页面侧靠 -webkit-app-region: drag 让左栏和命令条仍然能拖窗口。
       // 其它平台保持系统标题栏 —— Windows/Linux 上自绘标题栏还要自己实现
       // 最小化/最大化/关闭，得不偿失。
+      // 窗口与任务栏图标只有 Windows/Linux 要显式给；macOS 用的是安装包里的
+      // .icns，这里给了也不生效。assets/ 跟 dist/ 一起打进包（见 electron/package.json
+      // 的 build.files），所以开发态和装好之后是同一条相对路径。
       ...(process.platform === 'darwin'
         ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 14, y: 18 } }
-        : {}),
+        : { icon: path.join(__dirname, '..', 'assets', 'icon.png') }),
       webPreferences: {
         preload, contextIsolation: true,
         nodeIntegration: false, sandbox: true,
@@ -112,6 +120,6 @@ export function start(product: Product, { preload, implementations, onReady, onS
       if (!isMainFrame || code === -3) return;
       dialog.showErrorBox(config.name, `页面加载失败 (${code} ${description})\n${url}`);
     });
-    await window.loadURL(origin);
+    await window.loadURL(base);
   }).catch((error) => { dialog.showErrorBox(config.name, error.message); app.quit(); });
 };

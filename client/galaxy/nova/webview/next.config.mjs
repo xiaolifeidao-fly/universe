@@ -20,8 +20,16 @@
  *   · 把本应用的 node_modules 插到 resolve.modules 最前面 → 同样打挂预渲染。
  * 正解是把 client/ 做成 npm workspaces，让三个 app 共用一份提升后的 node_modules。
  */
+import { createRequire } from "node:module";
+
+// basePath 从 @galaxy/common 读，不在这里再写一遍字面量：它同时决定了
+// 页面地址、_next 静态资源前缀、桌面壳 loadURL 的地址和业务代理的前缀，
+// 抄成两份之后对不上，症状会是「页面能开但静态资源 404」这种难查的。
+const { products } = createRequire(import.meta.url)("@galaxy/common");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  basePath: products.nova.basePath,
   transpilePackages: ["@galaxy/common"],
   experimental: { outputFileTracingRoot: new URL("../../../../", import.meta.url).pathname },
   output: "standalone",

@@ -22,7 +22,7 @@ import {
 } from "@/components/site/icons";
 import { CodeTabs } from "@/components/home/CodeTabs";
 import { formatContext, formatUnitPrice } from "@/utils/format";
-import { siteConfig } from "@/utils/site";
+import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalModel, PortalOverview } from "@/utils/portal";
 import type { ReactNode } from "react";
 
@@ -30,6 +30,7 @@ import type { ReactNode } from "react";
 
 export function Steps({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
+  const siteConfig = useSiteConfig();
   const sample = overview.models.find((model) => model.featured) ?? overview.models[0];
 
   return (
@@ -219,6 +220,7 @@ export function HomeFaq() {
 
 export function CtaBand() {
   const { t } = useLocale();
+  const siteConfig = useSiteConfig();
   return (
     <Page>
       <div className="gp-cta">

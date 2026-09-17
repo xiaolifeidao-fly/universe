@@ -1,4 +1,5 @@
 export type Product = 'nova' | 'orbit';
-export const products: Record<Product, { name: string; role: string; home: string; port: number }>;
+export const products: Record<Product, { name: string; role: string; basePath: string; home: string; port: number }>;
+export const defaultOrigin: string;
 export interface DesktopAPI { product: Product }
 declare global { interface Window { galaxyDesktop?: DesktopAPI } }

@@ -82,6 +82,10 @@ server/galaxy-api/configs/application.properties
 # 门户站（client/galaxy/portal）没有 webview 这一层，构建产物直接在包根下。
 /client/galaxy/portal/.next/
 /client/galaxy/portal/tsconfig.tsbuildinfo
+/client/galaxy/portal/package/
+/client/galaxy/portal/logs/
+/client/galaxy/portal/run/
+/client/galaxy/portal/*.tar.gz
 /client/galaxy/*/webview/tsconfig.tsbuildinfo
 /client/galaxy/*/webview/package/
 /client/galaxy/*/webview/logs/

@@ -6,7 +6,7 @@ Galaxy 拆为三个独立 Go 模块、二进制和进程。三个 API 模块各�
 | --- | --- | --- |
 | galaxy-api | 10004 | Nova 提供端控制台、提供端账号：`/api/galaxy/provider/*` |
 | galaxy-consumer-api | 10005 | Orbit 使用端控制台与账号：`/api/galaxy/consumer/*`；门户：`/api/galaxy/portal/*`；支付回调：`/galaxy/payments/*` |
-| galaxy-hub-api | 10006 | 消费者 SDK：`/v1/*`；bridge 注册、配对、心跳、领任务、回传、升级：`/agent/v1/*`；bridge 安装下载：`/agent/v1/bridge/*` |
+| galaxy-hub-api | 10006 | 消费者 SDK：`/v1/*`；bridge 注册、配对、心跳、领任务、回传、升级：`/agent/v1/*`；bridge 安装下载：`/agent/v1/bridge/*`。对外这两段都挂在 `/hub-api` 前缀下，由 nginx 剥掉，服务自己不认前缀 |
 
 每个服务保留 `/healthz` 和 `/metrics`。运营接口仍归 manager-api。
 
@@ -47,6 +47,42 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 | `oss.*` | galaxy-consumer-api、galaxy-hub-api | 一边传上去、另一边签不出下载地址 |
 
 各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
+
+### 三个「对外地址」必须和 nginx 上那条 location 对齐
+
+`galaxy.provider_hub_url`（节点打哪儿）、`galaxy.consumer_base_url`（SDK 打哪儿）、
+`galaxy.instance`（上行打哪儿）都是**发给别人机器**的地址。填错不会让本服务启动失败，
+只会让对面拿着一个打不通的 URL —— 所以它们和 nginx 是一对，只改一边必然出事。
+
+线上这三个值都带 `/hub-api` 前缀：
+
+```properties
+galaxy.provider_hub_url  = https://www.galaxy.rodeo/hub-api        # galaxy-api 与 galaxy-hub-api，必须同值
+galaxy.consumer_base_url = https://www.galaxy.rodeo/hub-api/v1     # galaxy-consumer-api
+galaxy.instance          = https://www.galaxy.rodeo/hub-api        # galaxy-hub-api，单实例部署就填这个
+```
+
+而 Go 服务注册的路由是 `/v1/...` 与 `/agent/v1/...`，**没有**这段前缀 —— 前缀由 nginx 在
+转发前剥掉（[nginx/www.galaxy.rodeo.conf](nginx/www.galaxy.rodeo.conf) 里 Hub 那条 location，
+全文唯一一条会改写路径的 `proxy_pass`）。也就是说前缀纯粹是「对外怎么摆」，加一段、换一段、
+去掉一段都只需要同时改这两处，Go 侧一行都不用动。
+
+踩过的两次都在这条缝上：
+
+- **配置带前缀、nginx 上没有那条 location。** `/hub-api/agent/v1/pair` 顺着 `location /`
+  掉进门户站，门户回自己的 404 **HTML**，而节点是把响应体当错误信息抛出来的：Nova 的
+  「加入共享池」弹出一整页 HTML 源码，看上去像前端坏了，跟配置一点关系都看不出来。
+  改前缀之前先确认 nginx 转不转 —— 反过来也一样，先改 nginx 再改配置，中间那一刻是断的。
+- **`galaxy.instance` 留着开发用的 `http://127.0.0.1:10006`。** 节点跑在**用户自己的电脑**上，
+  streamURL 拼出来是 `http://127.0.0.1:10006/agent/v1/units/.../stream`，指回用户那台机器自己。
+  配对能过，派单之后才炸，所以这一项很容易在联调时被漏掉。
+
+nginx 侧只放行 Hub 真正对外的 `/v1/` 与 `/agent/v1/` 两段，**不是**把 `/hub-api/` 整段代理过去：
+后者会让 `/hub-api/metrics`、`/healthz`、`/readyz` 一起漏到公网。给 Hub 加对外路由时要顺手改
+那条正则，否则新路由带前缀访问就是 404。
+
+改配置要重启对应服务（配置在进程启动时读一次）；只改 nginx 的话 `nginx -t && systemctl reload nginx`
+就够，Go 进程不用动。
 
 `galaxy.instance` 是多实例部署里**唯一必须逐个实例配不同值**的键。派单时它被写进 `req:{rid}.instance`，节点领活拿到的 `streamURL` 由它拼成，而消费者的连接活在某个进程的内存里（响应字节不进 Redis），上行必须打回同一个进程。**填负载均衡入口会让上行随机落到别的实例**，表现为概率性的节点掉线与 `no_capacity`，两边日志都正常；`ip_hash` 之类的粘滞也救不了 —— 要钉住的是「哪条请求」，而消费者和节点是两个不同的客户端、两个不同的 IP。其余接口（`/v1/*`、节点的 register / hello / heartbeat / next）落到哪个实例都行，照常走统一入口。
 

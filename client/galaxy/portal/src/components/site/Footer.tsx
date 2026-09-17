@@ -9,18 +9,20 @@
 
 import Link from "next/link";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { orPlaceholder, siteConfig } from "@/utils/site";
+import { orPlaceholder } from "@/utils/site";
+import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import { BrandMark } from "./icons";
 
 /**
  * year 由外层的服务端组件算好传进来。
  *
- * 在这里 new Date().getFullYear() 会踩一个一年只出现一次的坑：页面是静态生成的，
+ * 在这里 new Date().getFullYear() 会踩一个一年只出现一次的坑：HTML 是服务端渲的，
  * 12 月 31 日服务端（UTC）还是 2026、浏览器（UTC+8）已经是 2027，
  * 两边渲染出的文本不一样，React 会把整棵子树退回客户端重渲。
  */
 export function Footer({ year }: { year: number }) {
   const { t } = useLocale();
+  const siteConfig = useSiteConfig();
 
   return (
     <footer className="gp-footer">

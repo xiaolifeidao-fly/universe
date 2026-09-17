@@ -186,7 +186,7 @@ func (s *service) CurrentMenus(ctx context.Context, userID string) ([]dto.Resour
 	}
 	menus := make([]*repository.ManagerResource, 0, len(rows))
 	for _, row := range rows {
-		if row.ResourceType == ResourceMenu || row.ResourceType == ResourceGroup || row.ResourceType == ResourcePage {
+		if row.ResourceType == ResourceMenu || row.ResourceType == ResourcePage {
 			menus = append(menus, row)
 		}
 	}

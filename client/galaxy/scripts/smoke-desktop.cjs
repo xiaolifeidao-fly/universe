@@ -15,11 +15,14 @@ async function main() {
   await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
   try {
     for (const [product, port, home, other] of [['nova', 17998, '/provider/today', '/consumer/keys'], ['orbit', 17999, '/consumer/keys', '/provider/today']]) {
-      const cwd = path.resolve(__dirname, '..', '.desktop', product, 'client/galaxy', product, 'webview');
+      const cwd = path.resolve(__dirname, '..', '.desktop', product, 'webview');
       const child = spawn(process.execPath, ['server.js'], { cwd, env: { ...process.env, HOSTNAME: '127.0.0.1', PORT: String(port), SERVER_TARGET: `http://127.0.0.1:${upstream.address().port}` }, stdio: 'pipe' });
       let output = '';
       child.stderr.on('data', (data) => output += data);
-      const base = `http://127.0.0.1:${port}`;
+      const origin = `http://127.0.0.1:${port}`;
+      // 控制台挂在 basePath 下（门户占着根）。base 用来拼页面地址；
+      // HTML 里的资源地址已经自带前缀了，那些要拼在 origin 上。
+      const base = origin + require('../common').products[product].basePath;
       try {
         let ready = false;
         for (let attempt = 0; attempt < 100; attempt++) {
@@ -28,6 +31,7 @@ async function main() {
         }
         assert.ok(ready, output);
         assert.equal((await fetch(base + other)).status, 404, 'Opposite product routes must not be shipped');
+        assert.equal((await fetch(origin + home)).status, 404, 'Console pages must only exist under basePath');
         assert.equal((await fetch(base + home)).status, 200);
         const login = await (await fetch(base + '/login')).text();
         assert.ok(login.includes(product === 'nova' ? 'Nova' : 'Orbit'));
@@ -35,7 +39,8 @@ async function main() {
         assert.deepEqual(await proxied.json(), { path: '/api/galaxy/consumer/keys', token: 'test-only' });
         const script = login.match(/src="([^\"]+\.js)"/);
         assert.ok(script);
-        assert.equal((await fetch(base + script[1])).status, 200);
+        assert.ok(script[1].startsWith(base.slice(origin.length)), `Assets must carry the basePath: ${script[1]}`);
+        assert.equal((await fetch(origin + script[1])).status, 200);
         console.log(`${product}: standalone, assets, product routing, and Next.js business proxy passed`);
       } finally { child.kill(); await new Promise((resolve) => child.once('exit', resolve)); }
     }

@@ -15,7 +15,7 @@ import { Card, Empty, Faq, LinkBtn, Section, SectionHead, Tag } from "@/componen
 import { IconArrowRight, IconGauge, IconReceipt, IconShield } from "@/components/site/icons";
 import { CtaBand, PageHero } from "@/components/home/HomeSections";
 import { formatAmount, formatUnitPrice, formatUnitValue } from "@/utils/format";
-import { siteConfig } from "@/utils/site";
+import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalOverview, PortalPackage } from "@/utils/portal";
 
 const HOW_ICONS = [<IconGauge key="1" />, <IconReceipt key="2" />, <IconShield key="3" />];
@@ -130,6 +130,7 @@ export function PricingBoard({ overview }: { overview: PortalOverview }) {
 
 function PlanCard({ plan, featured }: { plan: PortalPackage; featured: boolean }) {
   const { t } = useLocale();
+  const siteConfig = useSiteConfig();
   const units = Object.entries(plan.units ?? {});
 
   return (

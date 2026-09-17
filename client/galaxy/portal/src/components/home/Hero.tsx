@@ -13,7 +13,7 @@ import { Btn, LinkBtn, Page, useCopy } from "@/components/site/kit";
 import { IconArrowRight, IconCheck, IconCopy } from "@/components/site/icons";
 import { OrbitDiagram } from "@/components/home/OrbitDiagram";
 import { formatAmount, formatInt } from "@/utils/format";
-import { siteConfig } from "@/utils/site";
+import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalOverview } from "@/utils/portal";
 
 interface StatItem {
@@ -24,6 +24,7 @@ interface StatItem {
 
 export function Hero({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
+  const siteConfig = useSiteConfig();
   const { stats } = overview;
   const copier = useCopy();
 

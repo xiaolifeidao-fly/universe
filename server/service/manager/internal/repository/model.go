@@ -71,7 +71,7 @@ type ManagerResource struct {
 	Code     string `gorm:"column:code;type:varchar(96);uniqueIndex:uk_mgr_resource_code" description:"稳定标识，前端按它取 i18n 文案"`
 	Name     string `gorm:"column:name;type:varchar(64)"`
 
-	ResourceType string `gorm:"column:resource_type;type:varchar(16);index:idx_mgr_resource_type" description:"menu/group/page/api；group 是菜单里的分组标题，不是页面"`
+	ResourceType string `gorm:"column:resource_type;type:varchar(16);index:idx_mgr_resource_type" description:"menu/page/api"`
 	Method       string `gorm:"column:method;type:varchar(8)" description:"接口资源的 HTTP 方法；菜单与页面为空"`
 	ResourceURL  string `gorm:"column:resource_url;type:varchar(200);index:idx_mgr_resource_url" description:"gin 路由模板，如 /api/users/:id"`
 	PageURL      string `gorm:"column:page_url;type:varchar(200)" description:"前端路由，菜单项的 key 就是它"`

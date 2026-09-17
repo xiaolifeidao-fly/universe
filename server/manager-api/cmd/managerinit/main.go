@@ -35,51 +35,55 @@ var pages = []managerdto.SaveResourceRequest{
 	{Code: "users", Name: "用户管理", ResourceType: manager.ResourcePage, PageURL: "/users", Icon: "TeamOutlined", SortID: 20},
 	{Code: "businessLines", Name: "业务线管理", ResourceType: manager.ResourcePage, PageURL: "/business-lines", Icon: "BranchesOutlined", SortID: 30},
 	{Code: "programs", Name: "项目管理", ResourceType: manager.ResourcePage, PageURL: "/programs", Icon: "FolderOutlined", SortID: 40},
-	// 共享算力池是菜单不是页面：原来那十几块内容挤在一个页面的页签条里，
-	// 现在一块一个页面挂在它底下 —— 页签排到第十一个就不是导航了。
+	// 共享算力池：**六个一级菜单**，页面挂在各自底下做二级。
 	//
-	// 页面多起来之后，平铺的一长条同样找不到东西，所以中间隔着一层**分组标题**
-	// （ResourceGroup）：它不是要点开的目录，只是一行小标题，底下的页面一直摊着。
-	// 分组按「运营在想什么」切，不按「数据存在哪张表」切 —— 找提现审批的人，
-	// 想的是「供给侧那边的事」，不是「zt_galaxy_payout」。
-	{Code: "galaxy", Name: "共享算力池", ResourceType: manager.ResourceMenu, Icon: "GlobalOutlined", SortID: 50},
+	// 原来是「共享算力池」一个一级菜单 → 六个分组标题 → 二十三个页面，三层。
+	// 三层的代价是每一页都比别处深一格，而侧栏本来就只有 236 像素宽；
+	// 现在和「系统设置」一样是标准的两层，跟整个控制台对齐。
+	//
+	// 名字都带上「算力」前缀：这些一级菜单和「系统设置」「用户管理」并排站着，
+	// 叫「总览」「平台」的话，看的人分不清是全局的还是共享池的。
+	//
+	// 老的 galaxy 那一行留着、置为 disabled：CurrentMenus 只取 active，
+	// 它不会再出现在侧栏。不删是因为删了之后 zt_manager_role_resource 里
+	// 指向它的授权行会变成悬空 —— 那些行无害，但 DELETE 这一步不可逆。
+	{Code: "galaxy", Name: "共享算力池", ResourceType: manager.ResourceMenu, Icon: "GlobalOutlined", SortID: 50, Status: manager.StatusDisabled},
 
-	{Code: "galaxyOverview", Name: "总览", ResourceType: manager.ResourceGroup, SortID: 51},
-	{Code: "galaxyHome", Name: "运营总览", ResourceType: manager.ResourcePage, PageURL: "/galaxy/overview", SortID: 52},
-	{Code: "galaxyPool", Name: "池水位", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pool", SortID: 53},
-	{Code: "galaxyUnits", Name: "运行工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/units", SortID: 54},
-	{Code: "galaxySettlement", Name: "结算汇总", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settlement", SortID: 55},
-	{Code: "galaxyLedger", Name: "账本流水", ResourceType: manager.ResourcePage, PageURL: "/galaxy/ledger", SortID: 56},
+	{Code: "galaxyOverview", Name: "算力总览", ResourceType: manager.ResourceMenu, Icon: "GlobalOutlined", SortID: 50},
+	{Code: "galaxyHome", Name: "运营总览", ResourceType: manager.ResourcePage, PageURL: "/galaxy/overview", SortID: 51},
+	{Code: "galaxyPool", Name: "池水位", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pool", SortID: 52},
+	{Code: "galaxyUnits", Name: "运行工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/units", SortID: 53},
+	{Code: "galaxySettlement", Name: "结算汇总", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settlement", SortID: 54},
+	{Code: "galaxyLedger", Name: "账本流水", ResourceType: manager.ResourcePage, PageURL: "/galaxy/ledger", SortID: 55},
 
-	{Code: "galaxySupply", Name: "算力供给", ResourceType: manager.ResourceGroup, SortID: 57},
-	{Code: "galaxyNodes", Name: "节点与贡献", ResourceType: manager.ResourcePage, PageURL: "/galaxy/nodes", SortID: 58},
-	{Code: "galaxyPayouts", Name: "提现审批", ResourceType: manager.ResourcePage, PageURL: "/galaxy/payouts", SortID: 59},
+	{Code: "galaxySupply", Name: "算力供给", ResourceType: manager.ResourceMenu, Icon: "ClusterOutlined", SortID: 56},
+	{Code: "galaxyNodes", Name: "节点与贡献", ResourceType: manager.ResourcePage, PageURL: "/galaxy/nodes", SortID: 57},
+	{Code: "galaxyPayouts", Name: "提现审批", ResourceType: manager.ResourcePage, PageURL: "/galaxy/payouts", SortID: 58},
 
-	// 风控单成一组：抽检与用量偏差是「发现」，信誉与封禁是「处置」，
-	// 四页办的是同一件事，混在算力供给里会被当成日常运维顺手翻的东西。
-	{Code: "galaxyRisk", Name: "风控与审计", ResourceType: manager.ResourceGroup, SortID: 60},
-	{Code: "galaxyProbes", Name: "抽检", ResourceType: manager.ResourcePage, PageURL: "/galaxy/probes", SortID: 61},
-	{Code: "galaxyMismatches", Name: "用量偏差", ResourceType: manager.ResourcePage, PageURL: "/galaxy/mismatches", SortID: 62},
-	{Code: "galaxyReputation", Name: "信誉", ResourceType: manager.ResourcePage, PageURL: "/galaxy/reputation", SortID: 63},
-	{Code: "galaxyBans", Name: "封禁名单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bans", SortID: 64},
+	{Code: "galaxyRisk", Name: "风控与审计", ResourceType: manager.ResourceMenu, Icon: "SafetyCertificateOutlined", SortID: 59},
+	{Code: "galaxyProbes", Name: "抽检", ResourceType: manager.ResourcePage, PageURL: "/galaxy/probes", SortID: 60},
+	{Code: "galaxyMismatches", Name: "用量偏差", ResourceType: manager.ResourcePage, PageURL: "/galaxy/mismatches", SortID: 61},
+	{Code: "galaxyReputation", Name: "信誉", ResourceType: manager.ResourcePage, PageURL: "/galaxy/reputation", SortID: 62},
+	{Code: "galaxyBans", Name: "封禁名单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bans", SortID: 63},
 
-	{Code: "galaxyDemand", Name: "使用与计费", ResourceType: manager.ResourceGroup, SortID: 65},
-	{Code: "galaxyKeys", Name: "算力密钥", ResourceType: manager.ResourcePage, PageURL: "/galaxy/keys", SortID: 66},
-	{Code: "galaxyOrders", Name: "订单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/orders", SortID: 67},
-	{Code: "galaxyPoints", Name: "积分充值", ResourceType: manager.ResourcePage, PageURL: "/galaxy/points", SortID: 68},
-	{Code: "galaxyPackages", Name: "额度包", ResourceType: manager.ResourcePage, PageURL: "/galaxy/packages", SortID: 69},
-	{Code: "galaxyPricing", Name: "价目表", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pricing", SortID: 70},
+	{Code: "galaxyDemand", Name: "使用与计费", ResourceType: manager.ResourceMenu, Icon: "WalletOutlined", SortID: 64},
+	{Code: "galaxyKeys", Name: "算力密钥", ResourceType: manager.ResourcePage, PageURL: "/galaxy/keys", SortID: 65},
+	{Code: "galaxyOrders", Name: "订单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/orders", SortID: 66},
+	{Code: "galaxyPoints", Name: "积分充值", ResourceType: manager.ResourcePage, PageURL: "/galaxy/points", SortID: 67},
+	{Code: "galaxyPackages", Name: "额度包", ResourceType: manager.ResourcePage, PageURL: "/galaxy/packages", SortID: 68},
+	{Code: "galaxyPricing", Name: "价目表", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pricing", SortID: 69},
 
-	{Code: "galaxyCustomer", Name: "客户与增长", ResourceType: manager.ResourceGroup, SortID: 71},
-	{Code: "galaxyAccounts", Name: "账号", ResourceType: manager.ResourcePage, PageURL: "/galaxy/accounts", SortID: 72},
-	{Code: "galaxyDisputes", Name: "争议工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/disputes", SortID: 73},
-	{Code: "galaxyLeads", Name: "销售线索", ResourceType: manager.ResourcePage, PageURL: "/galaxy/leads", SortID: 74},
-	{Code: "galaxyReferrals", Name: "邀请返现", ResourceType: manager.ResourcePage, PageURL: "/galaxy/referrals", SortID: 75},
+	{Code: "galaxyCustomer", Name: "客户与增长", ResourceType: manager.ResourceMenu, Icon: "RiseOutlined", SortID: 70},
+	{Code: "galaxyAccounts", Name: "账号", ResourceType: manager.ResourcePage, PageURL: "/galaxy/accounts", SortID: 71},
+	{Code: "galaxyDisputes", Name: "争议工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/disputes", SortID: 72},
+	{Code: "galaxyLeads", Name: "销售线索", ResourceType: manager.ResourcePage, PageURL: "/galaxy/leads", SortID: 73},
+	{Code: "galaxyReferrals", Name: "邀请返现", ResourceType: manager.ResourcePage, PageURL: "/galaxy/referrals", SortID: 74},
 
-	{Code: "galaxyPlatform", Name: "平台设置", ResourceType: manager.ResourceGroup, SortID: 80},
-	{Code: "galaxySettings", Name: "运行参数", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settings", SortID: 81},
-	{Code: "galaxyModels", Name: "模型目录", ResourceType: manager.ResourcePage, PageURL: "/galaxy/models", SortID: 82},
-	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bridge-releases", SortID: 83},
+	{Code: "galaxyPlatform", Name: "算力平台", ResourceType: manager.ResourceMenu, Icon: "ControlOutlined", SortID: 75},
+	{Code: "galaxySettings", Name: "运行参数", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settings", SortID: 76},
+	{Code: "galaxyModels", Name: "模型目录", ResourceType: manager.ResourcePage, PageURL: "/galaxy/models", SortID: 77},
+	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bridge-releases", SortID: 78},
+
 	{Code: "settings", Name: "系统设置", ResourceType: manager.ResourceMenu, Icon: "SettingOutlined", SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", ResourceType: manager.ResourcePage, PageURL: "/settings/accounts", SortID: 91},
 	{Code: "settingsRoles", Name: "角色与权限", ResourceType: manager.ResourcePage, PageURL: "/settings/roles", SortID: 92},
@@ -87,13 +91,7 @@ var pages = []managerdto.SaveResourceRequest{
 
 // 挂在菜单下面的子页面。父节点在 pages 里排在子页面前面，下面那个循环才查得到它的 id。
 var pageParents = map[string]string{
-	// 五个分组标题直接挂在共享算力池下。
-	"galaxyOverview": "galaxy",
-	"galaxySupply":   "galaxy",
-	"galaxyDemand":   "galaxy",
-	"galaxyCustomer": "galaxy",
-	"galaxyPlatform": "galaxy",
-
+	// 六个 galaxy 一级菜单自己没有父节点，不在这张表里。
 	"galaxyHome":       "galaxyOverview",
 	"galaxyPool":       "galaxyOverview",
 	"galaxyUnits":      "galaxyOverview",
@@ -103,7 +101,6 @@ var pageParents = map[string]string{
 	"galaxyNodes":   "galaxySupply",
 	"galaxyPayouts": "galaxySupply",
 
-	"galaxyRisk":       "galaxy",
 	"galaxyProbes":     "galaxyRisk",
 	"galaxyMismatches": "galaxyRisk",
 	"galaxyReputation": "galaxyRisk",

@@ -55,14 +55,15 @@ client/galaxy/portal/
 
 ## 取数为什么在服务端
 
-三个读页面都是 React Server Component，直接 fetch Go 服务端，ISR 60 秒：
+三个读页面都是 React Server Component，直接 fetch Go 服务端，取数缓存 60 秒：
 
 - 门户是给陌生人和搜索引擎看的。浏览器取数意味着首屏是一圈转菊花，
   价格和模型进不了 HTML —— 一个搜不到自家模型和价格的门户没有意义；
 - 这几条接口没有用户维度，没有 token 要带，服务端取正合适。
 
-代价：构建时连不上 `SERVER_TARGET` 的话，页面会被预渲染成空态，直到部署后第一个
-访问触发重新生成。要避开这一秒，让 CI 构建时能连到后端。
+页面是**每次请求渲一遍**的（不是构建期预渲染）：根布局要在运行时读站点配置，
+见下面那节。缓存的是取数不是渲染 —— 后端依旧每分钟最多被打一次，而且构建时连不上
+`SERVER_TARGET` 也不会把空态烙进 HTML。
 
 写接口（联系我们）仍然走浏览器 → Next.js `/api/*` 代理 → Go，和两个控制台一致。
 
@@ -87,14 +88,26 @@ Instrument Serif / JetBrains Mono）和那支青绿 `#0f7b74` —— 青绿必�
 ```bash
 # 在 client/galaxy
 npm install
-cp portal/.env.example portal/.env    # 配 SERVER_TARGET 与 NEXT_PUBLIC_CONSOLE_URL
+cp portal/.env.example portal/.env    # 配 SERVER_TARGET 与 GALAXY_CONSOLE_URL
 npm run dev:portal                    # http://127.0.0.1:17900
 npm run build:portal                  # 产出 .desktop/portal（要部署到服务器的 standalone 包）
 ```
 
-`NEXT_PUBLIC_*` 必须写成 `process.env.NEXT_PUBLIC_XXX` 这样的**字面量**（见
-`src/utils/site.ts` 顶部）：Next 是打包时做字符串替换把值塞进浏览器包的，
-动态取法在服务端读得到、浏览器里是 undefined，同一个链接两边渲染不一致，水合会失败。
+### 站点配置（控制台地址、联系方式）在运行时读
+
+`GALAXY_CONSOLE_URL` / `GALAXY_DOCS_URL` / `GALAXY_CONTACT_EMAIL` /
+`GALAXY_CONTACT_WECHAT` / `GALAXY_ICP`：**服务端每次渲染现读一次**
+（`src/utils/site.server.ts`），经根布局的 `SiteConfigProvider` 发给客户端组件。
+改地址 = 改部署机上的 `runtime.json` + 重启进程，不用重新构建。
+
+这几项原先叫 `NEXT_PUBLIC_*`、直接在 `src/utils/site.ts` 里写
+`process.env.NEXT_PUBLIC_XXX`。那是**构建期**的写法：Next 打包时把它替换成字面量塞进
+浏览器包，值定格在构建那一刻 —— 线上因此出过「控制台」按钮指着打包机的
+`http://127.0.0.1:17899/...`，服务器上改配置一点用都没有。旧名字现在仍然认（见
+`site.server.ts` 里那张表），但别再用了。
+
+也因此客户端组件里**一个环境变量都不许读**：浏览器里 `process.env` 是空的，
+动态取法恒为 undefined，服务端却读得到真值 —— 同一个链接两边渲染不一致，水合会失败。
 
 没配的联系方式在页面上显示成 `[待填写]`，不编一个 —— 编一个假邮箱的代价是
 有人真的往那儿发信，然后再也没有下文。

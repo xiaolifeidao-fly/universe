@@ -13,6 +13,8 @@
 
 import {
   BranchesOutlined,
+  ClusterOutlined,
+  ControlOutlined,
   DashboardOutlined,
   FolderOutlined,
   GlobalOutlined,
@@ -20,10 +22,12 @@ import {
   LogoutOutlined,
   LockOutlined,
   MenuOutlined,
+  RiseOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   StarFilled,
   TeamOutlined,
+  WalletOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Layout, Menu, Select, Skeleton, Space, message } from "antd";
 import type { MenuProps } from "antd";
@@ -86,8 +90,6 @@ type FallbackNavEntry = {
   key: string;
   icon?: ReactNode;
   labelKey: TranslationKey;
-  /** 分组标题：不用点开，只是把一长条切成几段。和后端资源里的 group 一一对应。 */
-  group?: boolean;
   children?: FallbackNavEntry[];
 };
 
@@ -97,75 +99,68 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
   { key: "/business-lines", icon: <BranchesOutlined />, labelKey: "nav.businessLines" },
   { key: "/programs", icon: <FolderOutlined />, labelKey: "nav.programs" },
   {
-    key: "group:galaxy",
+    key: "menu:galaxyOverview",
     icon: <GlobalOutlined />,
-    labelKey: "nav.galaxy",
+    labelKey: "nav.galaxyOverview",
     children: [
-      {
-        key: "group:galaxyOverview",
-        labelKey: "nav.galaxyOverview",
-        group: true,
-        children: [
-          { key: "/galaxy/overview", labelKey: "nav.galaxyHome" },
-          { key: "/galaxy/pool", labelKey: "nav.galaxyPool" },
-          { key: "/galaxy/units", labelKey: "nav.galaxyUnits" },
-          { key: "/galaxy/settlement", labelKey: "nav.galaxySettlement" },
-          { key: "/galaxy/ledger", labelKey: "nav.galaxyLedger" },
-        ],
-      },
-      {
-        key: "group:galaxySupply",
-        labelKey: "nav.galaxySupply",
-        group: true,
-        children: [
-          { key: "/galaxy/nodes", labelKey: "nav.galaxyNodes" },
-          { key: "/galaxy/payouts", labelKey: "nav.galaxyPayouts" },
-        ],
-      },
-      {
-        key: "group:galaxyRisk",
-        labelKey: "nav.galaxyRisk",
-        group: true,
-        children: [
-          { key: "/galaxy/probes", labelKey: "nav.galaxyProbes" },
-          { key: "/galaxy/mismatches", labelKey: "nav.galaxyMismatches" },
-          { key: "/galaxy/reputation", labelKey: "nav.galaxyReputation" },
-          { key: "/galaxy/bans", labelKey: "nav.galaxyBans" },
-        ],
-      },
-      {
-        key: "group:galaxyDemand",
-        labelKey: "nav.galaxyDemand",
-        group: true,
-        children: [
-          { key: "/galaxy/keys", labelKey: "nav.galaxyKeys" },
-          { key: "/galaxy/orders", labelKey: "nav.galaxyOrders" },
-          { key: "/galaxy/points", labelKey: "nav.galaxyPoints" },
-          { key: "/galaxy/packages", labelKey: "nav.galaxyPackages" },
-          { key: "/galaxy/pricing", labelKey: "nav.galaxyPricing" },
-        ],
-      },
-      {
-        key: "group:galaxyCustomer",
-        labelKey: "nav.galaxyCustomer",
-        group: true,
-        children: [
-          { key: "/galaxy/accounts", labelKey: "nav.galaxyAccounts" },
-          { key: "/galaxy/disputes", labelKey: "nav.galaxyDisputes" },
-          { key: "/galaxy/leads", labelKey: "nav.galaxyLeads" },
-          { key: "/galaxy/referrals", labelKey: "nav.galaxyReferrals" },
-        ],
-      },
-      {
-        key: "group:galaxyPlatform",
-        labelKey: "nav.galaxyPlatform",
-        group: true,
-        children: [
-          { key: "/galaxy/settings", labelKey: "nav.galaxySettings" },
-          { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
-          { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
-        ],
-      },
+      { key: "/galaxy/overview", labelKey: "nav.galaxyHome" },
+      { key: "/galaxy/pool", labelKey: "nav.galaxyPool" },
+      { key: "/galaxy/units", labelKey: "nav.galaxyUnits" },
+      { key: "/galaxy/settlement", labelKey: "nav.galaxySettlement" },
+      { key: "/galaxy/ledger", labelKey: "nav.galaxyLedger" },
+    ],
+  },
+  {
+    key: "menu:galaxySupply",
+    icon: <ClusterOutlined />,
+    labelKey: "nav.galaxySupply",
+    children: [
+      { key: "/galaxy/nodes", labelKey: "nav.galaxyNodes" },
+      { key: "/galaxy/payouts", labelKey: "nav.galaxyPayouts" },
+    ],
+  },
+  {
+    key: "menu:galaxyRisk",
+    icon: <SafetyCertificateOutlined />,
+    labelKey: "nav.galaxyRisk",
+    children: [
+      { key: "/galaxy/probes", labelKey: "nav.galaxyProbes" },
+      { key: "/galaxy/mismatches", labelKey: "nav.galaxyMismatches" },
+      { key: "/galaxy/reputation", labelKey: "nav.galaxyReputation" },
+      { key: "/galaxy/bans", labelKey: "nav.galaxyBans" },
+    ],
+  },
+  {
+    key: "menu:galaxyDemand",
+    icon: <WalletOutlined />,
+    labelKey: "nav.galaxyDemand",
+    children: [
+      { key: "/galaxy/keys", labelKey: "nav.galaxyKeys" },
+      { key: "/galaxy/orders", labelKey: "nav.galaxyOrders" },
+      { key: "/galaxy/points", labelKey: "nav.galaxyPoints" },
+      { key: "/galaxy/packages", labelKey: "nav.galaxyPackages" },
+      { key: "/galaxy/pricing", labelKey: "nav.galaxyPricing" },
+    ],
+  },
+  {
+    key: "menu:galaxyCustomer",
+    icon: <RiseOutlined />,
+    labelKey: "nav.galaxyCustomer",
+    children: [
+      { key: "/galaxy/accounts", labelKey: "nav.galaxyAccounts" },
+      { key: "/galaxy/disputes", labelKey: "nav.galaxyDisputes" },
+      { key: "/galaxy/leads", labelKey: "nav.galaxyLeads" },
+      { key: "/galaxy/referrals", labelKey: "nav.galaxyReferrals" },
+    ],
+  },
+  {
+    key: "menu:galaxyPlatform",
+    icon: <ControlOutlined />,
+    labelKey: "nav.galaxyPlatform",
+    children: [
+      { key: "/galaxy/settings", labelKey: "nav.galaxySettings" },
+      { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
+      { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
     ],
   },
 ];
@@ -184,6 +179,13 @@ const MENU_ICONS: Record<string, ReactNode> = {
   SettingOutlined: <SettingOutlined />,
   SafetyCertificateOutlined: <SafetyCertificateOutlined />,
   KeyOutlined: <KeyOutlined />,
+  // 共享算力池拆成六个一级菜单之后各自要一个图标。
+  // 刻意避开上面那几个已经被占的：侧栏里两个一级菜单顶着同一个图标，
+  // 收起来只剩图标时就完全分不出谁是谁。
+  ClusterOutlined: <ClusterOutlined />,
+  WalletOutlined: <WalletOutlined />,
+  RiseOutlined: <RiseOutlined />,
+  ControlOutlined: <ControlOutlined />,
 };
 
 const LOCALE_OPTIONS = [
@@ -303,13 +305,32 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
     return new Set(menus.filter((item) => item.pageUrl).map((item) => item.pageUrl));
   }, [menus, menuUnavailable]);
 
-  // 顶层目录默认展开。收起来的话，进来的人看不到自己正停在哪个子页面上。
+  // 只展开当前页所在的那个一级菜单，不是全部展开。
+  //
+  // 原来是全展开的，那时候「共享算力池」是唯一一个有子项的菜单，展不展开都一样。
+  // 现在它拆成了六个，全展开是三十多行 —— 侧栏一进来就要滚，而滚动条底下那几个
+  // 菜单等于没人看得见。
+  //
+  // 「进来的人得看到自己停在哪」这个要求仍然满足：当前页那一个是展开的。
+  // defaultOpenKeys 是非受控的，用户点开别的照样留着。
   const defaultOpenKeys = useMemo(() => {
     if (menus.length === 0) {
-      return menuUnavailable ? FALLBACK_NAV.filter((entry) => entry.children?.length).map((entry) => entry.key) : [];
+      if (!menuUnavailable) return [];
+      const owner = FALLBACK_NAV.find((entry) => entry.children?.some((child) => child.key === activePath));
+      return owner ? [owner.key] : [];
     }
-    return menus.filter((item) => item.parentId === 0).map((item) => menuKey(item));
-  }, [menus, menuUnavailable]);
+    const byID = new Map(menus.map((item) => [item.id, item]));
+    let node = menus.find((item) => item.pageUrl && activePath.startsWith(item.pageUrl));
+    const opened: string[] = [];
+    // 一路往上收，中间那层（如果以后又有三层）也要跟着开，否则展开的是一个看不见的祖先。
+    while (node && node.parentId !== 0) {
+      const parent = byID.get(node.parentId);
+      if (!parent) break;
+      opened.push(menuKey(parent));
+      node = parent;
+    }
+    return opened;
+  }, [menus, menuUnavailable, activePath]);
 
   const [fallbackTitle, fallbackSubtitle] =
     FALLBACK_PAGE_TITLES[activePath] ?? ["dashboard.title", "dashboard.subtitle"];
@@ -470,10 +491,6 @@ function buildFallbackItems(entries: FallbackNavEntry[], t: (key: TranslationKey
       </span>
     );
     if (!entry.children?.length) return { key: entry.key, label: content };
-    if (entry.group) {
-      // 分组标题走 antd 的 group：底下的页面一直摊着，不用先点开一层。
-      return { key: entry.key, type: "group", label: t(entry.labelKey), children: buildFallbackItems(entry.children, t) };
-    }
     return { key: entry.key, label: content, children: buildFallbackItems(entry.children, t) };
   });
 }
@@ -520,13 +537,6 @@ function buildMenuItems(resources: ResourceItem[], label: (item: ResourceItem) =
       .map(build)
       .filter((item): item is MenuItem => item !== null);
     if (children.length === 0) return null;
-    if (resource.resourceType === "group") {
-      // 分组标题：一行小标题，底下的页面一直摊着。和 menu 的差别只在这里 ——
-      // 「共享算力池」底下十几个页面，平铺找不到东西，再套一层要点开的目录
-      // 又等于给每天都用的页面加一次点击，分组标题两头都不占。
-      // label 用纯文本：antd 的分组标题不渲染图标，塞进去只会多一个空盒子。
-      return { key: menuKey(resource), type: "group", label: label(resource), children };
-    }
     return { key: menuKey(resource), label: content, children };
   };
 

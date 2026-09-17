@@ -11,7 +11,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { NAV_ITEMS, siteConfig } from "@/utils/site";
+import { NAV_ITEMS } from "@/utils/site";
+import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import { BrandMark, IconArrowRight, IconClose, IconGlobe, IconMenu } from "./icons";
 import { LinkBtn } from "./kit";
 
@@ -22,6 +23,7 @@ function isActive(pathname: string, href: string): boolean {
 export function Header() {
   const pathname = usePathname() ?? "/";
   const { locale, setLocale, t } = useLocale();
+  const siteConfig = useSiteConfig();
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
