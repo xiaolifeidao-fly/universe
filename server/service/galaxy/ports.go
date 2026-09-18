@@ -396,6 +396,10 @@ const (
 	// MetricReferralSelfInvite 邀请奖励因为「同一台设备」被拦下的次数。
 	// 拦下是正常风控，不是错误；盯着它能看出有没有人在批量刷小号。
 	MetricReferralSelfInvite = "galaxy_referral_self_invite_total"
+	// MetricUsageGateTimeout 节点报终态时没等到 Hub 侧用量、只好照空结算的次数。
+	// 正常应当是 0。有量就说明那台机器的 token、积分、额度 used 正在漏记，
+	// 而这种漏法本身不报错 —— 没有这条指标就只能靠翻账才发现。
+	MetricUsageGateTimeout = "galaxy_usage_gate_timeout_total"
 	// MetricExportDispatch Hub 回连派单的结果计数，按 outcome 分（ok/unreachable/rejected）。
 	MetricExportDispatch = "galaxy_export_dispatch_total"
 	// MetricExportDispatchLatency 一次回连派单从发起到拿到响应头的耗时。

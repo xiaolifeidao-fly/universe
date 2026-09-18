@@ -17,11 +17,19 @@ import (
 type Exchange struct {
 	mu       sync.Mutex
 	sessions map[string]*Session
+	// usage 是「Hub 侧用量已交出」的闸门。它和交汇点同生共死、同样只在本进程内有效，
+	// 所以挂在这里而不是单独传一份：两者回答的是同一个问题的两半 ——
+	// 字节在谁手上、那份字节解析出的用量什么时候算数。
+	usage *UsageGate
 }
 
 func NewExchange() *Exchange {
-	return &Exchange{sessions: map[string]*Session{}}
+	return &Exchange{sessions: map[string]*Session{}, usage: NewUsageGate()}
 }
+
+// Usage 取这个进程的用量闸门。上行对拷开始时 Arm，交出用量之后开闸，
+// 节点报终态前 Wait —— 少了它 export 模式的 complete 会抢在用量之前结算。
+func (e *Exchange) Usage() *UsageGate { return e.usage }
 
 // ErrConsumerGone 消费者已经走了。节点收到它就该 abort 上游。
 var ErrConsumerGone = errors.New("消费者连接已断开")

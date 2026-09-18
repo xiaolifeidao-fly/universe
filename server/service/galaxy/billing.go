@@ -24,6 +24,11 @@ const priceScale = 1_000_000
 // 而不是指望没人给合计填价。
 var derivedUnits = map[contract.MeterUnit]bool{
 	contract.UnitTotalTokens: true,
+	// 缓存写入的合计：量已经被 5m / 1h 两个分项各自收过了。
+	// 它和 UnitTotalTokens 的区别只在于「合计谁」，进账本会重复收这一点是一样的。
+	contract.UnitCacheWriteTokens: true,
+	// 推理 token 是 output 的子集，同理：output 已经整笔收过。
+	contract.UnitReasoningTokens: true,
 }
 
 // record 写计量流水与三本账。幂等键是 rid + attempt + unit，重放不会记两遍。

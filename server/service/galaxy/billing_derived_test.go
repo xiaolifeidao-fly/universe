@@ -66,3 +66,61 @@ func bindsUnit(args []driver.Value, want string) bool {
 	}
 	return false
 }
+
+// 缓存写入的合计与推理 token 是新加的两个派生量，同样一步都不能进账本。
+//
+// cache_write 的量已经被 5m / 1h 两个分项各自收过了（那两个才是真正计价的，
+// 单价差 1.6 倍）；reasoning 是 output 的一部分，output 已经整笔收过。
+// 两个都以 _tokens 结尾、都长得像一个独立的桶，运营在定价页顺手填一档价
+// 完全可能 —— 所以闸门和合计一样设在 billing 里。
+func TestDerivedTokenSubsetsNeverReachTheLedger(t *testing.T) {
+	for _, unit := range []contract.MeterUnit{contract.UnitCacheWriteTokens, contract.UnitReasoningTokens} {
+		service, database := billingHarness(t, &replayPlane{settled: true})
+		database.tables["zt_galaxy_price"] = append(database.tables["zt_galaxy_price"], []driver.Value{
+			"llm.chat", string(unit), replayPrice, "CNY", replayProviderShare, time.Now().Add(-time.Hour),
+		})
+
+		usage := contract.Metering{contract.UnitOutputTokens: replayTokens, unit: replayTokens}
+		if err := service.record(context.Background(), replayRuntime(), contract.KindSpec{}, usage, true); err != nil {
+			t.Fatalf("%s 结算失败：%v", unit, err)
+		}
+
+		if !bindsUnit(database.argsOf(t, "zt_galaxy_meter_record"), string(unit)) {
+			t.Fatalf("%s 要进计量流水：额度与对账都要用它", unit)
+		}
+		if got := database.count("zt_galaxy_consumer_ledger"); got != 1 {
+			t.Fatalf("%s 被当成可计价的桶收了第二遍：消费侧账本 %d 行", unit, got)
+		}
+		if got := database.count("zt_galaxy_provider_ledger"); got != 1 {
+			t.Fatalf("%s 被当成可计价的桶发了第二遍：供给侧账本 %d 行", unit, got)
+		}
+	}
+}
+
+// 拆出来的两个 TTL 桶是真正计价的那一层，必须进账本 ——
+// 否则 5 分钟与 1 小时的单价差没有着落，整个拆分白做，而且表现是「缓存写入不要钱」。
+func TestCacheWriteTTLBucketsAreBillable(t *testing.T) {
+	service, database := billingHarness(t, &replayPlane{settled: true})
+	for _, unit := range []contract.MeterUnit{contract.UnitCacheWrite5mTokens, contract.UnitCacheWrite1hTokens} {
+		database.tables["zt_galaxy_price"] = append(database.tables["zt_galaxy_price"], []driver.Value{
+			"llm.chat", string(unit), replayPrice, "CNY", replayProviderShare, time.Now().Add(-time.Hour),
+		})
+	}
+
+	// 一笔缓存写入 1000，其中 400 是 1 小时档。合计那一行照写，但只有分项计价。
+	usage := contract.Metering{
+		contract.UnitCacheWriteTokens:   replayTokens,
+		contract.UnitCacheWrite5mTokens: 600,
+		contract.UnitCacheWrite1hTokens: 400,
+	}
+	if err := service.record(context.Background(), replayRuntime(), contract.KindSpec{}, usage, true); err != nil {
+		t.Fatalf("结算失败：%v", err)
+	}
+
+	if got := database.count("zt_galaxy_consumer_ledger"); got != 2 {
+		t.Fatalf("两个 TTL 桶各该入一次账，实际 %d 行", got)
+	}
+	if got := database.count("zt_galaxy_provider_ledger"); got != 2 {
+		t.Fatalf("供给侧同理，实际 %d 行", got)
+	}
+}

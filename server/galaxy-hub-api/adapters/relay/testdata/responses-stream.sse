@@ -8,5 +8,5 @@ event: response.output_text.delta
 data: {"type":"response.output_text.delta","delta":" world"}
 
 event: response.completed
-data: {"type":"response.completed","response":{"id":"resp_abc123","status":"completed","usage":{"input_tokens":2048,"output_tokens":311,"input_tokens_details":{"cached_tokens":1024,"cache_write_tokens":256},"total_tokens":2359}}}
+data: {"type":"response.completed","response":{"id":"resp_abc123","status":"completed","usage":{"input_tokens":2048,"output_tokens":311,"input_tokens_details":{"cached_tokens":1024,"cache_write_tokens":256},"output_tokens_details":{"reasoning_tokens":192},"total_tokens":2359}}}
 

@@ -36,6 +36,7 @@ type fakeGalaxy struct {
 	firstByte   chan string
 	hubUsage    chan contract.Metering
 	abandoned   chan string
+	completed   chan string
 	failed      chan *contract.UnitError
 	submitError error
 	reassign    bool
@@ -49,6 +50,7 @@ func newFakeGalaxy() *fakeGalaxy {
 		firstByte: make(chan string, 4),
 		hubUsage:  make(chan contract.Metering, 4),
 		abandoned: make(chan string, 4),
+		completed: make(chan string, 4),
 		failed:    make(chan *contract.UnitError, 4),
 		alive:     true,
 	}
@@ -131,17 +133,23 @@ func (f *fakeGalaxy) LookupResponseContribution(context.Context, string) (string
 	return "", false
 }
 
-func (f *fakeGalaxy) Complete(context.Context, dto.CompleteRequest) (dto.CompleteResult, error) {
+func (f *fakeGalaxy) Complete(_ context.Context, req dto.CompleteRequest) (dto.CompleteResult, error) {
+	select {
+	case f.completed <- req.UnitID:
+	default:
+	}
 	return dto.CompleteResult{}, nil
 }
 
 func newHub(t *testing.T) (*httptest.Server, *fakeGalaxy) {
-	return newHubWith(t, nil)
+	server, service, _ := newHubWith(t, nil)
+	return server, service
 }
 
 // newHubWith 让用例调 relay 的等待时限。默认那几个是按真实上游的节奏定的
 // （认领 30 秒、探心跳 10 秒），跑在用例里只会让测试等满。
-func newHubWith(t *testing.T, tune func(*corepkg.Deps)) (*httptest.Server, *fakeGalaxy) {
+// 交汇点也交出去：用量闸门挂在它身上，验终态先后的用例要能直接扳它。
+func newHubWith(t *testing.T, tune func(*corepkg.Deps)) (*httptest.Server, *fakeGalaxy, *corepkg.Exchange) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	service := newFakeGalaxy()
@@ -164,7 +172,7 @@ func newHubWith(t *testing.T, tune func(*corepkg.Deps)) (*httptest.Server, *fake
 		server.CloseClientConnections()
 		server.Close()
 	})
-	return server, service
+	return server, service, exchange
 }
 
 const anthropicStream = "event: message_start\n" +
@@ -468,7 +476,7 @@ func TestInvalidBodyIsRejectedBeforePlacement(t *testing.T) {
 // 也不会有 complete。少了时限，消费者的 codex 就一直转下去。
 
 func TestConsumerGetsErrorWhenNodeNeverAttaches(t *testing.T) {
-	server, service := newHubWith(t, func(deps *corepkg.Deps) {
+	server, service, _ := newHubWith(t, func(deps *corepkg.Deps) {
 		deps.AttachTimeout = 120 * time.Millisecond
 	})
 
@@ -527,7 +535,7 @@ func TestConsumerGetsErrorWhenNodeNeverAttaches(t *testing.T) {
 }
 
 func TestConsumerGetsErrorWhenNodeGoesOfflineBeforeFirstByte(t *testing.T) {
-	server, service := newHubWith(t, func(deps *corepkg.Deps) {
+	server, service, _ := newHubWith(t, func(deps *corepkg.Deps) {
 		deps.AttachTimeout = time.Hour // 只测心跳这条路
 		deps.NodeProbeInterval = 30 * time.Millisecond
 	})
@@ -563,5 +571,87 @@ func TestConsumerGetsErrorWhenNodeGoesOfflineBeforeFirstByte(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("心跳断了消费者仍被挂死")
+	}
+}
+
+// 终态不许抢在 Hub 侧用量之前落地。
+//
+// 这是 export 接入上真实发生过的事故：节点把上游流当作 Hub 回连请求的响应体回来，
+// 写完最后一个字节、handler 一返回就直接报 complete，而 Hub 那边还在读 EOF、解析、
+// 写控制面。complete 先到，reconcileUsage 读到一份空的 hubUsage，节点自己又不报 token，
+// 于是 actual 里只剩 Hub 自己数的 llm.calls 和 time.seconds —— token、积分、额度 used
+// 全是 0，三层都不报错。
+func TestCompleteWaitsForTheHubSideUsage(t *testing.T) {
+	server, service, exchange := newHubWith(t, nil)
+
+	// 扮演「本进程正在对拷这个单元的字节，用量还没交出去」。
+	release := exchange.Usage().Arm("u_racing")
+
+	done := make(chan int, 1)
+	go func() {
+		request, _ := http.NewRequest(http.MethodPost,
+			server.URL+"/agent/v1/units/u_racing/complete", strings.NewReader(`{"state":"completed"}`))
+		request.Header.Set("Authorization", "Bearer gnt_n_test")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			done <- 0
+			return
+		}
+		defer response.Body.Close()
+		done <- response.StatusCode
+	}()
+
+	select {
+	case unitID := <-service.completed:
+		t.Fatalf("用量还没交出去就结算了 %s —— 这一笔的 token 会记成 0", unitID)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	release()
+
+	select {
+	case unitID := <-service.completed:
+		if unitID != "u_racing" {
+			t.Fatalf("结算落在了别的单元上: %s", unitID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("开闸之后该立刻结算")
+	}
+	if status := <-done; status != http.StatusOK {
+		t.Fatalf("节点该拿到 200，实际 %d", status)
+	}
+}
+
+// 等不到也必须放行：卡住 complete 的代价是那台机器的并发位一直不还，
+// 比漏记一次用量严重得多。
+func TestCompleteSettlesAnywayWhenTheUsageNeverArrives(t *testing.T) {
+	server, service, exchange := newHubWith(t, nil)
+	defer exchange.Usage().Arm("u_stuck")()
+
+	// 用例不该真等满 DefaultUsageWait，但这一条验的就是「超时之后照常走」，
+	// 所以只能等它 —— 3 秒是 Hub 里写死的那个值。
+	request, _ := http.NewRequest(http.MethodPost,
+		server.URL+"/agent/v1/units/u_stuck/complete", strings.NewReader(`{"state":"completed"}`))
+	request.Header.Set("Authorization", "Bearer gnt_n_test")
+	started := time.Now()
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("终态上报失败: %v", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("超时也要照常收下终态，实际 %d", response.StatusCode)
+	}
+	if elapsed := time.Since(started); elapsed < corepkg.DefaultUsageWait {
+		t.Fatalf("没等满就放行了（%v），闸门形同虚设", elapsed)
+	}
+	select {
+	case unitID := <-service.completed:
+		if unitID != "u_stuck" {
+			t.Fatalf("结算落在了别的单元上: %s", unitID)
+		}
+	default:
+		t.Fatal("等超时之后必须照常结算，不能把节点的终态吞掉")
 	}
 }

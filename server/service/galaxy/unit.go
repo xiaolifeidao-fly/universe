@@ -601,6 +601,14 @@ func (s *service) Complete(ctx context.Context, req dto.CompleteRequest) (dto.Co
 		state = contract.UnitCompleted
 	}
 	spec, _ := s.kinds.Lookup(runtime.Kind, runtime.KindVersion)
+	// 产物大小由 Hub 自己算。kinds 把 storage.bytes 声明成平台侧权威，但 Hub 只在
+	// relay 那条路上写过 hubUsage（RecordHubResult 挂在字节对拷的收尾处），
+	// job 走的是 submitDetached，一次都不会调 —— 不补这一步，每条渲染都会掉进
+	// 「回退节点自报」那个分支，声明的权威名不副实，事件流里还多一条假的解析失败。
+	//
+	// 取的是 Hub 签发过的产物引用，不是节点 usage 里那个自由填写的数：节点可以
+	// 报 storage.bytes=1 却传一个 10GB 的文件，引用上的 size 是签名时就定死的。
+	runtime.HubUsage = withArtifactBytes(runtime.HubUsage, spec, req.Outputs)
 	actual := s.reconcileUsage(ctx, runtime, spec, req.Usage, state)
 	billable := s.billable(state, req.Error, runtime)
 
@@ -659,10 +667,14 @@ func (s *service) reconcileUsage(ctx context.Context, runtime UnitRuntime, spec 
 			} else if value, ok := nodeUsage[unit]; ok {
 				// 上游格式变了、Hub 没解析出来：回退节点自报并留痕待审。
 				actual[unit] = value
-				_ = s.repository.AppendUnitEvent(ctx, &repository.GalaxyUnitEvent{
-					BizLine: bizLine, UnitID: runtime.RID, Kind: "usage_parse_failed",
-					Message: "Hub 未解析出用量，回退节点自报", DataJSON: encodeJSON(map[string]any{"unit": unit}),
-				})
+				// 次数与时长不留痕：它们下面由 Hub 无条件重算，这里取到的值会被盖掉，
+				// 记一条「解析失败」只会让事件流里堆满永远不用查的噪声。
+				if !hubRecomputes(unit) {
+					_ = s.repository.AppendUnitEvent(ctx, &repository.GalaxyUnitEvent{
+						BizLine: bizLine, UnitID: runtime.RID, Kind: "usage_parse_failed",
+						Message: "Hub 未解析出用量，回退节点自报", DataJSON: encodeJSON(map[string]any{"unit": unit}),
+					})
+				}
 			}
 		default:
 			if value, ok := nodeUsage[unit]; ok {
@@ -682,6 +694,35 @@ func (s *service) reconcileUsage(ctx context.Context, runtime UnitRuntime, spec 
 		actual[contract.UnitTimeSeconds] = seconds
 	}
 	return actual
+}
+
+// hubRecomputes 报告某个单位是否由 Hub 在 reconcileUsage 末尾无条件重算。
+// 那两个的值不看任何一方的申报，中途取到什么都不作数。
+func hubRecomputes(unit contract.MeterUnit) bool {
+	return unit == contract.UnitCalls || unit == contract.UnitTimeSeconds
+}
+
+// withArtifactBytes 把这次交上来的产物大小合成 storage.bytes，写进 Hub 侧用量。
+// 只在该单位由 Hub 权威计量、且确实有产物时动手；没有产物的终态（失败、无输出的
+// 回合）原样返回，让它照常落进「这个单位这次没有量」。
+func withArtifactBytes(hubUsage contract.Metering, spec contract.KindSpec, outputs []contract.Payload) contract.Metering {
+	if !spec.TrustsUnit(contract.UnitStorageBytes) {
+		return hubUsage
+	}
+	var total int64
+	for _, output := range outputs {
+		if output.Ref != nil && output.Ref.Size > 0 {
+			total += output.Ref.Size
+		}
+	}
+	if total <= 0 {
+		return hubUsage
+	}
+	if hubUsage == nil {
+		hubUsage = contract.Metering{}
+	}
+	hubUsage[contract.UnitStorageBytes] = total
+	return hubUsage
 }
 
 // billable 失败语义表（设计文档 6.2）：谁付钱、算不算提供者贡献。

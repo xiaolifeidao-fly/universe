@@ -15,6 +15,11 @@ func Relay(providers map[string]string, bodyLimit int64) contract.KindSpec {
 	spec.Metering.Units = []contract.MeterUnit{
 		contract.UnitInputTokens, contract.UnitOutputTokens,
 		contract.UnitCacheReadTokens, contract.UnitCacheWriteTokens,
+		// 缓存写入真正计价的是这两个：5 分钟与 1 小时的单价差 1.6 倍。
+		// 上面那个 cache_write 从此只是它们的合计，不进账本。
+		contract.UnitCacheWrite5mTokens, contract.UnitCacheWrite1hTokens,
+		// 推理 token：output 的子集，只进统计与额度。
+		contract.UnitReasoningTokens,
 		// 四个桶的合计，给主人一条「整台机器一天最多跑多少 token」的上限用。
 		// 它和上面四个同时出现在计量里，所以只能进额度和统计，不能进账本 ——
 		// 见 contract.UnitTotalTokens 与 billing.go 的拦截。

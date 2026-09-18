@@ -55,9 +55,11 @@ func TestStreamWithoutContentTypeStillMeters(t *testing.T) {
 
 		assertUsage(t, writer.Usage(), contract.Metering{
 			// 净输入：流里的 2048 减掉 1024 个缓存命中（见 usage.go 的 netInput）。
-			contract.UnitInputTokens:      1024,
-			contract.UnitOutputTokens:     311,
-			contract.UnitCacheReadTokens:  1024,
+			contract.UnitInputTokens:     1024,
+			contract.UnitOutputTokens:    311,
+			contract.UnitCacheReadTokens: 1024,
+			// 推理是 output 的一部分，不是第五个桶 —— 合计里不加它。
+			contract.UnitReasoningTokens:  192,
 			contract.UnitCacheWriteTokens: 256,
 		})
 		// 逐字节透传是硬要求：端到端必须和直连一模一样。

@@ -296,6 +296,13 @@ func (h *Handler) stream(context *gin.Context) {
 		return
 	}
 
+	// 这条路上的先后本来由 HTTP 保证（下面的 RecordHubResult 跑完才回 200，
+	// 节点拿到 200 才去报 complete）。照样架一道闸，是为了让「终态不许抢在
+	// Hub 侧用量之前」成为节点通道的不变量，而不是某一条路径的巧合 ——
+	// export 那条就是因为没有这个巧合，把每一笔 token 都记成了 0。
+	releaseUsage := h.exchange.Usage().Arm(unitID)
+	defer releaseUsage()
+
 	status := http.StatusOK
 	if raw := context.GetHeader("X-Galaxy-Upstream-Status"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 100 && parsed < 600 {
@@ -433,6 +440,14 @@ func (h *Handler) complete(context *gin.Context) {
 		} else {
 			session.Finish(unitCause(req.Error))
 		}
+	}
+	// 结算只认 Hub 自己解析的用量，而那份用量是对拷收尾之后才交出去的。
+	// export 接入时节点写完最后一个字节就直接报终态，不知道 Hub 读没读完 ——
+	// 不等这道闸，reconcileUsage 读到的 hubUsage 是空的，token、积分、
+	// 额度 used 全部静静记 0（见 corepkg.UsageGate）。
+	if !h.exchange.Usage().Wait(context.Request.Context(), req.UnitID, corepkg.DefaultUsageWait) && h.metrics != nil {
+		// 等超时照常结算，但要留一条记录：这一笔的用量很可能是漏的。
+		h.metrics.Count(galaxy.MetricUsageGateTimeout, map[string]string{"node": req.NodeID}, 1)
 	}
 	result, err := h.service.Complete(context.Request.Context(), req)
 	if err != nil {

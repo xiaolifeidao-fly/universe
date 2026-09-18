@@ -59,7 +59,25 @@ const (
 	UnitCacheWriteTokens MeterUnit = "llm.cache_write_tokens"
 	UnitCalls            MeterUnit = "llm.calls"
 
-	// UnitTotalTokens 是上面四个 token 桶的**合计**，不是第五个桶。
+	// 缓存写入按 TTL 拆开的两个计价桶，两者之和恒等于 UnitCacheWriteTokens ——
+	// 所以拆开之后**合计那一个不再计价**（同 UnitTotalTokens，由 billing.go 兜住）。
+	//
+	// 必须拆：Anthropic 的 5 分钟缓存写入是基础输入价的 1.25 倍，1 小时是 2 倍。
+	// 混在一个桶里按一个单价收，必然有一边算错，错的方向还取决于流量构成；
+	// 而且事后补不回来 —— 分项只在上游那条流里出现过一次，流水里没存。
+	//
+	// 没有 TTL 概念的协议族（OpenAI）整笔落在 5m 这个桶上：对它来说 5m 就是
+	// 「默认档」的意思。这样两族共用同一套计价桶，不会出现「有量却没有可计价的桶」。
+	UnitCacheWrite5mTokens MeterUnit = "llm.cache_write_5m_tokens"
+	UnitCacheWrite1hTokens MeterUnit = "llm.cache_write_1h_tokens"
+
+	// UnitReasoningTokens 是 UnitOutputTokens 里属于推理的那一部分，不是新的一桶。
+	// 推理模型（gpt-5.6 这一档）把它单独报出来，主人要能看出「输出的 3 万 token
+	// 里有 2.9 万是在想」。因为是子集，它和合计一样**只进统计与额度，不计价**。
+	UnitReasoningTokens MeterUnit = "llm.reasoning_tokens"
+
+	// UnitTotalTokens 是 input / output / cache_read / cache_write 四个桶的**合计**，
+	// 不是第五个桶。拆出来的 5m、1h 与 reasoning 都是这四个的子集，不另计入。
 	//
 	// 它存在的唯一理由是额度：主人想说的是「这台机器一天最多跑 200 万 token」，
 	// 而不是「输入 80 万、输出 40 万、缓存读 60 万、缓存写 20 万」—— 分开设四条，

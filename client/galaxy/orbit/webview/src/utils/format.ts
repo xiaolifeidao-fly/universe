@@ -5,11 +5,19 @@
 /**
  * 从别的单位算出来的合计，不是独立的桶。
  *
- * `llm.total_tokens` 是输入 + 输出 + 缓存读 + 缓存写，主人用它给整台机器设一条
- * 总量上限。它也以 _tokens 结尾，所以凡是「把 token 类单位加起来」的地方都要先剔掉它，
- * 否则每一笔都被数两遍；摆明细时也别和四个分项并排，那样会被当成第五个桶。
+ * 这几个都不是独立的桶，而是别的桶的合计或子集，却同样以 _tokens 结尾 ——
+ * 凡是「把 token 类单位加起来」的地方都要先剔掉它们，否则那部分量被数两遍；
+ * 摆明细时也别和四个分项并排，那样会被当成又一个桶。
+ *
+ * - `llm.total_tokens`：输入 + 输出 + 缓存读 + 缓存写，主人用它给整台机器设总量上限
+ * - `llm.cache_write_tokens`：5m 与 1h 两档的合计（真正计价的是那两个，单价差 1.6 倍）
+ * - `llm.reasoning_tokens`：输出里属于推理的那部分
  */
-export const DERIVED_TOKEN_UNITS = new Set(["llm.total_tokens"]);
+export const DERIVED_TOKEN_UNITS = new Set([
+  "llm.total_tokens",
+  "llm.cache_write_tokens",
+  "llm.reasoning_tokens",
+]);
 
 /**
  * 计量单位的人话名。

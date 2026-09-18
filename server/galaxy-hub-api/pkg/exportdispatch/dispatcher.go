@@ -402,6 +402,12 @@ func (d *Dispatcher) relay(ctx context.Context, unitID string, response *http.Re
 		return
 	}
 
+	// 闸门要在读第一个字节之前就架好。节点写完最后一个字节就会去报 complete，
+	// 而那条 complete 是另一条连接上的请求 —— 中间没有任何先后保证，
+	// 它必须等到本函数把解析出的用量交出去为止，否则结算读到的是空。
+	releaseUsage := d.exchange.Usage().Arm(unitID)
+	defer releaseUsage()
+
 	status := http.StatusOK
 	if raw := response.Header.Get("X-Galaxy-Upstream-Status"); raw != "" {
 		if parsed, convErr := strconv.Atoi(raw); convErr == nil && parsed >= 100 && parsed < 600 {
