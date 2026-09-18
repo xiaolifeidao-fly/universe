@@ -28,6 +28,18 @@ import {
 } from "../../api/provider.api";
 
 const PAGE_SIZE = 15;
+
+/**
+ * 一格 token 数。没有就是一条短横，不是 0。
+ *
+ * 缓存那两列大多数行都是空的（上游没报缓存、模型不缓存、或者这轮没命中）。
+ * 满屏的 0 会把真正有数的那几行盖过去，而且「上游报了 0」和「上游根本没报这一项」
+ * 在对账时不是一回事。
+ */
+function TokenCell({ value }: { value: number }) {
+  if (value <= 0) return <span className="gx-mono gx-muted">-</span>;
+  return <span className="gx-mono gx-soft">{formatCompact(value)}</span>;
+}
 const DAYS = ["today", "yesterday", "7d", "all"] as const;
 
 export function ExecutionRecords() {
@@ -198,6 +210,12 @@ export function ExecutionRecords() {
             <Loading />
           ) : (
             <DataTable
+              // 列宽预算：固定列加起来 844px，再加 10 个 12px 的间距和左右各 16px 的内边距，
+              // 一共 996px —— 模型列（1fr）拿的是容器减掉这些之后剩下的。
+              //
+              // 缓存读、缓存写是后加的两列，它们要 136px。直接摞上去的话，窗口窄一点
+              // 模型名就被挤没了，所以从 unitId（定长截断串）、机器（本来就 ellipsis）
+              // 和几个数字列上各收了一点，净增压到 90px。再要加列先把这笔账重算一遍。
               columns={[
                 {
                   key: "time",
@@ -208,13 +226,14 @@ export function ExecutionRecords() {
                 {
                   key: "unit",
                   title: t("records.col.unit"),
-                  width: "132px",
+                  // 显示的是 shorten() 之后的定长串（u_06GB4V5…T8），宽度按它定就够。
+                  width: "112px",
                   render: (row: ExecutionRecord) => <span className="gx-mono gx-soft">{shorten(row.unitId)}</span>,
                 },
                 {
                   key: "node",
                   title: t("records.col.node"),
-                  width: "150px",
+                  width: "124px",
                   // 机器名常是 xxx-MacBook-Pro.local 这种长串，格子里放不下会被截断，悬停看全名和节点 id。
                   render: (row: ExecutionRecord) => (
                     <span title={row.nodeName ? `${row.nodeName} · ${row.nodeId}` : row.nodeId}>{row.nodeName || row.nodeId || "-"}</span>
@@ -229,16 +248,30 @@ export function ExecutionRecords() {
                 {
                   key: "in",
                   title: t("records.col.in"),
-                  width: "76px",
+                  width: "68px",
                   align: "right",
                   render: (row: ExecutionRecord) => <span className="gx-mono gx-soft">{formatCompact(row.usage["llm.input_tokens"] ?? 0)}</span>,
                 },
                 {
                   key: "out",
                   title: t("records.col.out"),
-                  width: "76px",
+                  width: "68px",
                   align: "right",
                   render: (row: ExecutionRecord) => <span className="gx-mono gx-soft">{formatCompact(row.usage["llm.output_tokens"] ?? 0)}</span>,
+                },
+                {
+                  key: "cacheRead",
+                  title: t("records.col.cacheRead"),
+                  width: "68px",
+                  align: "right",
+                  render: (row: ExecutionRecord) => <TokenCell value={row.usage["llm.cache_read_tokens"] ?? 0} />,
+                },
+                {
+                  key: "cacheWrite",
+                  title: t("records.col.cacheWrite"),
+                  width: "68px",
+                  align: "right",
+                  render: (row: ExecutionRecord) => <TokenCell value={row.usage["llm.cache_write_tokens"] ?? 0} />,
                 },
                 {
                   key: "took",
@@ -250,7 +283,7 @@ export function ExecutionRecords() {
                 {
                   key: "state",
                   title: t("records.col.state"),
-                  width: "96px",
+                  width: "88px",
                   render: (row: ExecutionRecord) =>
                     row.state === "completed" ? (
                       <Pill tone="ok">{t("records.state.completed")}</Pill>

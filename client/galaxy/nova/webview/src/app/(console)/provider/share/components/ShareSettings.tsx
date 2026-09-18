@@ -32,6 +32,7 @@ import {
   ChipInput,
   EmptyState,
   Field,
+  LinkBtn,
   LiveDot,
   Loading,
   Note,
@@ -44,13 +45,13 @@ import { isStudio } from "@/utils/auth";
 import { formatRelative, unitLabel } from "@/utils/format";
 import { isDesktop } from "@/utils/product";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
+import { confirmForceClose, isClosing, switchContributions } from "../../contributionClose";
 import {
   fetchNodes,
   isNodeOnline,
   nodeDisplayName,
   orderMachines,
   saveContributionLimits,
-  setContributionStatus,
   visibleContributions,
   visibleNodes,
   type ContributionView,
@@ -61,8 +62,17 @@ import { pingBridge, startUpstreamLogin } from "../../api/bridge.api";
 import { useCurrentAccount } from "../../useAccount";
 import { MachineRail } from "./MachineRail";
 
-/** llm.chat 的常用三维。别的 kind 自己加行。 */
-const COMMON_UNITS = ["llm.output_tokens", "llm.input_tokens", "llm.calls", "time.seconds"];
+/**
+ * llm.chat 的常用维度。别的 kind 自己加行。
+ *
+ * 合计排第一，「加一条额度」默认给的也是它：主人心里的那条线是「这台机器一天最多跑
+ * 多少 token」，而不是分头给输入、输出、缓存读、缓存写各设一个。分开设的坏处是
+ * 任何一条先触顶就把整台机器停了，剩下几条还空着大半 —— 尤其是 Claude 那边，
+ * 缓存读经常是新增输入的几十倍，两条上限根本没法按同一个量级去填。
+ *
+ * 四个分项仍然留着：想单独卡住某一项（比如只想限缓存写入）的时候还用得上。
+ */
+const COMMON_UNITS = ["llm.total_tokens", "llm.output_tokens", "llm.input_tokens", "llm.calls", "time.seconds"];
 
 /** 和「今天」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
 const REFRESH_MS = 20_000;
@@ -242,15 +252,17 @@ export function ShareSettings() {
   const toggle = async (row: ContributionView, on: boolean) => {
     setBusy(true);
     try {
-      await setContributionStatus(row.nodeId, row.cid, on ? "active" : "disabled");
-      await reload();
+      await switchContributions({ rows: [row], on, offStatus: "disabled", t, reload });
     } catch (error) {
-      // 「还有人绑在上面」是服务端拒的，原文比任何前端兜底话术都准。
       message.error((error as Error).message || t("common.actionFailed"));
     } finally {
       setBusy(false);
     }
   };
+
+  /** 「正在收尾」时的「立即关闭」：掐断在跑的请求，扣信誉分，自己会先确认。 */
+  const forceClose = (row: ContributionView) =>
+    void confirmForceClose({ rows: [row], inflight: row.inflight, offStatus: "disabled", t, modal, reload });
 
   const authorize = async (row: ContributionView) => {
     setBusy(true);
@@ -421,6 +433,7 @@ export function ShareSettings() {
                   busy={busy}
                   local={isLocal}
                   onToggle={(on) => void toggle(row, on)}
+                  onForce={() => forceClose(row)}
                   onAuthorize={() => void authorize(row)}
                 />
               ))}
@@ -710,16 +723,21 @@ function CapabilityRow({
   busy,
   local,
   onToggle,
+  onForce,
   onAuthorize,
 }: {
   row: ContributionView;
   busy: boolean;
   local: boolean;
   onToggle: (on: boolean) => void;
+  /** 「正在收尾」时的「立即关闭」。 */
+  onForce: () => void;
   onAuthorize: () => void;
 }) {
   const { t } = useLocale();
-  const on = row.status === "active";
+  // 正在收尾的画成关着：主人的意图是关，服务端也已经不给它派新单了。
+  const closing = isClosing(row);
+  const on = row.status === "active" && !closing;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: "1px solid var(--gx-line)" }}>
       <span
@@ -759,8 +777,14 @@ function CapabilityRow({
       {row.seatsBound > 0 ? <Pill tone="accent">{t("share.bound", { value: row.seatsBound })}</Pill> : null}
       {row.available ? (
         <>
-          <Pill tone={on ? "ok" : "default"}>{on ? t("share.on") : t("share.off")}</Pill>
-          <Switch checked={on} disabled={busy || (on && row.seatsBound > 0)} label={t("share.enable")} onChange={onToggle} />
+          {/* 开关**不因座位绑定而禁用**：座位是会话亲和，空闲满 30 分钟才释放，
+              拿它挡住关闭，主人在最后一次调用之后还要等半小时才点得动。
+              真正不该被打断的是在跑的请求，那件事由服务端排队处理，不是在这里灰掉按钮。 */}
+          <Pill tone={closing ? "warn" : on ? "ok" : "default"}>
+            {closing ? t("close.closingPill") : on ? t("share.on") : t("share.off")}
+          </Pill>
+          {closing ? <LinkBtn onClick={onForce}>{t("close.forceNow")}</LinkBtn> : null}
+          <Switch checked={on} disabled={busy} label={t("share.enable")} onChange={onToggle} />
         </>
       ) : (
         <>

@@ -222,23 +222,24 @@ func (h *Handler) revokeNode(context *gin.Context) {
 	httpx.JSON(context, req.NodeID, err)
 }
 
-// setContributionStatus 是紧急闸（P-09）与运行时调整（P-08）的入口：
-// 停掉的贡献排空在途后释放座位，不中断在跑的请求。
+// setContributionStatus 是紧急闸（P-09）与运行时调整（P-08）的入口。
+//
+// 关闭时手上还有在跑的请求，默认是**排队**：停止接新单，在途跑完自动落地，
+// 主人点一次就行。带 force 才会当场掐断在跑的请求，代价是扣信誉分。
+//
+// 返回的是结果对象而不是回声那个 status：立即生效还是在排队、还剩几条在跑、
+// 扣没扣分，界面只看 HTTP 200 分不出来。
 func (h *Handler) setContributionStatus(context *gin.Context) {
-	var req struct {
-		// NodeID 不能省：cid 在这里是**去掉节点前缀**的短名（relay_codex），
-		// 主人有两台机器时就重名了。不带节点，服务端只能猜一个，而它猜的是
-		// 排序第一个（node_id 是 ULID，等于最老那台）—— 改到的是别的机器。
-		NodeID string `json:"nodeId"`
-		CID    string `json:"cid" binding:"required"`
-		Status string `json:"status" binding:"required"`
-	}
+	// NodeID 不能省：cid 在这里是**去掉节点前缀**的短名（relay_codex），
+	// 主人有两台机器时就重名了。不带节点，服务端只能猜一个，而它猜的是
+	// 排序第一个（node_id 是 ULID，等于最老那台）—— 改到的是别的机器。
+	var req dto.SetContributionStatusRequest
 	if err := context.ShouldBindJSON(&req); err != nil {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	err := h.service.SetContributionStatus(context.Request.Context(), auth.UserID(context), req.NodeID, req.CID, req.Status)
-	httpx.JSON(context, req.Status, err)
+	result, err := h.service.SetContributionStatus(context.Request.Context(), auth.UserID(context), req)
+	httpx.JSON(context, result, err)
 }
 
 // saveContributionLimits 改授权：模型白名单、座位、三维额度、挂机时段（P-04~P-07）。

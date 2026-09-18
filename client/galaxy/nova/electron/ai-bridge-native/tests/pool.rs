@@ -4,8 +4,8 @@ use ai_bridge_native::pool::hub_address::{HubAddressCheck, HubAddressEvent};
 use ai_bridge_native::pool::lane::{Lane, LaneConfig};
 use ai_bridge_native::pool::models::{parse_codex_cache, parse_models};
 use ai_bridge_native::pool::runner::health_signature;
-use ai_bridge_native::pool::setup::hub_needs_rebind;
-use ai_bridge_native::pool::tools::parse_version;
+use ai_bridge_native::pool::setup::{hub_needs_rebind, shell_quote};
+use ai_bridge_native::pool::tools::{parse_version, resolve_in};
 use base64::Engine;
 use serde_json::json;
 use std::sync::Arc;
@@ -425,4 +425,69 @@ fn hub_rebind_compares_origin_not_string() {
     // 而没配对过的机器切进 pool 只会起不来。地址由配对流程写。
     assert!(!hub_needs_rebind("", "https://hub.example.com"));
     assert!(!hub_needs_rebind("   ", "https://hub.example.com"));
+}
+
+// ---------- 在 PATH 上找工具 ----------
+
+const WINDOWS_SUFFIXES: &[&str] = &["", ".exe", ".cmd", ".bat"];
+const UNIX_SUFFIXES: &[&str] = &[""];
+
+#[test]
+fn finds_the_first_match_along_path() {
+    let present = ["/opt/homebrew/bin/npm", "/usr/local/bin/npm"];
+    let found = resolve_in("/usr/bin:/opt/homebrew/bin:/usr/local/bin", "npm", ':', UNIX_SUFFIXES, |candidate| {
+        present.contains(&candidate.to_string_lossy().as_ref())
+    });
+    assert_eq!(found.unwrap().to_string_lossy(), "/opt/homebrew/bin/npm");
+}
+
+#[test]
+fn windows_must_try_cmd_because_npm_is_not_an_exe() {
+    // Command::new 只会补 .exe。不认 .cmd 的话，Windows 上连本机装的 npm 都调不起来。
+    // 拼路径用的是 std::path，分隔符跟着宿主平台走 —— 所以这里只验这两件事：
+    // 分号切分，以及后缀真的挨个试过。
+    let found = resolve_in("C:/Windows;C:/nodejs", "npm", ';', WINDOWS_SUFFIXES, |candidate| {
+        candidate.file_name().is_some_and(|name| name == "npm.cmd")
+            && candidate.to_string_lossy().contains("nodejs")
+    });
+    assert_eq!(found.unwrap().file_name().unwrap(), "npm.cmd");
+    // 顺序按 PATHEXT 的习惯来：两个都在时先用 .exe。claude 装出来的就是 .exe。
+    let both = resolve_in("C:/nodejs", "claude", ';', WINDOWS_SUFFIXES, |candidate| {
+        matches!(candidate.file_name().and_then(|name| name.to_str()), Some("claude.exe") | Some("claude.cmd"))
+    });
+    assert_eq!(both.unwrap().file_name().unwrap(), "claude.exe");
+}
+
+#[test]
+fn an_absolute_name_is_used_as_is() {
+    // setup.rs 拿 /usr/bin/osascript 调这里，不该再去 PATH 上找一遍。
+    let found = resolve_in("", "/usr/bin/osascript", ':', UNIX_SUFFIXES, |candidate| {
+        candidate.to_string_lossy() == "/usr/bin/osascript"
+    });
+    assert_eq!(found.unwrap().to_string_lossy(), "/usr/bin/osascript");
+    assert!(resolve_in("", "/nope/osascript", ':', UNIX_SUFFIXES, |_| false).is_none());
+}
+
+#[test]
+fn missing_tool_is_none_not_a_guess() {
+    assert!(resolve_in("/usr/bin:/bin", "npm", ':', UNIX_SUFFIXES, |_| false).is_none());
+}
+
+// ---------- 登录命令的引号 ----------
+
+#[test]
+fn a_path_with_spaces_must_survive_the_terminal() {
+    // 自带 npm 的 prefix 在 ~/Library/Application Support/Nova 下，名字里有空格。
+    assert_eq!(
+        shell_quote("/Users/x/Library/Application Support/Nova/toolchain/global/bin/claude"),
+        "'/Users/x/Library/Application Support/Nova/toolchain/global/bin/claude'"
+    );
+    assert_eq!(shell_quote("claude"), "claude");
+    assert_eq!(shell_quote("/opt/homebrew/bin/claude"), "/opt/homebrew/bin/claude");
+    assert_eq!(shell_quote("auth"), "auth");
+}
+
+#[test]
+fn a_single_quote_in_the_path_cannot_break_out() {
+    assert_eq!(shell_quote("/tmp/it's here/claude"), "'/tmp/it'\\''s here/claude'");
 }

@@ -306,6 +306,12 @@ type GalaxyContribution struct {
 	ScheduleJSON        string `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
 
 	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_contribution_node,priority:3" description:"active/draining/paused/disabled"`
+	// PendingStatus 主人点了关闭、但那会儿还有请求在跑，等在途归零之后要落到的状态。
+	//
+	// 不塞进 Status：draining 那个值是心跳按额度自己写的，每个心跳都会在
+	// active / draining 之间来回改。主人的意图放同一列会在下一个心跳被冲掉，
+	// 表现是「关了又自己开回来」。意图和额度是两个独立的事实，必须两列。
+	PendingStatus string `gorm:"column:pending_status;type:varchar(16)" description:"等在途请求跑完之后要落到的状态"`
 	// 信誉不在这里：贡献 id 带着 nodeId，重新配对就是一条新贡献。见 GalaxyMachine。
 
 	// Available / UnavailableReason 是**节点报上来的事实**，和 Status 是两回事：
@@ -620,12 +626,12 @@ func (r *GalaxyConsumerLedger) Init()             {}
 
 // GalaxyProviderLedger 供给侧积分账本：贡献 / 待结算 / 已结算 / 追回。
 type GalaxyProviderLedger struct {
-	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine     string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_provider_ledger,priority:1;index:idx_gx_provider_ledger_cid,priority:1"`
-	TxnID       string    `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_provider_ledger,priority:2"`
-	CID         string    `gorm:"column:cid;type:varchar(96);index:idx_gx_provider_ledger_cid,priority:2"`
-	OwnerUserID string    `gorm:"column:owner_user_id;type:varchar(64)"`
-	Type        string    `gorm:"column:type;type:varchar(16)" description:"contribute/settle/payout/clawback/referral/ref_clawback"`
+	ID          int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_provider_ledger,priority:1;index:idx_gx_provider_ledger_cid,priority:1"`
+	TxnID       string `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_provider_ledger,priority:2"`
+	CID         string `gorm:"column:cid;type:varchar(96);index:idx_gx_provider_ledger_cid,priority:2"`
+	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64)"`
+	Type        string `gorm:"column:type;type:varchar(16)" description:"contribute/settle/payout/clawback/referral/ref_clawback"`
 	// Unit 这笔积分是**哪种计量单位**挣来的（settle / clawback），或者 credit（提现、邀请奖励）。
 	Unit string `gorm:"column:unit;type:varchar(48)"`
 	// Amount 一律是**微积分**（1,000,000 = 1 积分 = ¥1），和信用账户余额同一量纲。
@@ -633,9 +639,9 @@ type GalaxyProviderLedger struct {
 	// 不是计量数：原先 settle 行记的是 token 数，于是收益页上「今天赚了多少」加的是 token、
 	// 「可提现」用的是余额里的钱，两个口径根本不是一个东西。原始计量数在
 	// zt_galaxy_meter_record 里（对账以它求和为准），这一列只回答「这笔挣了多少」。
-	Amount int64 `gorm:"column:amount" description:"微积分，1,000,000 = 1 积分 = ¥1"`
-	Price       int64     `gorm:"column:price"`
-	UnitID      string    `gorm:"column:unit_id;type:varchar(40)"`
+	Amount int64  `gorm:"column:amount" description:"微积分，1,000,000 = 1 积分 = ¥1"`
+	Price  int64  `gorm:"column:price"`
+	UnitID string `gorm:"column:unit_id;type:varchar(40)"`
 	// RelatedUserID 邀请奖励是谁跑出来的（被邀请人 pu_…）。其它类型为空。
 	// 邀请页按它汇总「每个好友给你带来多少」，不另设计数器 —— 账本是唯一权威。
 	RelatedUserID string    `gorm:"column:related_user_id;type:varchar(64)" description:"邀请奖励对应的被邀请人"`
@@ -951,15 +957,34 @@ type GalaxyModel struct {
 	ContextTokens   int64 `gorm:"column:context_tokens;default:0" description:"上下文窗口 token 数，0 表示未声明"`
 	MaxOutputTokens int64 `gorm:"column:max_output_tokens;default:0"`
 
-	// 三个单价都是「每百万 token 的微分」，与 zt_galaxy_price 同口径。
+	// 四个单价都是「每百万 token 的微分」，与 zt_galaxy_price 同口径。
 	// 0 表示这个模型不单独定价，按 kind 的统一价走 —— 不是「免费」。
-	InputPrice  int64  `gorm:"column:input_price;default:0" description:"每百万 input token 微分，0=按 kind 统一价"`
-	OutputPrice int64  `gorm:"column:output_price;default:0" description:"每百万 output token 微分，0=按 kind 统一价"`
-	CachePrice  int64  `gorm:"column:cache_price;default:0" description:"每百万 cache_read token 微分，0=按 kind 统一价"`
-	Currency    string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
+	//
+	// 四个桶互不重叠：InputPrice 对的是**未命中缓存的新增输入**（Hub 在 relay 的
+	// netInput 里已经把 OpenAI 那边含在 input 里的 cached 减掉了），缓存读与缓存写
+	// 各自一档。合成一档的话必有一边算错：缓存写入通常比普通输入还贵，
+	// 缓存读取却便宜一个数量级。
+	InputPrice      int64 `gorm:"column:input_price;default:0" description:"每百万新增 input token 微分，0=按 kind 统一价"`
+	OutputPrice     int64 `gorm:"column:output_price;default:0" description:"每百万 output token 微分，0=按 kind 统一价"`
+	CachePrice      int64 `gorm:"column:cache_price;default:0" description:"每百万 cache_read token 微分，0=按 kind 统一价"`
+	CacheWritePrice int64 `gorm:"column:cache_write_price;default:0" description:"每百万 cache_write token 微分，0=按 kind 统一价"`
+
+	// ListInputPrice / ListOutputPrice 官方参考价，口径与上面几档完全一致（每百万 token 微分、同一币种）。
+	// 模型广场拿它划那道线、算「省 X%」。必须是运营填进来的事实：上游改价我们不会立刻知道，
+	// 由代码推一个折扣写上去，性质上就是价格欺诈。0 = 没填，划线价与折扣一起不显示。
+	ListInputPrice  int64  `gorm:"column:list_input_price;default:0" description:"官方参考价：每百万 input token 微分，0=不显示划线价"`
+	ListOutputPrice int64  `gorm:"column:list_output_price;default:0" description:"官方参考价：每百万 output token 微分，0=不显示划线价"`
+	Currency        string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
 
 	TagsJSON string `gorm:"column:tags_json;type:varchar(512)" description:"能力标签，JSON 数组"`
 	Summary  string `gorm:"column:summary;type:varchar(256)" description:"一句话说明，门户卡片上那行"`
+
+	// BadgeText 卡片右上角那个角标（「首发」「性价比旗舰」「均衡」），空串不显示。
+	// 它推不出来：Featured 只有真假两种，而这类词随时间换，是运营的文案。
+	// BadgeTone 只认 hot / new / value / neutral，前端映射到既有的四种胶囊配色 ——
+	// 让运营直接填颜色的话，迟早出现一张六种颜色的卡片墙。
+	BadgeText string `gorm:"column:badge_text;type:varchar(16)" description:"卡片角标文案，空=不显示"`
+	BadgeTone string `gorm:"column:badge_tone;type:varchar(16)" description:"角标配色：hot/new/value/neutral"`
 
 	// ReferralBps 被邀请人买这个模型的套餐时，按实付积分返给邀请人的比例，单位万分之一。
 	// NULL 表示没单独设、走全局默认；0 是「这个模型不返」，两者不是一回事，所以用指针。
@@ -1099,19 +1124,19 @@ func (r *GalaxySetting) Init()             {}
 //
 // 下架不删行：机器上报的版本要能对得上它当初装的是哪一个包。
 type GalaxyBridgeRelease struct {
-	ID         int64  `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine    string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_bridge_release_id,priority:1;uniqueIndex:uk_gx_bridge_release_target,priority:1;index:idx_gx_bridge_release_platform,priority:1"`
-	ReleaseID  string `gorm:"column:release_id;type:varchar(40);uniqueIndex:uk_gx_bridge_release_id,priority:2" description:"业务键 br_…"`
-	Version    string `gorm:"column:version;type:varchar(32);uniqueIndex:uk_gx_bridge_release_target,priority:2" description:"语义版本，如 0.2.0"`
-	Platform   string `gorm:"column:platform;type:varchar(32);uniqueIndex:uk_gx_bridge_release_target,priority:3;index:idx_gx_bridge_release_platform,priority:2" description:"linux-x64 / darwin-arm64 / windows-x64 …"`
-	FileName   string `gorm:"column:file_name;type:varchar(128)" description:"ai-bridge-<版本>-<平台>.tar.gz（windows 是 .zip）"`
-	ObjectKey  string `gorm:"column:object_key;type:varchar(255)" description:"OSS 对象键，含部署配置的 prefix"`
-	Size       int64  `gorm:"column:size" description:"字节数"`
-	SHA256     string `gorm:"column:sha256;type:varchar(64)" description:"整个压缩包的 sha256，小写十六进制"`
-	Signature  string `gorm:"column:signature;type:varchar(128)" description:"发布签名（Ed25519，base64）"`
-	Notes      string `gorm:"column:notes;type:text" description:"版本说明"`
-	Status     string `gorm:"column:status;type:varchar(16);index:idx_gx_bridge_release_platform,priority:3" description:"published/withdrawn"`
-	PublishedBy string `gorm:"column:published_by;type:varchar(64)" description:"上传的管理端账号"`
+	ID          int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine     string     `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_bridge_release_id,priority:1;uniqueIndex:uk_gx_bridge_release_target,priority:1;index:idx_gx_bridge_release_platform,priority:1"`
+	ReleaseID   string     `gorm:"column:release_id;type:varchar(40);uniqueIndex:uk_gx_bridge_release_id,priority:2" description:"业务键 br_…"`
+	Version     string     `gorm:"column:version;type:varchar(32);uniqueIndex:uk_gx_bridge_release_target,priority:2" description:"语义版本，如 0.2.0"`
+	Platform    string     `gorm:"column:platform;type:varchar(32);uniqueIndex:uk_gx_bridge_release_target,priority:3;index:idx_gx_bridge_release_platform,priority:2" description:"linux-x64 / darwin-arm64 / windows-x64 …"`
+	FileName    string     `gorm:"column:file_name;type:varchar(128)" description:"ai-bridge-<版本>-<平台>.tar.gz（windows 是 .zip）"`
+	ObjectKey   string     `gorm:"column:object_key;type:varchar(255)" description:"OSS 对象键，含部署配置的 prefix"`
+	Size        int64      `gorm:"column:size" description:"字节数"`
+	SHA256      string     `gorm:"column:sha256;type:varchar(64)" description:"整个压缩包的 sha256，小写十六进制"`
+	Signature   string     `gorm:"column:signature;type:varchar(128)" description:"发布签名（Ed25519，base64）"`
+	Notes       string     `gorm:"column:notes;type:text" description:"版本说明"`
+	Status      string     `gorm:"column:status;type:varchar(16);index:idx_gx_bridge_release_platform,priority:3" description:"published/withdrawn"`
+	PublishedBy string     `gorm:"column:published_by;type:varchar(64)" description:"上传的管理端账号"`
 	PublishedAt *time.Time `gorm:"column:published_at;type:timestamp null default null"`
 
 	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`

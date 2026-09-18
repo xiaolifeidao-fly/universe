@@ -13,6 +13,7 @@ client/galaxy/
 │   │   ├── src/impl/register.ts     Nova 实现注册表
 │   │   ├── src/impl/bridge.impl.ts  BridgeApi 的内部实现
 │   │   ├── src/modules/bridge/     Nova 内置 ai-bridge 子进程管理
+│   │   ├── src/modules/toolchain/  自带的 node / npm，和给子进程补的 PATH
 │   │   ├── ai-bridge/              完整迁入的 bridge 源码、协议、测试和 CLI
 │   │   ├── tsconfig.json
 │   │   ├── dist/                   自动生成的 JS，不提交
@@ -162,8 +163,55 @@ Nova 启动时创建独立 UtilityProcess，退出时停止任务并回收子进
 
 本机配置与节点令牌保存于 Electron `userData/ai-bridge` 下（节点凭据权限 0600），
 不自动覆盖或启用原 `~/.config/ai-bridge` 的独立实例。原 CLI、协议中转、agent、共享池、
-凭据适配器、业务模块及测试一并保留。Claude/Codex CLI 的登录态继续从本机读取，
-相关 CLI/ffmpeg 仍按所用能力自行安装；bridge 自身随 Nova 更新，不提供 git 自升级按钮。
+凭据适配器、业务模块及测试一并保留。Claude/Codex CLI 的登录态继续从本机读取；
+ffmpeg 仍要自行安装，Claude Code / Codex 则可以由 Nova 自己装（见下一节）；
+bridge 自身随 Nova 更新，不提供 git 自升级按钮。
+
+## 自带的 node 与 npm
+
+共享端不需要本机装 Node —— **Nova 里本来就有一个**。Electron 40.10.2 内嵌 Node 24.15.0，
+桥接跑在 `utilityProcess` 里用的就是它，页面是远端加载的，主力的 relay 路径全程 HTTP 转发，
+一行 node 代码都不经过本机的 node。
+
+要本机 node 的只有一处：账户页「这台电脑」那个工具面板，它要 `npm view` 查最新版、
+`npm install -g` 装 / 升 Claude Code 与 Codex，还要 `claude --version` 看装没装
+（`ai-bridge-native/src/pool/tools.rs`）。而 macOS 上从 Dock 点开的应用继承的是 launchd 的环境，
+PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，nvm 和 homebrew 都不在里面，`/usr/bin/node` 也不存在。
+所以 `src/modules/toolchain` 在起桥接子进程之前做三件事，**缺一不可**：
+
+1. 起一个登录且交互的 shell 把用户自己那份 PATH 问回来（nvm 写在 `.zshrc` 里，少了 `-i` 问不出来）；
+2. 在 PATH 末尾挂上自带的 `node` / `npm` / `npx` 三个 shim —— `node` 就是
+   `ELECTRON_RUN_AS_NODE=1` 起 Nova 自己，npm 是随包分发的一份 JS（落在 `resources/npm`）；
+3. 只有在本机确实没有 npm 时，才把 `npm_config_prefix` 指到 `userData/toolchain/global`。
+
+顺序是**本机优先、自带兜底**：本机装了 Node 的人，用 Nova 装出来的 claude 仍然落在他自己的
+全局目录里，终端里直接能用。没装的人才用自带的那套，装出来的东西落在 userData 下 ——
+所以「登录上游」那条命令会用绝对路径拼（`pool/setup.rs` 的 `login_command_line`），
+否则递给 Terminal 只会是 command not found。
+
+node shim 不是可有可无的：包的安装脚本是 `sh -c node install.cjs` 这么跑的，
+实测只给 npm 不给 node，`npm install -g @anthropic-ai/claude-code` 会在自己的 postinstall 上
+以 127 失败，包装了一半。
+
+npm 由 `electron/build/after-pack.cjs` 在打包时拷进去，**不能走 `extraResources`**：
+electron-builder 的过滤器里有一行硬编码，相对路径正好是 `node_modules` 的目录一律丢弃
+（`app-builder-lib/out/util/filter.js`），filter 写什么都救不回来 —— 而 npm 那 12MB 依赖
+就躺在 `npm/node_modules` 下。这个坑不报错也不警告，包里会躺着一个一跑就
+MODULE_NOT_FOUND 的空壳。afterPack 还有一点要紧：它跑在签名之前，签完再塞文件会让
+`.app` 的签名失效。
+
+```bash
+npm run verify:toolchain                        # 把 PATH 剥成 launchd 那份，验 shim、npm、prefix
+node scripts/verify-toolchain.cjs --bundle <Nova.app>   # 验真打出来的包里那份能不能跑
+```
+
+**--bundle 那条不是可选的**：开发态用的是仓库里的 `node_modules/npm`，它永远是好的，
+验不出打包漏了依赖这类问题。
+
+自带的那个 Node 版本跟着 Electron 走（现在 24.15.0），钉不到某个指定版本；要钉死就得改成
+把官方 Node 整包塞进 `extraResources`，代价是每平台 ~110MB 和 macOS 上多一套二进制签名。
+另外自带的这个 npm（11.19）默认不跑依赖的 install script，`npm install -g` 之后 postinstall 是跳过的
+（Claude Code 实测不受影响，它的 bin 是预编译的原生文件）。
 
 ## 界面部署与桌面壳
 

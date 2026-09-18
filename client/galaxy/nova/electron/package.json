@@ -18,6 +18,7 @@
         "to": "desktop.json"
       }
     ],
+    "afterPack": "nova/electron/build/after-pack.cjs",
     "directories": {
       "output": "../../release/nova"
     },
@@ -56,9 +57,10 @@
     "build:electron": "node ../../scripts/build-electron.cjs nova"
   },
   "devDependencies": {
+    "@types/node": "^20",
     "electron": "40.10.2",
-    "typescript": "^5",
-    "@types/node": "^20"
+    "npm": "^11.19.1",
+    "typescript": "^5"
   },
   "dependencies": {
     "ai-bridge": "*"

@@ -29,8 +29,10 @@ func (r *GalaxyRepository) SaveModel(ctx context.Context, row *GalaxyModel) erro
 			DoUpdates: clause.AssignmentColumns([]string{
 				"display_name", "vendor", "family", "kind",
 				"context_tokens", "max_output_tokens",
-				"input_price", "output_price", "cache_price", "currency",
-				"tags_json", "summary", "referral_bps", "listed", "featured", "sort_order", "updated_time",
+				"input_price", "output_price", "cache_price", "cache_write_price",
+				"list_input_price", "list_output_price", "currency",
+				"tags_json", "summary", "badge_text", "badge_tone",
+				"referral_bps", "listed", "featured", "sort_order", "updated_time",
 			}),
 		}).Create(row).Error; err != nil {
 			return err

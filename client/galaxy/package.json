@@ -25,6 +25,7 @@
     "test:bridge": "npm run test --workspace @galaxy/ai-bridge-native && npm run test --workspace ai-bridge",
     "build:bridge-native": "npm run build --workspace @galaxy/ai-bridge-native",
     "verify:bridge": "node scripts/verify-bridge-packaging.cjs",
+    "verify:toolchain": "node scripts/verify-toolchain.cjs",
     "dev:portal": "node scripts/portal.cjs dev",
     "start:portal": "node scripts/portal.cjs start",
     "build:portal": "node scripts/portal.cjs build"

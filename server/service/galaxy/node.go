@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -556,14 +557,26 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	if err != nil {
 		return dto.HeartbeatResult{}, err
 	}
+	byCID := make(map[string]*repository.GalaxyContribution, len(rows))
+	for _, row := range rows {
+		byCID[row.CID] = row
+	}
 	result := dto.HeartbeatResult{HubURL: s.cfg().ProviderHubURL, Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
 	for _, snapshot := range snapshots {
 		s.observeLane(snapshot, now)
 		local := unscopedCID(req.NodeID, snapshot.CID)
 		result.QuotaUpdate[local] = snapshot.QuotaLeft()
+		row := byCID[snapshot.CID]
+		// 主人自己关掉的、以及正在等排空的，不归额度这段管。
+		//
+		// 少了这一句，下面那个 shouldDrain != snapshot.Draining 会把它们**打开**：
+		// 快照里 paused / draining 的 Draining 都是 true，而额度没触顶时 shouldDrain
+		// 是 false，两者不等，于是回写 status=active —— 主人关掉的共享，
+		// 一个心跳（15 秒）之后自己开了回来。
+		closedByOwner := ownerClosed(row)
 		exhausted := ExhaustedUnits(snapshot)
 		shouldDrain := len(exhausted) > 0
-		if shouldDrain != snapshot.Draining {
+		if !closedByOwner && shouldDrain != snapshot.Draining {
 			_ = s.control.SetDraining(ctx, snapshot.CID, shouldDrain)
 			status := statusActive
 			if shouldDrain {
@@ -571,7 +584,12 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 			}
 			_ = s.repository.SetContributionStatus(ctx, bizLine, snapshot.CID, status)
 		}
-		if shouldDrain {
+		// 排空到头了就把主人早先点下的关闭落地。放在这里是因为这一圈本来就
+		// 同时握着库里的行和控制面的快照，不必为它多查一次。
+		if row != nil {
+			s.applyPendingClose(ctx, row, snapshot.Inflight)
+		}
+		if shouldDrain || closedByOwner {
 			result.Drain = append(result.Drain, local)
 		}
 		if s.notifier != nil {
@@ -734,7 +752,8 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
 		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
-		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status, Reputation: reputation,
+		Seats: row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status,
+		PendingStatus: row.PendingStatus, Reputation: reputation,
 		Online:    Online(snapshot, now, s.cfg().HeartbeatTimeout),
 		SeatsUsed: snapshot.SeatsUsed, Inflight: snapshot.Inflight,
 		SeatsEffective: EffectiveSeats(snapshot, plan, now, nil),
@@ -859,37 +878,129 @@ func (s *service) nameRecordNodes(ctx context.Context, ownerUserID string, recor
 	return nil
 }
 
+// ForceCloseReputationPenalty 强制关闭掐断在跑请求的扣分。
+//
+// 和「节点故障」同档（unit.go 里的 -0.05）：对消费者来说这两件事是同一回事 ——
+// 一条已经开始的请求突然没了。按次扣而不是按掐断的条数乘：一次关机掐掉 5 条
+// 就扣 0.25，等于让「机器上恰好忙」变成惩罚的主要变量，而主人只做了一个动作。
+// 按天回升 0.05，所以一次强制关闭一天就回来了。
+const ForceCloseReputationPenalty = -0.05
+
+// forceCloseAbortLimit 一次强制关闭最多取消多少条在途单元。
+// 正常情况下一条贡献的在途量是个位数（受 seats × seatConcurrency 约束），
+// 这个数只是防止异常数据把一次点击变成一场全表扫描。
+const forceCloseAbortLimit = 200
+
 // SetContributionStatus 主人暂停 / 恢复 / 停掉一条贡献（P-08、P-09）。
-// 停掉的贡献排空在途后释放座位，不中断在跑的请求。
-func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, nodeID, cid, status string) error {
-	switch status {
+//
+// 关闭的门槛是「有没有请求在跑」（inflight），不是「有没有消费者绑在座位上」。
+// 座位是会话亲和，空闲满 bindIdleTTL（默认 30 分钟）才释放 —— 拿它当门槛，
+// 主人在最后一次调用结束之后还要对着「不能下线」点上半小时，而那半小时里
+// 这台机器一条请求都没在跑。真正不该被打断的是在跑的那几条。
+//
+// 于是关闭有三种结局：
+//
+//	手上没活        当场关掉。
+//	有活，不强制    记下意图、停止接新单，在途归零时自动落地（P-08 的排空语义）。
+//	                主人点一次就够，不用守着反复点。
+//	有活，强制      当场关掉，并把在跑的请求全部取消 —— 那是消费者眼里的失败，扣信誉分。
+//	                手上恰好没活时不扣：那种「强制」和普通关闭没有任何区别。
+func (s *service) SetContributionStatus(ctx context.Context, ownerUserID string, req dto.SetContributionStatusRequest) (dto.SetContributionStatusResult, error) {
+	switch req.Status {
 	case statusActive, statusPaused, statusDisabled:
 	default:
-		return fmt.Errorf("非法的贡献状态: %s", status)
+		return dto.SetContributionStatusResult{}, fmt.Errorf("非法的贡献状态: %s", req.Status)
 	}
-	row, err := s.findOwnedContribution(ctx, ownerUserID, nodeID, cid)
+	row, err := s.findOwnedContribution(ctx, ownerUserID, req.NodeID, req.CID)
 	if err != nil {
-		return err
+		return dto.SetContributionStatusResult{}, err
 	}
-	// 有消费者绑在这条贡献上就不许关。
-	//
-	// 座位不是「正在跑一条请求」，而是「某个消费者的会话钉在了这台机器上」——
-	// 会话中途换机器会丢上下文，所以绑定要等空闲 TTL 到期才释放。主人想停机的
-	// 心情是真的，但把别人跑到一半的会话踹掉更不可接受；额度和时段随时能改，
-	// 那两项才是「我现在就想少给一点」的正确出口。
-	if status != statusActive && row.Status == statusActive {
-		snapshot, found, err := s.control.GetContribution(ctx, row.CID)
-		if err != nil {
-			return err
-		}
-		if found && snapshot.SeatsUsed > 0 {
-			return fmt.Errorf("还有 %d 个消费者绑在这条贡献上，现在不能下线；"+
-				"他们的会话结束（或空闲 %s 后自动释放）就能关。想立刻少给一点的话，额度和挂机时段随时可以改",
-				snapshot.SeatsUsed, s.cfg().BindIdleTTL)
+	if req.Status == statusActive {
+		// 重新打开：把没来得及执行的关闭意图一并丢掉。
+		// 留着的话，下一次在途归零时那条陈年意图会把刚开的共享又关上。
+		return s.commitContributionStatus(ctx, row, statusActive, dto.SetContributionStatusResult{Status: statusActive})
+	}
+
+	inflight := 0
+	if snapshot, found, err := s.control.GetContribution(ctx, row.CID); err != nil {
+		return dto.SetContributionStatusResult{}, err
+	} else if found {
+		inflight = snapshot.Inflight
+	}
+
+	switch decideClose(inflight, req.Force) {
+	case closeNow:
+		// 手上没活，强制与否没有区别，都不扣分。
+		return s.commitContributionStatus(ctx, row, req.Status, dto.SetContributionStatusResult{Status: req.Status})
+	case closePending:
+		return s.pendContributionClose(ctx, row, req.Status, inflight)
+	}
+
+	result := dto.SetContributionStatusResult{Status: req.Status, Inflight: inflight}
+	result.Aborted = s.abortContributionUnits(ctx, row.CID)
+	// 扣分在状态落地之前：落地要写库和控制面，任何一步失败都会把这次强制关闭退回去，
+	// 而那时候请求已经被取消了 —— 扣分和取消必须落在同一侧。
+	if result.Aborted > 0 {
+		if err := s.adjustReputation(ctx, row.CID, ForceCloseReputationPenalty); err == nil {
+			result.ReputationDelta = ForceCloseReputationPenalty
 		}
 	}
+	return s.commitContributionStatus(ctx, row, req.Status, result)
+}
+
+// closeAction 关闭一条贡献的三种结局。
+type closeAction int
+
+const (
+	// closeNow 手上没活，当场关掉。
+	closeNow closeAction = iota
+	// closePending 有活在跑，记下意图、停止接新单，在途归零时自动落地。
+	closePending
+	// closeForce 有活在跑，主人仍要现在就关：掐断它们并扣信誉分。
+	closeForce
+)
+
+// decideClose 关闭动作的判据。
+//
+// 单拎出来是因为这三条分支的边界正是这个功能的全部：force 在手上没活时**不该**
+// 扣分（那和普通关闭没有区别），而没有 force 时不该报错（报错就意味着主人得守着反复点）。
+func decideClose(inflight int, force bool) closeAction {
+	if inflight <= 0 {
+		return closeNow
+	}
+	if force {
+		return closeForce
+	}
+	return closePending
+}
+
+// ownerClosed 主人是不是自己把这条关了，或者正在等它排空。
+//
+// 心跳里的额度排空逻辑要绕开这些行：那段按「额度有没有触顶」回写 status，
+// 而主人的意图不归它管，写下去就是把人家关掉的共享又打开。
+//
+// draining 单看状态分不出是谁写的 —— 额度触顶写它，等排空也写它。区别在 pending：
+// 有 pending 的是主人在等关闭，没有的是额度，后者必须留给额度那段自己在窗口翻转时写回 active，
+// 否则额度恢复了也接不了单。
+func ownerClosed(row *repository.GalaxyContribution) bool {
+	if row == nil {
+		return false
+	}
+	if row.PendingStatus != "" {
+		return true
+	}
+	return row.Status == statusPaused || row.Status == statusDisabled
+}
+
+// commitContributionStatus 把状态落到库与控制面。
+func (s *service) commitContributionStatus(
+	ctx context.Context,
+	row *repository.GalaxyContribution,
+	status string,
+	result dto.SetContributionStatusResult,
+) (dto.SetContributionStatusResult, error) {
 	if err := s.repository.SetContributionStatus(ctx, bizLine, row.CID, status); err != nil {
-		return err
+		return dto.SetContributionStatusResult{}, err
 	}
 	// 立刻写控制面，不等下一次 hello。
 	//
@@ -898,9 +1009,70 @@ func (s *service) SetContributionStatus(ctx context.Context, ownerUserID, nodeID
 	// 心跳会把「你已启用」下发给节点、节点也把通道建起来、界面显示共享中，
 	// 可放置端的车道里根本没有这台机器，消费者拿到的一律是 no_capacity。
 	if err := s.syncNodeToControlPlane(ctx, row.NodeID); err != nil {
-		return err
+		return dto.SetContributionStatusResult{}, err
 	}
-	return s.control.SetDraining(ctx, row.CID, status != statusActive)
+	if err := s.control.SetDraining(ctx, row.CID, status != statusActive); err != nil {
+		return dto.SetContributionStatusResult{}, err
+	}
+	return result, nil
+}
+
+// pendContributionClose 记下「主人想关，等在途跑完」。
+//
+// status 写 draining 而不是目标状态：draining 是额度触顶时用的同一套语义 ——
+// 停止接新单、在跑的正常跑完、通道留着 —— 节点侧不需要为此多认一种状态。
+// 真正的目标状态记在 pending_status 上，由心跳在 inflight 归零时落地。
+func (s *service) pendContributionClose(
+	ctx context.Context,
+	row *repository.GalaxyContribution,
+	target string,
+	inflight int,
+) (dto.SetContributionStatusResult, error) {
+	if err := s.repository.SetContributionStatus(ctx, bizLine, row.CID, statusDraining); err != nil {
+		return dto.SetContributionStatusResult{}, err
+	}
+	if err := s.repository.SetContributionPending(ctx, bizLine, row.CID, target); err != nil {
+		return dto.SetContributionStatusResult{}, err
+	}
+	if err := s.syncNodeToControlPlane(ctx, row.NodeID); err != nil {
+		return dto.SetContributionStatusResult{}, err
+	}
+	if err := s.control.SetDraining(ctx, row.CID, true); err != nil {
+		return dto.SetContributionStatusResult{}, err
+	}
+	return dto.SetContributionStatusResult{Status: statusDraining, Pending: target, Inflight: inflight}, nil
+}
+
+// abortContributionUnits 取消这条贡献上还没走到终态的单元，返回取消了几条。
+//
+// 只发取消请求，不在这里判失败：终态由节点报上来的 complete 或 Hub 侧的看门狗写，
+// 两条路都已经会结算、会回补额度。这里抢着写一遍只会和它们撞车。
+func (s *service) abortContributionUnits(ctx context.Context, cid string) int {
+	rows, err := s.repository.ListLiveUnitsByContribution(ctx, bizLine, cid, forceCloseAbortLimit)
+	if err != nil {
+		return 0
+	}
+	aborted := 0
+	for _, unit := range rows {
+		if err := s.Abandon(ctx, unit.UnitID, "provider_force_closed"); err == nil {
+			aborted++
+		}
+	}
+	return aborted
+}
+
+// applyPendingClose 在途归零之后，把主人早先点下的关闭落地。
+//
+// 由心跳调用：那里本来就同时握着数据库的行和控制面的快照，不用为此多查一次。
+// 代价是最迟一个心跳周期（15 秒）才落地 —— 对「关完共享」这件事足够快，
+// 而放在结算的热路径上，每一条请求跑完都要为此多读一次库。
+func (s *service) applyPendingClose(ctx context.Context, row *repository.GalaxyContribution, inflight int) {
+	if row.PendingStatus == "" || inflight > 0 {
+		return
+	}
+	if _, err := s.commitContributionStatus(ctx, row, row.PendingStatus, dto.SetContributionStatusResult{}); err != nil {
+		log.Printf("galaxy 排空后关闭失败 cid=%s target=%s: %v", row.CID, row.PendingStatus, err)
+	}
 }
 
 // registerNodeFromRow 按数据库里那一行把节点的控制面登记项整条重建。

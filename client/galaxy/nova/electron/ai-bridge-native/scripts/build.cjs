@@ -57,5 +57,13 @@ if (build.status !== 0) process.exit(build.status ?? 1);
 
 const from = path.join(targetDir(), target, profile, artifact);
 const to = path.join(root, `ai-bridge-native.${platformArch}.node`);
-fs.copyFileSync(from, to);
+// 先写临时文件再 rename，**不能**直接往旧的 .node 上覆写。
+//
+// 覆写是同一个 inode，而 macOS 给已签名的代码页留着缓存：新内容配旧缓存，
+// 下一次 dlopen 就是 EXC_BAD_ACCESS / CODESIGNING「Invalid Page」，进程被 SIGKILL。
+// 偏偏 `codesign -v` 看磁盘上那份是好的，所以这个坑长得非常像「刚改的那段代码
+// 把原生模块弄崩了」。rename 换的是目录项，新文件是新 inode，与旧缓存无关。
+const staging = `${to}.${process.pid}.tmp`;
+fs.copyFileSync(from, staging);
+fs.renameSync(staging, to);
 console.log(`ai-bridge-native: ${path.relative(root, to)} (${(fs.statSync(to).size / 1048576).toFixed(1)} MB)`);

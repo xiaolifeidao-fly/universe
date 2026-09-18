@@ -10,6 +10,40 @@ import (
 // 平台侧 usage 解析（设计文档 6.1）。Hub 在对拷字节时窥探事件，不修改字节。
 // 解析结果比节点自报更可信：节点可以撒谎，透传的上游流不能。
 
+// netInput 把「含缓存命中的总输入」折成「未命中缓存的新增输入」。
+//
+// 两族的 input 天生不是一个口径：Anthropic 的 input_tokens 与 cache_read / cache_creation
+// 三者互不重叠，OpenAI 的 input_tokens 却把 cached_tokens 算在里面。照原样存进去，
+// 同一个 llm.input_tokens 在两族之间指的是两件事 —— 界面上的「输入」列没法解释，
+// 而 billing 又是逐单位乘单价累加的（service/galaxy/billing.go），OpenAI 这边的缓存
+// token 会被收两遍：一次全价 input，一次 cache 价。
+//
+// 所以在解析这一层就减齐，让库里的三个桶永远互不重叠：
+// input = 新增输入，cache_read = 命中缓存，cache_write = 写入缓存。
+func netInput(total, cacheRead int64) int64 {
+	if cacheRead <= 0 {
+		return total
+	}
+	if total <= cacheRead {
+		// 上游偶尔把两个数报得一样大，或干脆报反。减成负数比偏大危险得多 ——
+		// 负用量在结算时是往回加额度，会把计数器越烧越松。
+		return 0
+	}
+	return total - cacheRead
+}
+
+// withTotal 补上四个桶的合计。
+//
+// 合计是解析出来的，不是上游报的 —— 上游只报分项。主人的额度设在合计上时，
+// 少补这一行就等于那条上限永远不涨，机器一直显示「还剩满格」。
+func withTotal(usage contract.Metering) contract.Metering {
+	usage[contract.UnitTotalTokens] = usage[contract.UnitInputTokens] +
+		usage[contract.UnitOutputTokens] +
+		usage[contract.UnitCacheReadTokens] +
+		usage[contract.UnitCacheWriteTokens]
+	return usage
+}
+
 // sniffer 一族协议的用量解析器。
 type sniffer interface {
 	// Event 喂入一个 SSE 事件。
@@ -100,6 +134,8 @@ func (s *anthropicSniffer) Usage() contract.Metering {
 	if !s.seen {
 		return nil
 	}
+	// Anthropic 的 input_tokens 本来就不含 cache_read / cache_creation，已经是净值，
+	// 不走 netInput。三个桶原样存进去就是互不重叠的。
 	usage := contract.Metering{
 		contract.UnitInputTokens:  s.input,
 		contract.UnitOutputTokens: s.output,
@@ -110,7 +146,7 @@ func (s *anthropicSniffer) Usage() contract.Metering {
 	if s.cacheWrite > 0 {
 		usage[contract.UnitCacheWriteTokens] = s.cacheWrite
 	}
-	return usage
+	return withTotal(usage)
 }
 
 // ---------- OpenAI Responses ----------
@@ -199,8 +235,9 @@ func (s *responsesSniffer) Usage() contract.Metering {
 	if !s.seen {
 		return nil
 	}
+	// input_tokens 含 cached_tokens（cached 是它的子集），减齐见 netInput。
 	usage := contract.Metering{
-		contract.UnitInputTokens:  s.input,
+		contract.UnitInputTokens:  netInput(s.input, s.cacheRead),
 		contract.UnitOutputTokens: s.output,
 	}
 	if s.cacheRead > 0 {
@@ -209,7 +246,7 @@ func (s *responsesSniffer) Usage() contract.Metering {
 	if s.cacheWrite > 0 {
 		usage[contract.UnitCacheWriteTokens] = s.cacheWrite
 	}
-	return usage
+	return withTotal(usage)
 }
 
 // ---------- OpenAI Chat Completions ----------
@@ -270,14 +307,15 @@ func (s *chatSniffer) Usage() contract.Metering {
 	if !s.seen {
 		return nil
 	}
+	// prompt_tokens 含 prompt_tokens_details.cached_tokens，同 Responses 一样减齐。
 	usage := contract.Metering{
-		contract.UnitInputTokens:  s.input,
+		contract.UnitInputTokens:  netInput(s.input, s.cacheRead),
 		contract.UnitOutputTokens: s.output,
 	}
 	if s.cacheRead > 0 {
 		usage[contract.UnitCacheReadTokens] = s.cacheRead
 	}
-	return usage
+	return withTotal(usage)
 }
 
 // isInjectedUsageChunk 判断一个 chat.completion.chunk 是不是「只带 usage 的那一条」。

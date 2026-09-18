@@ -9,7 +9,7 @@ use crate::credentials::CredentialRegistry;
 use crate::pool::client::HubClient;
 use crate::pool::probe::probe;
 use crate::pool::runner::{create_pool_runner_with, PoolRunner, RunnerOptions};
-use crate::pool::setup::{hub_needs_rebind, login_command, open_terminal, origin_of, write_pool_connection};
+use crate::pool::setup::{hub_needs_rebind, login_command, login_command_line, open_terminal, origin_of, write_pool_connection};
 use crate::pool::token::{read_node_identity, resolve_node_token_file, write_node_identity, NodeIdentity};
 use crate::pool::tools::{tool_statuses, upgrade_tool};
 use napi::bindgen_prelude::*;
@@ -321,7 +321,8 @@ impl NativeBridge {
             .auth_mode
             .and_then(|mode| login_command(mode.label()))
             .ok_or_else(|| err(format!("{name} 没有可拉起的登录命令")))?;
-        let command = argv.join(" ");
+        // argv[0] 换成绝对路径再拼：自带 npm 装出来的 claude 不在用户终端的 PATH 上。
+        let command = login_command_line(argv);
         let credentials = CredentialRegistry::new(self.http.clone());
         match probe_credentials(provider, &name, &credentials, &self.env).await {
             Ok(()) => to_json(&json!({ "command": command, "launched": false, "alreadyAuthorized": true })),

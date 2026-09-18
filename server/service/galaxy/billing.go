@@ -17,6 +17,15 @@ import (
 // priceScale 定价按「每百万单位」表示，避免 token 这种大基数上的浮点误差。
 const priceScale = 1_000_000
 
+// derivedUnits 是从别的单位算出来的合计，只进计量与额度，永远不进账本。
+//
+// 它们的量已经被分项收过一次了，再乘一次单价就是把每一笔都收两遍。运营能在
+// 定价页手填任意单位（那张表是候选提示不是白名单），所以这道闸设在这里，
+// 而不是指望没人给合计填价。
+var derivedUnits = map[contract.MeterUnit]bool{
+	contract.UnitTotalTokens: true,
+}
+
 // record 写计量流水与三本账。幂等键是 rid + attempt + unit，重放不会记两遍。
 func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract.KindSpec, actual contract.Metering, billable bool) error {
 	if len(actual) == 0 {
@@ -55,6 +64,10 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 			Amount: amount, Source: string(source),
 		})
 		if !billable {
+			continue
+		}
+		if derivedUnits[unit] {
+			// 合计到此为止：上面的 meter_record 照写（额度与对账要它），账本不碰。
 			continue
 		}
 		price, ok := prices[unit]

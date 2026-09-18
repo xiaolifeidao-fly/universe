@@ -34,6 +34,18 @@ const (
 	// 其余能力（比如视频渲染）只有在上架了对应商品时才会出现在单价表里，
 	// 见 portalKinds。
 	portalKind = "llm.chat"
+
+	// 卡片角标的四种配色。给的是语义名而不是颜色名：库里存「这是个主推位」，
+	// 每个端再按自己的调色板去渲染 —— Orbit 青绿、Nova 暖铜，同一条记录
+	// 存一个 "red" 进去，到了另一个端就没处安放。
+	badgeToneHot     = "hot"     // 主推、旗舰
+	badgeToneNew     = "new"     // 首发、刚上
+	badgeToneValue   = "value"   // 性价比、划算
+	badgeToneNeutral = "neutral" // 纯说明，不强调
+
+	// maxBadgeText 角标文案上限，与 badge_text 那一列同宽。
+	// 四个汉字是这个位置能放下的极限，再长就把模型名挤到换行。
+	maxBadgeText = 16
 )
 
 // PortalCatalog 门户一次取回整站要展示的东西。
@@ -241,9 +253,13 @@ func portalModelView(row *repository.GalaxyModel) dto.PortalModelView {
 		ModelID: row.ModelID, DisplayName: defaultString(row.DisplayName, row.ModelID),
 		Vendor: vendor, Family: family, Kind: defaultString(row.Kind, portalKind),
 		ContextTokens: row.ContextTokens, MaxOutputTokens: row.MaxOutputTokens,
-		InputPrice: row.InputPrice, OutputPrice: row.OutputPrice, CachePrice: row.CachePrice,
-		Currency: defaultString(row.Currency, "CNY"),
-		Tags:     decodeStrings(row.TagsJSON), Summary: row.Summary,
+		InputPrice: row.InputPrice, OutputPrice: row.OutputPrice,
+		CachePrice: row.CachePrice, CacheWritePrice: row.CacheWritePrice,
+		ListInputPrice: row.ListInputPrice, ListOutputPrice: row.ListOutputPrice,
+		DiscountBps: discountBps(row.OutputPrice, row.ListOutputPrice),
+		Currency:    defaultString(row.Currency, "CNY"),
+		Tags:        decodeStrings(row.TagsJSON), Summary: row.Summary,
+		BadgeText: row.BadgeText, BadgeTone: badgeTone(row.BadgeText, row.BadgeTone),
 		Featured: row.Featured, SortOrder: row.SortOrder,
 		// 要「输入和输出都填了」才算这个模型自己的价。
 		//
@@ -296,7 +312,47 @@ func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]pri
 			model.CachePrice = price.Price
 		}
 	}
+	// 缓存写入单独回落。它和缓存读取不是一档：写入比普通输入还贵，读取便宜一个数量级，
+	// 让写入跟着读取的价走等于按十分之一收。
+	if model.CacheWritePrice == 0 {
+		if price, ok := table[contract.UnitCacheWriteTokens]; ok {
+			model.CacheWritePrice = price.Price
+		}
+	}
 	model.Currency = defaultString(model.Currency, "CNY")
+	// 折扣按**卡片上最终显示的那个价**重算：回落到统一价之后再拿建表时的
+	// 0 去比，「省 X%」要么消失要么是个 100%。访问者读到的是「我要付这个数、
+	// 官方收那个数」，所以比的就该是他真会付的那个数。
+	model.DiscountBps = discountBps(model.OutputPrice, model.ListOutputPrice)
+}
+
+// discountBps 自家价比官方参考价便宜多少，万分之一（8500 = 省 85%）。
+//
+// 只按输出价算。输入与输出的折扣可以填得不一样，两个数都亮出来等于没说；
+// 而账单是按输出 token 计的，输出那一档才是使用者真正要付的大头。
+//
+// 官方价没填、或没比自家价贵时返 0：卡片上划线价与「省 X%」一起不出现。
+// 标一个「省 0%」或者负数，比什么都不标更糟。
+func discountBps(price, list int64) int {
+	if price <= 0 || list <= price {
+		return 0
+	}
+	return int((list - price) * 10000 / list)
+}
+
+// badgeTone 收敛角标配色。空文案就没有角标，配色跟着一起清掉 ——
+// 留一个孤零零的 tone 在 JSON 里，前端得再判一次「有色但没字」。
+// 认不出来的值一律当 neutral：库里躺着一个拼错的 tone，卡片也不该因此不渲染。
+func badgeTone(text, tone string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	switch tone {
+	case badgeToneHot, badgeToneNew, badgeToneValue:
+		return tone
+	default:
+		return badgeToneNeutral
+	}
 }
 
 // inferFamily 从模型名推族与厂商。
@@ -432,6 +488,13 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 	if req.ReferralBps != nil && (*req.ReferralBps < 0 || *req.ReferralBps > maxReferralBps) {
 		return fmt.Errorf("返现比例要在 0%% 到 100%% 之间")
 	}
+	if req.ListInputPrice < 0 || req.ListOutputPrice < 0 {
+		return fmt.Errorf("官方参考价不能是负数")
+	}
+	// 官方价填得比自家价还低不拦：拦了就意味着运营为了改一个无关字段
+	// （整行覆盖，每次保存都要把这两个数带回来）得先去把价格理顺。
+	// 它的后果只是 discountBps 返 0、卡片上不出现划线价，运营台那一列
+	// 会直接显示成「-」，看得见。
 	tags := ""
 	if len(req.Tags) > 0 {
 		encoded, err := json.Marshal(req.Tags)
@@ -440,6 +503,7 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 		}
 		tags = clip(string(encoded), 512)
 	}
+	badge := clip(req.BadgeText, maxBadgeText)
 	return s.repository.SaveModel(ctx, &repository.GalaxyModel{
 		BizLine: bizLine, ModelID: modelID,
 		DisplayName:   clip(defaultString(req.DisplayName, modelID), 96),
@@ -447,10 +511,15 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 		Family:        clip(defaultString(req.Family, family), 32),
 		Kind:          clip(defaultString(req.Kind, portalKind), 64),
 		ContextTokens: req.ContextTokens, MaxOutputTokens: req.MaxOutputTokens,
-		InputPrice: req.InputPrice, OutputPrice: req.OutputPrice, CachePrice: req.CachePrice,
+		InputPrice: req.InputPrice, OutputPrice: req.OutputPrice,
+		CachePrice: req.CachePrice, CacheWritePrice: req.CacheWritePrice,
+		ListInputPrice: req.ListInputPrice, ListOutputPrice: req.ListOutputPrice,
 		Currency: clip(defaultString(req.Currency, "CNY"), 8),
-		TagsJSON: tags, Summary: clip(req.Summary, 256), ReferralBps: req.ReferralBps,
-		Listed: listed, Featured: req.Featured, SortOrder: req.SortOrder,
+		TagsJSON: tags, Summary: clip(req.Summary, 256),
+		BadgeText:   badge,
+		BadgeTone:   badgeTone(badge, req.BadgeTone),
+		ReferralBps: req.ReferralBps,
+		Listed:      listed, Featured: req.Featured, SortOrder: req.SortOrder,
 	})
 }
 

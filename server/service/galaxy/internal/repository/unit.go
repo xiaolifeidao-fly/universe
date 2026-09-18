@@ -145,6 +145,23 @@ func (r *GalaxyRepository) ListUnits(ctx context.Context, q UnitQuery) ([]*Galax
 	return rows, total, err
 }
 
+// ListLiveUnitsByContribution 这条贡献上还没走到终态的单元。强制关闭要挨个取消它们。
+//
+// 不走 unitScope 的 State：那里是单值，而「还在跑」是三个状态（派下去了、在跑、在推流）。
+// 取消要一个不落 —— 漏掉的那条会一直挂在消费者那头，直到它自己超时。
+// queued 不在其中：它还没落到任何一条贡献上，关这台机器不该动它，它会被派到别处去。
+func (r *GalaxyRepository) ListLiveUnitsByContribution(ctx context.Context, bizLine, cid string, limit int) ([]*GalaxyUnit, error) {
+	tx := r.Db.WithContext(ctx).Model(&GalaxyUnit{}).
+		Where("biz_line = ?", bizLine).Where("cid = ?", cid).
+		Where("state IN ?", []string{"placed", "running", "streaming"})
+	if limit > 0 {
+		tx = tx.Limit(limit)
+	}
+	var rows []*GalaxyUnit
+	err := tx.Order("created_time desc, id desc").Find(&rows).Error
+	return rows, err
+}
+
 // UnitSummary 一组单元的整体统计。它统计的是**整个筛选条件**，不是当前这一页。
 type UnitSummary struct {
 	Calls  int64

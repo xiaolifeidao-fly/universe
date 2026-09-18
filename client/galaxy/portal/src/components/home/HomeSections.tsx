@@ -21,7 +21,8 @@ import {
   IconSnow,
 } from "@/components/site/icons";
 import { CodeTabs } from "@/components/home/CodeTabs";
-import { formatContext, formatUnitPrice } from "@/utils/format";
+import { formatBps, formatContext, formatUnitPrice } from "@/utils/format";
+import { VendorMark, vendorLabel } from "@shared/brand/VendorMark";
 import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalModel, PortalOverview } from "@/utils/portal";
 import type { ReactNode } from "react";
@@ -145,29 +146,47 @@ export function ModelPeek({ models }: { models: PortalModel[] }) {
   );
 }
 
+/** 角标配色：目录里存的是语义，这里落到门户自己的标签配色。 */
+const BADGE_TONES: Record<string, "accent" | "warn" | "ok" | "default"> = {
+  hot: "accent",
+  new: "warn",
+  value: "ok",
+  neutral: "default",
+};
+
 /** 模型卡片。首页和模型页共用一份 —— 同一个东西在两处长得不一样是最廉价的不一致。 */
 export function ModelCard({ model }: { model: PortalModel }) {
   const { t } = useLocale();
   const context = formatContext(model.contextTokens ?? 0);
+  const listInput = model.listInputPrice ?? 0;
+  const listOutput = model.listOutputPrice ?? 0;
+  const discountBps = model.discountBps ?? 0;
+  // 划线价只在真有自家价可比时出现：没有自家价还划掉官方价，等于说
+  // 「这个价不算数」却不给替代的数。回落到统一价时价格照样是真要付的数，那种情况要显示。
+  const listed = (listInput > 0 || listOutput > 0) && (model.inputPrice > 0 || model.outputPrice > 0);
 
   return (
     <Card lift className="gp-model">
       <div className="gp-model__head">
+        {/* 方块底色按族走，官方标在上面落成白色单色版 —— 只等比缩放、只改颜色。 */}
         <span className="gp-model__mark" style={{ background: familyColor(model.family) }}>
-          {(model.displayName || model.modelId).slice(0, 1).toUpperCase()}
+          <VendorMark vendor={model.vendor ?? ""} fallback={model.displayName || model.modelId} size={18} />
         </span>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div className="gp-model__id">{model.modelId}</div>
           <div className="gp-model__vendor">
-            {familyLabel(model.family, t)}
+            {model.vendor ? vendorLabel(model.vendor) : familyLabel(model.family, t)}
             {context ? ` · ${t("models.context")} ${context}` : ""}
           </div>
         </div>
-        {!model.priced ? (
-          <span className="gp-tag" title={t("common.unifiedHint")}>
-            {t("common.unified")}
-          </span>
-        ) : null}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {model.badgeText ? <Tag tone={BADGE_TONES[model.badgeTone ?? "neutral"] ?? "default"}>{model.badgeText}</Tag> : null}
+          {!model.priced ? (
+            <span className="gp-tag" title={t("common.unifiedHint")}>
+              {t("common.unified")}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {model.summary ? (
@@ -188,6 +207,19 @@ export function ModelCard({ model }: { model: PortalModel }) {
           <em>/ 1M</em>
         </div>
       </div>
+
+      {listed ? (
+        <div className="gp-model__list">
+          <span>
+            {t("models.listPrice")}{" "}
+            <s>
+              {formatUnitPrice(listInput, model.currency)} / {formatUnitPrice(listOutput, model.currency)}
+            </s>
+          </span>
+          {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
+          {discountBps > 0 ? <Tag tone="ok">{t("models.discount").replace("{rate}", formatBps(discountBps))}</Tag> : null}
+        </div>
+      ) : null}
 
       {model.tags && model.tags.length > 0 ? (
         <div className="gp-model__tags">

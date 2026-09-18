@@ -30,6 +30,14 @@ func feedStream(t *testing.T, target sniffer, path string, chunkSize int) {
 
 func assertUsage(t *testing.T, got, want contract.Metering) {
 	t.Helper()
+	// 合计不用每个用例手写：它按定义就是四个桶之和。这里替 want 补上，
+	// 顺带把「解析器必须报合计」变成所有用例共同的硬约束 —— 将来接第四族协议时
+	// 忘了 withTotal，这里就会红，而不是等主人发现额度条永远不涨。
+	if _, ok := want[contract.UnitTotalTokens]; !ok {
+		want = want.Clone()
+		want[contract.UnitTotalTokens] = want[contract.UnitInputTokens] + want[contract.UnitOutputTokens] +
+			want[contract.UnitCacheReadTokens] + want[contract.UnitCacheWriteTokens]
+	}
 	if len(got) != len(want) {
 		t.Fatalf("用量维度数量不符: got=%v want=%v", got, want)
 	}
@@ -73,7 +81,9 @@ func TestResponsesStreamUsage(t *testing.T) {
 	sniff := &responsesSniffer{}
 	feedStream(t, sniff, "testdata/responses-stream.sse", 13)
 	assertUsage(t, sniff.Usage(), contract.Metering{
-		contract.UnitInputTokens:      2048,
+		// 流里 input_tokens 报的是 2048，其中 1024 是缓存命中。存进去的是净值 1024 ——
+		// OpenAI 的 input_tokens 含 cached_tokens，不减的话缓存那部分会被计两次。
+		contract.UnitInputTokens:      1024,
 		contract.UnitOutputTokens:     311,
 		contract.UnitCacheReadTokens:  1024,
 		contract.UnitCacheWriteTokens: 256,
@@ -88,9 +98,37 @@ func TestChatStreamUsage(t *testing.T) {
 	sniff := &chatSniffer{}
 	feedStream(t, sniff, "testdata/chat-stream.sse", 29)
 	assertUsage(t, sniff.Usage(), contract.Metering{
-		contract.UnitInputTokens:     97,
+		// 同 Responses：流里 prompt_tokens=97 含 32 个缓存命中，净输入是 65。
+		contract.UnitInputTokens:     65,
 		contract.UnitOutputTokens:    24,
 		contract.UnitCacheReadTokens: 32,
+	})
+}
+
+// netInput 的边界：上游报得不自洽时，宁可偏大也不能变成负数 ——
+// 负用量在结算里是往回加额度。
+func TestNetInputNeverGoesNegative(t *testing.T) {
+	for _, testCase := range []struct{ total, cacheRead, want int64 }{
+		{total: 2048, cacheRead: 1024, want: 1024},
+		{total: 100, cacheRead: 0, want: 100},
+		{total: 100, cacheRead: 100, want: 0},
+		{total: 100, cacheRead: 300, want: 0},
+		{total: 100, cacheRead: -5, want: 100},
+	} {
+		if got := netInput(testCase.total, testCase.cacheRead); got != testCase.want {
+			t.Fatalf("netInput(%d,%d)=%d want=%d", testCase.total, testCase.cacheRead, got, testCase.want)
+		}
+	}
+}
+
+// Anthropic 的 input_tokens 已经是净值，再减一次就把新增输入抹掉了。
+func TestAnthropicInputIsNotNettedAgain(t *testing.T) {
+	sniff := &anthropicSniffer{}
+	sniff.Body([]byte(`{"usage":{"input_tokens":120,"output_tokens":9,"cache_read_input_tokens":6235}}`))
+	assertUsage(t, sniff.Usage(), contract.Metering{
+		contract.UnitInputTokens:     120,
+		contract.UnitOutputTokens:    9,
+		contract.UnitCacheReadTokens: 6235,
 	})
 }
 
@@ -157,5 +195,34 @@ func TestInjectIncludeUsageKeepsExistingStreamOptions(t *testing.T) {
 	}
 	if payload.StreamOptions["include_usage"] != true || payload.StreamOptions["other"] == nil {
 		t.Fatalf("已有的 stream_options 字段应保留: %v", payload.StreamOptions)
+	}
+}
+
+// 合计要跟着预估一起预留。
+//
+// 只在结算时扣的话，请求跑着的那几十秒里放置算法看到的合计剩余是满格的，
+// 会把远超上限的请求一股脑放进来 —— 主人设的「一天 200 万」就形同虚设。
+func TestEstimateReservesTheTotal(t *testing.T) {
+	adapter := New(nil, Options{})
+
+	chat := adapter.Estimate(&input{
+		spec:      pathSpec{family: FamilyAnthropic},
+		body:      []byte(`{"model":"claude-sonnet-5","max_tokens":1000}`),
+		maxTokens: 1000,
+	})
+	if got, want := chat[contract.UnitTotalTokens], chat[contract.UnitInputTokens]+chat[contract.UnitOutputTokens]; got != want {
+		t.Fatalf("预估的合计要等于输入加输出: got=%d want=%d", got, want)
+	}
+	if chat[contract.UnitTotalTokens] <= 0 {
+		t.Fatal("预估没有预留合计，主人的总量上限会在请求跑完之前一直显示满格")
+	}
+
+	// count_tokens 只数不生成，没有输出要预留，合计就等于输入。
+	counting := adapter.Estimate(&input{
+		spec: pathSpec{family: FamilyAnthropic, countTokens: true},
+		body: []byte(`{"model":"claude-sonnet-5"}`),
+	})
+	if got, want := counting[contract.UnitTotalTokens], counting[contract.UnitInputTokens]; got != want {
+		t.Fatalf("count_tokens 的合计要等于输入: got=%d want=%d", got, want)
 	}
 }

@@ -12,7 +12,7 @@ import { Modal, message } from "antd";
 import { useEffect, useState } from "react";
 import { Btn, Field, Note, Pill } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { errorLabel, formatCny, formatDateTime, formatInt, formatMillis, providerLabel, unitLabel } from "@/utils/format";
+import { DERIVED_TOKEN_UNITS, errorLabel, formatCny, formatDateTime, formatInt, formatMillis, providerLabel, unitLabel } from "@/utils/format";
 import { DISPUTE_REASONS, fileDispute, type DisputeReason, type UsageRecord } from "../../api/consumer.api";
 
 export function RecordDetail({
@@ -83,10 +83,15 @@ export function RecordDetail({
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <span className="gx-label">{t("detail.usage")}</span>
             {Object.entries(record.usage ?? {})
-              .filter(([, value]) => value > 0)
+              .filter(([unit, value]) => value > 0 && !DERIVED_TOKEN_UNITS.has(unit))
               .map(([unit, value]) => (
                 <Row key={unit} label={unitLabel(unit, t)} value={formatInt(value)} mono />
               ))}
+            {/* 合计单独摆在分项后面：和它们并排的话，看起来像是第五个桶，
+                而它其实就是上面那几项加起来的数。 */}
+            {(record.usage?.["llm.total_tokens"] ?? 0) > 0 ? (
+              <Row label={unitLabel("llm.total_tokens", t)} value={formatInt(record.usage["llm.total_tokens"])} mono strong />
+            ) : null}
             <Row label={t("detail.charge")} value={record.cost > 0 ? formatCny(record.cost) : "0"} mono strong />
           </div>
 

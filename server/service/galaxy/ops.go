@@ -222,6 +222,13 @@ func (s *service) Sweep(ctx context.Context) error {
 		snapshot, found, _ := s.control.GetContribution(ctx, row.CID)
 		if !found || !Online(snapshot, now, s.cfg().HeartbeatTimeout) {
 			offline[row.NodeID] = true
+			// 主人点过关闭、还没等到排空的那些，在这里落地。
+			//
+			// 正常情况下这件事由心跳做，但心跳恰恰是这台机器现在没有的东西：
+			// 关闭点下去之后机器就断了 / 关机了，那条贡献会永远停在「正在收尾」。
+			// 在途按 0 算 —— 这台机器已经不会再报任何东西回来了，
+			// 它手上那些活由 Hub 自己的看门狗判失败，不是在等它们跑完。
+			s.applyPendingClose(ctx, row, 0)
 			continue
 		}
 		plan := BuildQuotaPlan(grants[row.CID], now)

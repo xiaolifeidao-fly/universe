@@ -52,6 +52,7 @@ const messages = {
     "kind.delivery.task": "任务执行",
     "kind.video.edit.render": "视频渲染",
 
+    "unit.llm.total_tokens": "总 token",
     "unit.llm.input_tokens": "输入 token",
     "unit.llm.output_tokens": "输出 token",
     "unit.llm.cache_read_tokens": "缓存读取 token",
@@ -163,6 +164,8 @@ const messages = {
     "models.context": "上下文",
     "models.input": "输入",
     "models.output": "输出",
+    "models.listPrice": "官方",
+    "models.discount": "省 {rate}",
     "models.cache": "缓存读取",
     "models.priceNoteBase": "单价按每百万 token 计，与账单同口径。卡片上标「统一价」的，用的是这一类能力的通用单价，不是这个模型自己的价。",
     "models.priceNoteFlat":
@@ -273,6 +276,7 @@ const messages = {
     "kind.delivery.task": "Task execution",
     "kind.video.edit.render": "Video rendering",
 
+    "unit.llm.total_tokens": "Total tokens",
     "unit.llm.input_tokens": "Input tokens",
     "unit.llm.output_tokens": "Output tokens",
     "unit.llm.cache_read_tokens": "Cache read tokens",
@@ -391,6 +395,8 @@ const messages = {
     "models.context": "Context",
     "models.input": "Input",
     "models.output": "Output",
+    "models.listPrice": "list",
+    "models.discount": "{rate} off",
     "models.cache": "Cache read",
     "models.priceNoteBase":
       "Rates are per million tokens, the same unit the bill uses. A card marked \"Flat rate\" is showing the rate for that capability, not a rate set for that model.",

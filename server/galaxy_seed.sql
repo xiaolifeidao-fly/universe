@@ -157,32 +157,32 @@ ON DUPLICATE KEY UPDATE
 
 INSERT INTO `zt_galaxy_model`
   (`biz_line`, `model_id`, `display_name`, `vendor`, `family`, `kind`,
-   `context_tokens`, `max_output_tokens`, `input_price`, `output_price`, `cache_price`,
+   `context_tokens`, `max_output_tokens`, `input_price`, `output_price`, `cache_price`, `cache_write_price`,
    `currency`, `tags_json`, `summary`, `listed`, `featured`, `sort_order`,
    `created_time`, `updated_time`)
 VALUES
   ('galaxy', 'claude-opus-5', 'Claude Opus 5', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 'CNY', '["复杂推理","长代码库","Agent"]',
+   200000, 0, 0, 0, 0, 0, 'CNY', '["复杂推理","长代码库","Agent"]',
    'Anthropic 目前最强的一档，交给它的是那种想清楚比写得快更重要的活。',
    1, 1, 10, NOW(3), NOW(3)),
 
   ('galaxy', 'claude-sonnet-5', 'Claude Sonnet 5', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 'CNY', '["日常编码","速度均衡","Claude Code"]',
+   200000, 0, 0, 0, 0, 0, 'CNY', '["日常编码","速度均衡","Claude Code"]',
    '日常写代码的默认选择，快、稳、便宜，Claude Code 里跑得最多的就是它。',
    1, 1, 20, NOW(3), NOW(3)),
 
   ('galaxy', 'claude-fable-5-1', 'Claude Fable 5.1', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 'CNY', '["长文本","写作"]',
+   200000, 0, 0, 0, 0, 0, 'CNY', '["长文本","写作"]',
    '偏长文本与写作的一档。',
    1, 0, 30, NOW(3), NOW(3)),
 
   ('galaxy', 'claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 'CNY', '["低延迟","批量","便宜"]',
+   200000, 0, 0, 0, 0, 0, 'CNY', '["低延迟","批量","便宜"]',
    '最轻的一档，适合分类、抽取、批量跑这类量大而单次简单的活。',
    1, 0, 40, NOW(3), NOW(3)),
 
   ('galaxy', 'gpt-5.6-terra', 'GPT-5.6 Terra', 'openai', 'gpt', 'llm.chat',
-   0, 0, 0, 0, 0, 'CNY', '["OpenAI 兼容","Codex"]',
+   0, 0, 0, 0, 0, 0, 'CNY', '["OpenAI 兼容","Codex"]',
    'OpenAI 一族，Codex CLI 与 OpenAI SDK 直接指过来就能用。',
    1, 1, 50, NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE

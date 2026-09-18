@@ -13,7 +13,7 @@
  * 散户就只有这台电脑一台（见 visibleNodes），所以这一页对散户永远是平铺的。
  */
 
-import { message } from "antd";
+import { message, Modal } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HourBar } from "@/components/galaxy/charts";
@@ -26,6 +26,7 @@ import {
   formatClock,
   formatCny,
   formatCompact,
+  formatInt,
   formatMillis,
   formatPoints,
   formatRelative,
@@ -36,6 +37,7 @@ import {
 } from "@/utils/format";
 import { describeHours, isSharingNow, minutesLeftInWindow, nextWindowStart, scheduleToHours } from "@/utils/schedule";
 import { pingBridge } from "../../api/bridge.api";
+import { confirmForceClose, isClosing, switchContributions } from "../../contributionClose";
 import {
   fetchDashboard,
   fetchNodes,
@@ -43,7 +45,6 @@ import {
   isNodeOnline,
   nodeDisplayName,
   orderMachines,
-  setContributionStatus,
   visibleContributions,
   visibleNodes,
   type ContributionView,
@@ -64,6 +65,39 @@ const QUOTA_COLUMNS = "repeat(auto-fit, minmax(170px, 1fr))";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 一条记录的 token 流向：新增输入 → 输出，命中缓存的另算。
+ *
+ * 「输入」只算这次真正新读进去的内容 —— 命中缓存的那部分被上游按几分之一计价，
+ * 混进同一个数字里，主人会以为自己的机器白跑了一大堆活。所以缓存单独跟在后面，
+ * 没有就不显示（大多数行都没有，摆一个 0 只是噪声）。
+ *
+ * 这一页是概览，一行只放得下一个补充数字：缓存读与缓存写在这里合成「缓存」，
+ * 拆开的两列在记录页。悬停能看到四个数的明细。
+ */
+function TokenFlow({ record }: { record: ExecutionRecord }) {
+  const { t } = useLocale();
+  const input = record.usage["llm.input_tokens"] ?? 0;
+  const output = record.usage["llm.output_tokens"] ?? 0;
+  const cacheRead = record.usage["llm.cache_read_tokens"] ?? 0;
+  const cacheWrite = record.usage["llm.cache_write_tokens"] ?? 0;
+  const cached = cacheRead + cacheWrite;
+  const detail = [
+    `${t("records.col.in")} ${formatInt(input)}`,
+    `${t("records.col.out")} ${formatInt(output)}`,
+    `${t("records.col.cacheRead")} ${formatInt(cacheRead)}`,
+    `${t("records.col.cacheWrite")} ${formatInt(cacheWrite)}`,
+  ].join(" · ");
+  return (
+    <span className="gx-mono" style={{ color: "var(--gx-soft)", overflow: "hidden", textOverflow: "ellipsis" }} title={detail}>
+      {formatCompact(input)} → {formatCompact(output)}
+      {cached > 0 ? (
+        <span style={{ color: "var(--gx-faint)" }}> · {t("today.cached", { value: formatCompact(cached) })}</span>
+      ) : null}
+    </span>
+  );
+}
+
 export function TodayBoard() {
   const { t, locale } = useLocale();
   const router = useRouter();
@@ -72,6 +106,7 @@ export function TodayBoard() {
   const [records, setRecords] = useState<ExecutionRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [modal, modalHolder] = Modal.useModal();
   // 本机 bridge 报的自己：哪台排第一、哪台标「这台电脑」、两张概括卡同等情况下先挑谁，
   // 散户还靠它认出「只该显示的那一台」。纯浏览器里是 null —— 浏览器不是任何一台机器，
   // 那就没有哪台是「这台电脑」，也就无从只留一台。
@@ -129,15 +164,17 @@ export function TodayBoard() {
   const grouped = machines.length > 1;
   const now = new Date();
 
-  /** 总开关：一次改掉全部贡献。主人按它是想「现在别接单了」，不是想逐条挑。 */
-  const toggleAll = async (on: boolean) => {
-    if (contributions.length === 0) return;
+  /**
+   * 开关若干条贡献。
+   *
+   * 关闭时手上还有请求在跑的，服务端会先停止接新单、等跑完自动关 ——
+   * 主人点这一下就结束了，界面不再追问，只告诉他还剩多少、以及可以不等。
+   */
+  const switchRows = async (rows: ContributionView[], on: boolean) => {
+    if (rows.length === 0) return;
     setBusy(true);
     try {
-      await Promise.all(
-        contributions.map((item) => setContributionStatus(item.nodeId, item.cid, on ? "active" : "paused")),
-      );
-      await load();
+      await switchContributions({ rows, on, offStatus: "paused", t, reload: load });
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
     } finally {
@@ -145,17 +182,21 @@ export function TodayBoard() {
     }
   };
 
-  const toggleOne = async (item: ContributionView, on: boolean) => {
-    setBusy(true);
-    try {
-      await setContributionStatus(item.nodeId, item.cid, on ? "active" : "paused");
-      await load();
-    } catch (error) {
-      message.error((error as Error).message || t("common.actionFailed"));
-    } finally {
-      setBusy(false);
-    }
-  };
+  /** 总开关：一次改掉全部贡献。主人按它是想「现在别接单了」，不是想逐条挑。 */
+  const toggleAll = (on: boolean) => void switchRows(contributions, on);
+
+  const toggleOne = (item: ContributionView, on: boolean) => void switchRows([item], on);
+
+  /** 「正在收尾」那条上的「立即关闭」：掐断在跑的请求，扣信誉分，问过才做。 */
+  const forceClose = (item: ContributionView) =>
+    void confirmForceClose({
+      rows: [item],
+      inflight: item.inflight,
+      offStatus: "paused",
+      t,
+      modal,
+      reload: load,
+    });
 
   if (loading) {
     return (
@@ -356,7 +397,7 @@ export function TodayBoard() {
                   </LinkBtn>
                 }
               />
-              <div className="gx-th" style={{ gridTemplateColumns: "50px 1.3fr 1fr 56px 52px", fontSize: 12 }}>
+              <div className="gx-th" style={{ gridTemplateColumns: "50px 1.05fr 1.45fr 56px 52px", fontSize: 12 }}>
                 <span>{t("today.col.time")}</span>
                 <span>{t("today.col.model")}</span>
                 <span>{t("today.col.io")}</span>
@@ -368,12 +409,10 @@ export function TodayBoard() {
                   <div className="gx-empty">{t("records.empty")}</div>
                 ) : (
                   records.map((record) => (
-                    <div key={record.unitId} className="gx-row" style={{ gridTemplateColumns: "50px 1.3fr 1fr 56px 52px", fontSize: 12 }}>
+                    <div key={record.unitId} className="gx-row" style={{ gridTemplateColumns: "50px 1.05fr 1.45fr 56px 52px", fontSize: 12 }}>
                       <span className="gx-mono" style={{ color: "var(--gx-faint)" }}>{formatClock(record.startedAt)}</span>
                       <span className="gx-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{record.model || record.kind}</span>
-                      <span className="gx-mono" style={{ color: "var(--gx-soft)" }}>
-                        {formatCompact(record.usage["llm.input_tokens"] ?? 0)} → {formatCompact(record.usage["llm.output_tokens"] ?? 0)}
-                      </span>
+                      <TokenFlow record={record} />
                       <span className="gx-mono" style={{ color: "var(--gx-soft)" }}>{durationOf(record)}</span>
                       <span
                         className="gx-mono"
@@ -412,7 +451,8 @@ export function TodayBoard() {
                       node={node}
                       local={node.nodeId === localNodeId}
                       busy={busy}
-                      onToggle={(item, on) => void toggleOne(item, on)}
+                      onToggle={toggleOne}
+                      onForce={forceClose}
                     />
                   ))
                 : contributions.map((item) => (
@@ -420,7 +460,8 @@ export function TodayBoard() {
                       key={`${item.nodeId}:${item.cid}`}
                       contribution={item}
                       busy={busy}
-                      onToggle={(on) => void toggleOne(item, on)}
+                      onToggle={(on) => toggleOne(item, on)}
+                      onForce={() => forceClose(item)}
                     />
                   ))}
               <div
@@ -449,6 +490,7 @@ export function TodayBoard() {
           </Card>
         </div>
       </div>
+      {modalHolder}
     </>
   );
 }
@@ -500,11 +542,13 @@ function MachineGroup({
   local,
   busy,
   onToggle,
+  onForce,
 }: {
   node: NodeView;
   local: boolean;
   busy: boolean;
   onToggle: (contribution: ContributionView, on: boolean) => void;
+  onForce: (contribution: ContributionView) => void;
 }) {
   const { t } = useLocale();
   const rows = visibleContributions(node.contributions);
@@ -554,6 +598,7 @@ function MachineGroup({
             divider={index > 0}
             busy={busy}
             onToggle={(on) => onToggle(row, on)}
+            onForce={() => onForce(row)}
           />
         ))
       )}
@@ -574,6 +619,7 @@ function CapabilityRow({
   divider = true,
   busy,
   onToggle,
+  onForce,
 }: {
   contribution: ContributionView;
   /** 分组时传所属机器名：开关的读屏标签和悬停提示要带上它，不然几台上的「Claude 订阅」念出来一模一样。 */
@@ -582,9 +628,15 @@ function CapabilityRow({
   divider?: boolean;
   busy: boolean;
   onToggle: (on: boolean) => void;
+  /** 「正在收尾」时的「立即关闭」。掐断在跑的请求要扣信誉分，所以它自己会先确认。 */
+  onForce: () => void;
 }) {
   const { t } = useLocale();
-  const on = contribution.status === "active";
+  // 正在收尾的那条画成**关着**：主人的意图就是关，服务端也已经不给它派新单了。
+  // 画成开着的话，主人会以为刚才那下没点上，然后一遍遍地点 —— 而每一下都只是
+  // 重复同一个意图。开关旁边那行字负责说清楚「还在跑，跑完自动关」。
+  const closing = isClosing(contribution);
+  const on = contribution.status === "active" && !closing;
   const title = providerTitle(contribution.provider, t);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: divider ? "1px solid var(--gx-line)" : undefined }}>
@@ -606,11 +658,14 @@ function CapabilityRow({
         <span className="gx-mono" style={{ display: "block", fontSize: 11, color: "var(--gx-faint)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {!contribution.available
             ? contribution.unavailableReason || t("share.unavailable")
-            : on
-              ? `${contribution.provider} · ${contribution.seats} × ${contribution.seatConcurrency}`
-              : `${contribution.provider} · ${t("today.notShared")}`}
+            : closing
+              ? t("close.closingRow", { value: contribution.inflight })
+              : on
+                ? `${contribution.provider} · ${contribution.seats} × ${contribution.seatConcurrency}`
+                : `${contribution.provider} · ${t("today.notShared")}`}
         </span>
       </span>
+      {closing ? <LinkBtn onClick={onForce}>{t("close.forceNow")}</LinkBtn> : null}
       {contribution.available ? (
         <Switch checked={on} disabled={busy} label={machine ? `${title} · ${machine}` : title} onChange={onToggle} />
       ) : (

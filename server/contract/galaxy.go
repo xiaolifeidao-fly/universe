@@ -47,11 +47,28 @@ func (p Primitive) Valid() bool {
 type MeterUnit = string
 
 const (
+	// 三个 token 桶互不重叠，加起来才是这次请求读进模型的全部输入：
+	// UnitInputTokens 是**未命中缓存的新增输入**，不含缓存命中的部分。
+	//
+	// Anthropic 原生就是这个口径；OpenAI 的 input_tokens 把 cached_tokens 算在里面，
+	// 由 Hub 在 relay 解析时减齐（galaxy-hub-api/adapters/relay/usage.go 的 netInput）。
+	// 不减的话，billing 逐单位乘单价累加会把缓存那部分收两遍。
 	UnitInputTokens      MeterUnit = "llm.input_tokens"
 	UnitOutputTokens     MeterUnit = "llm.output_tokens"
 	UnitCacheReadTokens  MeterUnit = "llm.cache_read_tokens"
 	UnitCacheWriteTokens MeterUnit = "llm.cache_write_tokens"
 	UnitCalls            MeterUnit = "llm.calls"
+
+	// UnitTotalTokens 是上面四个 token 桶的**合计**，不是第五个桶。
+	//
+	// 它存在的唯一理由是额度：主人想说的是「这台机器一天最多跑 200 万 token」，
+	// 而不是「输入 80 万、输出 40 万、缓存读 60 万、缓存写 20 万」—— 分开设四条，
+	// 任何一条先触顶都会让整台机器停摆，而剩下三条还空着大半。
+	//
+	// 因为是合计，它**永远不参与计价**：额度引擎按单位记数，账本按单位乘单价，
+	// 把合计也乘一遍就是把每一笔都收两次。这条禁令由 billing.go 兜住，
+	// 不依赖「运营别给它定价」。
+	UnitTotalTokens MeterUnit = "llm.total_tokens"
 
 	UnitTimeSeconds MeterUnit = "time.seconds"
 

@@ -151,10 +151,24 @@ func (r *GalaxyRepository) ListActiveContributions(ctx context.Context, bizLine 
 	return rows, err
 }
 
+// SetContributionStatus 落状态，并把「等排空」的意图一并清掉。
+//
+// 两件事必须一起写：意图就是为了走到某个状态，状态一落地它就没有意义了。留着的话，
+// 主人重新打开共享之后，下一次在途归零时那条陈年意图会把刚开的共享又关掉。
 func (r *GalaxyRepository) SetContributionStatus(ctx context.Context, bizLine, cid, status string) error {
 	return r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
 		Where("biz_line = ?", bizLine).Where("cid = ?", cid).
-		Update("status", status).Error
+		Updates(map[string]any{"status": status, "pending_status": ""}).Error
+}
+
+// SetContributionPending 记下「主人想关，但还有请求在跑」。
+//
+// 只改意图那一列，不动 status —— status 这时候由调用方写成 draining（停止接新单、
+// 在跑的正常跑完），那是额度触顶时用的同一套语义，节点侧不需要为此多认一种状态。
+func (r *GalaxyRepository) SetContributionPending(ctx context.Context, bizLine, cid, pending string) error {
+	return r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
+		Where("biz_line = ?", bizLine).Where("cid = ?", cid).
+		Update("pending_status", pending).Error
 }
 
 // DisableContributionsByNode 把一台机器名下的贡献全部关掉。撤销与封禁都走它。

@@ -1,5 +1,7 @@
 "use client";
 
+import { plainToInstance } from "class-transformer";
+
 import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
 
 /**
@@ -64,6 +66,14 @@ export class ContributionView {
   seatConcurrency = 0;
 
   status = "";
+
+  /**
+   * 主人点了关闭、正在等在途请求跑完时，要落到的那个状态（paused / disabled）。
+   *
+   * 非空就意味着这条已经**不接新单**了，只是手上的活还没跑完。界面要把它和
+   * 「共享中」分开画：都显示成开着的话，主人会以为没点上，然后反复点。
+   */
+  pendingStatus = "";
 
   reputation = 1;
 
@@ -510,23 +520,50 @@ export async function fetchBridgeReleases() {
 }
 
 /**
+ * 一次开关的结果。
+ *
+ * 关闭不一定立即生效：手上还有请求在跑时是**排队** —— 先停止接新单，在途跑完
+ * 自动落地。只看「请求成功了」就把开关画成关上，主人会以为已经停了，
+ * 而那台机器还在给别人干活。所以这几个字段必须带回来。
+ */
+export class ContributionStatusResult {
+  /** 现在的状态。排队时是 draining（已停止接新单）。 */
+  status = "";
+
+  /** 等在途跑完之后要落到的状态；空串表示这次已经落地了。 */
+  pending = "";
+
+  /** 还有几条请求在跑。 */
+  inflight = 0;
+
+  /** 强制关闭掐断了几条。 */
+  aborted = 0;
+
+  /** 这次扣了多少信誉分（负数）。0 表示没扣。 */
+  reputationDelta = 0;
+}
+
+/**
  * 开关一条贡献。
  *
  * **nodeId 不能省。** cid 在视图里是去掉节点前缀的短名（relay_codex），主人有两台
  * 机器时必然重名；不带节点，服务端只能在重名里挑一个，而它挑的是最老那台 ——
  * 表现就是点了报成功、界面完全没变，因为改的不是你看的那条。
+ *
+ * force 是「别等了，现在就关」：它会把在跑的请求当场掐断，那是消费者眼里的一次
+ * 失败，所以要扣信誉分。只在主人明确确认过之后才传 true —— 默认的关闭不掐任何东西。
  */
 export async function setContributionStatus(
   nodeId: string,
   cid: string,
   status: "active" | "paused" | "disabled",
+  force = false,
 ) {
-  const response = await instance.post<ApiResponse<string>>("/galaxy/provider/contribution/status", {
-    nodeId,
-    cid,
-    status,
-  });
-  return unwrapApiResponse(response.data);
+  const response = await instance.post<ApiResponse<ContributionStatusResult>>(
+    "/galaxy/provider/contribution/status",
+    { nodeId, cid, status, force },
+  );
+  return plainToInstance(ContributionStatusResult, unwrapApiResponse(response.data) ?? {});
 }
 
 export async function saveContributionLimits(payload: SaveLimitsPayload) {

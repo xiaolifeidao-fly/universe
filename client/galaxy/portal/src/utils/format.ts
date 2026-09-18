@@ -36,6 +36,12 @@ export function formatUnitPrice(micros: number, currency = "CNY"): string {
   return `${symbolOf(currency)}${value < 0.01 ? value.toFixed(4) : value.toFixed(2)}`;
 }
 
+/** 万分之一 → 百分数：8500 → 85%。折扣与返现比例都存这个口径。 */
+export function formatBps(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return "0%";
+  return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+}
+
 /** 整数金额：¥99。额度包价目用它，后面两个零没有信息量。 */
 export function formatAmount(micros: number, currency = "CNY"): string {
   if (!Number.isFinite(micros)) return "-";

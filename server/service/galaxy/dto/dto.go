@@ -466,18 +466,21 @@ type ContributionView struct {
 	ModelsAllow []string `json:"modelsAllow"`
 	ModelsDeny  []string `json:"modelsDeny"`
 	// 节点报的上游可用模型。给控制台当候选项，不参与任何调度判定。
-	AvailableModels []string          `json:"availableModels"`
-	Seats           int               `json:"seats"`
-	SeatConcurrency int               `json:"seatConcurrency"`
-	Status          string            `json:"status"`
-	Reputation      float64           `json:"reputation"`
-	Online          bool              `json:"online"`
-	SeatsUsed       int               `json:"seatsUsed"`
-	SeatsEffective  int               `json:"seatsEffective"`
-	Inflight        int               `json:"inflight"`
-	Quota           []QuotaStatusView `json:"quota"`
-	Schedule        []ScheduleInput   `json:"schedule"`
-	ThrottledUntil  *time.Time        `json:"throttledUntil,omitempty"`
+	AvailableModels []string `json:"availableModels"`
+	Seats           int      `json:"seats"`
+	SeatConcurrency int      `json:"seatConcurrency"`
+	Status          string   `json:"status"`
+	// PendingStatus 主人点了关闭、正在等在途请求跑完时，要落到的那个状态。
+	// 非空时界面显示「正在收尾」而不是「共享中」——这时候它已经不接新单了。
+	PendingStatus  string            `json:"pendingStatus,omitempty"`
+	Reputation     float64           `json:"reputation"`
+	Online         bool              `json:"online"`
+	SeatsUsed      int               `json:"seatsUsed"`
+	SeatsEffective int               `json:"seatsEffective"`
+	Inflight       int               `json:"inflight"`
+	Quota          []QuotaStatusView `json:"quota"`
+	Schedule       []ScheduleInput   `json:"schedule"`
+	ThrottledUntil *time.Time        `json:"throttledUntil,omitempty"`
 	// Available / UnavailableReason 是节点报的「这台机器现在能不能干」，
 	// 和 Status（主人愿不愿意共享）是两回事，界面上要分开显示：
 	// 一个是「你关掉了」，另一个是「你的 Claude 登录态过期了」，处置方式完全不同。
@@ -856,6 +859,38 @@ type SaveContributionLimitsRequest struct {
 	Schedule        []ScheduleInput   `json:"schedule"`
 }
 
+// SetContributionStatusRequest 主人开关一条贡献。
+//
+// Force 是「别等了，现在就关」。它和普通关闭不是两个按钮的区别，而是两种承诺：
+// 普通关闭只停止接新单，在跑的请求正常跑完，对消费者没有任何影响；强制关闭会把
+// 在跑的请求当场掐断 —— 那是消费者眼里的一次失败，所以要扣信誉分。
+type SetContributionStatusRequest struct {
+	OwnerUserID string `json:"-"`
+	// NodeID 用来消歧：cid 是去掉节点前缀的短名，多台机器上会重名。
+	NodeID string `json:"nodeId"`
+	CID    string `json:"cid" binding:"required"`
+	Status string `json:"status" binding:"required"`
+	Force  bool   `json:"force"`
+}
+
+// SetContributionStatusResult 这次开关到底发生了什么。
+//
+// 界面不能只看 HTTP 200 就把开关画成关上：请求还在跑时，关闭是**排队**而不是立即生效，
+// 那时候画成关上，主人会以为已经停了，而机器还在给别人干活。
+type SetContributionStatusResult struct {
+	// Status 这条贡献现在的状态。排队时是 draining（已停止接新单）。
+	Status string `json:"status"`
+	// Pending 等在途请求跑完之后要落到的状态；空串表示没有在等的事。
+	Pending string `json:"pending,omitempty"`
+	// Inflight 还有几条请求在跑。Pending 非空时界面拿它显示「还有 N 条」。
+	Inflight int `json:"inflight"`
+	// Aborted 强制关闭掐断了几条在跑的请求。
+	Aborted int `json:"aborted"`
+	// ReputationDelta 这次扣了多少信誉分（负数）。没扣是 0 ——
+	// 强制关闭时手上没活就不扣，那种「强制」和普通关闭没有区别。
+	ReputationDelta float64 `json:"reputationDelta,omitempty"`
+}
+
 // ---------- 平台运营（manager 后台） ----------
 
 // 提供者身份。注册出来默认是散户，只有管理端能设成工作室。
@@ -1202,21 +1237,35 @@ type PortalFamilyView struct {
 
 // PortalModelView 门户上的一个模型。价格是「每百万 token 的微分」，与账单同口径。
 type PortalModelView struct {
-	ModelID         string   `json:"modelId"`
-	DisplayName     string   `json:"displayName"`
-	Vendor          string   `json:"vendor,omitempty"`
-	Family          string   `json:"family"`
-	Kind            string   `json:"kind"`
-	ContextTokens   int64    `json:"contextTokens,omitempty"`
-	MaxOutputTokens int64    `json:"maxOutputTokens,omitempty"`
-	InputPrice      int64    `json:"inputPrice"`
-	OutputPrice     int64    `json:"outputPrice"`
-	CachePrice      int64    `json:"cachePrice"`
-	Currency        string   `json:"currency"`
-	Tags            []string `json:"tags,omitempty"`
-	Summary         string   `json:"summary,omitempty"`
-	Featured        bool     `json:"featured"`
-	// Priced 说明这三个单价是这个模型自己的，还是回落到了 kind 的统一价。
+	ModelID         string `json:"modelId"`
+	DisplayName     string `json:"displayName"`
+	Vendor          string `json:"vendor,omitempty"`
+	Family          string `json:"family"`
+	Kind            string `json:"kind"`
+	ContextTokens   int64  `json:"contextTokens,omitempty"`
+	MaxOutputTokens int64  `json:"maxOutputTokens,omitempty"`
+	// 四个单价对的是四个互不重叠的桶。InputPrice 只管**未命中缓存的新增输入** ——
+	// OpenAI 那边含在 input_tokens 里的 cached 已经由 Hub 减掉了。
+	InputPrice      int64 `json:"inputPrice"`
+	OutputPrice     int64 `json:"outputPrice"`
+	CachePrice      int64 `json:"cachePrice"`
+	CacheWritePrice int64 `json:"cacheWritePrice"`
+	// ListInputPrice / ListOutputPrice 官方参考价，同口径同币种。0 = 运营没填，
+	// 卡片上不划线、也不标折扣 —— 比标一个「省 0%」诚实。
+	ListInputPrice  int64 `json:"listInputPrice,omitempty"`
+	ListOutputPrice int64 `json:"listOutputPrice,omitempty"`
+	// DiscountBps 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端算好下发：
+	// 门户站、使用端、运营台三处各算一遍，迟早对不上 —— 和 Priced、scopeCategory 一个道理。
+	DiscountBps int      `json:"discountBps,omitempty"`
+	Currency    string   `json:"currency"`
+	Tags        []string `json:"tags,omitempty"`
+	Summary     string   `json:"summary,omitempty"`
+	// BadgeText / BadgeTone 卡片右上角的角标与它的配色。文案是运营写的，
+	// 配色只在 hot / new / value / neutral 里选。BadgeText 为空就没有角标。
+	BadgeText string `json:"badgeText,omitempty"`
+	BadgeTone string `json:"badgeTone,omitempty"`
+	Featured  bool   `json:"featured"`
+	// Priced 说明这几个单价是这个模型自己的，还是回落到了 kind 的统一价。
 	// 门户据此决定要不要在卡片上标「统一价」—— 不标的话，回落期间
 	// 所有模型显示同一个价，看起来像是页面坏了。
 	Priced    bool `json:"priced"`
@@ -1264,19 +1313,25 @@ type LeadView struct {
 // SaveModelRequest 运营维护门户模型目录。整行覆盖，和 SavePackage 一个脾气：
 // 只想改一个字段也要把其余字段原样带回来，不带回来就是清零。
 type SaveModelRequest struct {
-	ModelID         string   `json:"modelId" binding:"required"`
-	DisplayName     string   `json:"displayName"`
-	Vendor          string   `json:"vendor"`
-	Family          string   `json:"family"`
-	Kind            string   `json:"kind"`
-	ContextTokens   int64    `json:"contextTokens"`
-	MaxOutputTokens int64    `json:"maxOutputTokens"`
-	InputPrice      int64    `json:"inputPrice"`
-	OutputPrice     int64    `json:"outputPrice"`
-	CachePrice      int64    `json:"cachePrice"`
+	ModelID         string `json:"modelId" binding:"required"`
+	DisplayName     string `json:"displayName"`
+	Vendor          string `json:"vendor"`
+	Family          string `json:"family"`
+	Kind            string `json:"kind"`
+	ContextTokens   int64  `json:"contextTokens"`
+	MaxOutputTokens int64  `json:"maxOutputTokens"`
+	InputPrice      int64  `json:"inputPrice"`
+	OutputPrice     int64  `json:"outputPrice"`
+	CachePrice      int64  `json:"cachePrice"`
+	CacheWritePrice int64  `json:"cacheWritePrice"`
+	// 官方参考价。留 0 就是不声明，模型广场那张卡上划线价与「省 X%」一起消失。
+	ListInputPrice  int64    `json:"listInputPrice"`
+	ListOutputPrice int64    `json:"listOutputPrice"`
 	Currency        string   `json:"currency"`
 	Tags            []string `json:"tags"`
 	Summary         string   `json:"summary"`
+	BadgeText       string   `json:"badgeText"`
+	BadgeTone       string   `json:"badgeTone"`
 	// ReferralBps 分享返现比例（万分之一），不传就是走全局默认。整行覆盖，所以编辑时要把原值带回来。
 	ReferralBps *int64 `json:"referralBps"`
 	Listed      *bool  `json:"listed"`

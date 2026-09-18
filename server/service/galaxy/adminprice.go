@@ -122,6 +122,9 @@ func priceKey(kind, unit string) string { return kind + "\x00" + unit }
 
 // knownMeterUnits contract 里登记过的计量单位。单位是注册制的，这份只是候选提示，
 // 不是白名单 —— 新业务自带的单位照样能在界面上手填。
+//
+// llm.total_tokens 刻意不在这里：它是四个 token 桶的合计，给它定价就是把每一笔
+// 都收两遍。但正因为这份清单不是白名单，真正的闸在 billing.go 的 derivedUnits。
 var knownMeterUnits = []contract.MeterUnit{
 	contract.UnitInputTokens, contract.UnitOutputTokens,
 	contract.UnitCacheReadTokens, contract.UnitCacheWriteTokens, contract.UnitCalls,

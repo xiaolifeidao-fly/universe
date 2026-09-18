@@ -35,10 +35,25 @@ import {
 /** 单价在库里是「每百万 token 的微元」；表单里填元。 */
 const MICRO = 1_000_000;
 
-/** 返现比例存万分之一：1000 = 10%。表单里填百分数。 */
+/** 返现比例存万分之一：1000 = 10%。表单里填百分数。折扣也是万分之一，同一个函数。 */
 function percent(bps: number): string {
   return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
+
+/**
+ * 角标配色。给的是语义名而不是颜色名：库里存「这是个主推位」，各端按自己的调色板渲染。
+ * 顺序就是下拉里的顺序，neutral 排最前 —— 它是不想强调时的那个选择。
+ */
+const BADGE_TONES = ["neutral", "hot", "new", "value"] as const;
+type BadgeTone = (typeof BADGE_TONES)[number];
+
+/** 运营台上的角标预览。用 antd 的 Tag 近似各端胶囊的观感，只为让人一眼认出配色差别。 */
+const BADGE_TAG_COLOR: Record<BadgeTone, string> = {
+  neutral: "default",
+  hot: "cyan",
+  new: "gold",
+  value: "green",
+};
 
 type ModelForm = {
   modelId: string;
@@ -51,8 +66,13 @@ type ModelForm = {
   inputYuan: number | null;
   outputYuan: number | null;
   cacheYuan: number | null;
+  cacheWriteYuan: number | null;
+  listInputYuan: number | null;
+  listOutputYuan: number | null;
   tags: string[];
   summary: string;
+  badgeText: string;
+  badgeTone: BadgeTone;
   referralMode: "inherit" | "custom";
   referralPercent: number | null;
   listed: boolean;
@@ -73,8 +93,15 @@ function toForm(row: GalaxyModelView | null): ModelForm {
     inputYuan: row ? row.inputPrice / MICRO : 0,
     outputYuan: row ? row.outputPrice / MICRO : 0,
     cacheYuan: row ? row.cachePrice / MICRO : 0,
+    cacheWriteYuan: row ? row.cacheWritePrice / MICRO : 0,
+    listInputYuan: row ? row.listInputPrice / MICRO : 0,
+    listOutputYuan: row ? row.listOutputPrice / MICRO : 0,
     tags: row?.tags ?? [],
     summary: row?.summary ?? "",
+    badgeText: row?.badgeText ?? "",
+    // 服务端在文案为空时把配色一起清掉，回到表单里要给个默认值，
+    // 否则 Select 显示空白，存回去的也是空白。
+    badgeTone: (BADGE_TONES.find((tone) => tone === row?.badgeTone) ?? "neutral") as BadgeTone,
     referralMode: row?.referralBps === undefined || row?.referralBps === null ? "inherit" : "custom",
     referralPercent: row?.referralBps === undefined || row?.referralBps === null ? null : row.referralBps / 100,
     listed: row?.listed ?? true,
@@ -159,9 +186,14 @@ export function ModelCatalog() {
         inputPrice: Math.round((values.inputYuan ?? 0) * MICRO),
         outputPrice: Math.round((values.outputYuan ?? 0) * MICRO),
         cachePrice: Math.round((values.cacheYuan ?? 0) * MICRO),
+        cacheWritePrice: Math.round((values.cacheWriteYuan ?? 0) * MICRO),
+        listInputPrice: Math.round((values.listInputYuan ?? 0) * MICRO),
+        listOutputPrice: Math.round((values.listOutputYuan ?? 0) * MICRO),
         currency: "CNY",
         tags: values.tags ?? [],
         summary: values.summary?.trim() ?? "",
+        badgeText: values.badgeText?.trim() ?? "",
+        badgeTone: values.badgeTone ?? "neutral",
         referralBps: values.referralMode === "custom" ? Math.round((values.referralPercent ?? 0) * 100) : null,
         listed: values.listed,
         featured: values.featured,
@@ -217,14 +249,45 @@ export function ModelCatalog() {
     {
       title: t("galaxy.model.prices"),
       key: "prices",
-      width: 220,
+      width: 260,
       render: (_, row) =>
         row.inputPrice > 0 || row.outputPrice > 0 ? (
           <span className="manager-mono">
-            {price(row.inputPrice)} / {price(row.outputPrice)} / {price(row.cachePrice)}
+            {price(row.inputPrice)} / {price(row.outputPrice)} / {price(row.cachePrice)} / {price(row.cacheWritePrice)}
           </span>
         ) : (
           <Typography.Text type="secondary">{t("galaxy.model.unifiedPrice")}</Typography.Text>
+        ),
+    },
+    {
+      // 划线价单独一列，不并进上面那格：它是对外声明的**别人家的价**，
+      // 和我们自己的四档混在一行，核对的时候第一眼分不清哪个是哪个。
+      title: t("galaxy.model.listPrices"),
+      key: "listPrices",
+      width: 190,
+      render: (_, row) =>
+        row.listInputPrice > 0 || row.listOutputPrice > 0 ? (
+          <Space size={6} wrap>
+            <span className="manager-mono">
+              {price(row.listInputPrice)} / {price(row.listOutputPrice)}
+            </span>
+            {/* 折扣是服务端按输出价算好的。填了官方价却显示「-」，
+                多半是官方价没比自家价高 —— 让运营在这里就看见，而不是等卡片上少一块。 */}
+            {row.discountBps > 0 ? <Tag color="green">{t("galaxy.model.discount").replace("{rate}", percent(row.discountBps))}</Tag> : <Typography.Text type="secondary">-</Typography.Text>}
+          </Space>
+        ) : (
+          <Typography.Text type="secondary">{t("galaxy.model.listPriceNone")}</Typography.Text>
+        ),
+    },
+    {
+      title: t("galaxy.model.badge"),
+      dataIndex: "badgeText",
+      width: 120,
+      render: (text: string, row) =>
+        text ? (
+          <Tag color={BADGE_TAG_COLOR[(BADGE_TONES.find((tone) => tone === row.badgeTone) ?? "neutral") as BadgeTone]}>{text}</Tag>
+        ) : (
+          <Typography.Text type="secondary">-</Typography.Text>
         ),
     },
     {
@@ -325,7 +388,7 @@ export function ModelCatalog() {
         dataSource={rows}
         locale={{ emptyText: t("galaxy.model.empty") }}
         pagination={false}
-        scroll={{ x: 1100 }}
+        scroll={{ x: 1450 }}
       />
 
       <Modal
@@ -380,6 +443,9 @@ export function ModelCatalog() {
             </Space>
           </Form.Item>
 
+          {/* 四档摆成两行而不是并排四格：弹窗 760 宽，四格各剩 170 上下，
+              「缓存写入单价 [____] ¥/1M」在中文下就已经贴边，切到英文直接换行。
+              分两行还顺手把语义分了组 —— 上行是这次真正读进模型的新内容，下行是缓存。 */}
           <Space size={12} style={{ display: "flex" }} align="start">
             <Form.Item name="inputYuan" label={t("galaxy.model.inputPrice")} style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} precision={2} addonAfter="¥/1M" />
@@ -387,12 +453,29 @@ export function ModelCatalog() {
             <Form.Item name="outputYuan" label={t("galaxy.model.outputPrice")} style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} precision={2} addonAfter="¥/1M" />
             </Form.Item>
+          </Space>
+          <Space size={12} style={{ display: "flex" }} align="start">
             <Form.Item name="cacheYuan" label={t("galaxy.model.cachePrice")} style={{ flex: 1 }}>
+              <InputNumber style={{ width: "100%" }} min={0} precision={2} addonAfter="¥/1M" />
+            </Form.Item>
+            <Form.Item name="cacheWriteYuan" label={t("galaxy.model.cacheWritePrice")} style={{ flex: 1 }}>
               <InputNumber style={{ width: "100%" }} min={0} precision={2} addonAfter="¥/1M" />
             </Form.Item>
           </Space>
           <Typography.Paragraph type="secondary" style={{ marginTop: -12 }}>
             {t("galaxy.model.priceHint")}
+          </Typography.Paragraph>
+
+          <Space size={12} style={{ display: "flex" }} align="start">
+            <Form.Item name="listInputYuan" label={t("galaxy.model.listInputPrice")} style={{ flex: 1 }}>
+              <InputNumber style={{ width: "100%" }} min={0} precision={2} addonAfter="¥/1M" />
+            </Form.Item>
+            <Form.Item name="listOutputYuan" label={t("galaxy.model.listOutputPrice")} style={{ flex: 1 }}>
+              <InputNumber style={{ width: "100%" }} min={0} precision={2} addonAfter="¥/1M" />
+            </Form.Item>
+          </Space>
+          <Typography.Paragraph type="secondary" style={{ marginTop: -12 }}>
+            {t("galaxy.model.listPriceHint")}
           </Typography.Paragraph>
 
           <Space size={12} style={{ display: "flex" }} align="start">
@@ -412,6 +495,24 @@ export function ModelCatalog() {
           <Form.Item name="summary" label={t("galaxy.model.summary")}>
             <Input.TextArea rows={2} maxLength={256} showCount />
           </Form.Item>
+          <Space size={12} style={{ display: "flex" }} align="start">
+            <Form.Item name="badgeText" label={t("galaxy.model.badge")} extra={t("galaxy.model.badgeHint")} style={{ flex: 1 }}>
+              {/* 16 个字符和库里那一列同宽，但真正的限制是版面：角标再长就把模型名挤到换行。 */}
+              <Input maxLength={16} showCount placeholder={t("galaxy.model.badgePlaceholder")} />
+            </Form.Item>
+            <Form.Item name="badgeTone" label={t("galaxy.model.badgeTone")} style={{ flex: 1 }}>
+              <Select
+                options={BADGE_TONES.map((tone) => ({
+                  value: tone,
+                  label: (
+                    <Tag color={BADGE_TAG_COLOR[tone]} style={{ marginInlineEnd: 0 }}>
+                      {t(`galaxy.model.badgeTone.${tone}`)}
+                    </Tag>
+                  ),
+                }))}
+              />
+            </Form.Item>
+          </Space>
           <Space size={24}>
             <Form.Item name="listed" label={t("galaxy.model.status")} valuePropName="checked">
               <Switch checkedChildren={t("galaxy.package.listed")} unCheckedChildren={t("galaxy.package.unlisted")} />

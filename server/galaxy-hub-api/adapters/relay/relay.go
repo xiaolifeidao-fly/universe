@@ -259,17 +259,25 @@ func (a *Adapter) Estimate(raw corepkg.Input) contract.Metering {
 	if !ok {
 		return contract.Metering{}
 	}
+	// 合计要跟着一起预留。主人的上限设在合计上而这里不预留，额度就只在结算时
+	// 一次性扣掉 —— 中间那段时间里放置算法看到的是「还剩满格」，会把远超上限的
+	// 请求一股脑放进来。预估里没有缓存（还没打上游，不知道会不会命中），
+	// 所以合计就是输入加输出；实际值在结算时按四个桶重算（usage.go 的 withTotal）。
 	if in.spec.countTokens {
 		// 只数 token 不生成内容：不预留输出额度，时长也短。
+		input := int64(math.Ceil(float64(len(in.body)) / 3))
 		return contract.Metering{
-			contract.UnitInputTokens: int64(math.Ceil(float64(len(in.body)) / 3)),
+			contract.UnitInputTokens: input,
+			contract.UnitTotalTokens: input,
 			contract.UnitCalls:       1,
 			contract.UnitTimeSeconds: 10,
 		}
 	}
+	input := int64(math.Ceil(float64(len(in.body)) / 3))
 	return contract.Metering{
-		contract.UnitInputTokens:  int64(math.Ceil(float64(len(in.body)) / 3)),
+		contract.UnitInputTokens:  input,
 		contract.UnitOutputTokens: in.maxTokens,
+		contract.UnitTotalTokens:  input + in.maxTokens,
 		contract.UnitCalls:        1,
 		contract.UnitTimeSeconds:  DefaultRunSeconds,
 	}

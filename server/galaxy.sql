@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `seat_concurrency`  bigint DEFAULT 2,                             -- 单座位并发上限
   `schedule_json`     varchar(512),                                 -- 挂机时段
   `status`            varchar(16),                                  -- active/draining/paused/disabled
+  `pending_status`    varchar(16) DEFAULT NULL,                     -- 主人点了关闭、等在途请求跑完之后要落到的状态
   `created_time`      datetime(3) NULL,
   `updated_time`      datetime(3) NULL,
   PRIMARY KEY (`id`),
@@ -742,12 +743,17 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_model` (
   `kind`              varchar(64),                                        -- 计价所属 kind，默认 llm.chat
   `context_tokens`    bigint DEFAULT 0,                                   -- 上下文窗口 token 数，0 表示未声明
   `max_output_tokens` bigint DEFAULT 0,
-  `input_price`       bigint DEFAULT 0,                                   -- 每百万 input token 微分，0=按 kind 统一价
+  `input_price`       bigint DEFAULT 0,                                   -- 每百万新增 input token 微分，0=按 kind 统一价
   `output_price`      bigint DEFAULT 0,                                   -- 每百万 output token 微分，0=按 kind 统一价
   `cache_price`       bigint DEFAULT 0,                                   -- 每百万 cache_read token 微分，0=按 kind 统一价
+  `cache_write_price` bigint DEFAULT 0,                                   -- 每百万 cache_write token 微分，0=按 kind 统一价
+  `list_input_price`  bigint DEFAULT 0,                                   -- 官方参考价：每百万 input token 微分，0=不显示划线价
+  `list_output_price` bigint DEFAULT 0,                                   -- 官方参考价：每百万 output token 微分，0=不显示划线价
   `currency`          varchar(8) DEFAULT 'CNY',
   `tags_json`         varchar(512),                                       -- 能力标签，JSON 数组
   `summary`           varchar(256),                                       -- 一句话说明，门户卡片上那行
+  `badge_text`        varchar(16),                                        -- 卡片右上角角标文案，空=不显示
+  `badge_tone`        varchar(16),                                        -- 角标配色：hot/new/value/neutral
   `referral_bps`      bigint,                                             -- 分享返现比例（万分之一），NULL 走全局默认，0 是不返
   `listed`            boolean DEFAULT true,
   `featured`          boolean DEFAULT false,                              -- 首页精选位

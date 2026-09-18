@@ -418,11 +418,26 @@ export class GalaxyModelView {
 
   cachePrice = 0;
 
+  cacheWritePrice = 0;
+
+  /** 官方参考价，口径与上面几档一致（每百万 token 微积分）。0 = 没填，卡片上不划线也不标折扣。 */
+  listInputPrice = 0;
+
+  listOutputPrice = 0;
+
+  /** 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端按输出价算好下发。 */
+  discountBps = 0;
+
   currency = "CNY";
 
   tags: string[] = [];
 
   summary = "";
+
+  /** 卡片右上角的角标文案，空=不显示。配色只在 hot / new / value / neutral 里选。 */
+  badgeText = "";
+
+  badgeTone = "";
 
   featured = false;
 
@@ -452,9 +467,14 @@ export async function saveGalaxyModel(payload: {
   inputPrice: number;
   outputPrice: number;
   cachePrice: number;
+  cacheWritePrice: number;
+  listInputPrice: number;
+  listOutputPrice: number;
   currency: string;
   tags: string[];
   summary: string;
+  badgeText: string;
+  badgeTone: string;
   referralBps: number | null;
   listed: boolean;
   featured: boolean;

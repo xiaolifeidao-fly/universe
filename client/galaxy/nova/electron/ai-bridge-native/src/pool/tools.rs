@@ -1,6 +1,7 @@
 use crate::log_warn;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -38,10 +39,74 @@ pub fn clear_tool_cache() {
     latest_cache().lock().unwrap().clear();
 }
 
+#[cfg(windows)]
+const PATH_SEPARATOR: char = ';';
+#[cfg(not(windows))]
+const PATH_SEPARATOR: char = ':';
+
+/// Windows 上可执行文件带后缀，而 npm / claude / codex 装出来的都是 `.cmd`。
+#[cfg(windows)]
+const EXECUTABLE_SUFFIXES: &[&str] = &["", ".exe", ".cmd", ".bat"];
+#[cfg(not(windows))]
+const EXECUTABLE_SUFFIXES: &[&str] = &[""];
+
+/// 在一份 PATH 里找可执行文件。分隔符和后缀由调用方给，好让测试把两个平台都过一遍。
+///
+/// 名字里已经带了路径分隔符（`/usr/bin/osascript` 这种）就当它是路径，直接看在不在。
+pub fn resolve_in(
+    path: &str,
+    name: &str,
+    separator: char,
+    suffixes: &[&str],
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    if name.contains('/') || name.contains('\\') {
+        let direct = PathBuf::from(name);
+        return exists(&direct).then_some(direct);
+    }
+    for dir in path.split(separator).filter(|part| !part.is_empty()) {
+        for suffix in suffixes {
+            let candidate = Path::new(dir).join(format!("{name}{suffix}"));
+            if exists(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+/// unix 上还要看执行位：PATH 上躺着一个同名的普通文件不算数。
+#[cfg(unix)]
+fn is_executable(candidate: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(candidate)
+        .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(candidate: &Path) -> bool {
+    std::fs::metadata(candidate).map(|meta| meta.is_file()).unwrap_or(false)
+}
+
+/// 按本进程的 PATH 找一个工具。
+///
+/// 为什么不直接 `Command::new("npm")`：Windows 上 npm 是 `npm.cmd`，而
+/// `Command::new` 只会补 `.exe`，不认 PATHEXT —— 不自己找一遍，Windows 上连本机
+/// 装的 npm 都调不起来。顺带也能把「没这个东西」和「跑起来失败了」分开说。
+///
+/// PATH 是 Nova 补好之后塞进来的（见 electron/src/modules/toolchain）：本机装的排在
+/// 前面，Nova 自带的 node / npm shim 在最后兜底。这里只负责照着它找。
+pub fn resolve_program(name: &str) -> Option<PathBuf> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    resolve_in(&path, name, PATH_SEPARATOR, EXECUTABLE_SUFFIXES, is_executable)
+}
+
 async fn run(file: &str, args: &[&str]) -> Result<String, String> {
+    let program = resolve_program(file).ok_or_else(|| format!("{file} 不在 PATH 上"))?;
     let output = tokio::time::timeout(
         EXEC_TIMEOUT,
-        tokio::process::Command::new(file).args(args).stdin(Stdio::null()).output(),
+        tokio::process::Command::new(&program).args(args).stdin(Stdio::null()).output(),
     )
     .await
     .map_err(|_| format!("{file} 超时"))?
@@ -139,7 +204,9 @@ pub fn upgrade_tool(name: &str) -> Result<String, String> {
 
 /// 脱离当前进程跑：升级过程比这次调用长得多，挂在自己身上会被一起带走。
 pub fn spawn_detached(program: &str, args: &[&str]) -> Result<(), String> {
-    let mut command = std::process::Command::new(program);
+    let resolved = resolve_program(program)
+        .ok_or_else(|| format!("{program} 不在 PATH 上：本机没装，Nova 自带的也没铺好"))?;
+    let mut command = std::process::Command::new(&resolved);
     command.args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     #[cfg(unix)]
     unsafe {

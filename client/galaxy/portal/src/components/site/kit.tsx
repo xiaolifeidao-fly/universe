@@ -152,8 +152,13 @@ export function Pill({
   return <span className={`gp-pill${tone === "default" ? "" : ` gp-pill--${tone}`}`}>{children}</span>;
 }
 
-export function Tag({ children }: PropsWithChildren) {
-  return <span className="gp-tag">{children}</span>;
+/**
+ * 小标签。tone 只有三档：中性、强调、便宜了多少。
+ * 配色名是语义的，不是颜色名 —— 模型目录里存的也是语义（hot/new/value），
+ * 两边对得上，换主题不用改数据。
+ */
+export function Tag({ tone = "default", children }: PropsWithChildren<{ tone?: "default" | "accent" | "ok" | "warn" }>) {
+  return <span className={`gp-tag${tone === "default" ? "" : ` gp-tag--${tone}`}`}>{children}</span>;
 }
 
 export function Empty({ title, hint }: { title: string; hint?: string }) {

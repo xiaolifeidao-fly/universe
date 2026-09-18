@@ -16,7 +16,7 @@ import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconDownload, IconRefresh, IconSearch } from "@/components/ui/icons";
 import { Card, DataTable, IconBtn, Kpi, Loading, Pager, Pill, Seg, Tabs } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatCny, formatCompact, formatDateTime, formatInt, formatMillis } from "@/utils/format";
+import { DERIVED_TOKEN_UNITS, formatCny, formatCompact, formatDateTime, formatInt, formatMillis } from "@/utils/format";
 import {
   fetchDashboard,
   fetchKeys,
@@ -33,6 +33,18 @@ import { RecordDetail } from "./RecordDetail";
 import { SessionList } from "./SessionList";
 
 const PAGE_SIZE = 15;
+
+/**
+ * 一格 token 数。没有就是一条短横，不是 0。
+ *
+ * 缓存那两列绝大多数行都是空的（上游没报缓存、或者这个模型压根不缓存）。
+ * 满屏的 0 会把真正有数的那几行盖掉，而「0」和「这次没有这项」在对账时
+ * 也不是一回事 —— 前者是上游报了 0，后者是根本没报。
+ */
+function TokenCell({ value }: { value: number }) {
+  if (value <= 0) return <span className="gx-mono gx-muted">-</span>;
+  return <span className="gx-mono gx-soft">{formatCompact(value)}</span>;
+}
 const DAYS = ["today", "7d", "30d", "all"] as const;
 type Tab = "records" | "bill" | "sessions" | "jobs" | "disputes";
 
@@ -92,13 +104,17 @@ export function UsageBoard() {
   const balance = dashboard?.balance?.["llm.output_tokens"] ?? 0;
 
   const exportCsv = () => {
-    const header = ["time", "key", "model", "input", "output", "durationMs", "cost", "state", "unitId"];
+    // input 是**未命中缓存的新增输入**，缓存命中与写入各自一列 —— 三个数互不重叠，
+    // 加起来才是这次请求读进模型的全部输入。导出的表拿去对账时这点必须写清楚。
+    const header = ["time", "key", "model", "input", "output", "cacheRead", "cacheWrite", "durationMs", "cost", "state", "unitId"];
     const lines = rows.map((row) => [
       row.startedAt ?? "",
       alias.get(row.keyId) ?? row.keyId,
       row.model,
       String(row.usage["llm.input_tokens"] ?? 0),
       String(row.usage["llm.output_tokens"] ?? 0),
+      String(row.usage["llm.cache_read_tokens"] ?? 0),
+      String(row.usage["llm.cache_write_tokens"] ?? 0),
       String(row.durationMs),
       String(row.cost),
       row.state,
@@ -214,6 +230,9 @@ export function UsageBoard() {
               <Loading />
             ) : (
               <DataTable
+                // 列宽预算：固定列 746px + 9 个 12px 间距 + 左右各 16px 内边距 = 886px，
+                // 模型列（1fr）拿剩下的。缓存读/写这两列是后加的，为了不把模型名挤没，
+                // 密钥列和几个数字列各收了一点。再要加列先重算这笔账。
                 columns={[
                   {
                     key: "time",
@@ -224,7 +243,7 @@ export function UsageBoard() {
                   {
                     key: "key",
                     title: t("usage.col.key"),
-                    width: "118px",
+                    width: "106px",
                     render: (row: UsageRecord) => <span className="gx-soft">{alias.get(row.keyId) ?? row.keyId}</span>,
                   },
                   {
@@ -236,16 +255,30 @@ export function UsageBoard() {
                   {
                     key: "in",
                     title: t("usage.col.in"),
-                    width: "72px",
+                    width: "66px",
                     align: "right",
                     render: (row: UsageRecord) => <span className="gx-mono gx-soft">{formatCompact(row.usage["llm.input_tokens"] ?? 0)}</span>,
                   },
                   {
                     key: "out",
                     title: t("usage.col.out"),
-                    width: "72px",
+                    width: "66px",
                     align: "right",
                     render: (row: UsageRecord) => <span className="gx-mono gx-soft">{formatCompact(row.usage["llm.output_tokens"] ?? 0)}</span>,
+                  },
+                  {
+                    key: "cacheRead",
+                    title: t("usage.col.cacheRead"),
+                    width: "66px",
+                    align: "right",
+                    render: (row: UsageRecord) => <TokenCell value={row.usage["llm.cache_read_tokens"] ?? 0} />,
+                  },
+                  {
+                    key: "cacheWrite",
+                    title: t("usage.col.cacheWrite"),
+                    width: "66px",
+                    align: "right",
+                    render: (row: UsageRecord) => <TokenCell value={row.usage["llm.cache_write_tokens"] ?? 0} />,
                   },
                   {
                     key: "took",
@@ -317,6 +350,6 @@ export function UsageBoard() {
 function usedTokens(dashboard: ConsumerDashboard | null): number {
   if (!dashboard) return 0;
   return Object.entries(dashboard.today.usage ?? {})
-    .filter(([unit]) => unit.endsWith("_tokens"))
+    .filter(([unit]) => unit.endsWith("_tokens") && !DERIVED_TOKEN_UNITS.has(unit))
     .reduce((sum, [, value]) => sum + value, 0);
 }

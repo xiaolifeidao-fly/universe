@@ -605,11 +605,26 @@ export class PortalModelView {
 
   cachePrice = 0;
 
+  cacheWritePrice = 0;
+
+  /** 官方参考价，同口径同币种。0 = 运营没声明，卡片上不划线也不标折扣。 */
+  listInputPrice = 0;
+
+  listOutputPrice = 0;
+
+  /** 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端按输出价算好，前端不再自己减一遍。 */
+  discountBps = 0;
+
   currency = "CNY";
 
   tags: string[] = [];
 
   summary = "";
+
+  /** 卡片右上角的角标；空就没有角标。配色是语义名（hot/new/value/neutral），由前端映射到本端的调色板。 */
+  badgeText = "";
+
+  badgeTone = "";
 
   featured = false;
 

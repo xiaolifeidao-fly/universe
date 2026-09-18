@@ -54,7 +54,8 @@ func TestStreamWithoutContentTypeStillMeters(t *testing.T) {
 		feedWriter(t, writer, raw, 17)
 
 		assertUsage(t, writer.Usage(), contract.Metering{
-			contract.UnitInputTokens:      2048,
+			// 净输入：流里的 2048 减掉 1024 个缓存命中（见 usage.go 的 netInput）。
+			contract.UnitInputTokens:      1024,
 			contract.UnitOutputTokens:     311,
 			contract.UnitCacheReadTokens:  1024,
 			contract.UnitCacheWriteTokens: 256,

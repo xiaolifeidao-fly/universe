@@ -15,6 +15,10 @@ func Relay(providers map[string]string, bodyLimit int64) contract.KindSpec {
 	spec.Metering.Units = []contract.MeterUnit{
 		contract.UnitInputTokens, contract.UnitOutputTokens,
 		contract.UnitCacheReadTokens, contract.UnitCacheWriteTokens,
+		// 四个桶的合计，给主人一条「整台机器一天最多跑多少 token」的上限用。
+		// 它和上面四个同时出现在计量里，所以只能进额度和统计，不能进账本 ——
+		// 见 contract.UnitTotalTokens 与 billing.go 的拦截。
+		contract.UnitTotalTokens,
 		contract.UnitCalls, contract.UnitTimeSeconds,
 	}
 	// 全部单位都由 Hub 自己计量：token 从透传的流里解析，次数与时长自己算。

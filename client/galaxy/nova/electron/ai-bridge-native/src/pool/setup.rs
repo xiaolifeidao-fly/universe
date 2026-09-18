@@ -14,13 +14,45 @@ pub fn login_command(auth_mode: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// 把 argv 拼成一条能直接敲的命令。
+///
+/// argv[0] 换成 PATH 上找到的绝对路径：本机没装 Node 的人，claude 是 Nova 用自带
+/// npm 装进 userData 下的 prefix 的（见 electron/src/modules/toolchain），那个目录
+/// 不在用户自己终端的 PATH 上 —— 写成 `claude auth login` 递给 Terminal 只会是
+/// command not found。找不到就原样留着名字，让控制台照常显示。
+///
+/// 路径可能带空格（`~/Library/Application Support/...`），所以要按 shell 的规矩引起来。
+pub fn login_command_line(argv: &[&str]) -> String {
+    let mut parts: Vec<String> = Vec::with_capacity(argv.len());
+    for (index, item) in argv.iter().enumerate() {
+        let resolved = if index == 0 {
+            super::tools::resolve_program(item)
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| (*item).to_string())
+        } else {
+            (*item).to_string()
+        };
+        parts.push(shell_quote(&resolved));
+    }
+    parts.join(" ")
+}
+
+/// POSIX 的单引号引法：里面的单引号要断开再拼回去。
+pub fn shell_quote(value: &str) -> String {
+    if !value.is_empty() && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./:=@".contains(&b)) {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// 在一个真终端窗口里跑命令，给交互式登录用。
 ///
 /// 只做 macOS：Linux 的终端模拟器五花八门，挨个试一遍还经常猜错，不如老实返回
 /// false，让控制台把命令显示出来让人自己敲 —— 那条路在所有平台上都是通的。
 ///
-/// command 全部来自 login_command 这张固定表，不含任何外部输入，所以这里
-/// 拼进 osascript 是安全的；哪天要接受外部参数，这里必须先加转义。
+/// 命令由 login_command 那张固定表加上本机解析出来的路径拼成，不含调用方输入；
+/// 传进来之前已经按 shell 的规矩引好（login_command_line），这里再整条 JSON 引一次
+/// 给 AppleScript。哪天要接受外部参数，这两层引用都要重新审一遍。
 pub fn open_terminal(command: &str) -> bool {
     if !cfg!(target_os = "macos") {
         return false;

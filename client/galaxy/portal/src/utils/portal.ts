@@ -50,11 +50,20 @@ export interface PortalModel {
   inputPrice: number;
   outputPrice: number;
   cachePrice: number;
+  cacheWritePrice: number;
+  /** 官方参考价，同口径同币种。0 = 运营没声明，卡片上不划线也不标折扣。 */
+  listInputPrice?: number;
+  listOutputPrice?: number;
+  /** 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端按输出价算好，门户不再自己减一遍。 */
+  discountBps?: number;
   currency: string;
   tags?: string[];
   summary?: string;
+  /** 卡片角标与它的配色（hot/new/value/neutral）；文案为空就没有角标。 */
+  badgeText?: string;
+  badgeTone?: string;
   featured: boolean;
-  /** false 表示这三个价来自 kind 的统一价，不是这个模型自己的。 */
+  /** false 表示这几个价来自 kind 的统一价，不是这个模型自己的。 */
   priced: boolean;
   sortOrder: number;
 }

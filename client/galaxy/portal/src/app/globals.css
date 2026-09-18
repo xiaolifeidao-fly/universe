@@ -502,6 +502,33 @@ svg {
   white-space: nowrap;
 }
 
+.gp-tag--accent {
+  background: var(--gp-accent-soft);
+  color: var(--gp-accent-ink);
+}
+
+.gp-tag--ok {
+  background: rgba(47, 125, 74, 0.1);
+  color: var(--gp-ok);
+}
+
+.gp-tag--warn {
+  background: rgba(154, 111, 20, 0.12);
+  color: var(--gp-warn);
+}
+
+/* 划掉的官方价。比正文小一档、颜色最淡 —— 它是个对照物，不该和我们自己的价抢。 */
+.gp-model__list {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  font-family: var(--gp-mono);
+  font-size: 11.5px;
+  color: var(--gp-faint);
+}
+
 .gp-dot {
   width: 6px;
   height: 6px;

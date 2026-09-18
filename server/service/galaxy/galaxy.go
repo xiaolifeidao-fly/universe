@@ -289,7 +289,10 @@ type Service interface {
 	// ListRetiredNodes 主人解绑掉的机器。ListNodes 不含它们，两边互补。
 	ListRetiredNodes(ctx context.Context, ownerUserID string) ([]dto.NodeView, error)
 	ListExecutionRecords(ctx context.Context, ownerUserID, cid string, limit int) ([]dto.ExecutionRecord, error)
-	SetContributionStatus(ctx context.Context, ownerUserID, nodeID, cid, status string) error
+	// SetContributionStatus 开关一条贡献。关闭时手上还有在跑的请求就排队（停止接新单、
+	// 在途跑完自动落地），除非请求里带了 Force —— 那会掐断在跑的请求并扣信誉分。
+	// 结果要交给界面：关闭是立即生效还是在排队，只看 HTTP 200 分不出来。
+	SetContributionStatus(ctx context.Context, ownerUserID string, req dto.SetContributionStatusRequest) (dto.SetContributionStatusResult, error)
 	// SaveContributionLimits 控制台改授权。额度以 Hub 为权威：改完节点下一次 hello
 	// 拿到的 quotaEffective 就与本地申报不同，节点以 Hub 为准。
 	SaveContributionLimits(ctx context.Context, req dto.SaveContributionLimitsRequest) error

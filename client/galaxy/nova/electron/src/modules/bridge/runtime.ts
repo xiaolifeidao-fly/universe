@@ -2,6 +2,7 @@ import { app, utilityProcess, type UtilityProcess } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { BridgeApi } from '@galaxy/common/eleapi/bridge.api';
+import { prepareToolchain } from '../toolchain';
 
 type Method = Exclude<keyof BridgeApi, 'getApiName' | 'getNamespace' | 'getRendererName' | 'isAvailable'>;
 interface Pending { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }
@@ -26,9 +27,17 @@ export class BridgeRuntime {
     if (app.isPackaged) entry = entry.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
     const data = process.env.NOVA_BRIDGE_DATA_DIR || path.join(app.getPath('userData'), 'ai-bridge');
     fs.mkdirSync(data, { recursive: true, mode: 0o700 });
+    // 桥接要起 npm / claude / codex（见 pool/tools.rs），而从 Dock 点开的 Nova
+    // 继承的是 launchd 那份只有四个目录的 PATH —— 不补这一下，本机装了 node 也找不到。
+    // 补丁只作用于这个子进程，主进程自己的 env 不动。
+    const toolchain = await prepareToolchain({
+      execPath: process.execPath, resourcesPath: process.resourcesPath,
+      userData: app.getPath('userData'), packaged: app.isPackaged,
+    });
+    console.log('[ai-bridge] toolchain npm =', toolchain.npmSource);
     const child = utilityProcess.fork(entry, [], {
       cwd: path.dirname(entry), serviceName: 'Nova ai-bridge', stdio: 'pipe',
-      env: { ...process.env, AI_BRIDGE_DESKTOP: '1',
+      env: { ...toolchain.env, AI_BRIDGE_DESKTOP: '1',
         AI_BRIDGE_CONFIG: path.join(data, 'config.yaml'), AI_BRIDGE_CONFIG_DIR: data,
         AI_BRIDGE_RUNTIME_DIR: path.join(data, 'state') },
     });
