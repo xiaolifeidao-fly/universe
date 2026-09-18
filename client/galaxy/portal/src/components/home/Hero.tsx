@@ -3,47 +3,24 @@
 /**
  * 首屏。
  *
- * 那排数字全部来自服务端真有的事实（模型数、上游厂商数、最低充值、可用性承诺）。
- * 「5000+ 开发者」这种没有出处的数字一个都不放 —— 门户上第一眼看到的数字如果是编的，
- * 后面写什么都不作数了。可用性那格没配就换成起步并发，宁可少说也不许诺。
+ * 这一屏只回答一件事：这里能调哪些模型、怎么调。
+ * 原来挂在按钮下面的服务地址和那排统计数字都撤了 —— 地址在「三步接入」的代码块和模型页里
+ * 各有一份，而模型数、厂商数这类数字是运营口径，不是陌生人第一眼该读的东西。
+ * 剩下这三条要点仍然只写服务端真有的事实，「5000+ 开发者」这种没有出处的话一句都不放。
  */
 
 import { useLocale } from "@/i18n/LocaleProvider";
-import { Btn, LinkBtn, Page, useCopy } from "@/components/site/kit";
-import { IconArrowRight, IconCheck, IconCopy } from "@/components/site/icons";
+import { LinkBtn, Page } from "@/components/site/kit";
+import { IconArrowRight, IconCheck } from "@/components/site/icons";
 import { OrbitDiagram } from "@/components/home/OrbitDiagram";
-import { formatAmount, formatInt } from "@/utils/format";
 import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalOverview } from "@/utils/portal";
-
-interface StatItem {
-  value: string;
-  unit?: string;
-  label: string;
-}
 
 export function Hero({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
   const siteConfig = useSiteConfig();
-  const { stats } = overview;
-  const copier = useCopy();
 
-  const items: StatItem[] = [
-    { value: formatInt(stats.models), unit: t("home.stat.unitModel"), label: t("home.stat.models") },
-    { value: formatInt(stats.vendors), unit: t("home.stat.unitVendor"), label: t("home.stat.vendors") },
-    {
-      value: stats.minTopup > 0 ? formatAmount(stats.minTopup, stats.currency) : "—",
-      label: t("home.stat.minTopup"),
-    },
-    stats.availability
-      ? { value: stats.availability, label: t("home.stat.availability") }
-      : {
-          value: formatInt(stats.concurrency),
-          unit: t("home.stat.unitConcurrency"),
-          label: t("home.stat.concurrency"),
-        },
-  ];
-
+  const points = [t("home.hero.point1"), t("home.hero.point2"), t("home.hero.point3")];
   const vendors = Array.from(new Set(overview.models.map((model) => model.vendor).filter(Boolean))) as string[];
 
   return (
@@ -77,49 +54,14 @@ export function Hero({ overview }: { overview: PortalOverview }) {
               </LinkBtn>
             </div>
 
-            {/* 服务地址：陌生人最想知道的技术事实之一，直接摆出来，还能一键复制。 */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, color: "var(--gp-faint)", fontWeight: 600 }}>
-                {t("home.hero.endpoint")}
-              </span>
-              <code
-                className="gp-mono"
-                style={{
-                  fontSize: 12.5,
-                  padding: "6px 10px",
-                  borderRadius: 8,
-                  border: "1px solid var(--gp-line)",
-                  background: "var(--gp-surface)",
-                  color: overview.endpoint ? "var(--gp-ink)" : "var(--gp-faint)",
-                }}
-              >
-                {overview.endpoint || t("home.hero.endpointEmpty")}
-              </code>
-              {overview.endpoint ? (
-                <Btn tone="quiet" size="sm" onClick={() => copier.copy(overview.endpoint)}>
-                  {copier.state === "ok" ? <IconCheck /> : <IconCopy />}
-                  {copier.state === "ok"
-                    ? t("common.copied")
-                    : copier.state === "fail"
-                      ? t("common.copyFailed")
-                      : t("common.copy")}
-                </Btn>
-              ) : null}
-            </div>
-
-            <div className="gp-hero__stats">
-              {items.map((item) => (
-                <div key={item.label} className="gp-stat">
-                  <div className="gp-stat__value">
-                    <span>{item.value}</span>
-                    {item.unit ? <span className="gp-stat__unit">{item.unit}</span> : null}
-                  </div>
-                  <div className="gp-stat__label" title={item.label}>
-                    {item.label}
-                  </div>
-                </div>
+            <ul className="gp-hero__points">
+              {points.map((point) => (
+                <li className="gp-hero__point" key={point}>
+                  <IconCheck className="gp-hero__point-mark" />
+                  <span>{point}</span>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
 
           <OrbitDiagram vendors={vendors} />

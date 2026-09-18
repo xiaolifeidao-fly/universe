@@ -400,6 +400,10 @@ const (
 	MetricExportDispatch = "galaxy_export_dispatch_total"
 	// MetricExportDispatchLatency 一次回连派单从发起到拿到响应头的耗时。
 	MetricExportDispatchLatency = "galaxy_export_dispatch_ms"
+	// MetricContributionRebuilt 心跳发现贡献不在控制面里、照库里的行重建的条数。
+	// 正常应当是 0。有量就说明控制面丢过状态（Hub 停了超过 45 秒、Redis 抖动、
+	// 有人清过 key），每一条都对应「一台机器在线着却收不到活」的一段时间。
+	MetricContributionRebuilt = "galaxy_contribution_rebuilt_total"
 )
 
 // 放置路径。埋点按它分组，才看得出「90% 请求走已绑定路径」这条是不是真的。

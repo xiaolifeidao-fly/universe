@@ -77,17 +77,9 @@ const messages = {
       "Anthropic 与 OpenAI 两族模型统一接入。额度跟着密钥走，输入、输出、缓存分开记账；每一次调用都留着一个能查到的请求号。",
     "home.hero.primary": "进入控制台",
     "home.hero.secondary": "先看价格",
-    "home.hero.endpoint": "服务地址",
-    "home.hero.endpointEmpty": "部署后由服务端下发",
-
-    "home.stat.models": "可用模型",
-    "home.stat.vendors": "上游厂商",
-    "home.stat.minTopup": "最低充值",
-    "home.stat.availability": "可用性",
-    "home.stat.concurrency": "最高并发",
-    "home.stat.unitVendor": "家",
-    "home.stat.unitModel": "个",
-    "home.stat.unitConcurrency": "并发",
+    "home.hero.point1": "一个地址、一把密钥，Claude 与 GPT / Codex 两族模型都能调",
+    "home.hero.point2": "只做中转：请求原样转给官方接口，响应原样转回来",
+    "home.hero.point3": "模型名与官方文档一致，完整清单和单价都在模型页",
 
     "home.orbit.core": "统一网关",
     "home.orbit.cli": "Claude Code · Codex",
@@ -107,7 +99,7 @@ const messages = {
 
     "home.why.eyebrow": "为什么是这里",
     "home.why.title": "把「花了多少、花在哪」摊开给你看",
-    "home.why.lead": "算力这门生意最容易糊弄的就是账。所以这套系统的每一个设计，都是为了让账对得上。",
+    "home.why.lead": "中转这门生意最容易糊弄的就是账。所以这套系统的每一个设计，都是为了让账对得上。",
 
     "home.why.1.title": "官方 SDK 直接指过来",
     "home.why.1.body":
@@ -132,9 +124,9 @@ const messages = {
     "home.faq.eyebrow": "常见问题",
     "home.faq.title": "你大概会问",
 
-    "home.faq.1.q": "和直接买官方账号有什么区别？",
+    "home.faq.1.q": "和直接用官方 API 有什么区别？",
     "home.faq.1.a":
-      "官方账号是按月订阅、额度按月清零，用不完是浪费、用超了要等下个月。这里是按 token 付费：买多少用多少，用不完留在密钥上；到期还有一段冻结期可以转走。另外这里一个地址同时给到 Anthropic 与 OpenAI 两族模型，不用维护两套账号和两套配置。",
+      "接口是一样的 —— 请求怎么发、响应什么形状、模型名怎么写，都照官方来，客户端一行都不用改。区别在这一层之外：一个地址同时给到 Anthropic 与 OpenAI 两族模型，只要一把密钥；额度按 token 买多少用多少，输入、输出、缓存读分开记账；每一次调用都带着请求号，控制台里能翻到那一笔扣了什么。",
     "home.faq.2.q": "我的请求内容会被保存吗？",
     "home.faq.2.a":
       "不保存。平台只记结构化的计量与执行事件（用了哪个模型、多少 token、成功还是失败），请求与响应的正文既不落库也不入日志。也正因如此，发起申诉时不需要、也请不要把请求内容粘贴进来。",
@@ -196,7 +188,7 @@ const messages = {
     "pricing.how.2.title": "三项分开记",
     "pricing.how.2.body": "输入、输出、缓存读各有各的余额和单价。缓存命中便宜得多，所以值得让它命中。",
     "pricing.how.3.title": "失败不计费",
-    "pricing.how.3.body": "没产出首字节就失败的请求会自动重试，不计费；已经产出的部分按实际产出计。",
+    "pricing.how.3.body": "没产出首字节就失败的请求不计费；已经产出的部分按实际产出计。",
     "pricing.faqTitle": "关于钱的几个问题",
 
     "contact.title": "联系我们",
@@ -301,17 +293,9 @@ const messages = {
       "Anthropic and OpenAI models behind one endpoint. Quota rides with the key; input, output and cache are metered separately, and every call leaves a request id you can look up.",
     "home.hero.primary": "Open the console",
     "home.hero.secondary": "See pricing first",
-    "home.hero.endpoint": "Endpoint",
-    "home.hero.endpointEmpty": "Issued by the server once deployed",
-
-    "home.stat.models": "Models",
-    "home.stat.vendors": "Upstream vendors",
-    "home.stat.minTopup": "Starts at",
-    "home.stat.availability": "Availability",
-    "home.stat.concurrency": "Peak concurrency",
-    "home.stat.unitVendor": "",
-    "home.stat.unitModel": "",
-    "home.stat.unitConcurrency": "in parallel",
+    "home.hero.point1": "One endpoint and one key, for both Claude and GPT / Codex",
+    "home.hero.point2": "A relay and nothing else: requests go to the official APIs as they are, responses come back as they are",
+    "home.hero.point3": "Model names match the official docs; the full list and prices live on the models page",
 
     "home.orbit.core": "One gateway",
     "home.orbit.cli": "Claude Code · Codex",
@@ -333,7 +317,7 @@ const messages = {
     "home.why.eyebrow": "Why here",
     "home.why.title": "The bill, opened up",
     "home.why.lead":
-      "Compute resale is an easy place to fudge the numbers. Every design decision below exists so the numbers add up.",
+      "A relay is an easy place to fudge the numbers. Every design decision below exists so the numbers add up.",
 
     "home.why.1.title": "Official SDKs point straight at it",
     "home.why.1.body":
@@ -361,9 +345,9 @@ const messages = {
     "home.faq.eyebrow": "FAQ",
     "home.faq.title": "You are probably wondering",
 
-    "home.faq.1.q": "How is this different from buying an official plan?",
+    "home.faq.1.q": "How is this different from calling the official APIs directly?",
     "home.faq.1.a":
-      "An official plan is a monthly subscription whose quota resets every month: leftovers are wasted, overruns wait for next month. This is pay-per-token — buy what you need, unused quota stays on the key, and an expired key freezes before anything is lost. One endpoint also covers both the Anthropic and OpenAI families, so there is one account and one config instead of two.",
+      "The interface is identical — how you send a request, the shape of the response, the model names. What changes is everything around it: one endpoint covers both the Anthropic and OpenAI families with a single key; quota is bought per token, with input, output and cache reads billed separately; and every call carries a request id you can look up in the console, down to what it cost.",
     "home.faq.2.q": "Do you store my prompts?",
     "home.faq.2.a":
       "No. Only structured metering and execution events are recorded — which model, how many tokens, success or failure. Request and response bodies never reach the database or the logs. That is also why a dispute does not need (and should not include) the payload.",
@@ -434,7 +418,7 @@ const messages = {
       "Input, output and cache reads each have their own rate. Cache hits are far cheaper, which is exactly why they are worth engineering for.",
     "pricing.how.3.title": "Failures are free",
     "pricing.how.3.body":
-      "A request that fails before the first byte is retried automatically and not charged. One that already produced output is charged for what it produced.",
+      "A request that fails before the first byte is not charged. One that already produced output is charged for what it produced.",
     "pricing.faqTitle": "Questions about money",
 
     "contact.title": "Contact",

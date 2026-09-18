@@ -409,18 +409,7 @@ func (s *service) effectiveContributions(ctx context.Context, node *repository.G
 	if err != nil {
 		return effectivePlan{}, err
 	}
-	live := make([]*repository.GalaxyContribution, 0, len(rows))
-	for _, row := range rows {
-		// 判据是「主人没关 + 本机可用」，不是「status == active」。
-		//
-		// draining 也要留在下发集合里：额度触顶时心跳会把状态写成 draining，
-		// 意思是「停止接新单、在跑的正常跑完」。要是这时候把它从集合里摘掉，
-		// 节点会直接拆掉通道，跑到一半的请求当场断线 —— 排空的意义就没了。
-		// 「要不要接新单」由心跳响应里的 Drain 列表单独表达，和这里是两件事。
-		if row.Status != statusDisabled && row.Available {
-			live = append(live, row)
-		}
-	}
+	live := liveContributions(rows)
 	grants, err := s.loadGrants(ctx, cidsOf(live))
 	if err != nil {
 		return effectivePlan{}, err
@@ -459,6 +448,44 @@ func (s *service) effectiveContributions(ctx context.Context, node *repository.G
 		})
 	}
 	return plan, nil
+}
+
+// liveContributions 「主人没关 + 本机可用」的那些行，也就是此刻该出现在控制面里的集合。
+//
+// 判据是这两条，不是「status == active」。draining 也要算在里面：额度触顶时心跳会把
+// 状态写成 draining，意思是「停止接新单、在跑的正常跑完」。要是这时候把它摘掉，
+// 节点会直接拆掉通道，跑到一半的请求当场断线 —— 排空的意义就没了。
+// 「要不要接新单」由心跳响应里的 Drain 列表单独表达，和这里是两件事。
+//
+// 单拎成函数是因为它有两个调用方：算生效集合的那条路，和心跳里那条「控制面缺了谁」
+// 的自愈检查。两边必须用同一个判据 —— 不一致的话，检查说该有、重建出来却没有，
+// 每个心跳都会白跑一次重建。
+func liveContributions(rows []*repository.GalaxyContribution) []*repository.GalaxyContribution {
+	live := make([]*repository.GalaxyContribution, 0, len(rows))
+	for _, row := range rows {
+		if row.Status != statusDisabled && row.Available {
+			live = append(live, row)
+		}
+	}
+	return live
+}
+
+// missingFromControlPlane 该在控制面里、此刻却不在的那些贡献。
+//
+// 比的是 cid 集合而不是条数：同一台机器上的贡献不一定同生同死 —— 主人在控制台
+// 新开一条会单独把它推进控制面，它和别的贡献不在同一个 TTL 节拍上。
+func missingFromControlPlane(rows []*repository.GalaxyContribution, snapshots []ContributionSnapshot) []string {
+	present := make(map[string]bool, len(snapshots))
+	for _, snapshot := range snapshots {
+		present[snapshot.CID] = true
+	}
+	var missing []string
+	for _, row := range liveContributions(rows) {
+		if !present[row.CID] {
+			missing = append(missing, row.CID)
+		}
+	}
+	return missing
 }
 
 // pushToControlPlane 把算好的集合写进控制面：放置算法只看得到这里的东西。
@@ -556,6 +583,35 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	snapshots, err := s.control.ListNodeContributions(ctx, req.NodeID)
 	if err != nil {
 		return dto.HeartbeatResult{}, err
+	}
+	// 控制面里缺了本该在的贡献，就按库里的行当场重建。
+	//
+	// 贡献的哈希只有 45 秒 TTL，而心跳只给**已经存在**的 key 续期（TouchNode 里
+	// 那段注释说明了为什么不能让心跳把它 HSET 回来）。于是 Hub 重启、Redis 抖动，
+	// 只要超过这 45 秒，还在线的机器就从车道里消失了 —— 而它自己什么都不知道：
+	// hello 只在启动、重连、本机能力指纹变化时发，心跳失败对节点来说只是一条警告。
+	// 结果是机器一直在线、控制台一直显示共享中，消费者那边却一路 no_capacity，
+	// 直到主人去控制台点一下开关（走 syncNodeToControlPlane）或者重启那台机器。
+	// 踩过一次：一台贡献机在 Hub 换配置重启之后静默掉出池子半天没人发现。
+	//
+	// 重建用的是数据库那一行，不是控制面里的残片 —— 权威在库里，而且要带上
+	// 节点行里的 resources，缺了它带资源要求的 kind 会被硬过滤直接挡掉。
+	if missing := missingFromControlPlane(rows, snapshots); len(missing) > 0 {
+		if err := s.syncNodeToControlPlane(ctx, req.NodeID); err != nil {
+			return dto.HeartbeatResult{}, err
+		}
+		s.metrics.Count(MetricContributionRebuilt, map[string]string{"nodeId": req.NodeID}, float64(len(missing)))
+		// 重建是全量替换，写下的是「主人设定的样子」：上游好不好、有没有被节点
+		// 自己暂停，这些只有节点知道，而它这一拍报上来的那份刚被覆盖掉。补回来，
+		// 否则一台上游正挂着的机器会有一个心跳周期看着是健康的，照样被派单。
+		if err := s.control.UpdateLaneRuntime(ctx, runtimes); err != nil {
+			return dto.HeartbeatResult{}, err
+		}
+		// 再读一遍：这一轮的排空判断、额度下发、待关闭落地都吃这份快照，
+		// 拿着刚才那份缺东西的往下走，等于让这台机器白跑一个心跳周期。
+		if snapshots, err = s.control.ListNodeContributions(ctx, req.NodeID); err != nil {
+			return dto.HeartbeatResult{}, err
+		}
 	}
 	byCID := make(map[string]*repository.GalaxyContribution, len(rows))
 	for _, row := range rows {

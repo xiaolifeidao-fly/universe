@@ -591,48 +591,32 @@ svg {
   gap: 12px;
 }
 
-.gp-hero__stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border: 1px solid var(--gp-line);
-  border-radius: var(--gp-radius);
-  background: rgba(255, 255, 255, 0.72);
-  overflow: hidden;
-}
-
-.gp-stat {
-  padding: 16px 18px;
-  border-right: 1px solid var(--gp-line);
-  min-width: 0;
-}
-
-.gp-stat:last-child {
-  border-right: 0;
-}
-
-.gp-stat__value {
-  font-family: var(--gp-serif);
-  font-size: 27px;
-  line-height: 1.05;
+/* 首屏要点。原来这里是服务地址加一排统计数字，现在换成三句话说清能调什么 ——
+   不描边不加底色：它紧跟在两个按钮下面，再来一个方框就成了第三个抢注意力的块。 */
+.gp-hero__points {
   display: flex;
-  align-items: baseline;
-  gap: 3px;
+  flex-direction: column;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.gp-stat__unit {
-  font-family: var(--gp-sans);
-  font-size: 12.5px;
-  font-weight: 600;
+.gp-hero__point {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14.5px;
+  line-height: 1.6;
   color: var(--gp-soft);
+  text-wrap: pretty;
 }
 
-.gp-stat__label {
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--gp-faint);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 勾号按首行文字的中线压一点，不然它会浮在字的上沿。 */
+.gp-hero__point-mark {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--gp-accent-ink);
 }
 
 /* ---------- 轨道图 ---------- */
@@ -1488,18 +1472,6 @@ svg {
 }
 
 @media (max-width: 720px) {
-  .gp-hero__stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .gp-stat:nth-child(2) {
-    border-right: 0;
-  }
-
-  .gp-stat:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--gp-line);
-  }
-
   .gp-grid--2,
   .gp-grid--3,
   .gp-grid--4 {
@@ -1559,10 +1531,6 @@ svg {
     height: 20px;
     border-radius: 6px;
     font-size: 11px;
-  }
-
-  .gp-hero__stats {
-    background: var(--gp-surface);
   }
 
   .gp-drawer__lang {

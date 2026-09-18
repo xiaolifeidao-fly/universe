@@ -46,7 +46,7 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 | `galaxy.referral.rate` / `.days` | galaxy-api、galaxy-hub-api | 页面写着返现比例，结算时按另一个值发 |
 | `oss.*` | galaxy-consumer-api、galaxy-hub-api | 一边传上去、另一边签不出下载地址 |
 
-各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
+各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的下载地址，只在密钥页展示；不配就是那一块不显示）、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
 
 ### 三个「对外地址」必须和 nginx 上那条 location 对齐
 

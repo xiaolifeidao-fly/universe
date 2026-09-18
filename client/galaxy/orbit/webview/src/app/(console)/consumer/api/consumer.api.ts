@@ -162,9 +162,18 @@ export class UsageReport {
   currency = "CNY";
 }
 
-/** SDK 要填的 base_url。由服务端给（配置在 galaxy.instance / galaxy.consumer_base_url），前端不再自己拼。 */
+/**
+ * 接入要的两条部署事实，都由服务端给，前端不再自己拼。
+ *
+ * baseUrl            SDK 要填的地址（galaxy.instance / galaxy.consumer_base_url）。
+ * clientDownloadUrl  桌面客户端的下载地址（galaxy.consumer_client_download_url）。
+ *
+ * 两条都可能是空串 —— 部署方没配就是没配，页面各自少显示一块，不猜。
+ */
 export class ConsumerEndpoint {
   baseUrl = "";
+
+  clientDownloadUrl = "";
 }
 
 export async function fetchConsumerEndpoint() {

@@ -92,7 +92,8 @@ func TestLookupSpecRefusesUnknownKeys(t *testing.T) {
 // 逐个点名，而不是只数个数：将来谁顺手加一项，这个用例要能指出加错了哪一个。
 func TestDeploymentFactsAreNotTunable(t *testing.T) {
 	forbidden := []string{
-		"galaxy.instance", "galaxy.consumer_base_url", "galaxy.provider_hub_url",
+		"galaxy.instance", "galaxy.consumer_base_url", "galaxy.consumer_client_download_url",
+		"galaxy.provider_hub_url",
 		"galaxy.key_cipher_secret", "bridge_release.public_keys",
 		"galaxy.contract_version", "galaxy.heartbeat_timeout_ms", "galaxy.payout_rate",
 		"payout.rate", "contract.version", "heartbeat.timeout_ms",

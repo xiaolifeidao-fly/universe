@@ -37,8 +37,8 @@ func NewHandler(service galaxy.Service, gate *auth.Gate, options Options) *Handl
 // RegisterConsole 挂在 /api/galaxy 下，整组只认使用端账号：共享端的令牌打进来是 not login。
 func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	console := group.Group("/consumer", h.gate.Consumer())
-	// SDK 接入要的两样东西之一（另一样是密钥）。地址由服务端给，
-	// 前端不该再配一遍 —— 配两处迟早对不上。
+	// SDK 接入要的两样东西之一（另一样是密钥），顺带桌面客户端的下载地址。
+	// 两条都由服务端给，前端不该再配一遍 —— 配两处迟早对不上。
 	console.GET("/endpoint", h.consumerEndpoint)
 	console.GET("/notice", h.currentNotice)
 	console.POST("/notice/accept", h.acceptNotice)
@@ -271,13 +271,21 @@ func (h *Handler) renewKey(context *gin.Context) {
 
 // ---------- 控制台 ----------
 
-// currentNotice 当前的数据告知版本与本人是否已确认。
-// 和提供者那边的 /terms 对称：前端要能在下单之前就知道拦不拦得住。
-// consumerEndpoint 消费者 SDK 要填的 base_url。
+// consumerEndpoint 接入这一页要的两条部署事实：消费者 SDK 要填的 base_url，
+// 和桌面客户端的下载地址。两条都可能是空的，控制台各自少显示一块。
+//
+// 下载地址跟着它一起下发而不是单开一个接口：密钥页本来就要取一次 base_url，
+// 而这两条是同一类事实——「这套部署把东西摆在哪儿」，合在一起少一次往返。
 func (h *Handler) consumerEndpoint(context *gin.Context) {
-	httpx.JSON(context, gin.H{"baseUrl": h.service.Config().ConsumerBaseURL}, nil)
+	config := h.service.Config()
+	httpx.JSON(context, gin.H{
+		"baseUrl":           config.ConsumerBaseURL,
+		"clientDownloadUrl": config.ConsumerClientDownloadURL,
+	}, nil)
 }
 
+// currentNotice 当前的数据告知版本与本人是否已确认。
+// 和提供者那边的 /terms 对称：前端要能在下单之前就知道拦不拦得住。
 func (h *Handler) currentNotice(context *gin.Context) {
 	version := h.service.Config().ConsumerNoticeVersion
 	accepted, err := h.service.HasConsent(context.Request.Context(), "consumer", auth.UserID(context), version)

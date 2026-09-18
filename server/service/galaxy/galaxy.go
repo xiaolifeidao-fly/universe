@@ -69,6 +69,16 @@ type Config struct {
 	// 节点就会去连一个它根本够不到的地方。这条必须显式配。
 	ProviderHubURL string
 
+	// ConsumerClientDownloadURL 使用端桌面客户端（Orbit）的下载地址，使用端控制台原样展示。
+	//
+	// 控制台自己就是这个客户端的界面，但它同时挂在浏览器上给没装客户端的人用，
+	// 而「使用」那个一键写本机配置的按钮只有桌面壳里才有 —— 在浏览器里看控制台的人
+	// 需要一条路把客户端拿到手，这就是那条路。
+	//
+	// 不配就是空串，控制台那一块直接不显示：安装包托管在哪儿是部署方的事，
+	// 这里派生不出来，猜一个地址只会换来一次 404。
+	ConsumerClientDownloadURL string
+
 	// UsageMismatchRatio 节点自报与 Hub 解析的偏差告警阈值。
 	UsageMismatchRatio float64
 

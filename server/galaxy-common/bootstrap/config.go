@@ -36,6 +36,9 @@ func LoadConfig() galaxy.Config {
 	config.ConsumerBaseURL = strings.TrimSpace(httpx.Property("galaxy.consumer_base_url"))
 	// 节点侧的对外地址。不配就由 withDefaults 从 consumer_base_url 去掉 /v1 派生。
 	config.ProviderHubURL = strings.TrimSpace(httpx.Property("galaxy.provider_hub_url"))
+	// 使用端桌面客户端的下载地址。只有使用端控制台用得上，不配就是那一块不显示 ——
+	// 安装包托管在哪儿派生不出来。
+	config.ConsumerClientDownloadURL = strings.TrimSpace(httpx.Property("galaxy.consumer_client_download_url"))
 	config.SessionIdleTTL = time.Duration(IntProperty("galaxy.session_idle_hours", 24)) * time.Hour
 	config.PayoutRate = IntProperty("galaxy.payout_rate", config.PayoutRate)
 	config.PayoutMinCredits = int64(IntProperty("galaxy.payout_min_credits", int(config.PayoutMinCredits)))

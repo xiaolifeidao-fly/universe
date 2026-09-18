@@ -80,8 +80,9 @@ type SettingSpec struct {
 //
 // **没有列进来的就是不可调的**，而且理由各不相同：
 //
-//   - galaxy.instance / consumer_base_url / provider_hub_url / bridge_download_base_url
-//     / referral_register_url：部署地址。改它们意味着这套部署换了位置，本来就要重新部署。
+//   - galaxy.instance / consumer_base_url / consumer_client_download_url / provider_hub_url
+//     / bridge_download_base_url / referral_register_url：部署地址。改它们意味着这套部署换了位置，
+//     本来就要重新部署。
 //   - galaxy.key_cipher_secret / bridge_release.public_keys：密钥材料。
 //     一个能在后台改加密密钥的开关，等于把所有密文的钥匙挂在后台登录页后面。
 //   - galaxy.contract_version：编译期契约，节点按它握手。

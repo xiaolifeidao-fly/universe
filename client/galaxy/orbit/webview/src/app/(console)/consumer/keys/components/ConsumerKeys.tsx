@@ -17,7 +17,7 @@ import { Dropdown, Modal, message } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconAlert, IconCopy, IconEye, IconEyeOff, IconKey, IconMonitor, IconPlus, IconRefresh } from "@/components/ui/icons";
+import { IconAlert, IconCopy, IconDownload, IconEye, IconEyeOff, IconKey, IconMonitor, IconPlus, IconRefresh } from "@/components/ui/icons";
 import { Btn, Card, CardHead, CopyBtn, EmptyState, IconBtn, Loading, Note, Pill, Seg, Tabs } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { copyText, formatCompact, formatDay, formatInt, unitLabel } from "@/utils/format";
@@ -81,6 +81,9 @@ export function ConsumerKeys() {
   // SDK 要填的 base_url **由服务端给** —— 消费者路由挂在 galaxy-api 的 /v1 上，
   // 那个地址前端猜不出来（控制台和 API 可能不同域、不同端口）。
   const [baseUrl, setBaseUrl] = useState("");
+  // 桌面客户端的下载地址，同样由服务端给（galaxy.consumer_client_download_url）。
+  // 没配就是空串 —— 那一块直接不显示，而不是给一个猜来的地址。
+  const [downloadUrl, setDownloadUrl] = useState("");
   // 「使用」只有桌面壳里有。判断依赖 window，挂载之后再定，否则首屏 HTML 和水合结果对不上。
   const [desktop, setDesktop] = useState(false);
   const [clientStatus, setClientStatus] = useState<ClientConfigStatus | null>(null);
@@ -115,10 +118,16 @@ export function ConsumerKeys() {
   useEffect(() => {
     setDesktop(canApplyLocally());
     void load();
-    // 取不到就不显示这一块，好过显示一个猜来的、打过去 404 的地址。
+    // 取不到就不显示这两块，好过显示一个猜来的、打过去 404 的地址。
     void fetchConsumerEndpoint()
-      .then((row) => setBaseUrl(row.baseUrl))
-      .catch(() => setBaseUrl(""));
+      .then((row) => {
+        setBaseUrl(row.baseUrl);
+        setDownloadUrl(row.clientDownloadUrl);
+      })
+      .catch(() => {
+        setBaseUrl("");
+        setDownloadUrl("");
+      });
   }, [load]);
 
   const { valid, invalid } = useMemo(() => {
@@ -334,7 +343,14 @@ export function ConsumerKeys() {
           </Card>
         ) : null}
 
-        {desktop && clientStatus ? <LocalClients status={clientStatus} keys={keys} /> : null}
+        {/* 同一个位置上的两种回答：桌面端说「这台电脑现在接的是哪把」，浏览器里说「客户端从这儿拿」。 */}
+        {desktop ? (
+          clientStatus ? (
+            <LocalClients status={clientStatus} keys={keys} />
+          ) : null
+        ) : downloadUrl ? (
+          <ClientDownload url={downloadUrl} />
+        ) : null}
 
         {shown.length === 0 ? (
           <Card className="gx-rise">
@@ -678,6 +694,39 @@ function LocalClients({ status, keys }: { status: ClientConfigStatus; keys: Cons
           </span>
         );
       })}
+    </Card>
+  );
+}
+
+/**
+ * 浏览器里看控制台时的那一块：把桌面客户端拿到手。
+ *
+ * 它占的就是桌面端「这台电脑」那一块的位置 —— 两边回答的是同一件事（本机的
+ * Claude Code / Codex 接没接上），只是浏览器里的答案还停在前一步：一键写本机配置的
+ * 「使用」按钮只有桌面壳里有，没装客户端的人得先装上（不装也行，照下面「接入方式」手填）。
+ *
+ * 用 <a> 而不是 Btn + window.open：这一块只在浏览器里渲染，而浏览器里一条真链接才能
+ * 右键另存、复制地址、中键新开一个页 —— 弹窗拦截也拦不到它。
+ */
+function ClientDownload({ url }: { url: string }) {
+  const { t } = useLocale();
+  return (
+    <Card className="gx-rise" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+      <IconMonitor size={16} style={{ color: "var(--gx-faint)", flex: "0 0 auto" }} />
+      <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{t("keys.client.title")}</span>
+        <span className="gx-card__hint">{t("keys.client.hint")}</span>
+      </span>
+      <a
+        className="gx-btn gx-btn--accent gx-btn--sm"
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        style={{ textDecoration: "none", flex: "0 0 auto" }}
+      >
+        <IconDownload size={14} />
+        {t("keys.client.download")}
+      </a>
     </Card>
   );
 }
