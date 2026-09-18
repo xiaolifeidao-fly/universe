@@ -87,6 +87,18 @@ export function RecordDetail({
               .map(([unit, value]) => (
                 <Row key={unit} label={unitLabel(unit, t)} value={formatInt(value)} mono />
               ))}
+            {/* 推理紧跟在分项后面、缩进摆：它是「输出」里的一部分，不是又一个桶。
+                和分项并排的话，输出 300 + 推理 250 看起来像这次用了 550。
+                它被 DERIVED_TOKEN_UNITS 从上面那轮过滤掉了，所以在这里单独补一行 ——
+                不补的话它就只存在于数据库里，谁都看不见，采集也就白做了。 */}
+            {(record.usage?.["llm.reasoning_tokens"] ?? 0) > 0 ? (
+              <Row
+                label={unitLabel("llm.reasoning_tokens", t)}
+                value={formatInt(record.usage["llm.reasoning_tokens"])}
+                mono
+                muted
+              />
+            ) : null}
             {/* 合计单独摆在分项后面：和它们并排的话，看起来像是第五个桶，
                 而它其实就是上面那几项加起来的数。 */}
             {(record.usage?.["llm.total_tokens"] ?? 0) > 0 ? (
@@ -139,10 +151,26 @@ export function RecordDetail({
   );
 }
 
-function Row({ label, value, mono, strong }: { label: string; value: string; mono?: boolean; strong?: boolean }) {
+// muted 是「上一行的一部分」：缩进 + 淡一档。推理 token 用它 —— 它是输出的子集，
+// 摆成平级会让人把两个数加起来。
+function Row({
+  label,
+  value,
+  mono,
+  strong,
+  muted,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  strong?: boolean;
+  muted?: boolean;
+}) {
   return (
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16, fontSize: 12.5 }}>
-      <span style={{ color: "var(--gx-soft)", flex: "0 0 auto" }}>{label}</span>
+      <span style={{ color: muted ? "var(--gx-muted)" : "var(--gx-soft)", flex: "0 0 auto", paddingLeft: muted ? 12 : 0 }}>
+        {label}
+      </span>
       <span
         className={mono ? "gx-mono" : undefined}
         style={{
@@ -151,7 +179,7 @@ function Row({ label, value, mono, strong }: { label: string; value: string; mon
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
           fontWeight: strong ? 600 : 400,
-          color: strong ? "var(--gx-ink)" : "inherit",
+          color: strong ? "var(--gx-ink)" : muted ? "var(--gx-muted)" : "inherit",
         }}
       >
         {value}

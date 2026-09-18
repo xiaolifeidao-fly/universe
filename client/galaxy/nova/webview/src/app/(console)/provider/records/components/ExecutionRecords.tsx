@@ -260,6 +260,16 @@ export function ExecutionRecords() {
                   render: (row: ExecutionRecord) => <span className="gx-mono gx-soft">{formatCompact(row.usage["llm.output_tokens"] ?? 0)}</span>,
                 },
                 {
+                  // 推理紧挨着输出：它是输出里的一部分，不是又一个桶。
+                  // 推理模型上这一列动辄是输出的九成，不摆出来的话「输出 32」和
+                  // 「输出 29000」在这张表里看起来是同一件事。
+                  key: "reasoning",
+                  title: t("records.col.reasoning"),
+                  width: "68px",
+                  align: "right",
+                  render: (row: ExecutionRecord) => <TokenCell value={row.usage["llm.reasoning_tokens"] ?? 0} />,
+                },
+                {
                   key: "cacheRead",
                   title: t("records.col.cacheRead"),
                   width: "68px",
