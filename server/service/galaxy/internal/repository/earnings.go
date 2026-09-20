@@ -27,29 +27,44 @@ type LedgerQuery struct {
 }
 
 func (r *GalaxyRepository) ledgerScope(ctx context.Context, q LedgerQuery) *gorm.DB {
-	tx := r.Db.WithContext(ctx).Model(&GalaxyProviderLedger{}).Where("biz_line = ?", q.BizLine)
+	return scopeProviderLedger(r.Db.WithContext(ctx).Model(&GalaxyProviderLedger{}), q, "")
+}
+
+// scopeProviderLedger 账本的查询范围。范围条件只写这一份 —— 它决定一个人
+// 看得到哪些钱，抄第二份就意味着有一天两份会不一样，而那种不一样叫越权。
+//
+// alias 是账本表的别名。**join 的时候必须给**：biz_line / cid 这些列在
+// zt_galaxy_unit 上也有，不带前缀 MySQL 报 1052，而不是替你挑一个。
+func scopeProviderLedger(tx *gorm.DB, q LedgerQuery, alias string) *gorm.DB {
+	col := func(name string) string {
+		if alias == "" {
+			return name
+		}
+		return alias + "." + name
+	}
+	tx = tx.Where(col("biz_line")+" = ?", q.BizLine)
 	// owner 与 cid 是「或」不是「且」：结算那条路径写的是 cid，
 	// 提现与驳回写的是 owner（它们不属于任何一条贡献）。
 	switch {
 	case q.OwnerUserID != "" && len(q.CIDs) > 0:
-		tx = tx.Where("owner_user_id = ? OR cid IN ?", q.OwnerUserID, q.CIDs)
+		tx = tx.Where(col("owner_user_id")+" = ? OR "+col("cid")+" IN ?", q.OwnerUserID, q.CIDs)
 	case q.OwnerUserID != "":
-		tx = tx.Where("owner_user_id = ?", q.OwnerUserID)
+		tx = tx.Where(col("owner_user_id")+" = ?", q.OwnerUserID)
 	case len(q.CIDs) > 0:
-		tx = tx.Where("cid IN ?", q.CIDs)
+		tx = tx.Where(col("cid")+" IN ?", q.CIDs)
 	default:
 		// 两个维度都空表示「这个人什么都没有」。不加条件会把全平台的账本查出来，
 		// 那是越权，不是空结果。
 		tx = tx.Where("1 = 0")
 	}
 	if len(q.Types) > 0 {
-		tx = tx.Where("type IN ?", q.Types)
+		tx = tx.Where(col("type")+" IN ?", q.Types)
 	}
 	if !q.From.IsZero() {
-		tx = tx.Where("created_at >= ?", q.From)
+		tx = tx.Where(col("created_at")+" >= ?", q.From)
 	}
 	if !q.To.IsZero() {
-		tx = tx.Where("created_at < ?", q.To)
+		tx = tx.Where(col("created_at")+" < ?", q.To)
 	}
 	return tx
 }
@@ -94,6 +109,28 @@ func (r *GalaxyRepository) SumProviderLedgerByDay(ctx context.Context, q LedgerQ
 	err := r.ledgerScope(ctx, q).
 		Select("DATE(created_at) AS day, SUM(amount) AS amount").
 		Group("DATE(created_at)").Order("day").Scan(&rows).Error
+	return rows, err
+}
+
+// ModelAmount 一个模型在一个时间窗里挣了多少微积分。
+type ModelAmount struct {
+	Model  string `gorm:"column:model"`
+	Amount int64  `gorm:"column:amount"`
+}
+
+// SumProviderLedgerByModel 按模型分组求和，共享端的模型页用它回答「这个模型给我赚了多少」。
+//
+// 模型只记在单元行上、账本里没有，所以要 join 回去 —— 和 SumUsage 是同一个原因。
+// 单元行已经被清掉的那些归进空串那一组：钱是真赚过的，只是说不出是哪个模型赚的。
+// 丢掉它们会让这一页的合计比收益页少一截，而两页对不上比少一行信息更难查。
+func (r *GalaxyRepository) SumProviderLedgerByModel(ctx context.Context, q LedgerQuery) ([]ModelAmount, error) {
+	tx := r.Db.WithContext(ctx).
+		Table((&GalaxyProviderLedger{}).TableName()+" AS l").
+		Joins("LEFT JOIN " + (&GalaxyUnit{}).TableName() + " AS u ON u.biz_line = l.biz_line AND u.unit_id = l.unit_id")
+	var rows []ModelAmount
+	err := scopeProviderLedger(tx, q, "l").
+		Select("COALESCE(u.model, '') AS model, SUM(l.amount) AS amount").
+		Group("u.model").Scan(&rows).Error
 	return rows, err
 }
 

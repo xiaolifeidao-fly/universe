@@ -12,10 +12,11 @@
 import { usePathname, useRouter } from "next/navigation";
 import { type PropsWithChildren, type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
+import { UpdateGate } from "@/components/shell/UpdateGate";
 import { clearAuthToken, getAuthUser } from "@/utils/auth";
 import { hasOverlayTitlebar, productConfig } from "@/utils/product";
 import { IconChevronDown, IconLogout, IconUser } from "@/components/ui/icons";
-import { IconCoins, IconHome, IconList, IconSend, IconSliders } from "@/components/ui/icons";
+import { IconCoins, IconHome, IconList, IconSend, IconSliders, IconSparkle } from "@/components/ui/icons";
 
 interface NavEntry {
   href: string;
@@ -28,6 +29,7 @@ interface NavEntry {
 const NAV: NavEntry[] = [
   { href: "/provider/today", labelKey: "nav.today", icon: <IconHome size={18} /> },
   { href: "/provider/share", labelKey: "nav.share", icon: <IconSliders size={18} /> },
+  { href: "/provider/models", labelKey: "nav.models", icon: <IconSparkle size={18} /> },
   { href: "/provider/earnings", labelKey: "nav.earnings", icon: <IconCoins size={18} /> },
   { href: "/provider/records", labelKey: "nav.records", icon: <IconList size={18} /> },
   { href: "/provider/invite", labelKey: "nav.invite", icon: <IconSend size={18} /> },
@@ -163,6 +165,8 @@ export function GalaxyShell({ children }: PropsWithChildren) {
         </div>
       </aside>
       <main className="gx-main">{children}</main>
+      {/* 桌面壳的版本更新。浏览器里、或者壳旧到没有 UpdateApi 时它自己不画。 */}
+      <UpdateGate />
     </div>
   );
 }

@@ -90,10 +90,14 @@ func TestLookupSpecRefusesUnknownKeys(t *testing.T) {
 // TestDeploymentFactsAreNotTunable 部署事实与密钥材料一项都不该在这张表里。
 //
 // 逐个点名，而不是只数个数：将来谁顺手加一项，这个用例要能指出加错了哪一个。
+//
+// 客户端安装包的下载地址曾经也在这张清单上（跟着配置文件走）。它被挪进来是有意的：
+// 没有流量走它，填错只是某一页上多一条坏链接，而管理端要展示它 —— 留在配置文件里
+// 就得在两个进程的两份文件里各配一遍。判据是「改它会不会让这套部署换个位置」，
+// 不是「它长得像不像一个地址」。
 func TestDeploymentFactsAreNotTunable(t *testing.T) {
 	forbidden := []string{
-		"galaxy.instance", "galaxy.consumer_base_url", "galaxy.consumer_client_download_url",
-		"galaxy.provider_hub_url",
+		"galaxy.instance", "galaxy.consumer_base_url", "galaxy.provider_hub_url",
 		"galaxy.key_cipher_secret", "bridge_release.public_keys",
 		"galaxy.contract_version", "galaxy.heartbeat_timeout_ms", "galaxy.payout_rate",
 		"payout.rate", "contract.version", "heartbeat.timeout_ms",
@@ -101,6 +105,30 @@ func TestDeploymentFactsAreNotTunable(t *testing.T) {
 	for _, key := range forbidden {
 		if _, known := settingSpecByKey[key]; known {
 			t.Errorf("%s 不该是可调参数", key)
+		}
+	}
+}
+
+// TestClientDownloadURLsAreValidated 下载地址会原样进 <a href>，
+// 所以它是文本型里唯一需要校验的一类：只收 http(s)，其余一概拒。
+//
+// 校验写在 apply 里，所以保存接口和进程回查（loadSettings）走的是同一道 ——
+// 手工改库塞进去的 javascript: 会在回查时被跳过，而不是被摆到页面上。
+func TestClientDownloadURLsAreValidated(t *testing.T) {
+	for _, key := range []string{SettingClientProviderDownloadURL, SettingClientConsumerDownloadURL} {
+		spec, err := lookupSpec(key)
+		if err != nil {
+			t.Fatalf("%s 应当是可调参数：%v", key, err)
+		}
+		for _, raw := range []string{"https://www.galaxy.rodeo/download", "http://192.168.1.9:8080/nova.dmg"} {
+			if err := validateSetting(spec, raw); err != nil {
+				t.Errorf("%s 应当收下 %q：%v", key, raw, err)
+			}
+		}
+		for _, raw := range []string{"javascript:alert(1)", "www.galaxy.rodeo/download", "Nova-0.1.0.dmg", "/downloads/nova.dmg"} {
+			if err := validateSetting(spec, raw); err == nil {
+				t.Errorf("%s 不该收下 %q", key, raw)
+			}
 		}
 	}
 }

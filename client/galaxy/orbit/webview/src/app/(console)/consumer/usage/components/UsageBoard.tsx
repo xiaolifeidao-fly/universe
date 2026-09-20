@@ -104,9 +104,9 @@ export function UsageBoard() {
   const balance = dashboard?.balance?.["llm.output_tokens"] ?? 0;
 
   const exportCsv = () => {
-    // input 是**未命中缓存的新增输入**，缓存命中与写入各自一列 —— 三个数互不重叠，
+    // input 是**未命中缓存的新增输入**，缓存命中单独一列 —— 两个数互不重叠，
     // 加起来才是这次请求读进模型的全部输入。导出的表拿去对账时这点必须写清楚。
-    const header = ["time", "key", "model", "input", "output", "cacheRead", "cacheWrite", "durationMs", "cost", "state", "unitId"];
+    const header = ["time", "key", "model", "input", "output", "cacheRead", "durationMs", "cost", "state", "unitId"];
     const lines = rows.map((row) => [
       row.startedAt ?? "",
       alias.get(row.keyId) ?? row.keyId,
@@ -114,7 +114,6 @@ export function UsageBoard() {
       String(row.usage["llm.input_tokens"] ?? 0),
       String(row.usage["llm.output_tokens"] ?? 0),
       String(row.usage["llm.cache_read_tokens"] ?? 0),
-      String(row.usage["llm.cache_write_tokens"] ?? 0),
       String(row.durationMs),
       String(row.cost),
       row.state,
@@ -230,8 +229,8 @@ export function UsageBoard() {
               <Loading />
             ) : (
               <DataTable
-                // 列宽预算：固定列 746px + 9 个 12px 间距 + 左右各 16px 内边距 = 886px，
-                // 模型列（1fr）拿剩下的。缓存读/写这两列是后加的，为了不把模型名挤没，
+                // 列宽预算：固定列 680px + 8 个 12px 间距 + 左右各 16px 内边距 = 808px，
+                // 模型列（1fr）拿剩下的。缓存读这一列是后加的，为了不把模型名挤没，
                 // 密钥列和几个数字列各收了一点。再要加列先重算这笔账。
                 columns={[
                   {
@@ -267,18 +266,15 @@ export function UsageBoard() {
                     render: (row: UsageRecord) => <span className="gx-mono gx-soft">{formatCompact(row.usage["llm.output_tokens"] ?? 0)}</span>,
                   },
                   {
+                    // 没有对应的「缓存写」列：上游报这一项的只有 Anthropic，而且
+                    // 2026-09-18 之后它被拆成 5m / 1h 两个计价桶，合计那个不再单独记。
+                    // 一列常年空着的数字只会让人以为「缓存没写成」。真要看写入量，
+                    // 点开那一行的明细里有 llm.cache_write_5m_tokens / _1h_tokens。
                     key: "cacheRead",
                     title: t("usage.col.cacheRead"),
                     width: "66px",
                     align: "right",
                     render: (row: UsageRecord) => <TokenCell value={row.usage["llm.cache_read_tokens"] ?? 0} />,
-                  },
-                  {
-                    key: "cacheWrite",
-                    title: t("usage.col.cacheWrite"),
-                    width: "66px",
-                    align: "right",
-                    render: (row: UsageRecord) => <TokenCell value={row.usage["llm.cache_write_tokens"] ?? 0} />,
                   },
                   {
                     key: "took",

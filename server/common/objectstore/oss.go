@@ -99,14 +99,39 @@ func NewAliyunOSS(config OSSConfig) (*AliyunOSS, error) {
 	}, nil
 }
 
-// Put 将正文写入 OSS；返回的 key 已包含部署配置的 prefix，供数据库仅保存元数据时定位对象。
+// Put 将正文写入 OSS；objectKey 是**相对键**，部署配置的 prefix 由这里补上。
+// 返回的 key 已包含 prefix，供数据库仅保存元数据时定位对象。
 func (c *AliyunOSS) Put(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error) {
+	return c.PutObject(ctx, c.ResolveKey(objectKey), contentType, content, sha256)
+}
+
+// ResolveKey 相对键 → 真正的对象键：补上部署配置的 prefix。
+//
+// 它存在是因为**这个客户端里只有 Put 会自动补 prefix**，签名地址（SignedURL /
+// SignedPutURL）和 Get 拿的都是真正的对象键。同一个目录里既有服务端写的小文件、
+// 又有浏览器拿签名地址直传的大文件时（桌面安装包就是这样：清单由服务端写、
+// 安装包由浏览器传），两边必须先在这里对齐成同一套键，否则清单和它指向的包
+// 会安静地落在两个目录里 —— 发布成功，客户端 404。
+//
+// 不做合法性校验：真正的把关在 PutObject / SignedPutURL 里，那里连同 prefix
+// 一起判路径穿越。
+func (c *AliyunOSS) ResolveKey(objectKey string) string {
+	trimmed := strings.Trim(strings.TrimSpace(strings.ReplaceAll(objectKey, "\\", "/")), "/")
+	switch {
+	case c.prefix == "":
+		return trimmed
+	case trimmed == "":
+		return c.prefix
+	default:
+		return c.prefix + "/" + trimmed
+	}
+}
+
+// PutObject 写一个对象，objectKey 是**真正的对象键**（不再补 prefix）。
+func (c *AliyunOSS) PutObject(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error) {
 	key, err := normalizeObjectKey(objectKey, false)
 	if err != nil {
 		return "", fmt.Errorf("OSS 对象键无效: %w", err)
-	}
-	if c.prefix != "" {
-		key = c.prefix + "/" + key
 	}
 	if contentType = strings.TrimSpace(contentType); contentType == "" {
 		contentType = "application/octet-stream"
@@ -301,4 +326,71 @@ func (c *AliyunOSS) SignedPutURL(objectKey, contentType string, expiresAt time.T
 	query.Set("Signature", signature)
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
+}
+
+// Stat 看一个对象在不在、有多大（HEAD，不取正文）。
+//
+// 桌面安装包由浏览器拿签名地址直传，服务端一个字节都不经手 —— 于是「运营到底传上去了没有」
+// 只能在这里问一次。少了这一问，一个指向不存在文件的清单会被发布出去：
+// 发布看着成功，每一台机器在下载那一步 404。
+func (c *AliyunOSS) Stat(ctx context.Context, objectKey string) (int64, bool, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return 0, false, fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	response, err := c.do(ctx, http.MethodHead, key)
+	if err != nil {
+		return 0, false, fmt.Errorf("读取 OSS 对象信息失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return 0, false, nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return 0, false, fmt.Errorf("OSS 对象信息读取失败: status=%d", response.StatusCode)
+	}
+	size := response.ContentLength
+	if size < 0 {
+		// HEAD 理应带 Content-Length；个别网关会吞掉它。这时候只回「在」，
+		// 大小交给调用方按 0 处理（它比对的是「传了没有」，不是字节级校验）。
+		size = 0
+	}
+	return size, true, nil
+}
+
+// Delete 删一个对象。已经不在了也算成功 —— 调用方要的是「它别再被人下载到」。
+func (c *AliyunOSS) Delete(ctx context.Context, objectKey string) error {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	response, err := c.do(ctx, http.MethodDelete, key)
+	if err != nil {
+		return fmt.Errorf("删除 OSS 对象失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("OSS 删除失败: status=%d, body=%s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+// do 发一个不带正文的请求（HEAD / DELETE），按 OSS V1 签名。
+// key 必须是已经规范化过的**真正的对象键**。
+func (c *AliyunOSS) do(ctx context.Context, method, key string) (*http.Response, error) {
+	date := c.now().UTC().Format(http.TimeFormat)
+	stringToSign := strings.Join([]string{method, "", "", date}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	request, err := http.NewRequestWithContext(ctx, method, c.objectURL(key), nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造 OSS 请求失败: %w", err)
+	}
+	request.Header.Set("Date", date)
+	request.Header.Set("Authorization", "OSS "+c.accessKeyID+":"+base64.StdEncoding.EncodeToString(signer.Sum(nil)))
+	return c.httpClient.Do(request)
 }

@@ -29,29 +29,43 @@
 -- effective_from 必须是过去的时刻：取价是 `effective_from <= now` 里最新的那条。
 -- 调价不要 UPDATE 这几行，而是插一条 effective_from 更晚的新行 —— 历史账单
 -- 要能按当时的价重算，改掉旧行就重算不出来了。
--- provider_share 是提供者分成比例。
+--
+-- 一行两个价：price 向使用者收，provider_price 结给共享者，差额是平台毛利。
+-- **两个数各填各的**，provider_price 不是 price 的一个百分比 —— 下面的默认值
+-- 恰好取了七成，但调其中一个不会自动改另一个。provider_share 是老口径，
+-- 只在 provider_price = 0 时兜底，新装的库一开始就不该走到它。
+--
+-- 四个 token 桶互不重叠：新增输入（未命中缓存那部分）/ 输出 / 缓存读 / 缓存写。
+-- 缓存写原先漏了，于是这个单位一直「有量无价」、账上静默算 0 ——
+-- 这里按上游通行的 1.25 倍输入价补上。
 -- -------------------------------------------------------------------------
 
+-- model_id 一律留空 = 该 kind 的**兜底价**。默认值不替运营决定「哪个模型贵」，
+-- 但每个单位都得有一行兜得住：查不到价是静默算 0，不是报错。
+-- 要给某个模型单独定价，在管理端价目表上加一行、把模型选上即可。
 INSERT INTO `zt_galaxy_price`
-  (`biz_line`, `kind`, `unit`, `effective_from`, `price`, `currency`, `provider_share`)
+  (`biz_line`, `kind`, `model_id`, `unit`, `effective_from`, `price`, `currency`, `provider_price`, `provider_share`)
 VALUES
   -- 中转站：按 token 计价
-  ('galaxy', 'llm.chat',          'llm.input_tokens',       '2026-01-01 00:00:00',  3000000, 'CNY', 0.7),
-  ('galaxy', 'llm.chat',          'llm.output_tokens',      '2026-01-01 00:00:00', 15000000, 'CNY', 0.7),
-  ('galaxy', 'llm.chat',          'llm.cache_read_tokens',  '2026-01-01 00:00:00',   300000, 'CNY', 0.7),
+  ('galaxy', 'llm.chat',          '', 'llm.input_tokens',       '2026-01-01 00:00:00',  3000000, 'CNY',  2100000, 0.7),
+  ('galaxy', 'llm.chat',          '', 'llm.output_tokens',      '2026-01-01 00:00:00', 15000000, 'CNY', 10500000, 0.7),
+  ('galaxy', 'llm.chat',          '', 'llm.cache_read_tokens',  '2026-01-01 00:00:00',   300000, 'CNY',   210000, 0.7),
+  ('galaxy', 'llm.chat',          '', 'llm.cache_write_tokens', '2026-01-01 00:00:00',  3750000, 'CNY',  2625000, 0.7),
 
   -- 任务宇宙：一个回合背后就是若干次 LLM 调用，换个计价单位只会让同一件事
   -- 在两张账单上对不上，所以和 llm.chat 同价。
-  ('galaxy', 'delivery.task',     'llm.input_tokens',       '2026-01-01 00:00:00',  3000000, 'CNY', 0.7),
-  ('galaxy', 'delivery.task',     'llm.output_tokens',      '2026-01-01 00:00:00', 15000000, 'CNY', 0.7),
-  ('galaxy', 'delivery.task',     'llm.cache_read_tokens',  '2026-01-01 00:00:00',   300000, 'CNY', 0.7),
+  ('galaxy', 'delivery.task',     '', 'llm.input_tokens',       '2026-01-01 00:00:00',  3000000, 'CNY',  2100000, 0.7),
+  ('galaxy', 'delivery.task',     '', 'llm.output_tokens',      '2026-01-01 00:00:00', 15000000, 'CNY', 10500000, 0.7),
+  ('galaxy', 'delivery.task',     '', 'llm.cache_read_tokens',  '2026-01-01 00:00:00',   300000, 'CNY',   210000, 0.7),
+  ('galaxy', 'delivery.task',     '', 'llm.cache_write_tokens', '2026-01-01 00:00:00',  3750000, 'CNY',  2625000, 0.7),
 
   -- 视频渲染：按输出时长与算力秒计价（O-01 口径）
-  ('galaxy', 'video.edit.render', 'video.output_seconds',   '2026-01-01 00:00:00', 20000000, 'CNY', 0.7),
-  ('galaxy', 'video.edit.render', 'cpu.seconds',            '2026-01-01 00:00:00',  2000000, 'CNY', 0.7)
+  ('galaxy', 'video.edit.render', '', 'video.output_seconds',   '2026-01-01 00:00:00', 20000000, 'CNY', 14000000, 0.7),
+  ('galaxy', 'video.edit.render', '', 'cpu.seconds',            '2026-01-01 00:00:00',  2000000, 'CNY',  1400000, 0.7)
 ON DUPLICATE KEY UPDATE
   `price`          = VALUES(`price`),
   `currency`       = VALUES(`currency`),
+  `provider_price` = VALUES(`provider_price`),
   `provider_share` = VALUES(`provider_share`);
 
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,16 @@ import (
 // settingsTTL 快照多久回查一次。十五秒：运营改完刷一下页面就该看到新值生效，
 // 而每个进程每分钟四次单行查询对一张几十行的表毫无压力。
 const settingsTTL = 15 * time.Second
+
+// 两个客户端安装包下载地址的键名。
+//
+// 单独拎出来是因为它们有**表外的用途**：管理端的「ai-bridge 版本」页把这两个值
+// 摆在自己的卡片上，保存时按键名提交回 /settings/save。其余参数只被那张通用的
+// 参数表按 settingSpecs 循环用到，键名留在字面量里就够了。
+const (
+	SettingClientProviderDownloadURL = "client.provider_download_url"
+	SettingClientConsumerDownloadURL = "client.consumer_download_url"
+)
 
 // SettingKind 一项参数的类型，决定怎么解析、怎么校验、界面上怎么填。
 type SettingKind string
@@ -80,9 +91,8 @@ type SettingSpec struct {
 //
 // **没有列进来的就是不可调的**，而且理由各不相同：
 //
-//   - galaxy.instance / consumer_base_url / consumer_client_download_url / provider_hub_url
-//     / bridge_download_base_url / referral_register_url：部署地址。改它们意味着这套部署换了位置，
-//     本来就要重新部署。
+//   - galaxy.instance / consumer_base_url / provider_hub_url / bridge_download_base_url
+//     / referral_register_url：部署地址。改它们意味着这套部署换了位置，本来就要重新部署。
 //   - galaxy.key_cipher_secret / bridge_release.public_keys：密钥材料。
 //     一个能在后台改加密密钥的开关，等于把所有密文的钥匙挂在后台登录页后面。
 //   - galaxy.contract_version：编译期契约，节点按它握手。
@@ -111,6 +121,11 @@ var settingSpecs = []SettingSpec{
 		Key: "placement.bind_idle_ttl_ms", Group: "placement", Kind: SettingDurationMs, Min: 1000, Max: 86400000, Unit: "minute",
 		apply: applyDuration(func(c *Config, v time.Duration) { c.BindIdleTTL = v }),
 		read:  readDuration(func(c Config) time.Duration { return c.BindIdleTTL }),
+	},
+	{
+		Key: "placement.affinity_ttl_ms", Group: "placement", Kind: SettingDurationMs, Min: 1000, Max: 86400000, Unit: "minute",
+		apply: applyDuration(func(c *Config, v time.Duration) { c.AffinityTTL = v }),
+		read:  readDuration(func(c Config) time.Duration { return c.AffinityTTL }),
 	},
 	{
 		Key: "placement.max_attempts", Group: "placement", Kind: SettingInt, Min: 1, Max: 20, Unit: "time",
@@ -238,6 +253,30 @@ var settingSpecs = []SettingSpec{
 		read:  func(c Config) string { return strconv.Itoa(c.ReferralDays) },
 	},
 
+	// ---------- 客户端安装包 ----------
+	//
+	// 两个桌面客户端的下载地址。它们**看着像部署地址，但不是**：
+	// 没有任何流量走它们，填错的代价只是某一页上多一条坏链接；而它们变动的理由
+	// （换个桶放安装包、前面挂上 CDN、改成指一个列各系统安装包的下载页）和这套部署
+	// 挪没挪位置完全无关。让运营为了换一条链接去登服务器改文件、重启进程，代价和收益不成比例。
+	//
+	// 更硬的一条理由是管理端要展示它们：manager-api 和 galaxy-consumer-api 是两个进程、
+	// 两份 application.properties，留在配置文件里就得两边各配一遍还得人工保持一致 ——
+	// 一处真相被拆成两处，迟早对不上。落到这张表上，两个进程读的是同一行。
+	//
+	// 空值的含义是「这一块不显示」，所以清空要走「改回默认」（删掉那一行），
+	// 而不是保存一个空字符串 —— SaveAdminSetting 那里本来也不收空值。
+	{
+		Key: SettingClientProviderDownloadURL, Group: "client", Kind: SettingText,
+		apply: applyURL(func(c *Config, v string) { c.ProviderClientDownloadURL = v }),
+		read:  func(c Config) string { return c.ProviderClientDownloadURL },
+	},
+	{
+		Key: SettingClientConsumerDownloadURL, Group: "client", Kind: SettingText,
+		apply: applyURL(func(c *Config, v string) { c.ConsumerClientDownloadURL = v }),
+		read:  func(c Config) string { return c.ConsumerClientDownloadURL },
+	},
+
 	// ---------- 合规与门户 ----------
 	// 版本号一改，旧的同意记录**全部失效**：提供者下次 hello 会被要求重新同意，
 	// 使用者签不出新密钥。这是有意的（条款变了就该重新征得同意），
@@ -307,6 +346,30 @@ func applyDuration(set func(*Config, time.Duration)) func(*Config, string) error
 func applyText(set func(*Config, string)) func(*Config, string) error {
 	return func(config *Config, raw string) error {
 		set(config, strings.TrimSpace(raw))
+		return nil
+	}
+}
+
+// applyURL 一条要摆到界面上、给人点开的地址。
+//
+// 校验严格到「有 scheme 有 host」为止，不再往下猜：这里拦的是把安装包的文件名、
+// 内网路径或者一句说明填进来这种当场就看得出的错。真正的死链只有点开才知道，
+// 而那不是一个正则能替运营验的事。
+//
+// 只认 http/https：这个值会原样进 <a href>，javascript: 和 data: 就是一条
+// 从后台输入框通到浏览器的路。校验放在 apply 里，validateSetting 对文本型
+// 只调 apply —— 保存接口和进程回查（loadSettings）因此走的是同一道校验，
+// 手工改库改出来的非法值会在回查时被跳过，而不是被摆到页面上。
+func applyURL(set func(*Config, string)) func(*Config, string) error {
+	return func(config *Config, raw string) error {
+		value := strings.TrimSpace(raw)
+		if value != "" {
+			parsed, err := url.Parse(value)
+			if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+				return fmt.Errorf("要填一个 http(s) 开头的完整地址，收到 %q", raw)
+			}
+		}
+		set(config, value)
 		return nil
 	}
 }
@@ -466,7 +529,7 @@ func sortedSpecs() []SettingSpec {
 	specs := append([]SettingSpec{}, settingSpecs...)
 	order := map[string]int{
 		"placement": 1, "score": 2, "key": 3, "artifact": 4,
-		"risk": 5, "payout": 6, "referral": 7, "compliance": 8,
+		"risk": 5, "payout": 6, "referral": 7, "compliance": 8, "client": 9,
 	}
 	sort.SliceStable(specs, func(i, j int) bool {
 		if order[specs[i].Group] != order[specs[j].Group] {

@@ -777,8 +777,8 @@ function CapabilityRow({
       {row.seatsBound > 0 ? <Pill tone="accent">{t("share.bound", { value: row.seatsBound })}</Pill> : null}
       {row.available ? (
         <>
-          {/* 开关**不因座位绑定而禁用**：座位是会话亲和，空闲满 30 分钟才释放，
-              拿它挡住关闭，主人在最后一次调用之后还要等半小时才点得动。
+          {/* 开关**不因座位绑定而禁用**：座位是会话亲和，最后一条请求结束之后
+              还要空闲满一分钟才释放，拿它挡住关闭，主人点完最后一次还得干等。
               真正不该被打断的是在跑的请求，那件事由服务端排队处理，不是在这里灰掉按钮。 */}
           <Pill tone={closing ? "warn" : on ? "ok" : "default"}>
             {closing ? t("close.closingPill") : on ? t("share.on") : t("share.off")}

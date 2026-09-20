@@ -437,6 +437,63 @@ export async function issuePairingCode() {
   return unwrapApiResponse(response.data);
 }
 
+/**
+ * 模型页的一行：这个模型是什么，跑它能记多少积分。
+ *
+ * 四档单价是**结算价**，也就是记进你积分账户的那个数 —— 不是平台对外收的价。
+ * 这条接口里没有对外价，也就反推不出平台抽了几成；那是运营台的事。
+ */
+export class ProviderModelView {
+  modelId = "";
+
+  displayName = "";
+
+  vendor = "";
+
+  family = "";
+
+  kind = "";
+
+  contextTokens = 0;
+
+  maxOutputTokens = 0;
+
+  tags: string[] = [];
+
+  summary = "";
+
+  badgeText = "";
+
+  badgeTone = "";
+
+  /** 每百万 token 记多少微积分。0 = 这一档没有价，不是免费。 */
+  inputPrice = 0;
+
+  outputPrice = 0;
+
+  cachePrice = 0;
+
+  cacheWritePrice = 0;
+
+  /** 这四个数是这个模型自己的价，还是回落到了该能力的统一价。 */
+  priced = false;
+
+  /** 你的允许/拒绝名单放不放它过。和「机器上有没有」是两回事。 */
+  allowed = false;
+
+  /** 至少有一台机器的上游真的有这个模型（节点报上来的事实）。 */
+  available = false;
+
+  /** 最近 7 天这个模型给你记了多少微积分。 */
+  earned7d = 0;
+
+  sortOrder = 0;
+}
+
+export async function fetchProviderModels() {
+  return getDataList(ProviderModelView, "/galaxy/provider/models");
+}
+
 export async function fetchNodes() {
   return getDataList(NodeView, "/galaxy/provider/nodes");
 }

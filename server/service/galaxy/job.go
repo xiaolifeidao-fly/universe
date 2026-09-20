@@ -159,6 +159,7 @@ func (s *service) requeue(ctx context.Context, row *repository.GalaxyUnit) bool 
 		RID: runtime.RID, CID: runtime.CID, ConsumerKey: runtime.ConsumerKey,
 		Estimate: runtime.Estimate, Actual: contract.Metering{},
 		WindowKeys: map[contract.MeterUnit]string{}, Lane: contract.Lane(runtime.Kind, runtime.Provider),
+		SeatTTL: s.cfg().BindIdleTTL, BindTTL: s.cfg().AffinityTTL,
 		State: contract.UnitFailed,
 	})
 	if err != nil {

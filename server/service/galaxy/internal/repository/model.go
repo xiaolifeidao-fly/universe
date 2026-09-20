@@ -558,17 +558,38 @@ type GalaxyConsentRecord struct {
 func (r *GalaxyConsentRecord) TableName() string { return "zt_galaxy_consent_record" }
 func (r *GalaxyConsentRecord) Init()             {}
 
-// GalaxyPrice kind 的「单位 → 单价」表。中转站按 token 计价，input 与 output 分别定价（D-02）。
+// GalaxyPrice 「kind × 模型 × 单位 → 单价」表。中转站按 token 计价，input 与 output 分别定价（D-02）。
+//
+// 一行里有**两个独立的价**：Price 是向使用者收的，ProviderPrice 是付给共享者的，
+// 差额是平台毛利。原先只有 Price 加一个 ProviderShare 比例，于是上游价是下游价的
+// 函数 —— 调一次下游价就自动改了所有共享者的收入，而共享者拿自己的积分一除
+// 就能反推出平台抽了几成。两个价各存各的之后，这两件事互不牵连。
+//
+// ModelID 空串是**该 kind 的兜底价**，不是「某个叫空串的模型」。取价先找这个模型
+// 自己的行，找不到才回落到兜底行。原先整张表只按 kind 定价：opus 和 haiku 都是
+// llm.chat，同样的 token 给共享者的钱一模一样，而门户上两者的标价能差几十倍 ——
+// 平台毛利于是随使用者调哪个模型剧烈漂移，且没有任何地方拦得住。
 type GalaxyPrice struct {
-	ID            int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine       string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_price,priority:1"`
-	Kind          string    `gorm:"column:kind;type:varchar(64);uniqueIndex:uk_gx_price,priority:2"`
-	Unit          string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_price,priority:3"`
-	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null default null;uniqueIndex:uk_gx_price,priority:4"`
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_price,priority:1"`
+	Kind    string `gorm:"column:kind;type:varchar(64);uniqueIndex:uk_gx_price,priority:2"`
+	// ModelID 这一行管哪个模型。空串 = 该 kind 的兜底价，模型没单独定价时按它算。
+	// NOT NULL DEFAULT '' 不是装饰：MySQL 的唯一索引**不拦 NULL**，
+	// 这一列要是可空，两行「同 kind 同单位同生效时刻、model_id 都是 NULL」能一起插进去，
+	// 取价时先拿到哪行全看运气。加列的迁移也靠这个默认值把存量行落成兜底价。
+	ModelID       string    `gorm:"column:model_id;type:varchar(96);not null;default:'';uniqueIndex:uk_gx_price,priority:3" description:"模型名，空=该 kind 的兜底价"`
+	Unit          string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_price,priority:4"`
+	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null default null;uniqueIndex:uk_gx_price,priority:5"`
 	// Price 是每百万单位的价格（微分），避免浮点累积误差。
-	Price         int64   `gorm:"column:price" description:"每百万单位价格，单位微分"`
-	Currency      string  `gorm:"column:currency;type:varchar(8);default:'CNY'"`
-	ProviderShare float64 `gorm:"column:provider_share;default:0.7" description:"提供者分成比例"`
+	Price    int64  `gorm:"column:price" description:"对外单价：每百万单位微分"`
+	Currency string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
+	// ProviderPrice 结算单价：每百万单位付给共享者多少微分。0 表示这一行还没迁移过，
+	// 结算回落到 ProviderShare —— 回落是给存量数据留的过渡，不是「免费」的意思。
+	// 真要不给钱就把 ProviderShare 一起设成 0。
+	ProviderPrice int64 `gorm:"column:provider_price;default:0" description:"结算单价：每百万单位微分，0=回落到 provider_share"`
+	// ProviderShare 老口径：提供者拿走下游金额的几成。只在 ProviderPrice 为 0 时还起作用。
+	// 存量行迁移完（见 migrations/20260919_galaxy_provider_price.sql）就只剩历史意义。
+	ProviderShare float64 `gorm:"column:provider_share;default:0.7" description:"旧口径分成比例，仅当 provider_price=0 时回落使用"`
 }
 
 func (r *GalaxyPrice) TableName() string { return "zt_galaxy_price" }
@@ -1164,3 +1185,46 @@ type GalaxyProviderReferral struct {
 
 func (r *GalaxyProviderReferral) TableName() string { return "zt_galaxy_provider_referral" }
 func (r *GalaxyProviderReferral) Init()             {}
+
+// ---------- 桌面客户端（Nova / Orbit）的版本分发 ----------
+
+// GalaxyDesktopRelease 一次桌面客户端发版：一个端 × 一个平台通道 × 一个版本一行。
+//
+// 和 ai-bridge 那张表最大的不同是**字节不经服务端**：安装包一百多兆，管理端的浏览器
+// 拿签名地址直传 OSS（见 desktoprelease.go）。所以这一行里没有 sha256 —— 校验值在
+// 清单里，由 electron-builder 打包时算好（sha512），客户端下载完自己比对。
+//
+// Manifest 存的就是要写到 OSS 上的那份 latest-*.yml 原文。为什么整份存下来：
+//
+//   - 它是 electron-builder 的产物，字段随版本会变（blockMapSize、minimumSystemVersion、
+//     packages…）。拆成列再拼回去，等于我们要跟着 electron-builder 的格式走一辈子；
+//   - 下架要能**回到上一版**：把上一行的原文重新写回去就行，不用重新生成。
+//
+// 于是 OSS 上那个 latest-*.yml 永远是「这个端这个通道里版本最高的、还在架上的那一行」
+// 的 Manifest（syncChannel），客户端只认它。
+type GalaxyDesktopRelease struct {
+	ID        int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine   string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_desktop_release_id,priority:1;uniqueIndex:uk_gx_desktop_release_target,priority:1;index:idx_gx_desktop_release_channel,priority:1"`
+	ReleaseID string `gorm:"column:release_id;type:varchar(40);uniqueIndex:uk_gx_desktop_release_id,priority:2" description:"业务键 dr_…"`
+	Product   string `gorm:"column:product;type:varchar(16);uniqueIndex:uk_gx_desktop_release_target,priority:2;index:idx_gx_desktop_release_channel,priority:2" description:"nova=共享端 / orbit=使用端"`
+	Channel   string `gorm:"column:channel;type:varchar(16);uniqueIndex:uk_gx_desktop_release_target,priority:3;index:idx_gx_desktop_release_channel,priority:3" description:"mac / win / linux"`
+	Version   string `gorm:"column:version;type:varchar(32);uniqueIndex:uk_gx_desktop_release_target,priority:4" description:"语义版本，如 0.1.1"`
+	// ManifestFile 这个通道在 OSS 上的清单文件名：latest-mac.yml / latest.yml / latest-linux.yml。
+	// 名字是 electron-updater 定死的，客户端按平台去取哪一个不由我们决定。
+	ManifestFile string `gorm:"column:manifest_file;type:varchar(64)" description:"latest-mac.yml / latest.yml / latest-linux.yml"`
+	Manifest     string `gorm:"column:manifest;type:mediumtext" description:"要写到 OSS 上的 latest-*.yml 原文"`
+	// FilesJSON 清单里那几个文件的名字与大小，给运营列表用。
+	// 真正的下载清单是 Manifest，这里只是为了列表不必每次去解析 yml。
+	FilesJSON   string     `gorm:"column:files_json;type:text" description:"[{name,size,sha512}]"`
+	Size        int64      `gorm:"column:size" description:"这一版全部文件的字节数之和"`
+	Notes       string     `gorm:"column:notes;type:text" description:"版本说明，会写进清单的 releaseNotes，客户端更新提示里原样展示"`
+	Status      string     `gorm:"column:status;type:varchar(16);index:idx_gx_desktop_release_channel,priority:4" description:"staging=已登记待上传 / published / withdrawn"`
+	PublishedBy string     `gorm:"column:published_by;type:varchar(64)" description:"操作的管理端账号"`
+	PublishedAt *time.Time `gorm:"column:published_at;type:timestamp null default null"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyDesktopRelease) TableName() string { return "zt_galaxy_desktop_release" }
+func (r *GalaxyDesktopRelease) Init()             {}

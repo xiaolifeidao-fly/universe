@@ -84,12 +84,23 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
+ * 金额与积分的小数位：默认两位，两位装不下就给到四位。
+ *
+ * 一次小调用的扣费常常只有 ¥0.0013、分成只有 0.00095 积分，按两位四舍五入
+ * 整列都写着 0，看着像根本没计费 —— 账上记的是精确的微，展示不该把它抹平。
+ * 微是整数，所以「两位装得下」就是刚好落在一分（10_000 微）上。
+ */
+function microDigits(micros: number): number {
+  return Math.abs(micros % 10_000) < 0.5 ? 2 : 4;
+}
+
+/**
  * 金额。服务端一律用「微分」存，避免 token 这种大基数上的浮点误差；
  * 展示才换成元。
  */
 export function formatMoney(micros: number, currency = "CNY"): string {
   const symbol = currency === "CNY" ? "¥" : "";
-  return `${symbol}${(micros / 1_000_000).toFixed(2)}`;
+  return `${symbol}${(micros / 1_000_000).toFixed(microDigits(micros))}`;
 }
 
 /** 单价是「每百万单位」的价格，直接显示微分没人看得懂。 */
@@ -158,21 +169,25 @@ export function formatSignedInt(value: number): string {
   return value > 0 ? `+${formatInt(value)}` : `−${formatInt(Math.abs(value))}`;
 }
 
-/** 服务端一律用「微分」存钱，展示才换成元。 */
+/** 服务端一律用「微分」存钱，展示才换成元。小数位见 microDigits。 */
 export function formatCny(micros: number): string {
   if (!Number.isFinite(micros)) return "-";
-  return `¥${(micros / 1_000_000).toFixed(2)}`;
+  return `¥${(micros / 1_000_000).toFixed(microDigits(micros))}`;
 }
 
 /**
  * 积分。1 积分 = ¥1，服务端和金额一样存「微」。
  *
- * 不补零到两位：「20 积分」「9.9 积分」读起来是个数，「20.00 积分」读起来像一张收据。
- * 最多留两位小数 —— 返现按比例算，会出现 0.99 这种零头，再细就没人关心了。
+ * 和金额同一套小数位（microDigits）：默认两位，不足一分的零头给到四位。
+ * 逐笔的分成、返现常常只有 0.00095 积分，两位小数会把它写成 0。
  */
 export function formatPoints(micros: number): string {
   if (!Number.isFinite(micros)) return "-";
-  return (micros / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const digits = microDigits(micros);
+  return (micros / 1_000_000).toLocaleString("en-US", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
 }
 
 /** 返现比例存的是万分之一：1000 → 10%，250 → 2.5%。 */

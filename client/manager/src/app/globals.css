@@ -10,6 +10,9 @@
  */
 
 @import "../../../shared/styles/tokens.css";
+/* 字体地址要带 basePath（管理端挂在 /manager 下），只能由应用自己声明；
+   必须排在 tokens.css 后面，见 fonts.css 顶注。 */
+@import "./fonts.css";
 
 /* ─── Shell layout ─── */
 

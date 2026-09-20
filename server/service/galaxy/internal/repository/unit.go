@@ -305,9 +305,12 @@ type UsageRow struct {
 	// Provider 是执行这笔用量的上游（claude_oauth / codex_chatgpt 等）。
 	// 单元行被清掉或还没写上游时是空串。
 	Provider string `gorm:"column:provider"`
-	Unit     string `gorm:"column:unit"`
-	Amount   int64  `gorm:"column:amount"`
-	Calls    int64  `gorm:"column:calls"`
+	// Model 这笔用量调的是哪个模型。和 Provider 一样只记在单元表上，
+	// 单元行被清掉时是空串 —— 那时取价只能回落到 kind 的兜底价。
+	Model  string `gorm:"column:model"`
+	Unit   string `gorm:"column:unit"`
+	Amount int64  `gorm:"column:amount"`
+	Calls  int64  `gorm:"column:calls"`
 }
 
 // SumUsage 按 kind + 上游 + 单位汇总用量。
@@ -321,7 +324,7 @@ func (r *GalaxyRepository) SumUsage(ctx context.Context, q UnitQuery) ([]UsageRo
 	tx := r.Db.WithContext(ctx).
 		Table((&GalaxyMeterRecord{}).TableName()+" AS m").
 		Joins("LEFT JOIN "+(&GalaxyUnit{}).TableName()+" AS u ON u.biz_line = m.biz_line AND u.unit_id = m.unit_id").
-		Select("m.kind AS kind, COALESCE(u.provider, '') AS provider, m.unit AS unit, "+
+		Select("m.kind AS kind, COALESCE(u.provider, '') AS provider, COALESCE(u.model, '') AS model, m.unit AS unit, "+
 			"SUM(m.amount) AS amount, COUNT(DISTINCT m.unit_id) AS calls").
 		Where("m.biz_line = ?", q.BizLine)
 	if q.ConsumerKey != "" {
@@ -345,7 +348,10 @@ func (r *GalaxyRepository) SumUsage(ctx context.Context, q UnitQuery) ([]UsageRo
 	var rows []UsageRow
 	// 分组按 u.provider 而不是 COALESCE 的别名：别名和 u.provider 同名，
 	// MySQL 在 GROUP BY 里会当成歧义列报错。NULL 与空串在分组上是同一组，结果一样。
-	err := tx.Group("m.kind, u.provider, m.unit").Order("m.kind, u.provider, m.unit").Find(&rows).Error
+	// 模型也进分组：计价已经按模型走了，汇总还按 kind 合并的话，账单上那个
+	// Cost 会拿兜底价去乘一笔其实按模型价收过的量。
+	err := tx.Group("m.kind, u.provider, u.model, m.unit").
+		Order("m.kind, u.provider, u.model, m.unit").Find(&rows).Error
 	return rows, err
 }
 
@@ -431,11 +437,30 @@ func (r *GalaxyRepository) FindCreditAccount(ctx context.Context, bizLine, owner
 
 // ---------- 定价 ----------
 
-func (r *GalaxyRepository) ListEffectivePrices(ctx context.Context, bizLine string, at time.Time) ([]*GalaxyPrice, error) {
+// ListEffectivePrices 此刻已经生效的价目行。kind 为空表示不限（门户、运营台、
+// 共享端模型页都要跨 kind 看），计费与争议那两条路径一定要带上它。
+//
+// **两处都是为了让这条查询走在唯一键上，而不是全表扫一遍再排一遍。**
+//
+//	uk_gx_price = (biz_line, kind, model_id, unit, effective_from)
+//
+//	· 带 kind：biz_line 恒等于 'galaxy'，不带 kind 等于没有过滤条件；
+//	  带上它索引才收窄到这一个 kind 的那几十行。计费是每笔请求都走的路径，
+//	  而这张表只会越长越大 —— 调价是插新行，旧行留作历史，永远不删。
+//	· 升序：ORDER BY 必须和索引同向。末尾写 desc 的话前四列顺着、第五列反着，
+//	  MySQL 用不了索引的顺序，只能捞回来 filesort。
+//
+// 升序的代价是「同一组里最后一条才是最新生效的」—— 取价的那几处按这个来
+// （resolvePrices、portalPrices）。注意别把这个顺序套到 ListAllPrices 上：
+// 那一份含未来价，「最新且已到点」不是简单的取头取尾。
+func (r *GalaxyRepository) ListEffectivePrices(ctx context.Context, bizLine, kind string, at time.Time) ([]*GalaxyPrice, error) {
+	tx := r.Db.WithContext(ctx).Where("biz_line = ?", bizLine)
+	if kind != "" {
+		tx = tx.Where("kind = ?", kind)
+	}
 	var rows []*GalaxyPrice
-	err := r.Db.WithContext(ctx).
-		Where("biz_line = ?", bizLine).Where("effective_from <= ?", at).
-		Order("kind, unit, effective_from desc").Find(&rows).Error
+	err := tx.Where("effective_from <= ?", at).
+		Order("kind, model_id, unit, effective_from").Find(&rows).Error
 	return rows, err
 }
 
@@ -446,22 +471,25 @@ func (r *GalaxyRepository) ListAllPrices(ctx context.Context, bizLine string) ([
 	var rows []*GalaxyPrice
 	err := r.Db.WithContext(ctx).
 		Where("biz_line = ?", bizLine).
-		Order("kind, unit, effective_from desc").Find(&rows).Error
+		// 兜底价（model_id = ''）排在这个 kind 的最前面：界面上先看到「这个 kind 收多少」，
+		// 再看到各个模型的特例。model_id 升序天然就是这个顺序，空串最小。
+		Order("kind, model_id, unit, effective_from desc").Find(&rows).Error
 	return rows, err
 }
 
 // DeletePrice 删掉一行价目。按四元组定位，和唯一键一致。
-func (r *GalaxyRepository) DeletePrice(ctx context.Context, bizLine, kind, unit string, effectiveFrom time.Time) error {
+func (r *GalaxyRepository) DeletePrice(ctx context.Context, bizLine, kind, modelID, unit string, effectiveFrom time.Time) error {
 	return r.Db.WithContext(ctx).
 		Where("biz_line = ?", bizLine).Where("kind = ?", kind).
+		Where("model_id = ?", modelID).
 		Where("unit = ?", unit).Where("effective_from = ?", effectiveFrom).
 		Delete(&GalaxyPrice{}).Error
 }
 
 func (r *GalaxyRepository) SavePrice(ctx context.Context, row *GalaxyPrice) error {
 	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "biz_line"}, {Name: "kind"}, {Name: "unit"}, {Name: "effective_from"}},
-		DoUpdates: clause.AssignmentColumns([]string{"price", "currency", "provider_share"}),
+		Columns:   []clause.Column{{Name: "biz_line"}, {Name: "kind"}, {Name: "model_id"}, {Name: "unit"}, {Name: "effective_from"}},
+		DoUpdates: clause.AssignmentColumns([]string{"price", "currency", "provider_price", "provider_share"}),
 	}).Create(row).Error
 }
 

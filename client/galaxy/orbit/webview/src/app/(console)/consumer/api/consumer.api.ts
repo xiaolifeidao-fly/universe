@@ -139,6 +139,13 @@ export class UsageLine {
   /** 走的是哪个上游：claude_oauth / codex_chatgpt。单元行不在了就是空串。 */
   provider = "";
 
+  /**
+   * 调的是哪个模型。单价按模型定，所以账单也按模型分行 ——
+   * 合并成一行的话，那一行的 unitPrice 只能是几个模型里随便一个的价。
+   * 和 provider 一样只记在单元行上，老记录的单元行被清掉之后是空串。
+   */
+  model = "";
+
   unit = "";
 
   amount = 0;

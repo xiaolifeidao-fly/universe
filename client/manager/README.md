@@ -13,17 +13,42 @@ cp .env.example .env   # 首次运行需要，SERVER_TARGET 按需改成你本�
 npm run dev
 ```
 
-打开 http://localhost:7895 ，会跳到登录页；随便填账号密码点登录（登录接口还没接，会弹一句提示，然后放你进 `/dashboard` 看控制台骨架，见下面的 TODO）。
+打开 http://localhost:7895/manager ，会跳到登录页；随便填账号密码点登录（登录接口还没接，会弹一句提示，然后放你进 `/dashboard` 看控制台骨架，见下面的 TODO）。
 
 也可以用仓库根目录 `.claude/launch.json` 里注册的 `manager` 配置（如果你用的是能读这个文件的工具）。
 
 | 命令 | 作用 |
 |---|---|
-| `npm run dev` | 开发模式，端口 **7895**（`client/web` 默认 7893，仓库里另配到 7899；`client/app` 默认 7894；7895 没被占用） |
+| `npm run dev` | 开发模式，端口 **7895**，地址是 `/manager`（见「部署与 basePath」；`client/web` 默认 7893，仓库里另配到 7899；`client/app` 默认 7894；7895 没被占用） |
 | `npm run build` | 生产构建（`output: "standalone"`，和 web 一致） |
-| `npm run start` | 生产模式启动，同样是 7895 |
+| `npm run start` | 生产模式启动，同样是 7895 + `/manager` |
 | `npm run lint` | `next lint` |
 | `npm run typecheck` | `tsc --noEmit`（会连带类型检查 `client/shared` 下的文件） |
+
+## 部署与 basePath
+
+线上挂在 **`https://www.galaxy.rodeo/manager`**：那张证书只签了一个名字，门户、Nova、Orbit
+和管理端全挤在同一个 host 上按路径分流（路由表见
+[`doc/deployment/nginx/www.galaxy.rodeo.conf`](../../doc/deployment/nginx/www.galaxy.rodeo.conf)）。
+nginx 那条 `location ^~ /manager/` **不改写路径**，所以应用自己必须知道挂在哪一段下 ——
+`next.config.mjs` 里的 `BASE_PATH` 就是唯一数据源，它是常量不是环境变量（漏注入的症状是
+页面能开、`_next` 与接口全 404，很难当场看出来）。本机开发跟着走同一段：`localhost:7895/manager`。
+
+跟着 basePath 走的东西里只有两样要手工带前缀，其余（页面跳转、`_next`、`public/`、
+`headers()` 的 source）Next 自己会加：
+
+- `src/utils/axios.ts`：`baseURL` 与未登录跳转，是界面里仅有的两处手拼绝对路径；
+- `src/app/fonts.css`：CSS 的 `url()` 不认 basePath，自托管字体要再声明一遍带前缀的
+  `@font-face`，且**必须排在 `tokens.css` 之后**（靠「同族最后一条生效」把根路径那组盖掉）。
+
+接口不在 nginx 上分流：浏览器打的是 `/manager/api/...`，被同一条 location 接住，再由
+`src/pages/api/[...all].ts` 转给 manager-api（`.env` 的 `SERVER_TARGET`，默认 `:10003`）。
+Next 在路由前会把 basePath 剥掉，所以那个代理收到的仍是 `/api/...`，不用改。
+
+上传 ai-bridge 安装包那条路（base64 进 JSON，约 86MB）在 nginx 上单独放宽了
+`client_max_body_size` 和读写超时，见 conf 里 `/manager/` 那段注释。
+
+改完前端要 `npm run build` 重新出包：`start.sh` 跑的是 `.next` 里的构建产物，不是 `next dev`。
 
 ## 技术栈（对齐 client/web）
 

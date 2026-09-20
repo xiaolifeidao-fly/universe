@@ -41,12 +41,15 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 | `galaxy.provider_terms_version` | galaxy-api、galaxy-hub-api | 同意记录版本对不上，节点反复被要求重新同意 |
 | `galaxy.consumer_notice_version` | galaxy-consumer-api、galaxy-hub-api | 同上，发生在签发新密钥时 |
 | `galaxy.key_ttl_days` / `key_freeze_days` | galaxy-consumer-api、galaxy-hub-api | 控制台签发与 SDK 换发算出不同有效期 |
-| `galaxy.bind_idle_ttl_ms` / `heartbeat_timeout_ms` | galaxy-api、galaxy-hub-api | 控制台的座位与在线灯和派单结果对不上 |
+| `galaxy.bind_idle_ttl_ms` / `affinity_ttl_ms` / `heartbeat_timeout_ms` | galaxy-api、galaxy-hub-api | 控制台的座位与在线灯和派单结果对不上 |
+
+座位（`bind_idle_ttl_ms`，默认 1 分钟）和「上次落在哪台」（`affinity_ttl_ms`，默认 30 分钟）是两条时间线，别配成一个值：前者是**谁正占着这台机器**，决定共享设置页那颗「有 N 位使用者绑在这台上」的牌子什么时候消失，也决定 `seats` 闸门；后者只是**偏好**，决定下一条请求先敲谁的门，敲不开就照常去挑别的机器。把前者配长，主人停手半小时还看着牌子挂在那儿；把后者配短，同一段对话会在机器之间跳，上游 prompt cache 每次都从头热。`affinity_ttl_ms` 小于 `bind_idle_ttl_ms` 时按后者取（见 `withDefaults`）。
+
 | `galaxy.reputation_recovery_per_day` | galaxy-api、galaxy-hub-api | 页面显示的回血速度不是实际的 |
 | `galaxy.referral.rate` / `.days` | galaxy-api、galaxy-hub-api | 页面写着返现比例，结算时按另一个值发 |
 | `oss.*` | galaxy-consumer-api、galaxy-hub-api | 一边传上去、另一边签不出下载地址 |
 
-各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的下载地址，只在密钥页展示；不配就是那一块不显示）、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
+各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的下载地址，只在密钥页展示；不配就是那一块不显示。它只是**默认值** —— 管理端「ai-bridge 版本」页上的「客户端安装包下载地址」改的是数据库里的 `client.consumer_download_url`，盖过这里；共享端 Nova 的地址 `client.provider_download_url` 只在那张卡片上，没有配置项）、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
 
 ### 三个「对外地址」必须和 nginx 上那条 location 对齐
 
@@ -97,6 +100,30 @@ galaxy.instance = https://www.example.com/instance/{hostname}
 注意这条路由**只能是精确映射，不能是哈希**。`hash ... consistent` 由 nginx 自己的算法挑 peer，而这里需要的是「送到 Hub 指定的那一台」；而且 unitId 是消费者请求落到某台之后才生成的，拿它去哈希和当初的选择没有任何关系。路由信息必须由 Hub 写进 URL，nginx 只负责照着送。
 
 监听地址环境变量依次为 `GALAXY_API_ADDR`、`GALAXY_CONSUMER_API_ADDR`、`GALAXY_HUB_API_ADDR`，优先于 `server.address`。
+
+### 桌面客户端的自动更新：地址在界面那一侧，不在这三个服务里
+
+Nova / Orbit 的壳按 electron-updater 的规矩，**直接去 OSS 上取清单**
+（`<前缀>/desktop/<端>/latest-mac.yml` 之类），不打这三个服务的任何接口。所以它没有
+`galaxy.*` 配置项，要配的是两个端**界面部署机**上的 `runtime.json`：
+
+```json
+{ "GALAXY_UPDATE_FEED_URL": "https://<桶>.<endpoint>/<oss.dirPrefix>/desktop" }
+```
+
+两个端填**同一个值**（各端的 `/api/desktop-health` 自己补上 `/nova`、`/orbit` 那一段再交给壳）。
+路径里的 `<oss.dirPrefix>` 不能省 —— 管理端写清单走的是 `oss.dirPrefix`，漏了那一段
+客户端取到的就是 404。不配就是这个部署的桌面端不检查更新，**不是故障**。
+
+桶那一侧还有两条，配不对时症状分别是「谁都收不到更新」和「运营传不上去」：
+
+- `<dirPrefix>/desktop/` 下必须**公开读**（或前面挂 CDN）。客户端拿不到签名地址，
+  它连我们的接口都不打。CDN 上给 `latest*.yml` 一个短缓存，安装包可以长缓存（文件名带版本号）。
+- 桶要允许**管理端那个域名跨域 PUT**。安装包一百多兆，是管理端浏览器拿签名地址直传的，
+  不经过 manager-api（那条路中间还隔着 Next.js 的通配代理，只转发 JSON）。
+
+发版本身在管理端「算力平台 → 桌面客户端版本」那一页，写库用的是 manager-api 的
+`oss.*`（和 ai-bridge 安装包同一套配置）。
 
 ## 构建与启动
 

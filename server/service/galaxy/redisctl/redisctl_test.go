@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 
 	"contract"
 	"service/galaxy"
@@ -163,7 +164,7 @@ func windowKeys(limits contract.Metering) map[contract.MeterUnit]string {
 	return keys
 }
 
-func placeCommand(rid, cid, consumerKey string, limits, estimate contract.Metering, seats, seatConc int, reuse bool) galaxy.PlaceCommand {
+func placeCommand(rid, cid, consumerKey string, limits, estimate contract.Metering, seats, seatConc int) galaxy.PlaceCommand {
 	expiry := map[contract.MeterUnit]time.Duration{}
 	for unit := range limits {
 		expiry[unit] = 48 * time.Hour
@@ -171,8 +172,8 @@ func placeCommand(rid, cid, consumerKey string, limits, estimate contract.Meteri
 	return galaxy.PlaceCommand{
 		RID: rid, CID: cid, ConsumerKey: consumerKey, Lane: "llm.chat|claude_oauth",
 		Estimate: estimate, QuotaLimits: limits, WindowKeys: windowKeys(limits), WindowExpiry: expiry,
-		Seats: seats, SeatConcurrency: seatConc, ReuseBinding: reuse,
-		BindTTL: 30 * time.Minute, SeatTTL: 30 * time.Minute,
+		Seats: seats, SeatConcurrency: seatConc,
+		BindTTL: 30 * time.Minute, SeatTTL: time.Minute,
 		Instance: "http://hub", Unit: []byte(`{"id":"` + rid + `","kind":"llm.chat","kindVersion":1,"provider":"claude_oauth","attempt":1}`),
 		Body: []byte(`{"model":"claude-sonnet-4-5"}`), BodyTTL: time.Minute,
 		Deadline: time.Now().Add(10 * time.Minute),
@@ -185,7 +186,7 @@ func TestPlaceBindsSeatAndEnqueues(t *testing.T) {
 	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
 	seedContribution(t, plane, "c1", 3, 2, limits)
 
-	outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, contract.Metering{contract.UnitOutputTokens: 100}, 3, 2, false))
+	outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, contract.Metering{contract.UnitOutputTokens: 100}, 3, 2))
 	if err != nil || !outcome.Placed {
 		t.Fatalf("放置失败: %v %+v", err, outcome)
 	}
@@ -219,6 +220,22 @@ func TestPlaceBindsSeatAndEnqueues(t *testing.T) {
 	if left := snapshot.QuotaLeft()[contract.UnitOutputTokens]; left != 9_900 {
 		t.Fatalf("预留没有反映到余量: %d", left)
 	}
+
+	// req 哈希里那几项都要对得上号。放置脚本的参数是位置参数，错一位不会报错，
+	// 只会让上行回不到正确的 Hub 实例、或者租约按一个荒唐的截止时刻判超时。
+	runtime, found, err := plane.LoadUnit(ctx, "u_1")
+	if err != nil || !found {
+		t.Fatalf("读单元失败: %v %v", err, found)
+	}
+	if runtime.Instance != "http://hub" || runtime.CID != "c1" || runtime.ConsumerKey != "ck_a" {
+		t.Fatalf("单元的归属信息串位了: %+v", runtime)
+	}
+	if runtime.Kind != "llm.chat" || runtime.Estimate[contract.UnitOutputTokens] != 100 {
+		t.Fatalf("信封或预估串位了: kind=%s estimate=%v", runtime.Kind, runtime.Estimate)
+	}
+	if runtime.Deadline.Before(time.Now().Add(9*time.Minute)) || runtime.Deadline.After(time.Now().Add(11*time.Minute)) {
+		t.Fatalf("截止时刻串位了: %s", runtime.Deadline)
+	}
 }
 
 func TestPlaceRejectsWhenSeatsFull(t *testing.T) {
@@ -229,13 +246,13 @@ func TestPlaceRejectsWhenSeatsFull(t *testing.T) {
 
 	estimate := contract.Metering{contract.UnitOutputTokens: 10}
 	for index, key := range []string{"ck_a", "ck_b"} {
-		outcome, err := plane.Place(ctx, placeCommand("u_"+key, "c1", key, limits, estimate, 2, 4, false))
+		outcome, err := plane.Place(ctx, placeCommand("u_"+key, "c1", key, limits, estimate, 2, 4))
 		if err != nil || !outcome.Placed {
 			t.Fatalf("第 %d 个消费者应能占到座位: %v %+v", index+1, err, outcome)
 		}
 	}
 	// 第三个消费者没座位了 —— 座位是「同时服务几个人」，不是并发数。
-	outcome, err := plane.Place(ctx, placeCommand("u_c", "c1", "ck_c", limits, estimate, 2, 4, false))
+	outcome, err := plane.Place(ctx, placeCommand("u_c", "c1", "ck_c", limits, estimate, 2, 4))
 	if err != nil {
 		t.Fatalf("放置出错: %v", err)
 	}
@@ -243,7 +260,7 @@ func TestPlaceRejectsWhenSeatsFull(t *testing.T) {
 		t.Fatalf("座位满时应被拒: %+v", outcome)
 	}
 	// 已经占着座位的消费者还能继续发请求。
-	again, err := plane.Place(ctx, placeCommand("u_a2", "c1", "ck_a", limits, estimate, 2, 4, true))
+	again, err := plane.Place(ctx, placeCommand("u_a2", "c1", "ck_a", limits, estimate, 2, 4))
 	if err != nil || !again.Placed {
 		t.Fatalf("已绑定的消费者应能继续: %v %+v", err, again)
 	}
@@ -257,12 +274,12 @@ func TestPlaceRejectsWhenConcurrencyFull(t *testing.T) {
 
 	estimate := contract.Metering{contract.UnitOutputTokens: 10}
 	for i := 0; i < 2; i++ {
-		outcome, err := plane.Place(ctx, placeCommand("u_"+string(rune('a'+i)), "c1", "ck_a", limits, estimate, 1, 2, i > 0))
+		outcome, err := plane.Place(ctx, placeCommand("u_"+string(rune('a'+i)), "c1", "ck_a", limits, estimate, 1, 2))
 		if err != nil || !outcome.Placed {
 			t.Fatalf("前两条应放行: %v %+v", err, outcome)
 		}
 	}
-	outcome, err := plane.Place(ctx, placeCommand("u_c", "c1", "ck_a", limits, estimate, 1, 2, true))
+	outcome, err := plane.Place(ctx, placeCommand("u_c", "c1", "ck_a", limits, estimate, 1, 2))
 	if err != nil {
 		t.Fatalf("放置出错: %v", err)
 	}
@@ -279,10 +296,10 @@ func TestPlaceRollsBackAllReservationsWhenOneUnitExceeds(t *testing.T) {
 	seedContribution(t, plane, "c1", 3, 2, limits)
 
 	estimate := contract.Metering{contract.UnitOutputTokens: 100, contract.UnitCalls: 1}
-	if outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil || !outcome.Placed {
+	if outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2)); err != nil || !outcome.Placed {
 		t.Fatalf("第一条应放行: %v %+v", err, outcome)
 	}
-	outcome, err := plane.Place(ctx, placeCommand("u_2", "c1", "ck_b", limits, estimate, 3, 2, false))
+	outcome, err := plane.Place(ctx, placeCommand("u_2", "c1", "ck_b", limits, estimate, 3, 2))
 	if err != nil {
 		t.Fatalf("放置出错: %v", err)
 	}
@@ -311,7 +328,7 @@ func TestSettleReturnsReservationAndRecordsActual(t *testing.T) {
 	seedContribution(t, plane, "c1", 3, 2, limits)
 
 	estimate := contract.Metering{contract.UnitOutputTokens: 1_000}
-	if outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil || !outcome.Placed {
+	if outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2)); err != nil || !outcome.Placed {
 		t.Fatalf("放置失败: %v %+v", err, outcome)
 	}
 
@@ -351,7 +368,7 @@ func TestSettleIsIdempotent(t *testing.T) {
 
 	estimate := contract.Metering{contract.UnitOutputTokens: 500}
 	actual := contract.Metering{contract.UnitOutputTokens: 200}
-	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil {
+	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2)); err != nil {
 		t.Fatalf("放置失败: %v", err)
 	}
 	command := galaxy.SettleCommand{
@@ -386,7 +403,7 @@ func TestSettleReleasesSeatWhenAsked(t *testing.T) {
 	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
 	seedContribution(t, plane, "c1", 3, 2, limits)
 	estimate := contract.Metering{contract.UnitOutputTokens: 100}
-	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil {
+	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2)); err != nil {
 		t.Fatalf("放置失败: %v", err)
 	}
 	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
@@ -411,7 +428,7 @@ func TestWindowRolloverRestoresQuota(t *testing.T) {
 	seedContribution(t, plane, "c1", 3, 2, limits)
 
 	estimate := contract.Metering{contract.UnitOutputTokens: 900}
-	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2, false)); err != nil {
+	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2)); err != nil {
 		t.Fatalf("放置失败: %v", err)
 	}
 	_, _ = plane.Settle(ctx, galaxy.SettleCommand{
@@ -439,7 +456,7 @@ func TestCancelFansOutToOwningNode(t *testing.T) {
 	ctx := context.Background()
 	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
 	seedContribution(t, plane, "c1", 3, 2, limits)
-	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, contract.Metering{contract.UnitOutputTokens: 10}, 3, 2, false)); err != nil {
+	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, contract.Metering{contract.UnitOutputTokens: 10}, 3, 2)); err != nil {
 		t.Fatalf("放置失败: %v", err)
 	}
 	if err := plane.RequestCancel(ctx, "u_1", "consumer_disconnected"); err != nil {
@@ -554,5 +571,226 @@ func TestListLaneContributionsEvictsDeadMembers(t *testing.T) {
 	}
 	if len(members) != 1 || members[0] != "c_live" {
 		t.Fatalf("死成员没被摘掉，集合里还是 %v", members)
+	}
+}
+
+// 座位的空闲窗口算的是「最后一次活动**结束**之后闲了多久」。窗口一旦短过单次请求的
+// 耗时（默认 1 分钟，而 llm.chat 一条能跑 10 分钟），按放置时刻起算就会让座位在流还
+// 没推完时过期：主人看到的是「没人在用」，别的消费者还能挤进来超出他设定的座位数。
+// 下面四个用例把这条时间线钉死。
+
+func seatScore(t *testing.T, plane *ControlPlane, cid, consumerKey string) int64 {
+	t.Helper()
+	score, err := plane.client.ZScore(context.Background(), plane.seatsKey(cid), consumerKey).Result()
+	if err != nil {
+		t.Fatalf("读座位到期时刻失败: %v", err)
+	}
+	return int64(score)
+}
+
+func placeWithSeatTTL(rid, cid, consumerKey string, limits, estimate contract.Metering, seatTTL time.Duration, deadline time.Time) galaxy.PlaceCommand {
+	command := placeCommand(rid, cid, consumerKey, limits, estimate, 3, 2)
+	command.BindTTL, command.SeatTTL, command.Deadline = 30*time.Minute, seatTTL, deadline
+	return command
+}
+
+func TestPlaceHoldsSeatUntilDeadline(t *testing.T) {
+	plane, _ := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
+	seedContribution(t, plane, "c1", 3, 2, limits)
+
+	estimate := contract.Metering{contract.UnitOutputTokens: 100}
+	deadline := time.Now().Add(10 * time.Minute)
+	if _, err := plane.Place(ctx, placeWithSeatTTL("u_1", "c1", "ck_a", limits, estimate, time.Minute, deadline)); err != nil {
+		t.Fatalf("放置失败: %v", err)
+	}
+
+	if score := seatScore(t, plane, "c1", "ck_a"); score < deadline.UnixMilli() {
+		t.Fatalf("座位在请求跑完之前就过期了: 到期 %d，请求截止 %d", score, deadline.UnixMilli())
+	}
+	// 绑定跟着一起撑长。两者错开会出现「座位还在、绑定没了」，下一回合改派别的机器。
+	ttl, err := plane.client.PTTL(ctx, plane.bindKey("ck_a", "llm.chat|claude_oauth")).Result()
+	if err != nil {
+		t.Fatalf("读绑定 TTL 失败: %v", err)
+	}
+	if ttl <= time.Minute {
+		t.Fatalf("绑定没跟着请求截止时刻一起撑长: %v", ttl)
+	}
+}
+
+func TestSettleShortensSeatToIdleWindow(t *testing.T) {
+	plane, _ := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
+	seedContribution(t, plane, "c1", 3, 2, limits)
+
+	estimate := contract.Metering{contract.UnitOutputTokens: 100}
+	deadline := time.Now().Add(10 * time.Minute)
+	if _, err := plane.Place(ctx, placeWithSeatTTL("u_1", "c1", "ck_a", limits, estimate, time.Minute, deadline)); err != nil {
+		t.Fatalf("放置失败: %v", err)
+	}
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
+		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: estimate,
+		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth",
+		SeatTTL: time.Minute, BindTTL: 30 * time.Minute, State: contract.UnitCompleted,
+	}); err != nil {
+		t.Fatalf("结算失败: %v", err)
+	}
+
+	// 收回来了：到期时刻落在「现在 + 1 分钟」附近，而不是请求的截止时刻。
+	score := seatScore(t, plane, "c1", "ck_a")
+	want := time.Now().Add(time.Minute).UnixMilli()
+	if score > want+5_000 || score < want-5_000 {
+		t.Fatalf("结算后座位没收回到空闲窗口: 到期 %d，期望 %d 附近", score, want)
+	}
+	// 但此刻还没到点，牌子仍然显示绑着 —— 粘性绑定本来就要留这一分钟。
+	if snapshot, _, _ := plane.GetContribution(ctx, "c1"); snapshot.SeatsUsed != 1 {
+		t.Fatalf("空闲窗口内座位不该消失: %d", snapshot.SeatsUsed)
+	}
+	// 绑定不跟着收 —— 它是「上次落在哪台」的偏好，走自己那条更长的时间线，
+	// 由 TestBindOutlivesSeat 守。
+}
+
+func TestSettleKeepsSeatWhileSiblingStillRunning(t *testing.T) {
+	plane, _ := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
+	seedContribution(t, plane, "c1", 3, 2, limits)
+
+	estimate := contract.Metering{contract.UnitOutputTokens: 100}
+	deadline := time.Now().Add(10 * time.Minute)
+	for _, rid := range []string{"u_1", "u_2"} {
+		if _, err := plane.Place(ctx, placeWithSeatTTL(rid, "c1", "ck_a", limits, estimate, time.Minute, deadline)); err != nil {
+			t.Fatalf("放置 %s 失败: %v", rid, err)
+		}
+	}
+	// 一个座位允许同时跑两条（seatConc=2）。先结完的那条把座位收短，
+	// 另一条就会在自己还在流的时候从界面上消失。
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
+		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: estimate,
+		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth",
+		SeatTTL: time.Minute, BindTTL: 30 * time.Minute, State: contract.UnitCompleted,
+	}); err != nil {
+		t.Fatalf("结算 u_1 失败: %v", err)
+	}
+	if score := seatScore(t, plane, "c1", "ck_a"); score < deadline.UnixMilli() {
+		t.Fatalf("还有在途请求时座位被收短了: %d", score)
+	}
+
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
+		RID: "u_2", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: estimate,
+		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth",
+		SeatTTL: time.Minute, BindTTL: 30 * time.Minute, State: contract.UnitCompleted,
+	}); err != nil {
+		t.Fatalf("结算 u_2 失败: %v", err)
+	}
+	if score := seatScore(t, plane, "c1", "ck_a"); score > time.Now().Add(2*time.Minute).UnixMilli() {
+		t.Fatalf("最后一条结完之后座位应收回到空闲窗口: %d", score)
+	}
+	// 在途计数要归零并把字段删掉，否则这个消费者往后每次结算都以为还有别的请求在跑。
+	if plane.client.HExists(ctx, plane.contribKey("c1"), "run:ck_a").Val() {
+		t.Fatal("在途计数没清干净")
+	}
+}
+
+func TestSettleDoesNotResurrectExpiredSeat(t *testing.T) {
+	plane, _ := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
+	seedContribution(t, plane, "c1", 3, 2, limits)
+
+	estimate := contract.Metering{contract.UnitOutputTokens: 100}
+	if _, err := plane.Place(ctx, placeWithSeatTTL("u_1", "c1", "ck_a", limits, estimate, time.Minute, time.Now().Add(10*time.Minute))); err != nil {
+		t.Fatalf("放置失败: %v", err)
+	}
+	// 心跳断了 45 秒，座位随贡献一起过期 —— 这时候来一条迟到的结算。
+	if err := plane.client.Del(ctx, plane.seatsKey("c1")).Err(); err != nil {
+		t.Fatalf("清座位失败: %v", err)
+	}
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
+		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: estimate,
+		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth",
+		SeatTTL: time.Minute, BindTTL: 30 * time.Minute, State: contract.UnitCompleted,
+	}); err != nil {
+		t.Fatalf("结算失败: %v", err)
+	}
+	// 结算若用裸 ZADD 把成员写回来，这个 ZSET 就没有 TTL 了 —— 一个永远不掉的座位。
+	if plane.client.Exists(ctx, plane.seatsKey("c1")).Val() != 0 {
+		t.Fatal("结算把已经过期的座位加回来了")
+	}
+}
+
+// 座位和「上次落在哪台」是两条时间线：前者一分钟就让出去（主人界面上的牌子跟着它走），
+// 后者记得久得多，只用来决定下一条请求先敲谁的门。拆开之后最容易出的事是
+// 「拿着旧偏好回来的人绕过座位闸门」—— 下面两个用例守的就是这条。
+
+func TestBindOutlivesSeat(t *testing.T) {
+	plane, _ := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
+	seedContribution(t, plane, "c1", 3, 2, limits)
+
+	estimate := contract.Metering{contract.UnitOutputTokens: 100}
+	if _, err := plane.Place(ctx, placeWithSeatTTL("u_1", "c1", "ck_a", limits, estimate, time.Minute, time.Now().Add(10*time.Minute))); err != nil {
+		t.Fatalf("放置失败: %v", err)
+	}
+	if _, err := plane.Settle(ctx, galaxy.SettleCommand{
+		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate, Actual: estimate,
+		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth",
+		SeatTTL: time.Minute, BindTTL: 30 * time.Minute, State: contract.UnitCompleted,
+	}); err != nil {
+		t.Fatalf("结算失败: %v", err)
+	}
+
+	// 座位一分钟后就该让出去，偏好还要记半小时。两者用同一个窗口的话，
+	// 主人界面上的牌子和「回头还落在这台」就只能二选一。
+	if score := seatScore(t, plane, "c1", "ck_a"); score > time.Now().Add(2*time.Minute).UnixMilli() {
+		t.Fatalf("座位没按一分钟收: %d", score)
+	}
+	ttl, err := plane.client.PTTL(ctx, plane.bindKey("ck_a", "llm.chat|claude_oauth")).Result()
+	if err != nil {
+		t.Fatalf("读绑定 TTL 失败: %v", err)
+	}
+	if ttl < 20*time.Minute {
+		t.Fatalf("绑定跟着座位一起收短了: %v", ttl)
+	}
+}
+
+func TestReturningConsumerStillPassesSeatGate(t *testing.T) {
+	plane, _ := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 100_000}
+	seedContribution(t, plane, "c1", 2, 4, limits)
+
+	estimate := contract.Metering{contract.UnitOutputTokens: 10}
+	if _, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 2, 4)); err != nil {
+		t.Fatalf("放置失败: %v", err)
+	}
+	// ck_a 停手超过空闲窗口，座位过期了 —— 但「上次落在 c1」这条偏好还记着。
+	if err := plane.client.ZAdd(ctx, plane.seatsKey("c1"), redis.Z{
+		Score: float64(time.Now().Add(-time.Second).UnixMilli()), Member: "ck_a",
+	}).Err(); err != nil {
+		t.Fatalf("把座位改成已过期失败: %v", err)
+	}
+	// 这段时间里两个新人把两个座位占满了。
+	for _, key := range []string{"ck_b", "ck_c"} {
+		outcome, err := plane.Place(ctx, placeCommand("u_"+key, "c1", key, limits, estimate, 2, 4))
+		if err != nil || !outcome.Placed {
+			t.Fatalf("%s 应能占到座位: %v %+v", key, err, outcome)
+		}
+	}
+
+	// ck_a 拿着旧偏好回来。座位没了、位子也满了，就得老老实实被挡在外面，
+	// 由调用方溢出到别的机器 —— 从前 reuse=1 会整段跳过闸门，让这台 2 座的机器坐进第 3 个人。
+	outcome, err := plane.Place(ctx, placeCommand("u_a2", "c1", "ck_a", limits, estimate, 2, 4))
+	if err != nil {
+		t.Fatalf("放置出错: %v", err)
+	}
+	if outcome.Placed || outcome.Reason != galaxy.PlaceSeatsFull {
+		t.Fatalf("回头客绕过了座位闸门: %+v", outcome)
+	}
+	if snapshot, _, _ := plane.GetContribution(ctx, "c1"); snapshot.SeatsUsed != 2 {
+		t.Fatalf("座位被坐超了: %d", snapshot.SeatsUsed)
 	}
 }

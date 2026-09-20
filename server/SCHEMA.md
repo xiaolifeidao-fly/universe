@@ -69,7 +69,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_consumer_key` | 算力密钥：鉴权按 sha256 查；`secret_cipher` 是明文的 AES-GCM 密文（加密密钥在配置 `galaxy.key_cipher_secret`，不进库），给「一键使用」和运营转交取回；带有效期、冻结期与允许范围 |
 | `zt_galaxy_consumer_balance` | 密钥的单位余额 |
 | `zt_galaxy_consent_record` | 提供者加入同意与消费者数据告知确认；两者都是硬前置 |
-| `zt_galaxy_price` | kind 的「单位 → 单价」表，单价按每百万单位的微分存 |
+| `zt_galaxy_price` | 「kind × 模型 × 单位 → 单价」表。两个价：`price` 向使用者收、`provider_price` 结给共享者，差额是平台毛利，都按每百万单位的微分存。`model_id` 空串是**该 kind 的兜底价**，取价先找模型自己的行、按单位找不到才回落。`provider_share` 是老口径，只在 `provider_price` 为 0 时回落。**除唯一键外没有别的索引**：取价靠 `uk_gx_price` 的前缀，所以计费路径一定要带 `kind`，`ORDER BY` 也一定要和索引同向（全升序）—— 见 `ListEffectivePrices` 的注释 |
 | `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
 | `zt_galaxy_credit_account` | 提供者积分账户。存**微积分**（1,000,000 = 1 积分 = ¥1），和使用者那本 `points_account` 同一口径 |
 | `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
@@ -89,6 +89,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_setting` | 运营随时要改、改完不该重启的开关，目前只有默认返现比例 `referral.default_bps` |
 | `zt_galaxy_bridge_release` | 已发布的 ai-bridge 安装包（一个版本一个平台一行）。字节在 OSS，这里只有 sha256 与 Ed25519 发布签名；节点只装验得过签名的包，下架不删行 |
 | `zt_galaxy_provider_referral` | 共享端的邀请码与邀请人。和使用端的 `zt_galaxy_referral` 是两张表、两套码：两端是两批人，码混在一个命名空间里会「查得到但返错人」 |
+| `zt_galaxy_desktop_release` | 桌面客户端（Nova / Orbit）的发版记录，一个端 × 一个平台通道 × 一个版本一行。存的是要写到 OSS 上的 `latest-*.yml` **原文**；没有 sha256 与发布签名 —— 包一百多兆，字节不经服务端（浏览器拿签名地址直传），校验值在清单里。客户端走 electron-updater 直接读 OSS，不打服务端任何接口 |
 
 **建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，
 并顺带写入 `llm.chat` 的默认定价；或者直接执行 `server/galaxy.sql`（只建表，定价表是空的，
@@ -111,6 +112,25 @@ AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，�
 `20260912_galaxy_provider_referral.sql` 建共享端邀请表并给供给侧账本加 `related_user_id`。
 这两个**必须先于新版 galaxy-api 发布**：节点行的那十列在每次 hello / 心跳的查询里，
 缺列会让**所有机器**连不上（不是少一个功能，是整个池子掉线）。
+
+`20260919_galaxy_price_model.sql` 给价目表加 `model_id` 并把唯一键换成
+`(biz_line, kind, model_id, unit, effective_from)`，让同一个 kind 下每个模型能各自定价。
+存量行一律落成兜底价（`model_id = ''`），行为和跑之前完全一样。
+**必须先于发版跑**，而且比下面那条更硬：新版的取价、保存、删除都带 `model_id`，
+缺列会让 `zt_galaxy_price` 上每一次读写都报 1054 —— 也就是**全站不计费、不结算**
+（`record` 取价失败直接返错）。`model_id` 是 `NOT NULL DEFAULT ''`：MySQL 的唯一索引不拦 NULL，
+这一列可空的话「同 kind 同单位同生效时刻」能插进两行，取价先拿到哪行全看运气。
+
+`20260919_galaxy_provider_price.sql` 给价目表加 `provider_price` 并按老算式回填，
+把上游价从「对外价 × 分成比例」变成一个独立的数。**要先于发版跑**，
+但缺列不会让池子掉线：请求路径上少一列只会让 `provider_price` 读成 0、结算自动回落老口径，
+真正会挂的是管理端价目表的保存（写入语句里带了这个列名，报 1054）。
+回填之后每一笔结算的金额和跑之前一样（取整差最多 1 微分 / 百万单位），不需要重算历史账。
+
+`20260918_galaxy_desktop_release.sql` 建桌面客户端的发版表（热更新）。它**不必先于发版**：
+表不在只是管理端那一页报错，两个客户端与共享池完全不受影响 —— 客户端读的是 OSS 上的清单，
+不经过服务端。同一批的 `20260918_manager_desktop_release_menu.sql` 给管理端补那一页的菜单资源，
+接口资源在 `server/manager_galaxy_resources.sql` 里（跑 `managerinit` 也一样）。
 
 **2026-09-12 同一批还改了供给侧账本的量纲**（不需要迁移脚本，但要确认一次）：
 `zt_galaxy_provider_ledger.amount` 从「计量数（token 数）」改成「微积分」，

@@ -41,6 +41,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/node/revoke", h.revokeNode)
 	api.POST("/contribution/status", h.setContributionStatus)
 	api.POST("/contribution/limits", h.saveContributionLimits)
+	// 模型页：跑哪个模型能记多少积分。只给结算价 —— 对外价不经这条接口。
+	api.GET("/models", h.models)
 	api.GET("/records", h.listRecords)
 	api.GET("/credits", h.credits)
 	api.GET("/endpoint", h.providerEndpoint)
@@ -57,6 +59,13 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 邀请返现。
 	api.GET("/referral", h.referral)
 	api.GET("/referral/invitees", h.referralInvitees)
+}
+
+// models 共享端的模型页。一个请求拿全：模型说明、四档结算单价、
+// 自己的名单允不允许、机器上有没有、最近 7 天它赚了多少。
+func (h *Handler) models(context *gin.Context) {
+	views, err := h.service.ProviderModels(context.Request.Context(), auth.UserID(context))
+	httpx.JSON(context, views, err)
 }
 
 // bridgeReleases 下载清单：每个平台最新的那一版，加上安装脚本地址。

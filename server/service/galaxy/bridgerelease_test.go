@@ -21,12 +21,12 @@ func TestParseBridgePackageNameAcceptsOnlyTheRealShape(t *testing.T) {
 	}
 
 	bad := map[string]string{
-		"ai-bridge-0.2.0-linux-x64.zip":     "linux 的包是 tar.gz，zip 要拦下来",
+		"ai-bridge-0.2.0-linux-x64.zip":      "linux 的包是 tar.gz，zip 要拦下来",
 		"ai-bridge-0.2.0-windows-x64.tar.gz": "windows 的包是 zip",
-		"ai-bridge-0.2.0-plan9-x64.tar.gz":  "不认识的平台",
-		"ai-bridge-v0.2.0-linux-x64.tar.gz": "版本号不该带 v",
-		"ai-bridge-linux-x64.tar.gz":        "少了版本号",
-		"ai-bridge-0.2.0-linux-x64.tar":     "不是认识的压缩格式",
+		"ai-bridge-0.2.0-plan9-x64.tar.gz":   "不认识的平台",
+		"ai-bridge-v0.2.0-linux-x64.tar.gz":  "版本号不该带 v",
+		"ai-bridge-linux-x64.tar.gz":         "少了版本号",
+		"ai-bridge-0.2.0-linux-x64.tar":      "不是认识的压缩格式",
 	}
 	for name, why := range bad {
 		if _, _, err := ParseBridgePackageName(name); err == nil {
@@ -85,8 +85,8 @@ func TestVerifyBridgeSignatureMatchesTheNodeSideVector(t *testing.T) {
 	// 签名覆盖三样东西：改任何一样都必须失败，否则一个旧版本的签名
 	// 就能被贴到新版本号上（降级攻击），或者跨平台冒用。
 	mutations := []struct {
-		name                       string
-		version, platform, digest  string
+		name                      string
+		version, platform, digest string
 	}{
 		{"换了版本号", "0.2.0", testReleasePlatform, testReleaseDigest},
 		{"换了平台", testReleaseVersion, "darwin-arm64", testReleaseDigest},
@@ -163,8 +163,8 @@ func TestCheckNodeUpgradableExplainsEveryRefusal(t *testing.T) {
 	}
 
 	cases := []struct {
-		name    string
-		mutate  func(*repository.GalaxyNode)
+		name     string
+		mutate   func(*repository.GalaxyNode)
 		contains string
 	}{
 		{"封禁", func(n *repository.GalaxyNode) { n.Banned = true }, "停用"},

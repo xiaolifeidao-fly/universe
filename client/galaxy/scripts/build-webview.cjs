@@ -20,9 +20,14 @@ const root = path.resolve(__dirname, '..');
 // （galaxy-api :10004），Orbit 的 /api/galaxy/consumer/* 和门户的
 // /api/galaxy/portal/* 都在 galaxy-consumer-api :10005 上。指错了不会 502、
 // 也不报错，是后端回一句 Go 默认的「404 page not found」，看上去像页面丢了。
+//
+// runtime 里的 GALAXY_UPDATE_FEED_URL 是两个端共用的**更新目录前缀**（OSS 上那个
+// 公开读的目录，管理端发版就是往它下面写）。桌面壳探 /api/desktop-health 时把它带走，
+// 所以换桶不用重新打包安装包 —— 改这台机器的 runtime.json 再重启界面就行。
+// 不配就是这个部署不检查更新。
 const members = {
-  nova: { dir: 'nova/webview', target: 'http://127.0.0.1:10004' },
-  orbit: { dir: 'orbit/webview', target: 'http://127.0.0.1:10005' },
+  nova: { dir: 'nova/webview', target: 'http://127.0.0.1:10004', runtime: { GALAXY_UPDATE_FEED_URL: '' } },
+  orbit: { dir: 'orbit/webview', target: 'http://127.0.0.1:10005', runtime: { GALAXY_UPDATE_FEED_URL: '' } },
   // 门户的「控制台」按钮指向哪儿、页脚上的联系方式，都是运维配的，跟着 runtime.json
   // 一起发。名字不带 NEXT_PUBLIC_ 前缀是**故意的**：这几个值现在由服务端在每次渲染时
   // 现读（portal/src/utils/site.server.ts），不再打进浏览器包 —— 带那个前缀的写法会被

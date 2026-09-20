@@ -63,7 +63,16 @@ export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
       ) : (
         <DataTable
           columns={[
-            { key: "kind", title: t("usage.col.model"), width: "150px", render: (row: UsageLine) => row.kind },
+            {
+              // 这一列本来就叫「模型」，却一直画的是 kind（所有行都是 llm.chat）。
+              // 计价按模型走之后，一行一个模型才对得上它自己那档单价。
+              // 老记录的单元行被清掉了，拿不到模型名，退回显示 kind。
+              key: "model",
+              title: t("usage.col.model"),
+              width: "170px",
+              render: (row: UsageLine) =>
+                row.model ? <span className="gx-mono">{row.model}</span> : <span className="gx-muted">{row.kind}</span>,
+            },
             {
               key: "provider",
               title: t("detail.provider"),
@@ -115,7 +124,7 @@ export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
             },
           ]}
           rows={report?.lines ?? []}
-          rowKey={(row) => `${row.kind}:${row.provider}:${row.unit}`}
+          rowKey={(row) => `${row.kind}:${row.provider}:${row.model}:${row.unit}`}
           empty={t("usage.empty")}
         />
       )}

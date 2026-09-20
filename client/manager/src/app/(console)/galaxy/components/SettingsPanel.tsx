@@ -32,7 +32,14 @@ function scaleOf(row: SettingView): number {
 /** 改动它会让已经发出去的同意记录全部失效，界面上要单独拦一道。 */
 const CONSENT_KEYS = new Set(["terms.provider_version", "notice.consumer_version"]);
 
-/** 分组在界面上的顺序，和服务端给的顺序一致。 */
+/**
+ * 分组在界面上的顺序，和服务端给的顺序一致。
+ *
+ * 服务端的 client 分组（两个客户端安装包下载地址）**故意不在这张表里**：它们摆在
+ * 「ai-bridge 版本」页顶上那张卡片里，那一页回答的就是「用户要装的东西从哪儿拿」。
+ * 两处都能改，运营就得先想清楚该信哪一处。下面这个循环只画列进来的分组，
+ * 所以没列 = 不显示。
+ */
 const GROUPS: { key: string; labelKey: TranslationKey }[] = [
   { key: "placement", labelKey: "galaxy.setting.group.placement" },
   { key: "score", labelKey: "galaxy.setting.group.score" },

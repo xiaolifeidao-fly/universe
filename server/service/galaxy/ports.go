@@ -188,10 +188,12 @@ type PlaceCommand struct {
 	Seats           int
 	SeatConcurrency int
 
-	// ReuseBinding 为真时走 90% 路径：座位已经绑好，只需并发与额度两项校验。
-	ReuseBinding bool
-	BindTTL      time.Duration
-	SeatTTL      time.Duration
+	// BindTTL「上次落在哪台」记多久。它只是偏好：回头客先试那台，位子被占满了
+	// 照常去挑别的机器，所以可以比座位长得多（默认 30 分钟）。
+	BindTTL time.Duration
+	// SeatTTL 座位的空闲窗口（默认 1 分钟）。它是「谁正占着这台机器」，
+	// 决定主人界面上那颗牌子和 seats 闸门，短得多。
+	SeatTTL time.Duration
 
 	// Instance 持有消费者连接的 Hub 实例内网地址，节点上行直推它。
 	Instance string
@@ -272,8 +274,13 @@ type SettleCommand struct {
 	WindowKeys  map[contract.MeterUnit]string
 	// ReleaseSeat 为真时同时摘掉座位绑定：贡献被停、被摘除或消费者换绑时才用。
 	ReleaseSeat bool
-	Lane        string
-	State       contract.UnitState
+	// SeatTTL 座位的空闲窗口。放置时座位被撑到「截止时刻 + 窗口」以免在途过期，
+	// 结算要把它收回到「现在 + 窗口」—— 空闲是从请求**结束**那一刻开始算的。
+	SeatTTL time.Duration
+	// BindTTL「上次落在哪台」的记忆窗口，同样从请求结束起算。比 SeatTTL 长。
+	BindTTL time.Duration
+	Lane    string
+	State   contract.UnitState
 }
 
 // ControlPlane 是共享池的控制面：唤醒队列、座位、绑定、额度计数器、取消标志。
@@ -349,6 +356,26 @@ type ObjectSigner interface {
 type ObjectUploader interface {
 	// Put 返回的是**带部署前缀的完整对象键**，签下载地址时要用它。
 	Put(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error)
+}
+
+// DesktopStore 桌面客户端（Nova / Orbit）安装包的对象存储。**只给管理端发版用**。
+//
+// 它比 ObjectUploader 宽，是因为这套流程里服务端只做"最小的那几件"：
+//
+//	SignedPutURL  签直传地址。安装包一百多兆，字节不经服务端（约束 3 仍然成立）。
+//	PutObject     写清单。清单是几百字节的 yml，而且它必须由服务端写 —— 「现在该发哪一版」
+//	              是业务决定，不能交给上传的人。
+//	Stat          确认包真的传上去了，再发清单。
+//	Delete        最后一个在架版本被下架时，把清单撤下来。
+//	ResolveKey    两条路（服务端写的清单、浏览器直传的包）必须落在同一个目录里。
+//
+// 形状照着 common/objectstore 的 OSS 客户端来，装配时一行就接上了（和 ObjectUploader 一样）。
+type DesktopStore interface {
+	ResolveKey(objectKey string) string
+	SignedPutURL(objectKey, contentType string, expiresAt time.Time) (string, error)
+	PutObject(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error)
+	Stat(ctx context.Context, objectKey string) (int64, bool, error)
+	Delete(ctx context.Context, objectKey string) error
 }
 
 // ---------- 可观测 ----------

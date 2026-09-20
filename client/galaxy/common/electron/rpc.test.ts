@@ -44,8 +44,10 @@ test('registration fails before exposure when implementation or registry is inva
   assert.throws(() => registerRpc(ipc, [DemoApi], [new DemoApi()], () => true), /Missing implementation/);
   assert.throws(() => registerRpc(ipc, [DemoApi, DemoApi], [new DemoImpl()], () => true), /Duplicate Electron API/);
   assert.throws(() => registerRpc(ipc, [], [new DemoImpl()], () => true), /no registered contract/);
-  assert.deepEqual(registerApi('orbit').map(Api => new Api().getRendererName()), ['galaxy_ClientConfigApi', 'galaxy_KeyVaultApi']);
-  assert.deepEqual(registerApi('nova').map(Api => new Api().getRendererName()), ['galaxy_BridgeApi', 'galaxy_ShellApi']);
+  // 两端各自认哪些契约。UpdateApi 在两边都有 —— 自动更新是壳的能力，不分端
+  // （实现由 common/electron/main.ts 统一补上，各端的 impl/register.ts 里没有它）。
+  assert.deepEqual(registerApi('orbit').map(Api => new Api().getRendererName()), ['galaxy_ClientConfigApi', 'galaxy_KeyVaultApi', 'galaxy_UpdateApi']);
+  assert.deepEqual(registerApi('nova').map(Api => new Api().getRendererName()), ['galaxy_BridgeApi', 'galaxy_ShellApi', 'galaxy_UpdateApi']);
 });
 
 test('a failed IPC registration rolls back already installed handlers', () => {

@@ -20,6 +20,7 @@ func LoadConfig() galaxy.Config {
 	config.ContractVersion = IntProperty("galaxy.contract_version", config.ContractVersion)
 	config.PlatformSeatLimit = IntProperty("galaxy.platform_seat_limit", config.PlatformSeatLimit)
 	config.BindIdleTTL = DurationProperty("galaxy.bind_idle_ttl_ms", int(config.BindIdleTTL.Milliseconds()))
+	config.AffinityTTL = DurationProperty("galaxy.affinity_ttl_ms", int(config.AffinityTTL.Milliseconds()))
 	config.SpillWait = DurationProperty("galaxy.spill_wait_ms", int(config.SpillWait.Milliseconds()))
 	config.MaxWait = DurationProperty("galaxy.max_wait_ms", int(config.MaxWait.Milliseconds()))
 	config.HeartbeatTimeout = DurationProperty("galaxy.heartbeat_timeout_ms", int(config.HeartbeatTimeout.Milliseconds()))

@@ -12,6 +12,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { type PropsWithChildren, type ReactNode, useEffect, useRef, useState } from "react";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
+import { UpdateGate } from "@/components/shell/UpdateGate";
 import { clearAuthToken, getAuthUser } from "@/utils/auth";
 import { hasOverlayTitlebar, productConfig } from "@/utils/product";
 import { IconChevronDown, IconLogout, IconUser } from "@/components/ui/icons";
@@ -163,6 +164,8 @@ export function GalaxyShell({ children }: PropsWithChildren) {
         </div>
       </aside>
       <main className="gx-main">{children}</main>
+      {/* 桌面壳的版本更新。浏览器里、或者壳旧到没有 UpdateApi 时它自己不画。 */}
+      <UpdateGate />
     </div>
   );
 }

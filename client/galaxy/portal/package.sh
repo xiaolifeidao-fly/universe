@@ -46,8 +46,11 @@ runtime.json 里的每一项都会被 start.sh 当环境变量发给进程，页
 依赖已经随包发好在 node_modules 里，不要在这个目录或 portal/ 下跑 npm install
 —— 会把备好的依赖当多余的裁掉（包括 next），之后 start.sh 就起不来了。
 
-重新部署：先 ./stop.sh，再跑 unpack-release.sh（它会整个换掉这个目录，
-只保留 runtime.json 和 logs/）。
+重新部署：在 tar.gz 旁边跑 unpack-release.sh --swap —— 它先把新版本解到
+旁边，再 stop、换目录、start，不用先手工停。上一版留在 <目录>.prev，回滚
+就是一条 mv。想把解包和停机分成两步：先 --stage（线上照跑），晚点再 --swap。
+不带参数是老用法：只换目录、不碰进程，服务还在跑就拒绝动手。
+两种用法都只保留 runtime.json 和 logs/。
 
 监听地址用 PORT 和 WEBVIEW_HOST 改；默认那个正是 nginx 里 galaxy_portal 指着的地址。
 NOTE

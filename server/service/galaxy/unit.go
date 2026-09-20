@@ -145,7 +145,13 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 		return placement, false, nil
 	}
 
-	// 2 已有绑定：座位已经占着，只需并发与额度两项校验。
+	// 2 上次落在哪台：先敲那台的门。
+	//
+	// 这一步是**偏好**，不是钉死。绑定记得比座位久（默认 30 分钟 vs 1 分钟），
+	// 所以走到这里时座位可能早就让出去了：还占着就直接接着用，
+	// 让出去了就照常过一遍座位闸门 —— 位子还空着照样回这台（上游 prompt cache
+	// 还热着，这是记这条偏好的全部意义），被别人占满了就落到第 3 步去挑别的机器。
+	// 放置脚本里那道闸门对回头客一视同仁，这里不需要、也不该自己判座位。
 	affinity := unit.ConsumerKey
 	if route.AffinityKey != "" {
 		affinity = route.AffinityKey
@@ -261,7 +267,7 @@ func (s *service) commit(ctx context.Context, unit contract.WorkUnit, snapshot C
 		RID: unit.ID, CID: snapshot.CID, ConsumerKey: affinity, Lane: lane,
 		Estimate: unit.Metering.Estimate, QuotaLimits: plan.Limits, WindowKeys: plan.Windows, WindowExpiry: plan.Expiry,
 		Seats: snapshot.Seats, SeatConcurrency: snapshot.SeatConcurrency,
-		ReuseBinding: reuseBinding, BindTTL: s.cfg().BindIdleTTL, SeatTTL: s.cfg().BindIdleTTL,
+		BindTTL: s.cfg().AffinityTTL, SeatTTL: s.cfg().BindIdleTTL,
 		Instance: s.cfg().Instance, Unit: payload, Body: body, BodyTTL: s.cfg().BodyTTL,
 		Deadline: time.UnixMilli(unit.Deadline),
 	})
@@ -760,6 +766,7 @@ func (s *service) settle(ctx context.Context, runtime UnitRuntime, spec contract
 	done, err := s.control.Settle(ctx, SettleCommand{
 		RID: runtime.RID, CID: runtime.CID, ConsumerKey: runtime.ConsumerKey,
 		Estimate: runtime.Estimate, Actual: settled, WindowKeys: plan.Windows,
+		SeatTTL: s.cfg().BindIdleTTL, BindTTL: s.cfg().AffinityTTL,
 		Lane: contract.Lane(runtime.Kind, runtime.Provider), State: state,
 	})
 	if err != nil {

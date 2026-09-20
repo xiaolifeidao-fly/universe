@@ -140,15 +140,23 @@ func buildGalaxyService(database *gorm.DB) (galaxysvc.Service, func()) {
 	config.BridgeReleaseKeys = splitList(httpx.Property("galaxy.bridge_release.public_keys"))
 
 	ports := galaxysvc.Ports{Control: control}
-	// 上传安装包是**唯一**要服务端经手字节的地方，也是唯一在管理端装配对象存储的理由：
-	// sha256 与发布签名的校验只有经手字节的一方做得了。产物仍然走 presigned 直传。
-	// 没配 OSS 不影响别的运营页面，只是传不了包（接口会明说）。
+	// 管理端装配对象存储有两个理由，都只在运营这一侧成立：
+	//
+	//	ai-bridge 安装包  是**唯一**要服务端经手字节的地方 —— sha256 与发布签名的校验
+	//	                  只有经手字节的一方做得了（包才三兆）。
+	//	桌面客户端发版    反过来：包一百多兆，字节不经服务端，服务端只签直传地址、
+	//	                  写那份几百字节的清单、确认包到了没有。
+	//
+	// 产物仍然走 presigned 直传。没配 OSS 不影响别的运营页面，只是发不了版（接口会明说）。
 	if deployment, err := objectstore.LoadAliyunOSSDeployment(httpx.Property); err != nil {
 		log.Printf("manager-api OSS 配置不可用，ai-bridge 安装包上传不可用：%v", err)
 	} else if storage, err := deployment.NewClient(); err != nil {
 		log.Printf("manager-api OSS 客户端不可用，ai-bridge 安装包上传不可用：%v", err)
 	} else if storage != nil {
 		ports.Uploader = storage
+		// 桌面客户端发版用的是同一个桶、另一套用法：清单（几百字节的 yml）由服务端写，
+		// 安装包（一百多兆）由管理端浏览器拿签名地址直传 —— 服务端只签地址、只确认包到了没有。
+		ports.Desktop = storage
 	}
 	service := galaxysvc.New(database, ports, nil, config)
 	return service, func() { _ = control.Close() }

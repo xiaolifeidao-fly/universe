@@ -40,7 +40,7 @@ func TestApplyKindPriceRecomputesDiscount(t *testing.T) {
 		contract.UnitInputTokens:  {Price: 1_500_000, Currency: "CNY"},
 		contract.UnitOutputTokens: {Price: 7_500_000},
 	}
-	applyKindPrice(&model, table)
+	applyKindPrice(&model, table, nil)
 	if model.DiscountBps != 8500 {
 		t.Fatalf("回落到统一价之后 DiscountBps = %d，想要 8500", model.DiscountBps)
 	}

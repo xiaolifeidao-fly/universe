@@ -6,8 +6,10 @@
  * 通用形状。这里只留最小公分母（id / username / displayName / role /
  * mustChangePassword），各 app 需要更多字段就自己在调用处扩展 AuthUser 泛型。
  *
- * 每个 app 传自己的 storage key 前缀（避免将来同源部署时 localStorage 撞车 ——
- * 目前 web/manager 端口不同、都是不同源，实际不会撞，但显式传更安全）。
+ * 每个 app 传自己的 storage key 前缀，避免同源部署时 localStorage 撞车。这已经不是
+ * 防患于未然了：Nova（galaxy_provider_*）、Orbit（galaxy_consumer_*）和管理端
+ * （manager_*）线上挂在同一个 www.galaxy.rodeo 上，只是路径不同 —— 同源共享一份
+ * localStorage，前缀撞了就是「登了 Orbit 把管理端踢下线」这种查不动的串台。
  *
  * TODO(shared-auth): web 的 src/utils/auth.ts 还是它自己那份手写实现（字段更多，
  * 且被 ManagerShell 等一堆现有组件直接引用），没有改造成基于这个工厂 —— 这次

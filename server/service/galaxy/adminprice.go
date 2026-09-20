@@ -65,30 +65,68 @@ func (s *service) AdminPrices(ctx context.Context) (dto.PriceTableView, error) {
 		}
 	}
 	view.Kinds, view.Units = sortedKeys(kinds), sortedKeys(units)
+
+	// 模型候选：目录里的（含已下架的 —— 下架只是不卖了，已经跑出来的用量还要按它计价）
+	// 加上价目表里已经出现过的。查目录失败不拦整页：候选没了运营还能手填，
+	// 而为了一个下拉把价目表整页打不开，是更坏的结果。
+	models := map[string]bool{}
+	for _, row := range rows {
+		models[row.ModelID] = true
+	}
+	if catalog, err := s.repository.ListModels(ctx, bizLine, false); err == nil {
+		for _, row := range catalog {
+			models[row.ModelID] = true
+		}
+	}
+	view.Models = sortedKeys(models)
 	return view, nil
 }
 
-// markLivePrices 标出每个 (kind, unit) 此刻生效的那一行，并回一张「已定价」的集合。
+// markLivePrices 标出每个 (kind, model, unit) 此刻生效的那一行，并回一张「已定价」的集合。
 //
 // 生效的定义只有一条：effective_from 已经到点、且是同组里最新的那个到点时刻。
-// 行按 kind, unit, effective_from desc 取回来，所以每组第一条到点的就是它 ——
+// 行按 kind, model_id, unit, effective_from desc 取回来，所以每组第一条到点的就是它 ——
 // 排在它前面的是还没到点的未来价，后面的是被它取代的历史价，两者都不是当前价。
+//
+// 「已定价」那张集合只收**兜底行**（model_id 为空）：模型单独定的价只覆盖它自己，
+// 有它不等于别的模型有价可查。拿模型行去消掉「有量无价」的告警，等于替其余模型
+// 宣布了一件没发生的事。
 func markLivePrices(rows []*repository.GalaxyPrice, now time.Time) ([]dto.PriceView, map[string]bool) {
 	priced := map[string]bool{}
+	seen := map[string]bool{}
 	views := make([]dto.PriceView, 0, len(rows))
 	for _, row := range rows {
-		key := priceKey(row.Kind, row.Unit)
+		key := priceKey(row.Kind, row.ModelID, row.Unit)
 		live := false
-		if !row.EffectiveFrom.After(now) && !priced[key] {
-			priced[key] = true
+		if !row.EffectiveFrom.After(now) && !seen[key] {
+			seen[key] = true
 			live = true
+			if row.ModelID == "" {
+				priced[priceKey(row.Kind, "", row.Unit)] = true
+			}
 		}
+		settle := settleUnitPrice(priceRow{
+			Price: row.Price, ProviderPrice: row.ProviderPrice, ProviderShare: row.ProviderShare,
+		})
 		views = append(views, dto.PriceView{
-			Kind: row.Kind, Unit: row.Unit, Price: row.Price, Currency: row.Currency,
+			Kind: row.Kind, ModelID: row.ModelID, Unit: row.Unit, Price: row.Price, Currency: row.Currency,
+			ProviderPrice: row.ProviderPrice, SettlePrice: settle,
+			MarginBps:     marginBps(row.Price, settle),
 			ProviderShare: row.ProviderShare, EffectiveFrom: row.EffectiveFrom, Effective: live,
 		})
 	}
 	return views, priced
+}
+
+// marginBps 平台毛利率，万分之一。负数就是结算价高过对外价 —— 平台在倒贴。
+//
+// 它是算出来的，不入库：入库就会有「价改了、毛利率没跟着改」的那一天，
+// 而那种不一致没有任何地方会报错。
+func marginBps(price, settle int64) int {
+	if price <= 0 {
+		return 0
+	}
+	return int((price - settle) * 10000 / price)
 }
 
 // unpricedFrom 有用量、却查不到价的 (kind, unit)。
@@ -100,7 +138,10 @@ func unpricedFrom(usage []repository.UsageRow, priced map[string]bool) []dto.Pri
 	seen := map[string]bool{}
 	out := make([]dto.PriceView, 0)
 	for _, row := range usage {
-		key := priceKey(row.Kind, row.Unit)
+		// 只按 kind 查兜底价：这张告警回答的是「有没有一行价兜得住这个单位」，
+		// 而兜得住它的只可能是兜底行。用量行本身也不带模型（SumUsage 会按模型分组，
+		// 但这里只关心单位有没有价，同一单位的多个模型行去重成一条）。
+		key := priceKey(row.Kind, "", row.Unit)
 		if priced[key] || seen[key] {
 			continue
 		}
@@ -116,9 +157,9 @@ func unpricedFrom(usage []repository.UsageRow, priced map[string]bool) []dto.Pri
 	return out
 }
 
-// priceKey (kind, unit) 拼成一个键。用 \x00 分隔而不是冒号：单位名里带冒号的那天，
+// priceKey (kind, model, unit) 拼成一个键。用 \x00 分隔而不是冒号：单位名里带冒号的那天，
 // 冒号分隔会让两个不同的组撞成一个。
-func priceKey(kind, unit string) string { return kind + "\x00" + unit }
+func priceKey(kind, model, unit string) string { return kind + "\x00" + model + "\x00" + unit }
 
 // knownMeterUnits contract 里登记过的计量单位。单位是注册制的，这份只是候选提示，
 // 不是白名单 —— 新业务自带的单位照样能在界面上手填。
@@ -155,20 +196,28 @@ func (s *service) SaveAdminPrice(ctx context.Context, req dto.SavePriceRequest) 
 	if kind == "" || unit == "" {
 		return errors.New("能力与计量单位都要填")
 	}
+	// 模型不校验「目录里有没有」：目录是门户的展示清单，计价表是账。
+	// 一个模型可以先接进来跑、后补目录，也可以从目录里下架而老账还要按它算。
+	modelID := strings.TrimSpace(req.ModelID)
 	if req.Price < 0 {
-		return errors.New("单价不能是负数")
+		return errors.New("对外单价不能是负数")
+	}
+	if req.ProviderPrice < 0 {
+		return errors.New("结算单价不能是负数")
 	}
 	if req.ProviderShare < 0 || req.ProviderShare > 1 {
 		return fmt.Errorf("分成比例要在 0 到 1 之间，收到 %v", req.ProviderShare)
 	}
+	// 结算价高过对外价是平台倒贴。**不拦** —— 拉新期定向补贴某个单位是真实需求，
+	// 而这里拦下来，运营就只能回去写 SQL。界面上会标红，账上会记一笔负的 fee。
 	effective := time.Now().Truncate(time.Second)
 	if req.EffectiveFrom != nil && !req.EffectiveFrom.IsZero() {
 		effective = req.EffectiveFrom.Truncate(time.Second)
 	}
 	return s.repository.SavePrice(ctx, &repository.GalaxyPrice{
-		BizLine: bizLine, Kind: kind, Unit: unit, EffectiveFrom: effective,
+		BizLine: bizLine, Kind: kind, ModelID: modelID, Unit: unit, EffectiveFrom: effective,
 		Price: req.Price, Currency: defaultString(strings.TrimSpace(req.Currency), "CNY"),
-		ProviderShare: req.ProviderShare,
+		ProviderPrice: req.ProviderPrice, ProviderShare: req.ProviderShare,
 	})
 }
 
@@ -180,5 +229,5 @@ func (s *service) DeleteAdminPrice(ctx context.Context, req dto.DeletePriceReque
 	if kind == "" || unit == "" {
 		return errors.New("能力与计量单位都要填")
 	}
-	return s.repository.DeletePrice(ctx, bizLine, kind, unit, req.EffectiveFrom.Truncate(time.Second))
+	return s.repository.DeletePrice(ctx, bizLine, kind, strings.TrimSpace(req.ModelID), unit, req.EffectiveFrom.Truncate(time.Second))
 }

@@ -83,6 +83,7 @@ var pages = []managerdto.SaveResourceRequest{
 	{Code: "galaxySettings", Name: "运行参数", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settings", SortID: 76},
 	{Code: "galaxyModels", Name: "模型目录", ResourceType: manager.ResourcePage, PageURL: "/galaxy/models", SortID: 77},
 	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bridge-releases", SortID: 78},
+	{Code: "galaxyDesktopReleases", Name: "桌面客户端版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/desktop-releases", SortID: 79},
 
 	{Code: "settings", Name: "系统设置", ResourceType: manager.ResourceMenu, Icon: "SettingOutlined", SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", ResourceType: manager.ResourcePage, PageURL: "/settings/accounts", SortID: 91},
@@ -117,9 +118,10 @@ var pageParents = map[string]string{
 	"galaxyLeads":     "galaxyCustomer",
 	"galaxyReferrals": "galaxyCustomer",
 
-	"galaxySettings":       "galaxyPlatform",
-	"galaxyModels":         "galaxyPlatform",
-	"galaxyBridgeReleases": "galaxyPlatform",
+	"galaxySettings":        "galaxyPlatform",
+	"galaxyModels":          "galaxyPlatform",
+	"galaxyBridgeReleases":  "galaxyPlatform",
+	"galaxyDesktopReleases": "galaxyPlatform",
 
 	"settingsAccounts": "settings",
 	"settingsRoles":    "settings",
@@ -137,7 +139,7 @@ var operatorPages = []string{
 	"galaxyProbes", "galaxyMismatches", "galaxyReputation", "galaxyBans",
 	"galaxyKeys", "galaxyOrders", "galaxyPoints", "galaxyPackages", "galaxyPricing",
 	"galaxyAccounts", "galaxyDisputes", "galaxyLeads", "galaxyReferrals",
-	"galaxySettings", "galaxyModels", "galaxyBridgeReleases",
+	"galaxySettings", "galaxyModels", "galaxyBridgeReleases", "galaxyDesktopReleases",
 }
 
 func main() {

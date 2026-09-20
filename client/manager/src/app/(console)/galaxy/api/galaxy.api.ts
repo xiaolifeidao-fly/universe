@@ -1,5 +1,6 @@
 "use client";
 
+import axios from "axios";
 import { plainToInstance } from "class-transformer";
 import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";
 
@@ -697,8 +698,37 @@ export class BridgeReleaseView {
   updatedAt = "";
 }
 
+/** 两个桌面客户端的安装包下载地址。空串表示还没填，界面上那一格显示「未填写」。 */
+export class ClientDownloads {
+  /** 共享端 Nova。目前只有管理端展示它。 */
+  providerUrl = "";
+
+  /** 使用端 Orbit。使用端控制台的密钥页摆出来的就是这一条。 */
+  consumerUrl = "";
+}
+
+/**
+ * 「ai-bridge 版本」这一页的全部内容：命令行版 ai-bridge 的包，加上两个桌面客户端的下载地址。
+ *
+ * 两样东西合在一条接口里，因为它们是同一个问题的两半 ——「用户要装的东西从哪儿拿」。
+ * 客户端地址存在运行参数表里，但读它跟着这一页的授权走，不必再要一份「运行参数」的读权限；
+ * 改它才回到 /settings/save（写权限判在那条路上），键名由服务端一并给出，前端不自己拼。
+ */
+export class AdminBridgeReleasePage {
+  releases: BridgeReleaseView[] = [];
+
+  clients: ClientDownloads = new ClientDownloads();
+
+  providerSettingKey = "";
+
+  consumerSettingKey = "";
+
+  /** 改完最多多少秒在全部进程上生效 —— 使用端控制台读的是同一行，不是立刻跟着变。 */
+  propagationSeconds = 0;
+}
+
 export async function fetchBridgeReleases() {
-  return getDataList(BridgeReleaseView, "/galaxy/admin/bridge/releases");
+  return getData(AdminBridgeReleasePage, "/galaxy/admin/bridge/releases");
 }
 
 /**
@@ -728,6 +758,173 @@ export async function uploadBridgeRelease(
 /** 下架 / 重新上架。下架不删包：已经装上它的机器不受影响，节点也不会降级。 */
 export async function setBridgeReleaseStatus(releaseId: string, status: BridgeReleaseStatus) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/admin/bridge/releases/status", {
+    releaseId,
+    status,
+  });
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 桌面客户端（Nova / Orbit）发版 ---------- */
+
+export type DesktopReleaseStatus = "staging" | "published" | "withdrawn";
+
+/** 清单里的一个文件。真正的下载依据是服务端存下来的清单原文，这里只为了在页面上列出来。 */
+export class DesktopReleaseFile {
+  name = "";
+
+  size = 0;
+
+  /** electron-builder 打包时算的 base64，客户端下载完比对的就是它。 */
+  sha512 = "";
+}
+
+/**
+ * 一次桌面客户端发版：一个端 × 一个平台通道 × 一个版本一行。
+ *
+ * 和 ai-bridge 的发布包不是一回事：那边的包才三兆、经服务端、要验 Ed25519 签名；
+ * 这边的安装包一百多兆，浏览器拿签名地址直传 OSS，服务端只签地址、写清单、确认包到了没有。
+ * 客户端（electron-updater）读的是 OSS 上那份清单，不打任何接口。
+ */
+export class DesktopReleaseView {
+  /** dr_… */
+  releaseId = "";
+
+  /** nova=共享端 / orbit=使用端。 */
+  product = "";
+
+  /** mac / win / linux。决定 OSS 上那份清单叫什么名字。 */
+  channel = "";
+
+  version = "";
+
+  /** latest-mac.yml / latest.yml / latest-linux.yml。 */
+  manifestFile = "";
+
+  files: DesktopReleaseFile[] = [];
+
+  size = 0;
+
+  notes = "";
+
+  /**
+   * 缺省当成还没传完：字段万一没带回来，宁可少算一个「当前版本」，
+   * 也不要让运营以为客户端已经在更新到它了。
+   */
+  status: DesktopReleaseStatus = "staging";
+
+  /** 客户端现在会更新到的就是这一版。由服务端算，前端不自己比版本号。 */
+  current = false;
+
+  publishedBy = "";
+
+  publishedAt?: string;
+
+  createdAt = "";
+
+  updatedAt = "";
+}
+
+export class DesktopReleasePage {
+  releases: DesktopReleaseView[] = [];
+
+  /** 清单与安装包在对象存储上的目录，**含部署配置的 dirPrefix**。运营拿它拼客户端的更新地址。 */
+  objectRoot = "";
+
+  products: string[] = [];
+
+  channels: string[] = [];
+}
+
+export class DesktopReleaseUploadTarget {
+  name = "";
+
+  size = 0;
+
+  /** 上传时必须原样带上：它参与签名，对不上 OSS 直接拒。 */
+  contentType = "";
+
+  /** 短期有效的 PUT 直传地址。 */
+  url = "";
+}
+
+export class DesktopReleaseUpload {
+  releaseId = "";
+
+  product = "";
+
+  channel = "";
+
+  version = "";
+
+  uploads: DesktopReleaseUploadTarget[] = [];
+
+  expiresAt = "";
+}
+
+export async function fetchDesktopReleases() {
+  return getData(DesktopReleasePage, "/galaxy/admin/desktop/releases");
+}
+
+/**
+ * 发版第一步：把 electron-builder 出的 latest-*.yml 原文交上去，换回几个直传地址。
+ *
+ * 版本、文件名、大小、sha512 全部由服务端从清单解析 —— 那些值是打包时算出来的，
+ * 让人再填一遍只会填错。
+ */
+export async function prepareDesktopRelease(payload: {
+  product: string;
+  fileName: string;
+  manifest: string;
+  notes?: string;
+}) {
+  const response = await instance.post<ApiResponse<DesktopReleaseUpload>>(
+    "/galaxy/admin/desktop/releases/prepare",
+    payload,
+  );
+  return plainToInstance(DesktopReleaseUpload, unwrapApiResponse(response.data));
+}
+
+/**
+ * 把一个安装包直传到对象存储。
+ *
+ * **绕开共享的 axios 实例**，这是故意的：它带着 baseURL、管理端令牌和响应拦截器，
+ * 而这一次请求打的是对象存储的签名地址 —— 令牌不该发给第三方，那边回的也不是
+ * 我们那套 {code,data} 包封。
+ *
+ * Content-Type 必须原样带上服务端给的那个值：它参与签名，改一个字符 OSS 就拒。
+ */
+export async function uploadDesktopAsset(
+  target: DesktopReleaseUploadTarget,
+  file: File,
+  options: { onProgress?: (percent: number) => void; signal?: AbortSignal } = {},
+) {
+  await axios.put(target.url, file, {
+    headers: { "Content-Type": target.contentType },
+    // 包一百多兆，慢一点的上行要传十几分钟。共享实例那 10 秒的默认超时在这里毫无意义。
+    timeout: 0,
+    signal: options.signal,
+    onUploadProgress: options.onProgress
+      ? (event) => options.onProgress?.(Math.round((event.progress ?? 0) * 100))
+      : undefined,
+  });
+}
+
+/**
+ * 发版第二步：包都传完了，把清单写到对象存储上。
+ *
+ * **全网的客户端从这一刻起开始提示更新**，所以服务端会先 HEAD 一遍确认包真的在那儿。
+ */
+export async function publishDesktopRelease(releaseId: string) {
+  const response = await instance.post<ApiResponse<DesktopReleaseView>>(
+    "/galaxy/admin/desktop/releases/publish",
+    { releaseId },
+  );
+  return plainToInstance(DesktopReleaseView, unwrapApiResponse(response.data));
+}
+
+/** 下架 / 重新上架。下架把清单换回上一个在架版本，包不删 —— 已经更新过的人不受影响。 */
+export async function setDesktopReleaseStatus(releaseId: string, status: DesktopReleaseStatus) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/desktop/releases/status", {
     releaseId,
     status,
   });
@@ -843,18 +1040,42 @@ export async function revealPayoutAccount(payoutId: string) {
 /**
  * 价目表的一行。
  *
- * price 是**每百万单位的微分**：1,000,000 微分 = ¥1，所以「¥3 / 百万 token」
+ * 一行**两个价**：price 向使用者收，providerPrice 结给共享者，差额是平台毛利。
+ * 两个数各填各的 —— 上游价不再是下游价的一个百分比。
+ *
+ * 两个价都是**每百万单位的微分**：1,000,000 微分 = ¥1，所以「¥3 / 百万 token」
  * 存进来是 3,000,000。界面上按元显示，别把这两个量纲混了。
  */
 export class PriceView {
   kind = "";
 
+  /**
+   * 这一行管哪个模型。空串 = 该 kind 的**兜底价**，不是「一个叫空串的模型」。
+   * 取价先找模型自己的行，按单位找不到才回落到兜底行。
+   */
+  modelId = "";
+
   unit = "";
 
+  /** 对外单价：向使用者收多少。 */
   price = 0;
 
   currency = "CNY";
 
+  /** 运营填的结算单价。0 表示这一行还没迁过来，结算回落到 providerShare。 */
+  providerPrice = 0;
+
+  /**
+   * 共享者**实际**按多少结。providerPrice 填了就是它，没填就是回落算出来的那个数。
+   * 编辑时要拿它预填 —— 拿 providerPrice 预填的话，一行还没迁移的价被保存一次
+   * 就从「按七成」变成了「一分不给」。
+   */
+  settlePrice = 0;
+
+  /** 平台毛利率，万分之一（3000 = 30%）。负数是平台在倒贴。对外单价为 0 时是 0。 */
+  marginBps = 0;
+
+  /** 老口径分成比例。只在 providerPrice 为 0 时还参与计算，看到它就是「这行没迁」。 */
   providerShare = 0.7;
 
   effectiveFrom = "";
@@ -871,6 +1092,9 @@ export class PriceTableView {
 
   units: string[] = [];
 
+  /** 模型候选：模型目录里的（含已下架的）加上价目表里出现过的。同样是提示不是白名单。 */
+  models: string[] = [];
+
   /**
    * 近 30 天产生过用量、却查不到价的 (kind, unit)。
    * 这些用量的扣费与分成会**静默算 0**，不报错 —— 这一列就是那个告警。
@@ -884,17 +1108,21 @@ export async function fetchPrices() {
 
 export async function savePrice(payload: {
   kind: string;
+  /** 留空 = 改该 kind 的兜底价。 */
+  modelId: string;
   unit: string;
   price: number;
+  /** 结算单价。一律显式带上 —— 不带就是把这一行的结算价清成 0。 */
+  providerPrice: number;
   currency?: string;
-  providerShare: number;
   effectiveFrom?: string;
 }) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/admin/prices/save", payload);
   return unwrapApiResponse(response.data);
 }
 
-export async function deletePrice(payload: { kind: string; unit: string; effectiveFrom: string }) {
+/** modelId 在唯一键里，删除**一定要带**：不带就会去删兜底价那一行。 */
+export async function deletePrice(payload: { kind: string; modelId: string; unit: string; effectiveFrom: string }) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/admin/prices/delete", payload);
   return unwrapApiResponse(response.data);
 }
@@ -1547,7 +1775,10 @@ export type SettingGroup =
   | "risk"
   | "payout"
   | "referral"
-  | "compliance";
+  | "compliance"
+  // client 这一组不在「运行参数」页上画：两个客户端下载地址有自己的位置
+  // （「ai-bridge 版本」页顶上那张卡片），在两处都能改只会让人不知道该信哪一处。
+  | "client";
 
 /**
  * 一项可调参数。

@@ -9,7 +9,7 @@ import (
 // TestRevokeProviderKeyKeepsHash 盯住一把吊不掉的密钥。
 //
 // key_hash 上挂着 (biz_line, key_hash) 的唯一索引。吊销时顺手把它清空，
-// 第一把还吊得掉，第二把就去抢第一把留下的那个 ('galaxy','')，MySQL 回 1062，
+// 第一把还吊得掉，第二把就去抢第一把留下的那个 ('galaxy',”)，MySQL 回 1062，
 // 主人在控制台点「吊销」只看到一行红字，而那把该停的密钥还活着。
 // 单元测试里连不上真库，看不见 1062 —— 能看见的是这条 UPDATE 到底动了哪几列。
 func TestRevokeProviderKeyKeepsHash(t *testing.T) {

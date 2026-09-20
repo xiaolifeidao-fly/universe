@@ -6,13 +6,19 @@ import "github.com/redis/go-redis/v9"
 //
 // 为什么必须是一段脚本：这几步之间任何一处让别的请求插进来，都会出现
 // 「两个消费者抢到同一个最后的座位」或者「额度已经超了但单元已经入队」。
-// 消费者已绑定时（reuse=1）跳过座位判定，这是 90% 请求走的那条路径。
+//
+// 这里有两条时间线，长短不同，别混成一件事：
+//
+//	座位（seats ZSET）  谁正占着这台机器。空闲窗口很短（默认 1 分钟），
+//	                    主人界面上那颗「有 N 位使用者绑在这台上」数的就是它。
+//	绑定（bind key）    上次落在哪台。记得久得多（默认 30 分钟），只是**偏好**：
+//	                    回头客先试那台，位子被别人占满了就照常去挑别的机器。
 //
 // KEYS: 1 contrib  2 seats  3 bind  4 queue  5 req  6 body
-// ARGV: 1 rid 2 cid 3 consumerKey 4 seats 5 concurrency 6 reuse 7 bindTTL(s)
+// ARGV: 1 rid 2 cid 3 consumerKey 4 seats 5 concurrency 6 bindTTL(s)
 //
-//	8 seatTTL(ms) 9 nowMs 10 unitJSON 11 bodyTTL(s) 12 instance 13 deadlineMs
-//	14 estimateJSON 15 body 16 quotaCount
+//	7 seatTTL(ms) 8 nowMs 9 unitJSON 10 bodyTTL(s) 11 instance 12 deadlineMs
+//	13 estimateJSON 14 body 15 quotaCount
 //	之后每个单位 5 个：unit, usedKey, reservedKey, limit, estimate, expiry(s)
 var placeScript = redis.NewScript(`
 local contribKey, seatsKey, bindKey, queueKey, reqKey, bodyKey =
@@ -27,26 +33,28 @@ local cid          = ARGV[2]
 local consumerKey  = ARGV[3]
 local seats        = tonumber(ARGV[4])
 local concurrency  = tonumber(ARGV[5])
-local reuse        = tonumber(ARGV[6])
-local bindTTL      = tonumber(ARGV[7])
-local seatTTL      = tonumber(ARGV[8])
-local now          = tonumber(ARGV[9])
-local unitJSON     = ARGV[10]
-local bodyTTL      = tonumber(ARGV[11])
-local instance     = ARGV[12]
-local deadline     = ARGV[13]
-local estimateJSON = ARGV[14]
-local body         = ARGV[15]
-local quotaCount   = tonumber(ARGV[16])
+local bindTTL      = tonumber(ARGV[6])
+local seatTTL      = tonumber(ARGV[7])
+local now          = tonumber(ARGV[8])
+local unitJSON     = ARGV[9]
+local bodyTTL      = tonumber(ARGV[10])
+local instance     = ARGV[11]
+local deadline     = ARGV[12]
+local deadlineMs   = tonumber(ARGV[12]) or 0
+local estimateJSON = ARGV[13]
+local body         = ARGV[14]
+local quotaCount   = tonumber(ARGV[15])
 
 -- 过期座位先回收：座位是带 TTL 的粘性绑定，主人停机或消费者走了都不该一直占着。
 redis.call('ZREMRANGEBYSCORE', seatsKey, '-inf', now)
 
-if reuse == 0 then
-  local held = redis.call('ZSCORE', seatsKey, consumerKey)
-  if not held and redis.call('ZCARD', seatsKey) >= seats then
-    return {0, 'seats_full', ''}
-  end
+-- 座位闸门对「回头客」一视同仁。从前这里有一条 reuse==1 就整段跳过的快捷路径，
+-- 它成立的前提是绑定与座位同生共死 —— 拿着绑定回来的人必定还占着座位。
+-- 两条时间线拆开之后这个前提没了：绑定还在、座位早就过期，跳过闸门就意味着
+-- 一台 3 座的机器能被第 4 个人挤进来。还占着座位的人照样放行，ZSCORE 就是为他留的。
+local held = redis.call('ZSCORE', seatsKey, consumerKey)
+if not held and redis.call('ZCARD', seatsKey) >= seats then
+  return {0, 'seats_full', ''}
 end
 
 local inflight = redis.call('HINCRBY', contribKey, 'inflight', 1)
@@ -57,7 +65,7 @@ end
 
 -- 额度预留。任一维度不够就把已经预留的全部回滚 —— 三维同时生效，不存在部分预留。
 local reservedFields = {}
-local base = 17
+local base = 16
 for i = 0, quotaCount - 1 do
   local unit        = ARGV[base + i * 6]
   local usedKey     = ARGV[base + i * 6 + 1]
@@ -82,8 +90,19 @@ for i = 0, quotaCount - 1 do
   table.insert(reservedFields, {reservedKey, estimate, unit})
 end
 
-redis.call('ZADD', seatsKey, now + seatTTL, consumerKey)
-redis.call('SET', bindKey, cid, 'EX', bindTTL)
+-- 座位与绑定至少活到这条请求的截止时刻之后。空闲窗口算的是「最后一次活动**结束**
+-- 之后闲了多久」，而正在跑的请求本身就是活动。窗口比单次请求短的时候（现在默认 1 分钟，
+-- llm.chat 一条能跑 10 分钟）少了这一句，座位会在流还没推完时就过期：界面显示没人在用，
+-- 别的消费者还能挤进来，超过主人设定的座位数。结算时再收回到「现在 + 空闲窗口」。
+local seatUntil = now + seatTTL
+if deadlineMs + seatTTL > seatUntil then seatUntil = deadlineMs + seatTTL end
+local bindPX = bindTTL * 1000
+if seatUntil - now > bindPX then bindPX = seatUntil - now end
+redis.call('ZADD', seatsKey, seatUntil, consumerKey)
+redis.call('SET', bindKey, cid, 'PX', bindPX)
+-- run:<consumerKey> 是这个消费者在这台机器上还没结算的请求数。结算靠它分辨
+-- 「是不是最后一条」—— 同时跑着两条时，先结完的那条不能把座位收短。
+redis.call('HINCRBY', contribKey, 'run:' .. consumerKey, 1)
 redis.call('HSET', contribKey, 'seatsUsed', redis.call('ZCARD', seatsKey), 'lastBoundAt', now)
 
 redis.call('HSET', reqKey,
@@ -102,18 +121,31 @@ return {1, '', ''}
 // 两者分开存才能让「预留—结算」幂等（设计文档 5.3）。
 //
 // KEYS: 1 contrib  2 seats  3 bind  4 req
-// ARGV: 1 consumerKey 2 releaseSeat 3 state 4 quotaCount
+// ARGV: 1 consumerKey 2 releaseSeat 3 state 4 nowMs 5 seatTTL(ms) 6 bindTTL(ms) 7 quotaCount
 //
 //	之后每个单位 6 个：unit, usedKey, reservedKey, estimate, actual, expiry
+//	最后 1 个：cid
 var settleScript = redis.NewScript(`
 local contribKey, seatsKey, bindKey, reqKey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
 local consumerKey = ARGV[1]
 local releaseSeat = tonumber(ARGV[2])
 local state       = ARGV[3]
-local quotaCount  = tonumber(ARGV[4])
+local now         = tonumber(ARGV[4])
+local seatTTL     = tonumber(ARGV[5])
+local bindTTL     = tonumber(ARGV[6])
+local quotaCount  = tonumber(ARGV[7])
 
 if redis.call('HGET', reqKey, 'state') == 'settled' then
   return 0
+end
+
+-- 这个消费者在这台机器上还剩几条没结算的请求。放置时 +1，这里 -1，
+-- 减到 0 才算「他真的闲下来了」，座位的空闲计时从这一刻开始走。
+-- 计数只在放置成功之后加，所以脚本里那几条回滚返回的路径不会把它带偏。
+local running = redis.call('HINCRBY', contribKey, 'run:' .. consumerKey, -1)
+if running <= 0 then
+  redis.call('HDEL', contribKey, 'run:' .. consumerKey)
+  running = 0
 end
 
 local inflight = redis.call('HINCRBY', contribKey, 'inflight', -1)
@@ -121,7 +153,7 @@ if inflight < 0 then
   redis.call('HSET', contribKey, 'inflight', 0)
 end
 
-local base = 5
+local base = 8
 for i = 0, quotaCount - 1 do
   local unit        = ARGV[base + i * 6]
   local usedKey     = ARGV[base + i * 6 + 1]
@@ -147,10 +179,21 @@ for i = 0, quotaCount - 1 do
   end
 end
 
+local cid = ARGV[base + quotaCount * 6]
 if releaseSeat == 1 then
   redis.call('ZREM', seatsKey, consumerKey)
-  if redis.call('GET', bindKey) == ARGV[5 + quotaCount * 6] then
+  redis.call('HDEL', contribKey, 'run:' .. consumerKey)
+  if redis.call('GET', bindKey) == cid then
     redis.call('DEL', bindKey)
+  end
+elseif running == 0 then
+  -- 最后一条在途请求刚结束，把放置时按截止时刻撑长的座位收回到「现在 + 空闲窗口」。
+  -- XX 只改已经存在的成员：座位可能已经被主人摘掉，或者随心跳超时连 key 一起过期了，
+  -- 结算不该把它凭空加回来 —— 那会留下一个没有 TTL、永远不掉的座位。
+  redis.call('ZADD', seatsKey, 'XX', now + seatTTL, consumerKey)
+  -- 绑定走自己那条更长的时间线：座位让出去了，「上次落在哪台」还记着。
+  if redis.call('GET', bindKey) == cid then
+    redis.call('PEXPIRE', bindKey, bindTTL)
   end
 end
 redis.call('HSET', contribKey, 'seatsUsed', redis.call('ZCARD', seatsKey))

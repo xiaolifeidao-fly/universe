@@ -28,13 +28,22 @@ type Config struct {
 	ContractVersion int
 
 	PlatformSeatLimit int
-	BindIdleTTL       time.Duration
-	SpillWait         time.Duration
-	MaxWait           time.Duration
-	HeartbeatTimeout  time.Duration
-	BodyTTL           time.Duration
-	MaxPlaceAttempts  int
-	Weights           ScoreWeights
+	// BindIdleTTL 座位的空闲窗口：消费者停手多久之后不再算「占着这台机器」。
+	// 闲置从**最后一条请求结束**起算，在途请求不计入 —— 放置时座位会被撑到
+	// 「截止时刻 + 这个窗口」。它同时是共享设置页那颗「有 N 位使用者绑在这台上」
+	// 牌子的消失时间，所以不能配长：主人停手半小时还看着牌子挂在那儿，只会以为是卡了。
+	BindIdleTTL time.Duration
+	// AffinityTTL「上次落在哪台」记多久。它和座位是两条时间线：座位让出去了，
+	// 偏好还记着，下一条请求先去敲那台的门 —— 敲得开就接着用（上游 prompt cache
+	// 还热着），位子被别人占了就照常去挑别的机器。它只影响挑机器的顺序，
+	// 不占资源、不上界面，所以可以比座位长得多。
+	AffinityTTL      time.Duration
+	SpillWait        time.Duration
+	MaxWait          time.Duration
+	HeartbeatTimeout time.Duration
+	BodyTTL          time.Duration
+	MaxPlaceAttempts int
+	Weights          ScoreWeights
 
 	// 密钥有效期与冻结期。
 	KeyTTL         time.Duration
@@ -77,7 +86,20 @@ type Config struct {
 	//
 	// 不配就是空串，控制台那一块直接不显示：安装包托管在哪儿是部署方的事，
 	// 这里派生不出来，猜一个地址只会换来一次 404。
+	//
+	// 源头有两个，叠加关系：配置文件里的 galaxy.consumer_client_download_url 是默认值，
+	// 后台「运行参数」的 client.consumer_download_url 覆盖它（管理端那一页就是改这一行）。
 	ConsumerClientDownloadURL string
+
+	// ProviderClientDownloadURL 共享端桌面客户端（Nova）的下载地址。
+	//
+	// 和上面那个成对，但**只有数据库这一个源头**（照 ConsumerReferralBps 的先例）：
+	// 它是这次为管理端展示加的，还没有任何一个服务从配置文件里读它，
+	// 再开一个 galaxy.provider_client_download_url 出来，等于一上来就摆两个都要维护
+	// 而其中一个永远没人填的地方。真需要预置时再补配置文件那一层。
+	//
+	// 现在只有管理端在展示它 —— 共享端控制台那一块要不要摆，是另一件事。
+	ProviderClientDownloadURL string
 
 	// UsageMismatchRatio 节点自报与 Hub 解析的偏差告警阈值。
 	UsageMismatchRatio float64
@@ -141,7 +163,8 @@ func DefaultConfig() Config {
 	return Config{
 		ContractVersion:          1,
 		PlatformSeatLimit:        10,
-		BindIdleTTL:              30 * time.Minute,
+		BindIdleTTL:              time.Minute,
+		AffinityTTL:              30 * time.Minute,
 		SpillWait:                3 * time.Second,
 		MaxWait:                  10 * time.Second,
 		HeartbeatTimeout:         45 * time.Second,
@@ -175,6 +198,14 @@ func (c Config) withDefaults() Config {
 	}
 	if c.BindIdleTTL <= 0 {
 		c.BindIdleTTL = defaults.BindIdleTTL
+	}
+	if c.AffinityTTL <= 0 {
+		c.AffinityTTL = defaults.AffinityTTL
+	}
+	if c.AffinityTTL < c.BindIdleTTL {
+		// 偏好短于座位没有意义：座位还占着、偏好先忘了，下一条请求会去挑别的机器，
+		// 而这台的座位仍旧记在他名下 —— 一个人同时占住两台。
+		c.AffinityTTL = c.BindIdleTTL
 	}
 	if c.SpillWait <= 0 {
 		c.SpillWait = defaults.SpillWait
@@ -396,6 +427,9 @@ type Service interface {
 	ListLeads(ctx context.Context, status string, offset, limit int) (dto.LeadPage, error)
 	HandleLead(ctx context.Context, req dto.HandleLeadRequest) error
 	ListPortalModels(ctx context.Context, listedOnly bool) ([]dto.PortalModelView, error)
+	// ProviderModels 共享端的模型页：平台在卖哪些模型、跑它们各自记多少积分。
+	// 只给**结算价** —— 对外价和毛利不在这条接口里，共享者拿不到也就反推不出抽成。
+	ProviderModels(ctx context.Context, ownerUserID string) ([]dto.ProviderModelView, error)
 	SavePortalModel(ctx context.Context, req dto.SaveModelRequest) error
 	DeletePortalModel(ctx context.Context, modelID string) error
 
@@ -502,6 +536,18 @@ type Service interface {
 	PublishBridgeRelease(ctx context.Context, req dto.PublishBridgeReleaseRequest) (dto.BridgeReleaseView, error)
 	SetBridgeReleaseStatus(ctx context.Context, req dto.SetBridgeReleaseStatusRequest) error
 
+	// ---------- 桌面客户端（Nova / Orbit）的版本分发 ----------
+	//
+	// 只有运营这三条。客户端那一侧走 electron-updater，直接读 OSS 上公开读目录里的
+	// 清单，**不经过服务端的任何接口** —— 所以这里没有「取更新」那种方法。
+	ListDesktopReleases(ctx context.Context) (dto.DesktopReleasePage, error)
+	// PrepareDesktopRelease 第一步：收下 electron-builder 出的清单，登记这一版，回几个直传地址。
+	PrepareDesktopRelease(ctx context.Context, req dto.PrepareDesktopReleaseRequest) (dto.DesktopReleaseUpload, error)
+	// PublishDesktopRelease 第二步：确认包真的在对象存储上了，再把清单发出去。
+	PublishDesktopRelease(ctx context.Context, req dto.PublishDesktopReleaseRequest) (dto.DesktopReleaseView, error)
+	// SetDesktopReleaseStatus 下架 / 重新上架。改的是「对外那份清单指向谁」，不删包。
+	SetDesktopReleaseStatus(ctx context.Context, req dto.SetDesktopReleaseStatusRequest) error
+
 	// ---------- 平台运营（manager 后台） ----------
 	AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeView, error)
 	// BanNode 平台封禁。和主人自己撤销的区别：封禁主人解不开。
@@ -575,8 +621,9 @@ type Service interface {
 	Sweep(ctx context.Context) error
 	// RunProbes 跑一批待比对的抽检。定时任务调用，不在请求路径上。
 	RunProbes(ctx context.Context, limit int) (int, error)
-	// SeedPrices 写入某个 kind 的「单位 → 单价」表。定价是运营动作，由初始化命令调用。
-	SeedPrices(ctx context.Context, kind string, prices map[contract.MeterUnit]int64, providerShare float64) error
+	// SeedPrices 写入某个 kind 的「单位 → 单价」表：prices 对外收，providerPrices 结算给共享者。
+	// 定价是运营动作，由初始化命令调用。
+	SeedPrices(ctx context.Context, kind string, prices, providerPrices map[contract.MeterUnit]int64) error
 }
 
 // Ports 是共享池核心的全部外部依赖。做成一个结构体而不是一串参数：
@@ -597,6 +644,9 @@ type Ports struct {
 	// Uploader 只有管理端装配它：上传 ai-bridge 安装包是运营动作，
 	// galaxy-api 上没有任何路径需要往对象存储里写整个文件。
 	Uploader ObjectUploader
+	// Desktop 同样只有管理端装配：桌面客户端发版是运营动作。
+	// 客户端自己**不经过任何接口**取更新，它直接读 OSS 上那个公开读目录里的清单。
+	Desktop DesktopStore
 }
 
 type service struct {
@@ -605,12 +655,14 @@ type service struct {
 	signer     ObjectSigner
 	// uploader 只有管理端进程装配，其余进程是 nil：上传安装包是运营动作。
 	uploader ObjectUploader
-	notifier   ProviderNotifier
-	replayer   ShadowReplayer
-	payment    PaymentVerifier
-	audit      AuditConfig
-	metrics    Metrics
-	kinds      *KindRegistry
+	// desktop 同上：桌面客户端发版只在管理端做。
+	desktop  DesktopStore
+	notifier ProviderNotifier
+	replayer ShadowReplayer
+	payment  PaymentVerifier
+	audit    AuditConfig
+	metrics  Metrics
+	kinds    *KindRegistry
 	// config 是**配置文件给的那份**，只当默认值用。
 	// 读参数一律走 cfg() —— 它叠加了后台改过的项，见 settings.go。
 	config Config
@@ -655,6 +707,7 @@ func New(database *gorm.DB, ports Ports, kinds *KindRegistry, config Config) Ser
 		control:    ports.Control,
 		signer:     ports.Signer,
 		uploader:   ports.Uploader,
+		desktop:    ports.Desktop,
 		notifier:   ports.Notifier,
 		replayer:   ports.Replayer,
 		payment:    ports.Payment,
@@ -676,6 +729,7 @@ func Migrate(database *gorm.DB) error {
 }
 
 func (s *service) Kinds() []contract.KindSpec { return s.kinds.List() }
+
 // Config 当前生效的参数，**含后台改过的那些**。
 // 回 s.config（配置文件那份）会让门户和控制台显示一套和实际执行不一样的值。
 func (s *service) Config() Config { return s.cfg() }

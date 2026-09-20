@@ -73,10 +73,12 @@ client/galaxy/
 │   ├── eleapi/register.ts          按端选择的 API 契约注册表
 │   ├── eleapi/bridge.api.ts        类型化页面调用类
 │   ├── eleapi/bridge.model.ts      入参与返回值的共享类型
+│   ├── eleapi/update.api.ts        壳自己的版本更新，两端都注册
 │   └── electron/
 │       ├── main.ts                通用窗口、Next 生命周期、来源校验
 │       ├── preload.ts             根据契约自动 exposeInMainWorld
-│       └── rpc.ts                 自动注册 IPC 与暴露方法
+│       ├── rpc.ts                 自动注册 IPC 与暴露方法
+│       └── update/                electron-updater 的状态机、更新地址与它的实现
 ├── assets/icons/                   两个端的应用图标母版（nova.svg / orbit.svg）
 ├── scripts/                        工作区构建、启动、验证工具
 └── package.json
@@ -154,6 +156,7 @@ macOS 上窗口用 `titleBarStyle: 'hiddenInset'`，左栏顶部空出 34px 给�
 - Orbit 不暴露 bridge，也不注册 bridge IPC；它只有 `ClientConfigApi`（见下文「Orbit 本机 API」）。
 - common 不负责页面、不接管业务 HTTP、不持有平台登录 token。
 - 两端拥有独立 appId、userData、登录态、窗口与本机服务端口（Nova 17898，Orbit 17899）。
+- 壳的自动更新两端共用一份（`UpdateApi`），地址由控制台在探活那一跳报回来，见「自动更新」。
 - Electron 使用 sandbox、contextIsolation，禁用 nodeIntegration；Nova 的 IPC 校验窗口、frame、来源和接口白名单。
 
 ai-bridge 已从 `galaxy/ai-bridge` 完整迁入 `nova/electron/ai-bridge`。
@@ -255,7 +258,7 @@ npm run package:nova    →  release/nova/           安装包，不含 Next 服
 |---|---|
 | `build.sh` | 只构建界面，产出 `.desktop/<端>/`。不编 Electron、不编 Rust 桥接 —— 只跑界面的服务器不该为发一个前端装 Rust 工具链 |
 | `package.sh` | 构建 + 打成 `<端>-webview-linux-x64.tar.gz`（含 `start.sh` / `stop.sh`） |
-| `unpack-release.sh` | 在服务器上解包。**放在 tar.gz 旁边跑**，把目录整个换掉、只留 `runtime.json` 与 `logs/`；服务还在跑就拒绝动手 |
+| `unpack-release.sh` | 在服务器上解包。**放在 tar.gz 旁边跑**，把目录整个换掉、只留 `runtime.json` 与 `logs/`。不带参数时服务还在跑就拒绝动手；`--swap` 自己停、换、起，`--stage` 只解包不碰线上 |
 | `start.sh` / `stop.sh` | 起停那份 standalone。pid 在 `run/`，日志在 `logs/`。写的是 POSIX sh，`sh start.sh` 掉进 dash 也不会炸 |
 
 解包后就是这几样，没有多余的层级：
@@ -270,6 +273,21 @@ npm run package:nova    →  release/nova/           安装包，不含 Next 服
 ├── start.sh
 └── stop.sh
 ```
+
+换版本不用先手工 `stop.sh`：
+
+```sh
+./unpack-release.sh --swap     # 解到旁边 → stop → 换目录 → start
+./unpack-release.sh --stage    # 只解包，线上照跑；晚点再 --swap 换过去
+```
+
+「先解包再 stop」这个顺序**直接做是不行的**：解包会把整个目录换掉，`run/*.pid` 跟着一起没，
+`stop.sh` 再跑就找不到进程 —— 老进程成了孤儿还占着端口，新的怎么都起不来。`--swap` 就是
+把这个顺序做对：先解到旁边的 `.staging-<包名>/`，停下来之后才 `mv` 换目录（同一个盘，瞬间完成），
+所以停机窗口里只剩 stop 和 start，解包、校验、盘满都挪到了服务还活着的时候。上一版留在
+`<包名>.prev`，回滚就是一条 `mv`；新版本没起来时脚本会把那条命令打出来。`--stage` 把解包
+单独拎出来，可以提前很久做，`--swap` 时认出暂存的是同一个包就直接用，不是就重新解一份。
+首次部署不自动起 —— 那会儿 `runtime.json` 刚从模板生成，`SERVER_TARGET` 还是打包机的值。
 
 `unpack-release.sh` 是**整个换掉**而不是覆盖解包：tar 只写包里有的文件，上一次留下的
 多余文件它一个都不删。踩过的那次是有人在包里 `npm install`，npm 按清单把「多余的」
@@ -423,7 +441,67 @@ standalone 同样不打入原始 `.env`，仅提取公开的 `SERVER_TARGET` 与
 测试包括本机 bridge 白名单/凭据/错误处理，以及两端 standalone 页面、静态资源、
 路由分离、Next.js 业务代理的本机模拟验证（验的就是要部署上去的那份包），不操作真实账户。
 macOS arm64 可构建未签名 `.app`；Windows/Linux 安装包与真实账户业务流程需在目标环境验收。
-发布签名、证书及自动更新服务尚未配置。
+**代码签名证书仍未配置** —— 这一条现在有实际后果，见下一节。
+
+
+## 自动更新（两端共用）
+
+界面部署在远端，天天都是最新的；**壳不是**。壳的更新就是这一节：
+有新版本弹一次提示，用户点了才下载，下完重启装上。非强制 —— 点「稍后再说」
+就什么都不发生，连带宽都不占。
+
+| 在哪儿 | 做什么 |
+|---|---|
+| `common/eleapi/update.api.ts` / `update.model.ts` | 契约与那一个 `UpdateStatus` 结构。两端都注册（`registerApi`），页面只按 `state` 画 |
+| `common/electron/update/runtime.ts` | electron-updater 的事件流收敛成 `UpdateStatus`；不自动下载、下完不自动重启 |
+| `common/electron/update/feed.ts` | 更新地址从哪儿来、什么样的地址不收。`node --test` 守着（`npm run test:desktop`） |
+| `common/electron/main.ts` | 起更新器、把 `UpdateImpl` 补进实现表 —— **各端的 `impl/register.ts` 里没有它**，更新是壳的能力，不分端 |
+| `<端>/webview/src/components/shell/UpdateGate.tsx` | 提示、进度、右下角那个胶囊。挂在 `GalaxyShell` 里，浏览器里整块不画 |
+
+### 更新地址不冻进安装包
+
+地址由**界面那一侧**给：壳启动本来就要探 `<base>/api/desktop-health`，那一跳顺带把
+这个端的更新目录带回来（部署机 `runtime.json` 里的 `GALAXY_UPDATE_FEED_URL` + `/<端>`）。
+
+```
+runtime.json  GALAXY_UPDATE_FEED_URL = https://<桶>.<endpoint>/<oss.dirPrefix>/desktop
+     ↓  /api/desktop-health
+桌面壳        https://…/desktop/nova/latest-mac.yml、…/Nova-0.1.1-arm64.zip
+```
+
+冻进安装包的话，换一次桶就等于所有老版本永远收不到更新 —— 而更新地址恰恰是那种
+「换了之后老包还得能用」的东西。启动环境里的 `GALAXY_<端>_UPDATE_FEED` /
+`GALAXY_UPDATE_FEED` 仍然覆盖它（对着本地目录调更新流程时用）。没配就是这个部署
+不检查更新，**不是故障**，界面上整块不画。
+
+`electron/package.json` 里那条 `publish.url`（`https://galaxy.invalid/…`）只是为了让
+electron-builder 生成 `latest-*.yml`，运行时不会被读到 —— 壳在检查之前一定先
+`setFeedURL`。
+
+### 发版
+
+先把版本号抬上去：**壳比的是 `<端>/electron/package.json` 的 `version`**（`app.getVersion()`），
+两个端各记各的。忘了改这一行，打出来的包和在架的那一版同号，装出去的客户端一律认为
+自己已经是最新的 —— 而且不报任何错。
+
+包传到 OSS 上由运营在管理端做（`/galaxy/desktop-releases`）：把 `release/<端>/` 下的
+`latest-*.yml` 和它点名的安装包拖进去，写一段版本说明（会写进清单的 `releaseNotes`，
+客户端提示里原样展示），点发布。包一百多兆，浏览器拿签名地址直传 OSS，不经过服务端；
+服务端只确认包到了、把清单写到固定路径上 —— **清单写出去的那一刻，全网客户端才会
+开始提示更新**。桶那一侧要两条：发布目录公开读、允许管理端那个域名跨域 PUT。
+
+`.blockmap` 不用传：客户端关掉了差量下载（`disableDifferentialDownload`），
+省下的那点流量换来的是一条更容易出错、且只在「上一版恰好还在本机缓存里」时才生效的路径。
+
+### macOS 上装不上的那一半
+
+Squirrel.Mac 只接受**签过名**的应用。没有 Developer ID 证书时，包下载得到、装不上：
+MacUpdater 会先派发 `update-downloaded`、再在 error 事件里吐
+`Could not get code signature for running application`。
+
+所以 runtime 不把它当失败：状态留在 `downloaded`，只把 `manualInstall` 立起来，
+界面上的「立即重启」换成「打开安装包」，用户自己拖一次。配上证书之后这条路自然就不走了，
+不需要改代码。Windows（NSIS）与 Linux（AppImage）是完整的自动下载 + 自动安装 + 重启。
 
 
 ## 本机 API 使用方式（参考 Maserati）

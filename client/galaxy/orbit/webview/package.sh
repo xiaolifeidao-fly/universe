@@ -43,8 +43,11 @@ Galaxy Orbit 界面（使用端）
 跑 npm install —— 装不动（@galaxy/common 只在工作区里有），还会把备好的
 依赖当多余的裁掉（包括 next），之后 start.sh 就起不来了。
 
-重新部署：先 ./stop.sh，再跑 unpack-release.sh（它会整个换掉这个目录，
-只保留 runtime.json 和 logs/）。
+重新部署：在 tar.gz 旁边跑 unpack-release.sh --swap —— 它先把新版本解到
+旁边，再 stop、换目录、start，不用先手工停。上一版留在 <目录>.prev，回滚
+就是一条 mv。想把解包和停机分成两步：先 --stage（线上照跑），晚点再 --swap。
+不带参数是老用法：只换目录、不碰进程，服务还在跑就拒绝动手。
+两种用法都只保留 runtime.json 和 logs/。
 
 监听地址用 PORT 和 WEBVIEW_HOST 改；默认那个正是 nginx 里 galaxy_orbit 指着的地址。
 NOTE

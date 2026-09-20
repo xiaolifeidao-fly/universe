@@ -490,6 +490,9 @@ func (c *ControlPlane) ReleaseBinding(ctx context.Context, consumerKey, lane, ci
 	pipe := c.client.TxPipeline()
 	pipe.Del(ctx, c.bindKey(consumerKey, lane))
 	pipe.ZRem(ctx, c.seatsKey(cid), consumerKey)
+	// 在途计数跟着一起清：留着它，这个消费者往后每次结算都以为「还有别的请求在跑」，
+	// 于是座位再也收不回到「现在 + 空闲窗口」。
+	pipe.HDel(ctx, c.contribKey(cid), "run:"+consumerKey)
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -502,7 +505,6 @@ func (c *ControlPlane) Place(ctx context.Context, command galaxy.PlaceCommand) (
 	argv := []any{
 		command.RID, command.CID, command.ConsumerKey,
 		command.Seats, command.Seats * command.SeatConcurrency,
-		boolToInt(command.ReuseBinding),
 		int64(command.BindTTL.Seconds()), command.SeatTTL.Milliseconds(), now.UnixMilli(),
 		string(command.Unit), int64(command.BodyTTL.Seconds()), command.Instance,
 		command.Deadline.UnixMilli(), encode(command.Estimate), string(command.Body),
@@ -691,7 +693,21 @@ func (c *ControlPlane) Settle(ctx context.Context, command galaxy.SettleCommand)
 	}
 	sortUnits(ordered)
 
-	argv := []any{command.ConsumerKey, boolToInt(command.ReleaseSeat), string(command.State), len(ordered)}
+	seatTTL := command.SeatTTL
+	if seatTTL <= 0 {
+		// 兜底：没给窗口就按一分钟收。给 0 会让座位当场过期。
+		seatTTL = time.Minute
+	}
+	bindTTL := command.BindTTL
+	if bindTTL < seatTTL {
+		// 绑定只是「上次落在哪台」的偏好，短于座位没有意义：座位还占着、
+		// 偏好先忘了，下一条请求会去挑别的机器，而这台的座位仍记在他名下。
+		bindTTL = seatTTL
+	}
+	argv := []any{
+		command.ConsumerKey, boolToInt(command.ReleaseSeat), string(command.State),
+		time.Now().UnixMilli(), seatTTL.Milliseconds(), bindTTL.Milliseconds(), len(ordered),
+	}
 	for _, unit := range ordered {
 		window := command.WindowKeys[unit]
 		argv = append(argv, unit,

@@ -438,7 +438,11 @@ type UsageLine struct {
 	// Provider 是这笔用量走的上游（claude_oauth / codex_chatgpt 等）。
 	// 同一个 kind 下 Claude 与 Codex 分行列出：账单要能看出钱花在哪个上游。
 	Provider string `json:"provider"`
-	Unit     string `json:"unit"`
+	// Model 这笔用量调的是哪个模型。单价按模型定，所以账单也必须按模型分行 ——
+	// 合并成一行的话，那一行的 UnitPrice 只能是几个模型里随便一个的价。
+	// 单元行被清掉的老记录是空串。
+	Model string `json:"model"`
+	Unit  string `json:"unit"`
 	// Amount 该单位的累计量；Calls 是产生它的请求数。
 	Amount int64 `json:"amount"`
 	Calls  int64 `json:"calls"`
@@ -456,6 +460,44 @@ type UsageReport struct {
 }
 
 // ---------- 提供者视图 ----------
+
+// ProviderModelView 共享端「模型」那一页的一行：这个模型是什么，跑它能记多少积分。
+//
+// **只有结算价。** 对外价和平台毛利不在这条接口里 —— 两个数一相除就是抽成比例，
+// 而抽成不是共享者要做的决定。他们要做的决定是「开放哪些模型」，
+// 那只需要知道每个模型记多少积分，以及自己的机器上有没有它。
+type ProviderModelView struct {
+	ModelID     string `json:"modelId"`
+	DisplayName string `json:"displayName"`
+	Vendor      string `json:"vendor"`
+	Family      string `json:"family"`
+	Kind        string `json:"kind"`
+	// 说明性的几样，和使用端模型广场同一份出处（zt_galaxy_model），
+	// 免得两端对同一个模型的介绍不一样。
+	ContextTokens   int64    `json:"contextTokens"`
+	MaxOutputTokens int64    `json:"maxOutputTokens"`
+	Tags            []string `json:"tags,omitempty"`
+	Summary         string   `json:"summary"`
+	BadgeText       string   `json:"badgeText,omitempty"`
+	BadgeTone       string   `json:"badgeTone,omitempty"`
+	// 四档**结算**单价：跑这个模型每百万 token 记多少微积分。
+	// 四个桶互不重叠，口径和计量单位一一对应。
+	InputPrice      int64 `json:"inputPrice"`
+	OutputPrice     int64 `json:"outputPrice"`
+	CachePrice      int64 `json:"cachePrice"`
+	CacheWritePrice int64 `json:"cacheWritePrice"`
+	// Priced 这四个数是这个模型自己的价，还是回落到了该 kind 的兜底价。
+	// 界面要能说出区别：回落期间所有模型显示同一个数字，不说清就像页面坏了。
+	Priced bool `json:"priced"`
+	// Allowed 这个人名下至少有一条贡献接这个模型（按各自的允许/拒绝名单算）。
+	Allowed bool `json:"allowed"`
+	// Available 至少有一台机器的上游**真的**有这个模型。这是节点报上来的事实，
+	// 和 Allowed 那个「主人定的规则」是两回事：允许了但上游没有，照样接不到单。
+	Available bool `json:"available"`
+	// Earned7d 最近 7 天这个模型给这个人记了多少微积分。
+	Earned7d  int64 `json:"earned7d"`
+	SortOrder int   `json:"sortOrder"`
+}
 
 type ContributionView struct {
 	CID         string   `json:"cid"`

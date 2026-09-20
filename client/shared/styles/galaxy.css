@@ -1295,6 +1295,48 @@ textarea.gx-input {
   }
 }
 
+/* ─── 桌面壳的更新胶囊 ─── */
+/*
+ * 弹窗被关掉之后留在右下角的那一小条（components/shell/UpdateGate.tsx）：
+ * 下载还在后台跑，得有个地方看进度、也得有路回到弹窗。
+ *
+ * 固定在视口右下角而不是塞进左栏：左栏那一列是导航，往里插一条会跟着页面滚，
+ * 而这件事和当前在看哪一页无关。层级压在 antd 的浮层之下（modal 是 1000），
+ * 弹窗开着的时候它本来也不画。
+ */
+.gx-update-pill {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border: 1px solid var(--gx-line-strong);
+  border-radius: 999px;
+  background: var(--gx-surface);
+  box-shadow: 0 10px 30px var(--gx-line-strong);
+  color: var(--gx-soft);
+  font-family: var(--gx-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gx-update-pill:hover {
+  color: var(--gx-ink);
+  border-color: var(--gx-border);
+}
+
+.gx-update-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gx-accent);
+  box-shadow: 0 0 0 3px var(--gx-accent-soft);
+  animation: gxPulse 2s infinite;
+}
+
 /* ─── antd 对齐 ─── */
 /*
  * antd 只用在 Modal / Select / message / Popconfirm 这几个「浮层」上：

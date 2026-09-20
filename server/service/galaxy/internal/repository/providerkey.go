@@ -42,7 +42,7 @@ func (r *GalaxyRepository) ListProviderKeysByOwner(ctx context.Context, bizLine,
 //
 // 抹掉 hash 看着像是「吊销了就别留着」，实际会砸掉两件事。一是 1062：
 // uk_gx_provider_key_hash 是 (biz_line, key_hash) 上的唯一索引，把吊销的行统统
-// 置成空串，等于让它们去抢同一个 ('galaxy','') —— 第一把吊销得掉，第二把就撞死，
+// 置成空串，等于让它们去抢同一个 ('galaxy',”) —— 第一把吊销得掉，第二把就撞死，
 // 主人的密钥列表里从此有一把吊不掉的密钥。二是上面 FindProviderKeyByHash 那条
 // 路：hash 没了就查不到这一行，拿着旧密钥的机器只会收到「接入密钥无效」，
 // 而它真正需要听到的是「已经被吊销了，去控制台重新签发一把」—— 一句让人怀疑

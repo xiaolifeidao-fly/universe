@@ -39,6 +39,35 @@ type BridgeReleaseManifest struct {
 	Platforms []BridgeReleaseAsset `json:"platforms"`
 }
 
+// ---------- 客户端安装包 ----------
+
+// ClientDownloads 两个桌面客户端的安装包下载地址。
+//
+// 空串的含义是「这一块不显示」：安装包托管在哪儿服务端派生不出来，
+// 猜一个只会换来一次 404。
+type ClientDownloads struct {
+	// ProviderURL 共享端 Nova。
+	ProviderURL string `json:"providerUrl"`
+	// ConsumerURL 使用端 Orbit。使用端控制台的密钥页摆的就是它。
+	ConsumerURL string `json:"consumerUrl"`
+}
+
+// AdminBridgeReleasePage 管理端那一页要的全部东西：ai-bridge 的包，加上两个客户端的下载地址。
+//
+// 两样东西合在一条接口里，是因为它们本来就是同一个问题的两半（「用户要装的东西从哪儿拿」），
+// 而且这样运营只要有这一页的读权限就都看得到 —— 客户端地址虽然存在运行参数表里，
+// 但读它不必再要一份「运行参数」的授权。
+type AdminBridgeReleasePage struct {
+	Releases []BridgeReleaseView `json:"releases"`
+	Clients  ClientDownloads     `json:"clients"`
+	// ProviderSettingKey / ConsumerSettingKey 改地址时要提交给 /settings/save 的键名。
+	// 由服务端给而不是前端自己拼：键名只在一处定义，改名时不会有一边悄悄留在旧名字上。
+	ProviderSettingKey string `json:"providerSettingKey"`
+	ConsumerSettingKey string `json:"consumerSettingKey"`
+	// PropagationSeconds 改完最多多少秒在全部进程上生效（使用端控制台读的是同一行）。
+	PropagationSeconds int `json:"propagationSeconds"`
+}
+
 // BridgeReleaseView 运营看到的一行，含已下架的。
 type BridgeReleaseView struct {
 	ReleaseID   string     `json:"releaseId"`

@@ -80,6 +80,7 @@ const FALLBACK_PAGE_TITLES: Record<string, [TranslationKey, TranslationKey]> = {
   "/galaxy/settlement": ["nav.galaxySettlement", "galaxy.settlement.subtitle"],
   "/galaxy/ledger": ["nav.galaxyLedger", "galaxy.ledger.subtitle"],
   "/galaxy/bridge-releases": ["nav.galaxyBridgeReleases", "galaxy.bridgeReleases.subtitle"],
+  "/galaxy/desktop-releases": ["nav.galaxyDesktopReleases", "galaxy.desktopReleases.subtitle"],
   "/settings/accounts": ["accounts.title", "accounts.subtitle"],
   "/settings/roles": ["roles.title", "roles.subtitle"],
 };
@@ -161,6 +162,7 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
       { key: "/galaxy/settings", labelKey: "nav.galaxySettings" },
       { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
       { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
+      { key: "/galaxy/desktop-releases", labelKey: "nav.galaxyDesktopReleases" },
     ],
   },
 ];

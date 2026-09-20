@@ -1,6 +1,14 @@
 "use client";
 
-import { CloudUploadOutlined, FileTextOutlined, FileZipOutlined, InboxOutlined, ReloadOutlined } from "@ant-design/icons";
+import {
+  CloudUploadOutlined,
+  EditOutlined,
+  FileTextOutlined,
+  FileZipOutlined,
+  InboxOutlined,
+  ReloadOutlined,
+  UndoOutlined,
+} from "@ant-design/icons";
 import {
   Alert,
   Button,
@@ -23,8 +31,10 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import {
   fetchBridgeReleases,
+  saveSetting,
   setBridgeReleaseStatus,
   uploadBridgeRelease,
+  type AdminBridgeReleasePage,
   type BridgeReleaseStatus,
   type BridgeReleaseView,
 } from "../api/galaxy.api";
@@ -152,7 +162,7 @@ export function BridgeReleases() {
   const { t } = useLocale();
   // 发布和下架决定全网节点升级到哪一版，只读角色一律看不到入口。
   const canWrite = useCanWrite();
-  const [rows, setRows] = useState<BridgeReleaseView[]>([]);
+  const [page, setPage] = useState<AdminBridgeReleasePage | null>(null);
   const [loading, setLoading] = useState(true);
   // 拉成功过一次才画「各平台当前最新」：没拉回来之前画出来是一排「无」，那是假话。
   const [loaded, setLoaded] = useState(false);
@@ -161,8 +171,7 @@ export function BridgeReleases() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // ?? [] 是护栏：Go 那边一个包都没有时，空切片可能编成 null。
-      setRows((await fetchBridgeReleases()) ?? []);
+      setPage(await fetchBridgeReleases());
       setLoaded(true);
     } catch (error) {
       message.error((error as Error).message || t("galaxy.loadFailed"));
@@ -174,6 +183,10 @@ export function BridgeReleases() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // ?? [] 是护栏：Go 那边一个包都没有时，空切片可能编成 null。
+  // 引用要稳住 —— 下面几个 useMemo 都按它做依赖，每次渲染换一个新数组等于白 memo。
+  const rows = useMemo(() => page?.releases ?? [], [page]);
 
   // 服务端已经是版本新的在前；这里按契约的比较规则再排一遍，同一版本内按清单的平台顺序。
   // sort 是稳定的，比不出先后的行保持服务端给的顺序。
@@ -334,6 +347,8 @@ export function BridgeReleases() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <ClientDownloadCard page={page} canWrite={canWrite} onSaved={() => void load()} />
+
       <Space>
         {canWrite ? (
           <Button type="primary" icon={<CloudUploadOutlined />} onClick={() => setUploadOpen(true)}>
@@ -386,6 +401,216 @@ export function BridgeReleases() {
           onUploaded={() => void load()}
         />
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 和服务端同一条规矩：只收 http(s) 的完整地址。
+ *
+ * 前端这一道是为了省一趟往返（填成文件名、内网路径、一句说明当场就看得出），
+ * **不是**那道门 —— 真正的校验在 service/galaxy 的 applyURL 里，保存接口和
+ * 进程回查都走它。
+ */
+function isDownloadURL(value: string) {
+  try {
+    const parsed = new URL(value.trim());
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.host !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 两个桌面客户端的安装包下载地址。
+ *
+ * 摆在 ai-bridge 的包上面，照着「谁装什么」的顺序：绝大多数人装的是客户端，
+ * 要单独在服务器上部署 ai-bridge 的才往下看。
+ *
+ * 值存在运行参数表里（client.*_download_url），不在配置文件里 —— 换个桶放安装包
+ * 不该要一次重新部署，而且管理端和使用端服务是两个进程，留在配置文件里就得两边各配一遍。
+ * 代价是改完不立刻到处生效：各进程按自己的节奏回查同一行，所以保存提示里把秒数原样说出来。
+ *
+ * 地址没填就是空着 —— 使用端控制台那一块直接不显示。这里不摆一个猜出来的地址，
+ * 猜错只会换来一次 404。
+ */
+function ClientDownloadCard({
+  page,
+  canWrite,
+  onSaved,
+}: {
+  page: AdminBridgeReleasePage | null;
+  canWrite: boolean;
+  onSaved: () => void;
+}) {
+  const { t } = useLocale();
+  // 还没拉回来之前不画：空地址和「没填」长得一样，而那是两件事。
+  if (!page) return null;
+  return (
+    <section className="manager-data-card" style={{ padding: 16 }}>
+      <Typography.Title level={5} style={{ marginTop: 0 }}>
+        {t("galaxy.bridge.clientsTitle")}
+      </Typography.Title>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+        {t("galaxy.bridge.clientsHint")}
+      </Typography.Paragraph>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <ClientDownloadRow
+          label={t("galaxy.bridge.clientProvider")}
+          hint={t("galaxy.bridge.clientProviderHint")}
+          url={page.clients?.providerUrl ?? ""}
+          settingKey={page.providerSettingKey}
+          canWrite={canWrite}
+          propagationSeconds={page.propagationSeconds}
+          onSaved={onSaved}
+        />
+        <ClientDownloadRow
+          label={t("galaxy.bridge.clientConsumer")}
+          hint={t("galaxy.bridge.clientConsumerHint")}
+          url={page.clients?.consumerUrl ?? ""}
+          settingKey={page.consumerSettingKey}
+          canWrite={canWrite}
+          propagationSeconds={page.propagationSeconds}
+          onSaved={onSaved}
+        />
+      </div>
+    </section>
+  );
+}
+
+function ClientDownloadRow({
+  label,
+  hint,
+  url,
+  settingKey,
+  canWrite,
+  propagationSeconds,
+  onSaved,
+}: {
+  label: string;
+  hint: string;
+  url: string;
+  /** 运行参数的键名，服务端给的。前端不自己拼 —— 拼错了保存会被「这一项不是可调参数」顶回来。 */
+  settingKey: string;
+  canWrite: boolean;
+  propagationSeconds: number;
+  onSaved: () => void;
+}) {
+  const { t } = useLocale();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(url);
+  const [saving, setSaving] = useState(false);
+
+  // 保存成功后父组件会重新拉一次，跟着新值走；别人改过之后刷新页面也一样。
+  useEffect(() => {
+    setDraft(url);
+  }, [url]);
+
+  const commit = async (payload: { value?: string; reset?: boolean }) => {
+    setSaving(true);
+    try {
+      await saveSetting({ key: settingKey, ...payload });
+      message.success(t("galaxy.setting.saved").replace("{seconds}", String(propagationSeconds)));
+      setEditing(false);
+      onSaved();
+    } catch (error) {
+      message.error((error as Error).message || t("galaxy.actionFailed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const value = draft.trim();
+  const dirty = value !== url;
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+      <Typography.Text strong style={{ width: 132, flexShrink: 0 }}>
+        {label}
+      </Typography.Text>
+
+      {editing ? (
+        <>
+          <Input
+            value={draft}
+            autoFocus
+            // 库里那一列是 varchar(1024)，这里给到 500 —— 下载地址再长也到不了，
+            // 而超了长度是保存那一刻才报的错。
+            maxLength={500}
+            style={{ flex: "1 1 320px", minWidth: 240 }}
+            placeholder={t("galaxy.bridge.clientPlaceholder")}
+            status={value && !isDownloadURL(value) ? "error" : undefined}
+            onChange={(event) => setDraft(event.target.value)}
+            onPressEnter={() => {
+              if (dirty && isDownloadURL(value)) void commit({ value });
+            }}
+          />
+          <Button
+            type="primary"
+            size="small"
+            loading={saving}
+            disabled={!dirty || !isDownloadURL(value)}
+            onClick={() => void commit({ value })}
+          >
+            {t("galaxy.setting.save")}
+          </Button>
+          <Button
+            size="small"
+            disabled={saving}
+            onClick={() => {
+              setDraft(url);
+              setEditing(false);
+            }}
+          >
+            {t("galaxy.cancel")}
+          </Button>
+          {value && !isDownloadURL(value) ? (
+            <Typography.Text type="danger" style={{ fontSize: 12 }}>
+              {t("galaxy.bridge.clientInvalid")}
+            </Typography.Text>
+          ) : null}
+        </>
+      ) : (
+        <>
+          {url ? (
+            // 地址在服务端校验过只可能是 http(s)，所以敢直接给一个能点的链接；
+            // noreferrer 是顺手的卫生，这条地址本来也不该把管理端的来路带出去。
+            <Typography.Text
+              className="manager-mono"
+              style={{ fontSize: 13, wordBreak: "break-all" }}
+              copyable={{ text: url }}
+            >
+              <a href={url} target="_blank" rel="noreferrer">
+                {url}
+              </a>
+            </Typography.Text>
+          ) : (
+            <Tag>{t("galaxy.bridge.clientEmpty")}</Tag>
+          )}
+          {canWrite ? (
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => setEditing(true)}>
+              {url ? t("galaxy.bridge.clientEdit") : t("galaxy.bridge.clientFill")}
+            </Button>
+          ) : null}
+          {canWrite && url ? (
+            <Popconfirm
+              title={t("galaxy.bridge.clientClear")}
+              description={<div style={{ maxWidth: 320 }}>{t("galaxy.bridge.clientClearHint")}</div>}
+              okText={t("galaxy.confirm")}
+              cancelText={t("galaxy.cancel")}
+              onConfirm={() => void commit({ reset: true })}
+            >
+              <Button type="link" size="small" icon={<UndoOutlined />} loading={saving}>
+                {t("galaxy.bridge.clientClear")}
+              </Button>
+            </Popconfirm>
+          ) : null}
+        </>
+      )}
+
+      <Typography.Text type="secondary" style={{ fontSize: 12, flexBasis: "100%" }}>
+        {hint}
+      </Typography.Text>
     </div>
   );
 }

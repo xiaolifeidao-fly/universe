@@ -68,20 +68,19 @@ func (s *service) PortalCatalog(ctx context.Context, fallbackModels []string) (d
 		models = fallbackModelViews(fallbackModels)
 	}
 
-	// 单价按 kind 取一次就够：门户上所有模型都归 llm.chat，
-	// 逐个模型去查等于把同一张表查 N 遍。
-	tables := map[string]map[contract.MeterUnit]priceRow{}
+	// 价目行取一次，几十个模型在内存里各挑各的 —— 单价已经能按模型定了，
+	// 再按 kind 取一张表给所有模型用，门户上标的就不是这个模型真会收的价。
+	// 门户要跨 kind 列全部模型，这里不收窄。
+	priceRows, err := s.repository.ListEffectivePrices(ctx, bizLine, "", now)
+	if err != nil {
+		return dto.PortalOverview{}, err
+	}
 	for index := range models {
 		kind := defaultString(models[index].Kind, portalKind)
-		table, ok := tables[kind]
-		if !ok {
-			if table, err = s.priceTable(ctx, kind, now); err != nil {
-				return dto.PortalOverview{}, err
-			}
-			tables[kind] = table
-		}
-		applyKindPrice(&models[index], table)
+		table, own := resolvePrices(priceRows, kind, models[index].ModelID)
+		applyKindPrice(&models[index], table, own)
 	}
+
 	sort.SliceStable(models, func(i, j int) bool {
 		if models[i].SortOrder != models[j].SortOrder {
 			return models[i].SortOrder < models[j].SortOrder
@@ -135,25 +134,34 @@ func portalKinds(models []dto.PortalModelView, packages []dto.PackageView) map[s
 // portalPrices 当前生效的单价表，每个 (kind, unit) 只留最新生效的那条。
 // 不计价的单位（calls、time.seconds）本来就不在价格表里，不用特意过滤。
 func (s *service) portalPrices(ctx context.Context, at time.Time, kinds map[string]bool) ([]dto.PortalPriceLine, error) {
-	rows, err := s.repository.ListEffectivePrices(ctx, bizLine, at)
+	rows, err := s.repository.ListEffectivePrices(ctx, bizLine, "", at)
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	lines := make([]dto.PortalPriceLine, 0, len(rows))
 	for _, row := range rows {
 		if len(kinds) > 0 && !kinds[row.Kind] {
 			continue
 		}
-		key := row.Kind + "|" + row.Unit
-		if seen[key] {
-			continue // 已按 effective_from desc 排序，第一条就是当前生效的
+		// 这张表回答的是「这个 kind 怎么收费」，所以只列兜底价。
+		// 把模型的特例也铺进来，同一个 kind 会出现好几行不同的 input_tokens 价，
+		// 而这一页没有「哪个模型」这一列，读者只会当成价目表自相矛盾。
+		if row.ModelID != "" {
+			continue
 		}
-		seen[key] = true
-		lines = append(lines, dto.PortalPriceLine{
+		key := row.Kind + "|" + row.Unit
+		line := dto.PortalPriceLine{
 			Kind: row.Kind, Unit: row.Unit, Price: row.Price,
 			Currency: defaultString(row.Currency, "CNY"),
-		})
+		}
+		// 行按 effective_from 升序回来，后来的盖掉先来的 —— 同组最后一条就是当前价。
+		if index, ok := seen[key]; ok {
+			lines[index] = line
+			continue
+		}
+		seen[key] = len(lines)
+		lines = append(lines, line)
 	}
 	sort.Slice(lines, func(i, j int) bool {
 		if lines[i].Kind != lines[j].Kind {
@@ -290,35 +298,42 @@ func fallbackModelViews(declared []string) []dto.PortalModelView {
 	return views
 }
 
-// applyKindPrice 模型没自己的单价时回落到 kind 的统一价。
-// Priced 保持 false —— 门户要能说出「这是统一价」，不然回落期间
-// 所有模型显示同一个数字，看起来像页面坏了。
-func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]priceRow) {
+// applyKindPrice 模型目录没填展示价时，回落到计价表里它真会被收的那个价。
+//
+// 回落有两层：先看这个模型自己的计价行，没有才用 kind 的兜底价。own 分得清
+// 落到了哪一层 —— 落到兜底价才叫「统一价」，Priced 置 false，门户据此说明
+// 「这几个数字不是这个模型专属的」；落到模型自己的计价行时，卡片上标的就是
+// 它真会被收的价，再说成统一价就是在骗人。
+//
+// Priced 最后统一算一遍，而不是边填边置 false：目录只填了 input、output 靠
+// 模型自己的计价行补上，这种半填的行两个数都是它自己的，Priced 该是 true。
+func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]priceRow, own map[contract.MeterUnit]bool) {
+	// fill 返回「这一档最终是不是这个模型自己的价」。目录里填过的当然算。
+	fill := func(unit contract.MeterUnit, price *int64) bool {
+		if *price > 0 {
+			return true
+		}
+		row, ok := table[unit]
+		if !ok {
+			return false
+		}
+		*price = row.Price
+		return own[unit]
+	}
 	if model.InputPrice == 0 {
-		model.Priced = false
 		if price, ok := table[contract.UnitInputTokens]; ok {
-			model.InputPrice = price.Price
 			model.Currency = defaultString(price.Currency, model.Currency)
 		}
 	}
-	if model.OutputPrice == 0 {
-		model.Priced = false
-		if price, ok := table[contract.UnitOutputTokens]; ok {
-			model.OutputPrice = price.Price
-		}
-	}
-	if model.CachePrice == 0 {
-		if price, ok := table[contract.UnitCacheReadTokens]; ok {
-			model.CachePrice = price.Price
-		}
-	}
+	inputOwn := fill(contract.UnitInputTokens, &model.InputPrice)
+	outputOwn := fill(contract.UnitOutputTokens, &model.OutputPrice)
+	fill(contract.UnitCacheReadTokens, &model.CachePrice)
 	// 缓存写入单独回落。它和缓存读取不是一档：写入比普通输入还贵，读取便宜一个数量级，
 	// 让写入跟着读取的价走等于按十分之一收。
-	if model.CacheWritePrice == 0 {
-		if price, ok := table[contract.UnitCacheWriteTokens]; ok {
-			model.CacheWritePrice = price.Price
-		}
-	}
+	fill(contract.UnitCacheWriteTokens, &model.CacheWritePrice)
+	// 要「输入和输出都是这个模型自己的」才算它有专属价。用 || 的话，
+	// 只有一档是专属的那些模型会被当成整份都专属，另一档其实是统一价。
+	model.Priced = inputOwn && outputOwn
 	model.Currency = defaultString(model.Currency, "CNY")
 	// 折扣按**卡片上最终显示的那个价**重算：回落到统一价之后再拿建表时的
 	// 0 去比，「省 X%」要么消失要么是个 100%。访问者读到的是「我要付这个数、

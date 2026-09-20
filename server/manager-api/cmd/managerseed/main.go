@@ -85,6 +85,7 @@ var pages = []struct {
 	{Code: "galaxySettings", Name: "运行参数", Parent: "galaxyPlatform", PageURL: "/galaxy/settings", Type: manager.ResourcePage, SortID: 76},
 	{Code: "galaxyModels", Name: "模型目录", Parent: "galaxyPlatform", PageURL: "/galaxy/models", Type: manager.ResourcePage, SortID: 77},
 	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", Parent: "galaxyPlatform", PageURL: "/galaxy/bridge-releases", Type: manager.ResourcePage, SortID: 78},
+	{Code: "galaxyDesktopReleases", Name: "桌面客户端版本", Parent: "galaxyPlatform", PageURL: "/galaxy/desktop-releases", Type: manager.ResourcePage, SortID: 79},
 
 	{Code: "settings", Name: "系统设置", Icon: "SettingOutlined", Type: manager.ResourceMenu, SortID: 90},
 	{Code: "settingsAccounts", Name: "管理端账号", Parent: "settings", PageURL: "/settings/accounts", Type: manager.ResourcePage, SortID: 91},
@@ -102,7 +103,7 @@ var operatorPages = []string{
 	"galaxyProbes", "galaxyMismatches", "galaxyReputation", "galaxyBans",
 	"galaxyKeys", "galaxyOrders", "galaxyPoints", "galaxyPackages", "galaxyPricing",
 	"galaxyAccounts", "galaxyDisputes", "galaxyLeads", "galaxyReferrals",
-	"galaxySettings", "galaxyModels", "galaxyBridgeReleases",
+	"galaxySettings", "galaxyModels", "galaxyBridgeReleases", "galaxyDesktopReleases",
 }
 
 func main() {

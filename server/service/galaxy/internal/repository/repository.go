@@ -42,8 +42,8 @@ func models() []any {
 		&GalaxyModel{}, &GalaxyLead{},
 		// 使用者积分与分享
 		&GalaxyPointsAccount{}, &GalaxyPointsLedger{}, &GalaxyReferral{}, &GalaxySetting{},
-		// ai-bridge 的版本分发，与共享端的邀请返现
-		&GalaxyBridgeRelease{}, &GalaxyProviderReferral{},
+		// ai-bridge 与桌面客户端的版本分发，以及共享端的邀请返现
+		&GalaxyBridgeRelease{}, &GalaxyDesktopRelease{}, &GalaxyProviderReferral{},
 	}
 }
 

@@ -89,6 +89,14 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.POST("/bridge/releases/upload", h.uploadBridgeRelease)
 	admin.POST("/bridge/releases/status", h.setBridgeReleaseStatus)
 
+	// 桌面客户端（Nova / Orbit）的版本分发。和上面那三条不是一件事：
+	// 包一百多兆，字节不经服务端 —— prepare 只回几个直传地址，浏览器自己把包 PUT 上 OSS，
+	// publish 再确认包真的在那儿、把清单发出去。客户端读的是 OSS 上的清单，不打我们的接口。
+	admin.GET("/desktop/releases", h.desktopReleases)
+	admin.POST("/desktop/releases/prepare", h.prepareDesktopRelease)
+	admin.POST("/desktop/releases/publish", h.publishDesktopRelease)
+	admin.POST("/desktop/releases/status", h.setDesktopReleaseStatus)
+
 	// 门户的模型目录。列全部（含下架的），保存是整行覆盖。
 	admin.GET("/portal/models", h.portalModels)
 	admin.POST("/portal/models/save", h.savePortalModel)
@@ -403,12 +411,33 @@ func (h *Handler) deletePrice(context *gin.Context) {
 }
 
 // bridgeReleases 全部安装包，含已下架的 —— 那是历史，机器上报的版本要对得上它。
+//
+// 顺带把两个桌面客户端（共享端 Nova、使用端 Orbit）的下载地址一起给出去。
+// 它们存在运行参数表里，但读它们不该再要一份「运行参数」的授权：这一页问的
+// 就是「用户要装的东西从哪儿拿」，ai-bridge 和两个客户端是同一个问题的两半。
+// 改地址仍然走 /settings/save（写权限在那条路上判），键名由这里一并给出。
 func (h *Handler) bridgeReleases(context *gin.Context) {
 	if !h.enabled(context) {
 		return
 	}
 	views, err := h.service.ListBridgeReleases(context.Request.Context())
-	httpx.JSON(context, views, err)
+	if err != nil {
+		httpx.JSON(context, nil, err)
+		return
+	}
+	// Config() 是叠加过后台设置的那一份，而且保存时本进程的快照会同步失效 ——
+	// 运营点完保存刷新这一页，看到的就是刚填的值。
+	config := h.service.Config()
+	httpx.JSON(context, dto.AdminBridgeReleasePage{
+		Releases: views,
+		Clients: dto.ClientDownloads{
+			ProviderURL: config.ProviderClientDownloadURL,
+			ConsumerURL: config.ConsumerClientDownloadURL,
+		},
+		ProviderSettingKey: galaxysvc.SettingClientProviderDownloadURL,
+		ConsumerSettingKey: galaxysvc.SettingClientConsumerDownloadURL,
+		PropagationSeconds: galaxysvc.SettingsPropagationSeconds(),
+	}, nil)
 }
 
 // uploadBridgeRelease 上传一个安装包。
@@ -427,6 +456,62 @@ func (h *Handler) uploadBridgeRelease(context *gin.Context) {
 	req.Operator = httpx.CallerID(context)
 	view, err := h.service.PublishBridgeRelease(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
+}
+
+// desktopReleases 全部发版记录，含还没传完的和已下架的。
+func (h *Handler) desktopReleases(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	page, err := h.service.ListDesktopReleases(context.Request.Context())
+	httpx.JSON(context, page, err)
+}
+
+// prepareDesktopRelease 发版第一步：交清单，换直传地址。
+//
+// 请求体里只有几百字节的 yml —— 安装包一百多兆，走不了这条路（浏览器到这里中间
+// 隔着 Next.js 的通配代理，那条路只转发 JSON），所以包由浏览器拿签名地址直传 OSS。
+func (h *Handler) prepareDesktopRelease(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.PrepareDesktopReleaseRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.Operator = httpx.CallerID(context)
+	view, err := h.service.PrepareDesktopRelease(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+// publishDesktopRelease 发版第二步：确认包都传上去了，再把清单写到对象存储上。
+func (h *Handler) publishDesktopRelease(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.PublishDesktopReleaseRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.Operator = httpx.CallerID(context)
+	view, err := h.service.PublishDesktopRelease(context.Request.Context(), req)
+	httpx.JSON(context, view, err)
+}
+
+// setDesktopReleaseStatus 下架 / 重新上架。改的是对外那份清单指向谁，包不删。
+func (h *Handler) setDesktopReleaseStatus(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SetDesktopReleaseStatusRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.Operator = httpx.CallerID(context)
+	httpx.JSON(context, req.ReleaseID, h.service.SetDesktopReleaseStatus(context.Request.Context(), req))
 }
 
 // setBridgeReleaseStatus 下架 / 重新上架。下架之后它不再是任何机器的升级目标。

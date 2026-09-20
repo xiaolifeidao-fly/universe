@@ -36,7 +36,7 @@ func TestMarkLivePricesPicksTheLatestRowThatHasArrived(t *testing.T) {
 	if views[2].Effective {
 		t.Error("被取代的历史价不该再标成生效中")
 	}
-	if !priced[priceKey("llm.chat", "llm.input_tokens")] {
+	if !priced[priceKey("llm.chat", "", "llm.input_tokens")] {
 		t.Error("有生效价的组合应当算「已定价」")
 	}
 }
@@ -57,7 +57,7 @@ func TestMarkLivePricesTreatsAFutureOnlyRowAsUnpriced(t *testing.T) {
 	if views[0].Effective {
 		t.Error("还没到生效时间的行不该标成生效中")
 	}
-	if priced[priceKey("video.edit.render", "video.output_seconds")] {
+	if priced[priceKey("video.edit.render", "", "video.output_seconds")] {
 		t.Fatal("只排了未来价 = 此刻没有价，不能当成已定价")
 	}
 	unpriced := unpricedFrom([]repository.UsageRow{
@@ -74,7 +74,7 @@ func TestMarkLivePricesTreatsAFutureOnlyRowAsUnpriced(t *testing.T) {
 // 而库里没有任何地方记着这个决定。列出来、让运营填一行 0，
 // 「0 是有意的」和「忘了填」才区分得开。
 func TestUnpricedFromListsEveryMeteredUnitWithoutAPrice(t *testing.T) {
-	priced := map[string]bool{priceKey("llm.chat", "llm.input_tokens"): true}
+	priced := map[string]bool{priceKey("llm.chat", "", "llm.input_tokens"): true}
 	usage := []repository.UsageRow{
 		{Kind: "llm.chat", Unit: "llm.output_tokens"},
 		{Kind: "llm.chat", Unit: "llm.input_tokens"},  // 已定价，不该出现
@@ -114,5 +114,56 @@ func TestSaveAdminPriceRefusesANegativePrice(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("负单价应当被拒")
+	}
+}
+
+// TestSaveAdminPriceRefusesANegativeProviderPrice 负的结算单价会让共享者倒着还钱。
+func TestSaveAdminPriceRefusesANegativeProviderPrice(t *testing.T) {
+	svc, _, _ := banHarness(t, nil)
+	err := svc.SaveAdminPrice(context.Background(), dto.SavePriceRequest{
+		Kind: "llm.chat", Unit: "llm.input_tokens", Price: 3_000_000, ProviderPrice: -1,
+	})
+	if err == nil {
+		t.Fatal("负的结算单价应当被拒")
+	}
+}
+
+// TestSaveAdminPriceAllowsSubsidy 结算价高过对外价不拦。
+//
+// 拉新期定向补贴某个单位是真实需求，拦下来运营就只能回去写 SQL ——
+// 而写 SQL 绕过的不只是这一条校验。倒贴在界面上标红、在账上记一笔负的 fee。
+func TestSaveAdminPriceAllowsSubsidy(t *testing.T) {
+	svc, _, _ := banHarness(t, nil)
+	err := svc.SaveAdminPrice(context.Background(), dto.SavePriceRequest{
+		Kind: "llm.chat", Unit: "llm.input_tokens", Price: 1_000_000, ProviderPrice: 3_000_000,
+	})
+	if err != nil {
+		t.Fatalf("补贴期的定价不该被拦：%v", err)
+	}
+}
+
+// TestMarkLivePricesShowsWhatProvidersActuallyGet 界面显示的是「共享者实际按多少结」。
+//
+// 还没迁移的行 provider_price 是 0，照着它显示等于告诉运营「这行不发钱」——
+// 而实际上它正按老比例在发。运营据此去调价，调的是一个不存在的现状。
+func TestMarkLivePricesShowsWhatProvidersActuallyGet(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	views, _ := markLivePrices([]*repository.GalaxyPrice{
+		// 迁过来的：两个价各填各的，毛利 40%。
+		{Kind: "llm.chat", Unit: "llm.output_tokens", Price: 15_000_000, ProviderPrice: 9_000_000,
+			ProviderShare: 0.7, EffectiveFrom: now.AddDate(0, 0, -1)},
+		// 还没迁的：结算价空着，实际按 70% 在发。
+		{Kind: "llm.chat", Unit: "llm.input_tokens", Price: 10_000_000,
+			ProviderShare: 0.7, EffectiveFrom: now.AddDate(0, 0, -1)},
+	}, now)
+
+	if views[0].SettlePrice != 9_000_000 || views[0].MarginBps != 4000 {
+		t.Fatalf("填了结算价的行应当按它显示：settle=%d margin=%d", views[0].SettlePrice, views[0].MarginBps)
+	}
+	if views[1].SettlePrice != 7_000_000 {
+		t.Fatalf("没填结算价的行要显示回落出来的 7,000,000，实际 %d", views[1].SettlePrice)
+	}
+	if views[1].ProviderPrice != 0 {
+		t.Fatal("ProviderPrice 要保持 0 —— 界面靠它区分「填过」和「还在回落」")
 	}
 }

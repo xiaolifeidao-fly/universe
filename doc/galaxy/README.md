@@ -180,6 +180,44 @@ export  Hub  ── POST {endpoint}/node/v1/execute ────▶ 节点    �
 - **卡住的升级会超时**：十分钟没来领、十五分钟没有新进展，控制台显示成失败并说明原因。
   超时只影响显示，节点那边该装还在装，装完的那次 hello 仍然会把状态翻成成功。
 
+## 桌面客户端的热更新（2026-09-18）
+
+Nova / Orbit 的壳装在用户机器上，界面却部署在远端 —— 页面天天都是最新的，壳不是。
+所以壳自己要能更新：有新版本弹一次提示，**用户点了才下载**，下完重启装上。非强制。
+
+和上一节那套（ai-bridge）是两件事，差别都来自「包大了一百倍」：
+
+| | ai-bridge | 桌面客户端 |
+|---|---|---|
+| 包 | 三兆 | 一百多兆 |
+| 上传 | base64 进请求体，字节经服务端（要算 sha256、验发布签名） | 管理端浏览器拿签名地址**直传 OSS**，服务端一个字节都不经手 |
+| 取更新 | 节点问 Hub 要指令，Hub 下发地址与校验值 | 客户端按 electron-updater 的规矩**直接读 OSS 上的清单**，不打任何接口 |
+| 信任 | Ed25519 发布签名，节点不信任 Hub | 传输完整性靠清单里的 sha512；「这个包是我们发的」要靠代码签名 |
+| 谁决定装 | 运营点「升级」，推给指定机器 | 用户自己点，平台只决定「最新是哪一版」 |
+
+| 部件 | 落点 |
+|---|---|
+| 发版记录 | `zt_galaxy_desktop_release`，迁移 `server/migrations/20260918_galaxy_desktop_release.sql` |
+| 领域逻辑 | `service/galaxy/desktoprelease.go`（校验清单、签直传地址、确认包到了、决定对外那份清单指向谁） |
+| 运营 | `GET/POST /api/galaxy/admin/desktop/releases*`（manager-api），管理端「算力平台 → 桌面客户端版本」 |
+| 客户端 | `client/galaxy/common/electron/update/` 与两端的 `UpdateGate.tsx`，见 `client/galaxy/README.md` 的「自动更新」 |
+| 对外落点 | OSS `<oss.dirPrefix>/desktop/<端>/`，**公开读**；地址配在两个端界面部署机的 `runtime.json` |
+
+几条要记住的规则：
+
+- **发布 = 写清单。** 传包只是把文件放上去；清单（`latest-*.yml`）写到固定路径的那一刻，
+  全网客户端下一次检查才会看到新版本。服务端在写之前会 HEAD 一遍确认包真的在那儿 ——
+  字节不经服务端，这是唯一能拦住「清单指向一个不存在的文件」的地方。
+- **同一个通道只有一个当前版本**：版本最高的那个在架的。补发一个更旧的版本不会顶掉它。
+- **下架不是删除**：包还在，清单换回上一个在架版本（一个都不剩就把清单撤下来）。
+  已经更新过的人不受影响 —— 桌面应用不会自己降级。
+- **清单原文整份存库**。它是 electron-builder 的产物，字段随版本会变；拆成列再拼回去
+  等于我们要跟着它的格式走一辈子，而下架时要回到上一版，把上一行的原文写回去就行。
+  运营写的版本说明作为 `releaseNotes` 塞进这份原文，客户端的更新提示里原样展示。
+- **macOS 上还差一张证书**：Squirrel.Mac 只接受签过名的应用，没有 Developer ID 时
+  包下载得到、装不上。客户端把这种情况降级成「打开安装包，自己拖一次」，不当成失败。
+  Windows 与 Linux 是完整的自动下载 + 自动安装 + 重启。
+
 ## 共享端的邀请返现（2026-09-12）
 
 分享一个带邀请码的注册链接，好友贡献算力赚到积分时，**平台额外**奖励分享者一个百分比，
@@ -383,7 +421,7 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 | 领域 | `service/galaxy/points.go`（积分、购买、返现、邀请码）、`keycipher.go`（明文加密存储）、`consumerkey.go` 的 `RevealKey` / `AdminKeys` |
 | 使用端接口 | `GET /api/galaxy/consumer/{catalog,points,points/ledger,referral,referral/invitees}`、`POST …/points/purchase`、`POST …/keys/secret`；注册 `POST …/auth/register` 多一个 `inviteCode` |
 | 运营接口 | `GET /api/galaxy/admin/{keys,points/ledger,points/summary,referral/settings}`、`POST …/keys/secret`、`POST …/points/recharge`、`POST …/referral/settings/save`；模型的返现比例随 `portal/models/save` 的 `referralBps` 保存，套餐绑模型随 `packages/save` 的 `modelId` |
-| 界面 | Orbit：密钥（有效 / 无效、「使用」、手动接入命令）、模型广场、购买、积分；管理端「共享算力池」多了模型目录、积分充值、算力密钥三个页面 |
+| 界面 | Orbit：密钥（有效 / 无效、「使用」、手动接入命令）、模型广场、购买、积分；Nova 也有一页模型，但标的是**结算价**（跑它记多少积分）而不是对外价；管理端「共享算力池」多了模型目录、积分充值、算力密钥三个页面 |
 
 几条要记住的规则：
 

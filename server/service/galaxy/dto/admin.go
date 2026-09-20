@@ -64,12 +64,27 @@ type PayoutAccountView struct {
 // ---------- 价目表 ----------
 
 // PriceView 价目表的一行：某个 kind 的某个计量单位，从某一刻起多少钱。
+//
+// 一行两个价：Price 向使用者收，ProviderPrice 结给共享者，差额是平台毛利。
 type PriceView struct {
 	Kind string `json:"kind"`
-	Unit string `json:"unit"`
-	// Price 每百万单位的价格，单位微分（1,000,000 微分 = ¥1）。
-	Price         int64     `json:"price"`
-	Currency      string    `json:"currency"`
+	// ModelID 这一行管哪个模型。空串 = 该 kind 的兜底价，模型没单独定价时按它算。
+	ModelID string `json:"modelId"`
+	Unit    string `json:"unit"`
+	// Price 对外单价：每百万单位多少微分（1,000,000 微分 = ¥1）。
+	Price    int64  `json:"price"`
+	Currency string `json:"currency"`
+	// ProviderPrice 运营填的结算单价。0 表示这行还没填，结算回落到 ProviderShare。
+	ProviderPrice int64 `json:"providerPrice"`
+	// SettlePrice 这一行**实际**按多少结给共享者：ProviderPrice 填了就是它，
+	// 没填就是回落算出来的那个数。界面显示的是共享者真拿到的口径，
+	// 不是运营填了什么 —— 两者在迁移完成之前并不相等。
+	SettlePrice int64 `json:"settlePrice"`
+	// MarginBps 平台毛利率，万分之一（3000 = 30%）。负数是平台在倒贴。
+	// 对外单价为 0 时除不出比例，返 0，界面按「不适用」显示。
+	MarginBps int `json:"marginBps"`
+	// ProviderShare 老口径的分成比例。只在 ProviderPrice 为 0 时还参与计算，
+	// 留在返回里是为了让运营看得见「这行还没迁过来」。
 	ProviderShare float64   `json:"providerShare"`
 	EffectiveFrom time.Time `json:"effectiveFrom"`
 	// Effective 这一行此刻是不是正在生效的那一条。同一个 (kind, unit) 下
@@ -85,17 +100,26 @@ type PriceTableView struct {
 	Prices []PriceView `json:"prices"`
 	Kinds  []string    `json:"kinds"`
 	Units  []string    `json:"units"`
+	// Models 模型目录里的模型名，给「给某个模型单独定价」那个下拉用。
+	// 和 Kinds / Units 一样是候选提示不是白名单：目录里还没建的模型照样能手填，
+	// 否则接一个新模型就得先去建目录才能给它定价。
+	Models []string `json:"models"`
 	// UsedUnits 最近 30 天真实产生过用量、却没有价可查的 (kind, unit)。
 	// 价目表是空的时候账单永远是 0，而系统不会报错 —— 这一列就是那个告警。
 	Unpriced []PriceView `json:"unpriced"`
 }
 
 // SavePriceRequest 新增或改一行价目。四元组 (kind, unit, effectiveFrom) 定位，
-// 撞上已有的就覆盖价格与分成。
+// 撞上已有的就覆盖两个价。
 type SavePriceRequest struct {
-	Kind          string     `json:"kind" binding:"required"`
-	Unit          string     `json:"unit" binding:"required"`
+	Kind string `json:"kind" binding:"required"`
+	// ModelID 留空就是改该 kind 的兜底价。
+	ModelID string `json:"modelId"`
+	Unit    string `json:"unit" binding:"required"`
+	// Price 对外单价，ProviderPrice 结算单价。两个数各填各的 ——
+	// 上游价不再是下游价的一个百分比。
 	Price         int64      `json:"price"`
+	ProviderPrice int64      `json:"providerPrice"`
 	Currency      string     `json:"currency"`
 	ProviderShare float64    `json:"providerShare"`
 	EffectiveFrom *time.Time `json:"effectiveFrom"`
@@ -103,7 +127,9 @@ type SavePriceRequest struct {
 
 // DeletePriceRequest 删一行价目。
 type DeletePriceRequest struct {
-	Kind          string    `json:"kind" binding:"required"`
+	Kind string `json:"kind" binding:"required"`
+	// ModelID 空串删的是兜底价那一行 —— 它在唯一键里，不带就会删错行。
+	ModelID       string    `json:"modelId"`
 	Unit          string    `json:"unit" binding:"required"`
 	EffectiveFrom time.Time `json:"effectiveFrom" binding:"required"`
 }
@@ -494,7 +520,9 @@ type AdminLedgerPage struct {
 // SettingView 一项可调参数此刻的样子。
 type SettingView struct {
 	Key string `json:"key"`
-	// Group 界面上的分组：placement / score / key / artifact / risk / payout / referral / compliance。
+	// Group 界面上的分组：placement / score / key / artifact / risk / payout / referral /
+	// compliance / client。client 那两项不在「运行参数」页上画，它们有自己的位置
+	// （管理端的「ai-bridge 版本」页顶上那张卡片）。
 	Group string `json:"group"`
 	// Kind int / float / duration / text。duration 的值是**毫秒**。
 	Kind string `json:"kind"`

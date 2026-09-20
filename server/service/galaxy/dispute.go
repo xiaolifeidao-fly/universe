@@ -95,6 +95,19 @@ func (s *service) findDisputeByUnit(ctx context.Context, unitID string, attempt 
 	return nil, gorm.ErrRecordNotFound
 }
 
+// unitModel 这次执行调的是哪个模型。追回要按同一个模型的价算 ——
+// 拿兜底价去退一笔按模型价收过的钱，退多退少都会挂在平台账上。
+//
+// 查不到（单元行被清掉了）就回落到空串，也就是该 kind 的兜底价：
+// 和当初结算时单元行已经没了的情形一致。
+func (s *service) unitModel(ctx context.Context, unitID string) string {
+	row, err := s.repository.FindUnit(ctx, bizLine, unitID)
+	if err != nil {
+		return ""
+	}
+	return row.Model
+}
+
 func (s *service) contributionOwner(ctx context.Context, cid string) string {
 	row, err := s.repository.FindContribution(ctx, bizLine, cid)
 	if err != nil {
@@ -226,7 +239,7 @@ func (s *service) planClawback(ctx context.Context, row *repository.GalaxyDisput
 	if len(meters) == 0 {
 		return nil, 0, nil
 	}
-	prices, err := s.priceTable(ctx, row.Kind, time.Now())
+	prices, err := s.priceTable(ctx, row.Kind, s.unitModel(ctx, row.UnitID), time.Now())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -251,11 +264,11 @@ func clawbackPlan(amounts contract.Metering, prices map[contract.MeterUnit]price
 			continue
 		}
 		price, ok := prices[unit]
-		if !ok || price.Price <= 0 {
+		if !ok || (price.Price <= 0 && price.ProviderPrice <= 0) {
 			continue
 		}
 		cost, share := splitCost(amount, price)
-		if cost <= 0 {
+		if cost <= 0 && share <= 0 {
 			continue // 不足一个计价单位，当初也没收过钱
 		}
 		refund[unit] = amount
@@ -272,7 +285,7 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 	if len(refund) == 0 {
 		return nil
 	}
-	prices, err := s.priceTable(ctx, row.Kind, time.Now())
+	prices, err := s.priceTable(ctx, row.Kind, s.unitModel(ctx, row.UnitID), time.Now())
 	if err != nil {
 		return err
 	}
@@ -292,7 +305,7 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 		// 两边不一致的话，对账时「进来过又出去了」这句话就对不平。
 		provider = append(provider, &repository.GalaxyProviderLedger{
 			BizLine: bizLine, TxnID: txn, CID: row.CID, OwnerUserID: row.ProviderUserID,
-			Type: "clawback", Unit: unit, Amount: share, Price: price.Price, UnitID: row.UnitID,
+			Type: "clawback", Unit: unit, Amount: share, Price: settleUnitPrice(price), UnitID: row.UnitID,
 		})
 		platformLoss += cost - share
 	}

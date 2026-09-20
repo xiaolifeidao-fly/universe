@@ -38,7 +38,7 @@ func TestPricedNeedsBothOwnPrices(t *testing.T) {
 			view := portalModelView(&repository.GalaxyModel{
 				ModelID: "claude-opus-5", InputPrice: testCase.input, OutputPrice: testCase.output,
 			})
-			applyKindPrice(&view, table)
+			applyKindPrice(&view, table, nil)
 			if view.Priced != testCase.wantPriced {
 				t.Errorf("Priced = %v，期望 %v", view.Priced, testCase.wantPriced)
 			}

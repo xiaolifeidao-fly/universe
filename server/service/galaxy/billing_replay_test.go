@@ -154,6 +154,9 @@ type billingDB struct {
 	tables  map[string][][]driver.Value
 	columns map[string][]string
 	writes  []billingWrite
+	// queries 抄下来的查询语句。取价那条要钉住：它每笔计费都走一遍，
+	// 而「走不走得上索引」只看 WHERE 和 ORDER BY 长什么样。
+	queries []string
 	// duplicateLedger 为真时账本插入报「0 行受影响」，也就是撞了唯一键。
 	duplicateLedger bool
 }
@@ -198,6 +201,20 @@ func (db *billingDB) argsOf(t *testing.T, table string) []driver.Value {
 	}
 	t.Fatalf("没有写到 %s 的语句", table)
 	return nil
+}
+
+// queryOf 第一条读某张表的语句。
+func (db *billingDB) queryOf(t *testing.T, table string) string {
+	t.Helper()
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for _, query := range db.queries {
+		if strings.Contains(query, table) {
+			return query
+		}
+	}
+	t.Fatalf("没有读 %s 的语句", table)
+	return ""
 }
 
 func containsValue(args []driver.Value, want int64) bool {
@@ -250,6 +267,7 @@ func (r billingResult) RowsAffected() (int64, error) { return r.affected, nil }
 func (s billingStmt) Query([]driver.Value) (driver.Rows, error) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
+	s.db.queries = append(s.db.queries, s.query)
 	from := strings.Index(s.query, " FROM `")
 	if from < 0 {
 		return &billingRows{}, nil

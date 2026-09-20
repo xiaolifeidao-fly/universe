@@ -442,13 +442,15 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_price` (
   `id`             bigint AUTO_INCREMENT,
   `biz_line`       varchar(32),
   `kind`           varchar(64),
+  `model_id`       varchar(96) NOT NULL DEFAULT '',                       -- 模型名，空=该 kind 的兜底价（不是「叫空串的模型」）；唯一索引不拦 NULL，所以这列不能可空
   `unit`           varchar(48),
   `effective_from` timestamp NULL DEFAULT NULL,
-  `price`          bigint,                                                -- 每百万单位价格，单位微分
+  `price`          bigint,                                                -- 对外单价：每百万单位微分
   `currency`       varchar(8) DEFAULT 'CNY',
-  `provider_share` double DEFAULT 0.700000,                               -- 提供者分成比例
+  `provider_price` bigint DEFAULT 0,                                      -- 结算单价：每百万单位微分，0=回落到 provider_share
+  `provider_share` double DEFAULT 0.700000,                               -- 旧口径分成比例，仅当 provider_price=0 时回落使用
   PRIMARY KEY (`id`),
-  UNIQUE INDEX `uk_gx_price` (`biz_line`,`kind`,`unit`,`effective_from`)
+  UNIQUE INDEX `uk_gx_price` (`biz_line`,`kind`,`model_id`,`unit`,`effective_from`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_artifact` (
@@ -883,6 +885,33 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_bridge_release` (
   UNIQUE INDEX `uk_gx_bridge_release_id` (`biz_line`,`release_id`),
   UNIQUE INDEX `uk_gx_bridge_release_target` (`biz_line`,`version`,`platform`),
   INDEX `idx_gx_bridge_release_platform` (`biz_line`,`platform`,`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 桌面客户端（Nova 共享端 / Orbit 使用端）的发版记录。一个端 × 一个平台通道 × 一个版本一行。
+-- 和上面那张的区别都来自「包大了一百倍」：字节不经服务端（管理端浏览器拿签名地址直传 OSS），
+-- 所以这里没有 sha256、没有发布签名 —— 校验值在 manifest 里，客户端下载完自己比对。
+-- manifest 存的是要写到 OSS 上的 latest-*.yml 原文：下架就是把上一版的原文重新写回去。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_desktop_release` (
+  `id`            bigint AUTO_INCREMENT,
+  `biz_line`      varchar(32),
+  `release_id`    varchar(40),                                      -- 业务键 dr_…
+  `product`       varchar(16),                                      -- nova=共享端 / orbit=使用端
+  `channel`       varchar(16),                                      -- mac / win / linux
+  `version`       varchar(32),                                      -- 语义版本，如 0.1.1
+  `manifest_file` varchar(64),                                      -- latest-mac.yml / latest.yml / latest-linux.yml
+  `manifest`      mediumtext,                                       -- 要写到 OSS 上的 yml 原文（含 releaseNotes）
+  `files_json`    text,                                             -- [{name,size,sha512}]，只给运营列表用
+  `size`          bigint,                                           -- 这一版全部文件之和
+  `notes`         text,                                             -- 版本说明，客户端更新提示里原样展示
+  `status`        varchar(16),                                      -- staging=已登记待上传 / published / withdrawn
+  `published_by`  varchar(64),                                      -- 操作的管理端账号
+  `published_at`  timestamp NULL DEFAULT NULL,
+  `created_time`  datetime(3) NULL,
+  `updated_time`  datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_desktop_release_id` (`biz_line`,`release_id`),
+  UNIQUE INDEX `uk_gx_desktop_release_target` (`biz_line`,`product`,`channel`,`version`),
+  INDEX `idx_gx_desktop_release_channel` (`biz_line`,`product`,`channel`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 共享端的邀请码与邀请人。和使用端那张 zt_galaxy_referral 分开：两端是两批人，

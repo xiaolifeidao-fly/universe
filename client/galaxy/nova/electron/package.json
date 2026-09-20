@@ -7,6 +7,14 @@
   "build": {
     "appId": "com.galaxy.nova",
     "productName": "Nova",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://galaxy.invalid/desktop/nova",
+        "channel": "latest"
+      }
+    ],
     "files": [
       "dist/**/*",
       "assets/**/*",
@@ -63,6 +71,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "ai-bridge": "*"
+    "ai-bridge": "*",
+    "electron-updater": "^6.8.9"
   }
 }

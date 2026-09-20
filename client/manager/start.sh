@@ -3,6 +3,9 @@ set -euo pipefail
 
 APP_NAME="manager-console"
 PORT="${PORT:-7895}"
+# 应用挂在 basePath 下（next.config.mjs 的 BASE_PATH），站点根上什么都没有 ——
+# 探活必须带上这一段，打根路径只会拿到 Next 的 404，看上去像「起不来」。
+BASE_PATH="${BASE_PATH:-/manager}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${SCRIPT_DIR}/run/${APP_NAME}.pid"
@@ -39,7 +42,7 @@ NEXT_TELEMETRY_DISABLED=1 nohup ./node_modules/.bin/next start -p "${PORT}" >>"$
 echo $! >"${PID_FILE}"
 
 for _ in {1..20}; do
-  if curl -fsS "http://127.0.0.1:${PORT}/" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${PORT}${BASE_PATH}/login" >/dev/null 2>&1; then
     echo "${APP_NAME} started on port ${PORT} (pid $(cat "${PID_FILE}"))"
     exit 0
   fi

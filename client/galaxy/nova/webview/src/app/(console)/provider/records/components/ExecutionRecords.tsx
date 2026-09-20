@@ -32,9 +32,9 @@ const PAGE_SIZE = 15;
 /**
  * 一格 token 数。没有就是一条短横，不是 0。
  *
- * 缓存那两列大多数行都是空的（上游没报缓存、模型不缓存、或者这轮没命中）。
- * 满屏的 0 会把真正有数的那几行盖过去，而且「上游报了 0」和「上游根本没报这一项」
- * 在对账时不是一回事。
+ * 推理这列大多数行都是空的（不是推理模型、或者上游没报这一项）。满屏的 0 会把
+ * 真正有数的那几行盖过去，而且「上游报了 0」和「上游根本没报这一项」在对账时
+ * 不是一回事。
  */
 function TokenCell({ value }: { value: number }) {
   if (value <= 0) return <span className="gx-mono gx-muted">-</span>;
@@ -211,11 +211,13 @@ export function ExecutionRecords() {
           ) : (
             <DataTable
               // 列宽预算：固定列加起来 844px，再加 10 个 12px 的间距和左右各 16px 的内边距，
-              // 一共 996px —— 模型列（1fr）拿的是容器减掉这些之后剩下的。
+              // 一共 996px —— 模型列（1fr）拿的是容器减掉这些之后剩下的。再要加列先把
+              // 这笔账重算一遍。
               //
-              // 缓存读、缓存写是后加的两列，它们要 136px。直接摞上去的话，窗口窄一点
-              // 模型名就被挤没了，所以从 unitId（定长截断串）、机器（本来就 ellipsis）
-              // 和几个数字列上各收了一点，净增压到 90px。再要加列先把这笔账重算一遍。
+              // 缓存写那一列不展示：上游报这一项的只有 Anthropic，而且 2026-09-18 之后
+              // 它被拆成了 5m / 1h 两个计价桶，合计那一个不再单独记。给主人看一列
+              // 常年空着的数字不如不给。要恢复的话数据在 row.usage 的
+              // llm.cache_write_5m_tokens / llm.cache_write_1h_tokens 里。
               columns={[
                 {
                   key: "time",
@@ -270,18 +272,14 @@ export function ExecutionRecords() {
                   render: (row: ExecutionRecord) => <TokenCell value={row.usage["llm.reasoning_tokens"] ?? 0} />,
                 },
                 {
+                  // 缓存读挨着新增输入的道理和推理挨着输出一样：「新增」这个词
+                  // 只有和缓存命中的那部分摆在一起才说得通。放在推理之后是为了
+                  // 不把输出与它的子集拆开，列序跟使用端那张表保持一致。
                   key: "cacheRead",
                   title: t("records.col.cacheRead"),
                   width: "68px",
                   align: "right",
                   render: (row: ExecutionRecord) => <TokenCell value={row.usage["llm.cache_read_tokens"] ?? 0} />,
-                },
-                {
-                  key: "cacheWrite",
-                  title: t("records.col.cacheWrite"),
-                  width: "68px",
-                  align: "right",
-                  render: (row: ExecutionRecord) => <TokenCell value={row.usage["llm.cache_write_tokens"] ?? 0} />,
                 },
                 {
                   key: "took",

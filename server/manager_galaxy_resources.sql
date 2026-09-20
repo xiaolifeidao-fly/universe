@@ -1,5 +1,5 @@
 -- =========================================================================
--- 管理端权限资源：共享算力池运营接口（27 条）
+-- 管理端权限资源：共享算力池运营接口（34 条）
 --
 -- 首选做法**不是**跑这份 SQL，而是：
 --
@@ -12,9 +12,13 @@
 -- 页面资源不用动：galaxy（/galaxy，GlobalOutlined，sort=50）已经在 managerinit
 -- 的 pages 清单里，菜单能显示出来就是证据。这次新增的全是接口。
 --
--- 后 10 条是 Galaxy 账号体系独立出来时加的（2026-09-11）：Galaxy 账号的列表 / 停用 /
+-- 中间 10 条是 Galaxy 账号体系独立出来时加的（2026-09-11）：Galaxy 账号的列表 / 停用 /
 -- 重置密码，以及原来挂在 galaxy-api、认任务宇宙管理员的那几条运营接口
 -- （发内测密钥、人工确认到账、门户模型目录、门户线索）。galaxy-api 上已经没有运营接口了。
+--
+-- 最后 4 条是桌面客户端热更新上线时加的（2026-09-18）：Nova / Orbit 安装包的发版。
+-- 那一页还要一条页面资源（galaxyDesktopReleases），在
+-- migrations/20260918_manager_desktop_release_menu.sql 里。
 --
 -- 全部幂等，反复执行不出错、不改已有行。
 -- 库：manager-api 的 application.properties 里 sqlconn 指向的那个
@@ -210,6 +214,36 @@ INSERT INTO zt_manager_resource
 SELECT 0, 'api.post.api.galaxy.admin.bridge.releases.status', 'POST /api/galaxy/admin/bridge/releases/status', 'api', 'POST', '/api/galaxy/admin/bridge/releases/status', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.bridge.releases.status');
 
+-- 下面 4 条是桌面客户端（Nova / Orbit）热更新上线时加的（2026-09-18）。
+--
+-- 发版分两步是因为包一百多兆、字节不经服务端：prepare 收下 electron-builder 出的清单、
+-- 回几个直传地址，浏览器把包 PUT 上 OSS，publish 再确认包到了没有、把清单写出去。
+-- 客户端读的是 OSS 上那份清单，不打这里的任何接口。
+
+-- 发版记录列表（含还没传完的和已下架的）。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.get.api.galaxy.admin.desktop.releases', 'GET /api/galaxy/admin/desktop/releases', 'api', 'GET', '/api/galaxy/admin/desktop/releases', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.desktop.releases');
+
+-- 第一步：交清单、登记这一版、换回直传地址。这一步还没有任何用户看得到。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.desktop.releases.prepare', 'POST /api/galaxy/admin/desktop/releases/prepare', 'api', 'POST', '/api/galaxy/admin/desktop/releases/prepare', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.desktop.releases.prepare');
+
+-- 第二步：确认包真的在对象存储上，把清单发出去 —— **全网的客户端从这一刻起开始提示更新**。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.desktop.releases.publish', 'POST /api/galaxy/admin/desktop/releases/publish', 'api', 'POST', '/api/galaxy/admin/desktop/releases/publish', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.desktop.releases.publish');
+
+-- 下架 / 重新上架。下架把清单换回上一版，问题版本立刻不再被推给任何人。
+INSERT INTO zt_manager_resource
+  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
+SELECT 0, 'api.post.api.galaxy.admin.desktop.releases.status', 'POST /api/galaxy/admin/desktop/releases/status', 'api', 'POST', '/api/galaxy/admin/desktop/releases/status', '', '', 0, 'active', NOW(3), NOW(3)
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.desktop.releases.status');
+
 
 -- -------------------------------------------------------------------------
 -- 2. 角色授权
@@ -258,7 +292,11 @@ WHERE r.status = 'active'
     'api.post.api.galaxy.admin.referral.settings.save',
     'api.get.api.galaxy.admin.bridge.releases',
     'api.post.api.galaxy.admin.bridge.releases.upload',
-    'api.post.api.galaxy.admin.bridge.releases.status'
+    'api.post.api.galaxy.admin.bridge.releases.status',
+    'api.get.api.galaxy.admin.desktop.releases',
+    'api.post.api.galaxy.admin.desktop.releases.prepare',
+    'api.post.api.galaxy.admin.desktop.releases.publish',
+    'api.post.api.galaxy.admin.desktop.releases.status'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
@@ -302,7 +340,11 @@ WHERE r.status = 'active'
     'api.post.api.galaxy.admin.referral.settings.save',
     'api.get.api.galaxy.admin.bridge.releases',
     'api.post.api.galaxy.admin.bridge.releases.upload',
-    'api.post.api.galaxy.admin.bridge.releases.status'
+    'api.post.api.galaxy.admin.bridge.releases.status',
+    'api.get.api.galaxy.admin.desktop.releases',
+    'api.post.api.galaxy.admin.desktop.releases.prepare',
+    'api.post.api.galaxy.admin.desktop.releases.publish',
+    'api.post.api.galaxy.admin.desktop.releases.status'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr
@@ -332,7 +374,8 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.points.ledger',
     'api.get.api.galaxy.admin.points.summary',
     'api.get.api.galaxy.admin.referral.settings',
-    'api.get.api.galaxy.admin.bridge.releases'
+    'api.get.api.galaxy.admin.bridge.releases',
+    'api.get.api.galaxy.admin.desktop.releases'
   )
   AND NOT EXISTS (
     SELECT 1 FROM zt_manager_role_resource rr

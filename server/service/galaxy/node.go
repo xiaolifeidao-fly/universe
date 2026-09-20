@@ -808,7 +808,7 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
 		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
-		Seats: row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status,
+		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status,
 		PendingStatus: row.PendingStatus, Reputation: reputation,
 		Online:    Online(snapshot, now, s.cfg().HeartbeatTimeout),
 		SeatsUsed: snapshot.SeatsUsed, Inflight: snapshot.Inflight,
@@ -950,9 +950,9 @@ const forceCloseAbortLimit = 200
 // SetContributionStatus 主人暂停 / 恢复 / 停掉一条贡献（P-08、P-09）。
 //
 // 关闭的门槛是「有没有请求在跑」（inflight），不是「有没有消费者绑在座位上」。
-// 座位是会话亲和，空闲满 bindIdleTTL（默认 30 分钟）才释放 —— 拿它当门槛，
-// 主人在最后一次调用结束之后还要对着「不能下线」点上半小时，而那半小时里
-// 这台机器一条请求都没在跑。真正不该被打断的是在跑的那几条。
+// 座位是会话亲和，最后一条请求结束之后还要空闲满 bindIdleTTL（默认 1 分钟）
+// 才释放 —— 拿它当门槛，主人在最后一次调用结束之后还得对着「不能下线」干等，
+// 而那段时间里这台机器一条请求都没在跑。真正不该被打断的是在跑的那几条。
 //
 // 于是关闭有三种结局：
 //
