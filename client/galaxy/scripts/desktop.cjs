@@ -2,8 +2,17 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { products, defaultOrigin } = require('../common');
-const [action, product] = process.argv.slice(2);
-if (!products[product] || !['dev', 'start', 'build', 'package'].includes(action)) throw new Error('Usage: desktop.cjs dev|start|build|package nova|orbit');
+const [action, product, ...targets] = process.argv.slice(2);
+if (!products[product] || !['dev', 'start', 'build', 'package'].includes(action)) throw new Error('Usage: desktop.cjs dev|start|build|package nova|orbit [electron-builder 的平台/架构参数]');
+// package 之后多余的参数原样转给 electron-builder，用来一次出多个平台 / 架构：
+//
+//   package nova --mac --arm64 --x64     一次出 Intel 与 Apple 芯片两份
+//   package orbit --win --x64            Windows 安装包
+//
+// **一个平台的几个架构必须在同一次调用里出**：electron-builder 每跑一次就重写一遍
+// 那个平台的 latest-*.yml，分两次跑的话后一次会把前一次的架构从清单里挤掉，
+// 于是另一半用户永远收不到更新（清单里没有他那一片，客户端只会说「已经是最新」）。
+if (action !== 'package' && targets.length) throw new Error(`${action} 不接受额外参数：${targets.join(' ')}`);
 const root = path.resolve(__dirname, '..');
 const webview = path.join(root, product, 'webview');
 const electron = path.join(root, product, 'electron');
@@ -85,6 +94,6 @@ async function main() {
     APP_ORIGIN: (process.env.APP_ORIGIN || '').trim() || defaultOrigin,
   }, null, 2));
 
-  if (action === 'package') await wait(run(process.execPath, [require.resolve('electron-builder/cli.js'), '--projectDir', electron], { cwd: root }));
+  if (action === 'package') await wait(run(process.execPath, [require.resolve('electron-builder/cli.js'), '--projectDir', electron, ...targets], { cwd: root }));
 }
 main().catch((error) => { console.error(error); stop(); process.exitCode = 1; });

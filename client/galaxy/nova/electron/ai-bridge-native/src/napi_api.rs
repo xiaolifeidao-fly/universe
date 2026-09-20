@@ -513,6 +513,14 @@ impl NativeBridge {
         if let Some(queue) = queue {
             out["queue"] = queue;
         }
+        // 上游订阅还剩多少。跑起来之前、或者一次中转都还没接过时是空的 ——
+        // 空对象和「余量为 0」是两回事，界面上不能显示成同一个样子。
+        if let Some(pool) = runtime.pool.as_ref() {
+            let usage = pool.upstream_usage();
+            if !usage.is_empty() {
+                out["upstreamUsage"] = serde_json::to_value(&usage).unwrap_or(Value::Null);
+            }
+        }
         to_json(&prune_nulls(out))
     }
 

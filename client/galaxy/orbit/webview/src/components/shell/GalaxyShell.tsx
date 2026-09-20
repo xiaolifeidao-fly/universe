@@ -16,7 +16,7 @@ import { UpdateGate } from "@/components/shell/UpdateGate";
 import { clearAuthToken, getAuthUser } from "@/utils/auth";
 import { hasOverlayTitlebar, productConfig } from "@/utils/product";
 import { IconChevronDown, IconLogout, IconUser } from "@/components/ui/icons";
-import { IconBag, IconChat, IconCoins, IconKey, IconList, IconSparkle } from "@/components/ui/icons";
+import { IconChat, IconCoins, IconKey, IconList, IconSparkle } from "@/components/ui/icons";
 
 interface NavEntry {
   href: string;
@@ -24,11 +24,11 @@ interface NavEntry {
   icon: ReactNode;
 }
 
-// 钱的流向排在一起：看模型 → 用积分买 → 积分从哪来（含分享返现）。
+// 钱的流向排在一起：拿密钥去调 → 看模型什么价 → 余额还剩多少、从哪来。
+// 没有「购买」：额度就是账户余额，由运营充进来，这一端只有看和花。
 const NAV: NavEntry[] = [
   { href: "/consumer/keys", labelKey: "nav.keys", icon: <IconKey size={18} /> },
   { href: "/consumer/models", labelKey: "nav.models", icon: <IconSparkle size={18} /> },
-  { href: "/consumer/store", labelKey: "nav.store", icon: <IconBag size={18} /> },
   { href: "/consumer/points", labelKey: "nav.points", icon: <IconCoins size={18} /> },
   { href: "/consumer/usage", labelKey: "nav.usage", icon: <IconList size={18} /> },
   { href: "/consumer/chat", labelKey: "nav.chat", icon: <IconChat size={18} /> },

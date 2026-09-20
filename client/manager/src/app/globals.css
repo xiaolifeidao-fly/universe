@@ -151,8 +151,8 @@
     bottom: 0;
     left: 0;
     z-index: 101;
-    width: 236px !important;
-    max-width: 236px !important;
+    width: 260px !important;
+    max-width: 260px !important;
     height: 100dvh;
     transform: translateX(-100%);
     transition: transform 0.25s var(--manager-ease) !important;
@@ -352,7 +352,12 @@
   height: 44px;
   min-height: 44px;
   margin: 2px 0 !important;
-  padding: 0 10px !important;
+  /*
+   * 右边 30 而不是 10：折叠箭头是**绝对定位**的，它不占标签的盒子 —— 标签算宽度时
+   * 当它不存在，于是最长那条英文（Customers & growth）正好压在箭头上，
+   * 而 scrollWidth 一点都不超，自动省略号也不会触发。这 30px 就是给箭头留的位。
+   */
+  padding: 0 30px 0 10px !important;
   border-radius: 11px;
   color: var(--manager-text-soft) !important;
   transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t);
@@ -400,11 +405,73 @@
  * 而上面 .ant-menu-item 那条规则带了 !important，会把它盖掉 —— 结果就是子项
  * 贴着左边、和父项左对齐，看不出从属关系。
  *
- * 47px = 父项 padding-left 10 + 图标 26 + 图标与文字的 gap 11，
- * 让子项文字正好落在父项文字的起点上。
+ * 32px：子项也有图标之后，这里缩进的是**图标**而不是文字了。原先是 47
+ * （父项 padding 10 + 图标 26 + gap 11），让子项文字对齐父项文字；现在照搬
+ * 那个值会把子项图标推到父项文字的位置上，右边只剩九十来像素装标签。
+ * 32 让子项图标落在导引线（left: 22）右侧半格，文字起点 32 + 20 + 9 = 61。
  */
 .manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline > .ant-menu-item {
-  padding-left: 47px !important;
+  padding-right: 6px !important;
+  padding-left: 32px !important;
+}
+
+/*
+ * 子项图标：小一号、**没有底托**。
+ *
+ * 一级菜单那个圆角底托是层级信号，子项再来一个，两层就一样重了 —— 展开之后
+ * 侧栏是一整片色块，反而比没有图标更难扫。子项只留字形，靠颜色和位置区分。
+ */
+.manager-shell-menu.ant-menu .ant-menu-sub .manager-nav-item-content {
+  gap: 9px;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub .manager-nav-item-icon {
+  width: 20px;
+  height: 20px;
+  padding-bottom: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: var(--manager-fs-base);
+}
+
+/* 悬停/选中时子项图标只换颜色：底托和浮起是一级菜单的语言。 */
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item:hover .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item-selected .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: transparent;
+  box-shadow: none;
+}
+
+/*
+ * 侧栏收起来之后二级菜单改从悬浮层出，而 antd 把那一层渲染到 body 上的
+ * .ant-menu-submenu-popup 里 —— 上面那些以 .manager-shell-menu 开头的规则全都够不着它，
+ * 同一个菜单项在悬浮层里会退回一级菜单那个带底托的大图标。这里再交代一次，
+ * 让它和展开时长得一样。
+ */
+.ant-menu-submenu-popup .manager-nav-item-content {
+  gap: 9px;
+}
+
+.ant-menu-submenu-popup .manager-nav-item-icon {
+  width: 20px;
+  height: 20px;
+  padding-bottom: 0;
+  border-radius: 6px;
+  color: var(--manager-text-faint);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--manager-fs-base);
+}
+
+.ant-menu-submenu-popup .ant-menu-item:hover .manager-nav-item-icon,
+.ant-menu-submenu-popup .ant-menu-item-selected .manager-nav-item-icon {
+  color: var(--manager-primary);
 }
 
 /* 父项在子页面被选中时也要有在场感，否则折叠起来就完全看不出自己在哪。 */

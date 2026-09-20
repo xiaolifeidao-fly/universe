@@ -183,17 +183,3 @@ func TestApplyKindPriceKeepsPricedWhenTheRowIsTheModelsOwn(t *testing.T) {
 		t.Fatal("input 走的是兜底价，Priced 该是 false")
 	}
 }
-
-// 目录只填了 input、output 靠模型自己的计价行补上：两个数都是它自己的，Priced 该是 true。
-//
-// 边填边置 false 的写法过不了这条 —— 那种写法只看「目录填没填」，
-// 不看回落落到了哪一层。
-func TestApplyKindPriceHandlesHalfDeclaredCatalogRow(t *testing.T) {
-	model := dto.PortalModelView{InputPrice: 18_000_000}
-	applyKindPrice(&model,
-		map[contract.MeterUnit]priceRow{contract.UnitOutputTokens: {Price: 90_000_000}},
-		map[contract.MeterUnit]bool{contract.UnitOutputTokens: true})
-	if !model.Priced {
-		t.Fatal("目录填了 input、模型自己的计价行补了 output，两档都是它的")
-	}
-}

@@ -17,16 +17,16 @@ import (
 
 // 使用者积分与分享返现。
 //
-// 钱怎么流：运营在管理端给使用者充积分（线下收了钱）→ 使用者在 Orbit 用积分买套餐，
-// 买完签发密钥或充进已有密钥 → 如果他是别人邀请来的，按套餐所绑模型的比例给邀请人返积分。
-// 1 积分 = ¥1，量纲和 amount / price 一样是「微」，套餐标价直接就是积分价。
+// 钱怎么流：运营在管理端给使用者充积分（线下收了钱）→ 使用者拿自己签发的密钥调模型，
+// 每次请求按单价从余额里扣（见 billing.go 的 chargeUsage）→ 如果他是别人邀请来的，
+// 充值那一刻按默认比例给邀请人返一笔积分。
+// 1 积分 = ¥1，量纲和 amount / price 一样是「微」。
 //
-// 三条不能松的规则：
+// 两条不能松的规则：
 //   - 余额的每一次变动都和一行流水在同一个事务里，流水的 txn_id 是幂等键 ——
-//     充值和购买按前端生成的请求号，返现按订单号，重放不会多记一笔钱。
-//   - 扣积分、订单推到已付、签发或充值，三件事在一个事务里：发不出去就一起回滚，
-//     不存在「积分扣了、密钥没到」的中间态，也就不需要事后补偿。
-//   - 返现跟着「这一单交付了」走，发生在交付之后、事务之外。返现失败不影响买的人，
+//     充值按前端生成的请求号，消费按 (请求, 第几次尝试)，返现按那笔充值的流水号，
+//     重放不会多记一笔钱。
+//   - 返现跟着「这笔充值到账了」走，发生在到账之后、事务之外。返现失败不影响充值本身，
 //     流水幂等，漏的可以照日志补。
 
 const (
@@ -44,7 +44,7 @@ const (
 	inviteCodeLength = 8
 )
 
-var errInsufficientPoints = errors.New("积分不足，请联系运营充值后再购买")
+var errInsufficientPoints = errors.New("积分余额不足，请联系运营充值")
 
 // ---------- 积分 ----------
 
@@ -62,9 +62,12 @@ func (s *service) PointsSummary(ctx context.Context, ownerUserID string) (dto.Po
 		return summary, err
 	}
 	summary.Recharged = sums[dto.PointsRecharge]
-	// 买套餐记的是负数。
-	summary.Spent = -sums[dto.PointsPurchase]
+	// 消费记的是负数；退款是正的，从消费里抵掉 —— 「一共花了多少」说的是净额，
+	// 把退回来的钱还算在花掉的里面，这个数就永远比余额少的那部分大。
+	summary.Used = -(sums[dto.PointsUsage] + sums[dto.PointsRefund])
 	summary.Referral = sums[dto.PointsReferral]
+	// 买额度包已经下架，这一项只剩历史。
+	summary.Spent = -sums[dto.PointsPurchase]
 	return summary, nil
 }
 
@@ -73,7 +76,7 @@ func (s *service) PointsLedger(ctx context.Context, query dto.PointsLedgerQuery)
 	var types []string
 	switch kind := strings.TrimSpace(query.Type); kind {
 	case "":
-	case dto.PointsRecharge, dto.PointsPurchase, dto.PointsReferral:
+	case dto.PointsRecharge, dto.PointsUsage, dto.PointsRefund, dto.PointsReferral, dto.PointsPurchase:
 		types = []string{kind}
 	default:
 		return dto.PointsLedgerPage{}, fmt.Errorf("未知的流水类型：%s", kind)
@@ -133,7 +136,8 @@ func pointsEntry(row *repository.GalaxyPointsLedger) dto.PointsLedgerEntry {
 	return dto.PointsLedgerEntry{
 		TxnID: row.TxnID, OwnerUserID: row.OwnerUserID, Type: row.Type,
 		Amount: row.Amount, BalanceAfter: row.BalanceAfter, BaseAmount: row.BaseAmount, RateBps: row.RateBps,
-		OrderID: row.OrderID, ModelID: row.ModelID, Remark: row.Remark, Operator: row.Operator,
+		OrderID: row.OrderID, UnitID: row.UnitID, Kind: row.Kind, ModelID: row.ModelID,
+		Remark: row.Remark, Operator: row.Operator,
 		CreatedAt: row.CreatedAt,
 	}
 }
@@ -169,7 +173,7 @@ func (s *service) RechargePoints(ctx context.Context, req dto.RechargePointsRequ
 		Amount: req.Points, BaseAmount: req.PaidAmount,
 		Remark: clip(req.Remark, 256), Operator: clip(req.Operator, 64),
 	}
-	applied, err := s.applyPoints(ctx, row, nil)
+	applied, err := s.applyPoints(ctx, row, false, nil)
 	if err != nil {
 		return dto.PointsLedgerEntry{}, err
 	}
@@ -184,6 +188,9 @@ func (s *service) RechargePoints(ctx context.Context, req dto.RechargePointsRequ
 		}
 		row = existing
 	}
+	// 返现在充值到账之后、事务之外。它按这笔充值的流水号幂等，
+	// 所以重试到的那一次也会补上 —— 第一次要是返现失败了，第二次不会漏。
+	s.rewardReferrer(ctx, row)
 	entry := pointsEntry(row)
 	names, err := s.userNames(ctx, dto.SideConsumer, []string{userID})
 	if err != nil {
@@ -197,16 +204,27 @@ func (s *service) RechargePoints(ctx context.Context, req dto.RechargePointsRequ
 //
 // Amount 为正是入账；为负是出账，余额不够返回 errInsufficientPoints。
 // 第一个返回值为假表示这个 txn_id 已经记过：余额没动、within 没跑，事务整个回滚。
-func (s *service) applyPoints(ctx context.Context, row *repository.GalaxyPointsLedger, within func(tx *repository.GalaxyRepository) error) (bool, error) {
+//
+// overdraw 只给**按量消费**用：服务已经交付了，这笔钱必须记下来，哪怕余额不够。
+// 其余出账（当初的买套餐）一律不许透支 —— 那些是「先付钱后拿货」，
+// 余额不够的正确答案是不卖，而不是记一笔负债。
+func (s *service) applyPoints(ctx context.Context, row *repository.GalaxyPointsLedger, overdraw bool, within func(tx *repository.GalaxyRepository) error) (bool, error) {
 	errReplayed := errors.New("points ledger replayed")
 	err := s.repository.Tx(ctx, func(tx *repository.GalaxyRepository) error {
-		if row.Amount >= 0 {
+		switch {
+		case row.Amount >= 0:
 			after, err := tx.CreditPoints(ctx, bizLine, row.OwnerUserID, row.Amount)
 			if err != nil {
 				return err
 			}
 			row.BalanceAfter = after
-		} else {
+		case overdraw:
+			after, err := tx.CreditPoints(ctx, bizLine, row.OwnerUserID, row.Amount)
+			if err != nil {
+				return err
+			}
+			row.BalanceAfter = after
+		default:
 			ok, after, err := tx.DebitPoints(ctx, bizLine, row.OwnerUserID, -row.Amount)
 			if err != nil {
 				return err
@@ -234,199 +252,53 @@ func (s *service) applyPoints(ctx context.Context, row *repository.GalaxyPointsL
 	return err == nil, err
 }
 
-// PurchaseWithPoints 用积分买一个套餐。
-//
-// 下单的校验（商品上架、目标密钥是本人的且没吊销、签发新密钥前确认过数据告知）
-// 全部复用渠道下单那一套。之后扣积分、推到已付、签发或充值在同一个事务里 ——
-// 签发写到一半失败，积分和订单状态跟着一起回滚，不会有人花了积分没拿到东西，
-// 也不会有人拿到东西又被「退款」补偿一次。
-func (s *service) PurchaseWithPoints(ctx context.Context, req dto.PurchaseRequest) (dto.OrderView, error) {
-	requestID := clip(req.RequestID, 64)
-	// 超时重试最常见：第一次其实已经成了。先按请求号查一次，查到就直接还回那一单，
-	// 不然重试会先建一张多余的单子，余额刚好够一单时还会被报成「积分不足」。
-	if requestID != "" {
-		existing, err := s.repository.FindPointsLedger(ctx, bizLine, "purchase:"+requestID)
-		if err == nil {
-			return s.purchasedOrder(ctx, req.UserID, existing)
-		}
-		if !notFound(err) {
-			return dto.OrderView{}, err
-		}
-	}
-
-	order, err := s.createOrder(ctx, dto.CreateOrderRequest{
-		UserID: req.UserID, PackageCode: req.PackageCode,
-		TargetKeyID: req.TargetKeyID, NoticeVersion: req.NoticeVersion,
-	}, payByPoints)
-	if err != nil {
-		return dto.OrderView{}, err
-	}
-
-	// 扣积分那一行流水的 txn_id 就是这一单的幂等键。前端带了请求号就按请求号：
-	// 点两下、超时重试会各建一张待支付的单，但只有第一张能写进这一行，后面的在事务里撞键回滚。
-	payTxn := "order:" + order.OrderID + ":pay"
-	if requestID != "" {
-		payTxn = "purchase:" + requestID
-	}
-
-	var view dto.OrderView
-	deliver := func(tx *repository.GalaxyRepository) error {
-		moved, err := tx.MarkOrderPaid(ctx, bizLine, order.OrderID, payByPoints+":"+order.OrderID, time.Now())
-		if err != nil {
-			return err
-		}
-		if !moved {
-			return fmt.Errorf("订单已不是待支付状态")
-		}
-		view, err = s.scopedTo(tx).fulfilOrder(ctx, order.OrderID)
-		return err
-	}
-	if order.Amount > 0 {
-		var applied bool
-		applied, err = s.applyPoints(ctx, &repository.GalaxyPointsLedger{
-			BizLine: bizLine, TxnID: payTxn, OwnerUserID: req.UserID,
-			Type: dto.PointsPurchase, Amount: -order.Amount, BaseAmount: order.Amount,
-			OrderID: order.OrderID, ModelID: order.ModelID,
-		}, deliver)
-		if err == nil && !applied {
-			return s.replayedPurchase(ctx, req.UserID, order.OrderID, payTxn)
-		}
-	} else {
-		err = s.repository.Tx(ctx, deliver)
-	}
-	if err != nil {
-		// 事务已经把积分和订单状态回滚了。剩下这张待支付的单子付不了也不该留着，关掉。
-		if cancelErr := s.repository.CancelOrder(ctx, bizLine, req.UserID, order.OrderID); cancelErr != nil && !notFound(cancelErr) {
-			log.Printf("galaxy 积分购买失败后关单也失败 order=%s: %v", order.OrderID, cancelErr)
-		}
-		return dto.OrderView{}, err
-	}
-	s.rewardReferrer(ctx, order.OrderID)
-	return view, nil
-}
-
-// replayedPurchase 并发的两次提交撞了同一个请求号，后到的那次在事务里撞键回滚了：
-// 它多建出来的那张待支付单关掉，把先到的那一单原样还回去。不报错 —— 对点了两下的人来说，他只买了一次。
-func (s *service) replayedPurchase(ctx context.Context, userID, duplicateOrderID, payTxn string) (dto.OrderView, error) {
-	if err := s.repository.CancelOrder(ctx, bizLine, userID, duplicateOrderID); err != nil && !notFound(err) {
-		log.Printf("galaxy 重复的积分购买关单失败 order=%s: %v", duplicateOrderID, err)
-	}
-	existing, err := s.repository.FindPointsLedger(ctx, bizLine, payTxn)
-	if err != nil {
-		return dto.OrderView{}, err
-	}
-	return s.purchasedOrder(ctx, userID, existing)
-}
-
-// purchasedOrder 按扣积分那行流水找回当初那一单。明文不跟着回 —— 要的话去密钥页取。
-func (s *service) purchasedOrder(ctx context.Context, userID string, paid *repository.GalaxyPointsLedger) (dto.OrderView, error) {
-	// 请求号是别人用过的：不能把别人的订单还给他。
-	if paid.OwnerUserID != userID || paid.Type != dto.PointsPurchase {
-		return dto.OrderView{}, fmt.Errorf("购买请求号冲突，请刷新页面后重试")
-	}
-	original, err := s.repository.FindOrder(ctx, bizLine, paid.OrderID)
-	if err != nil {
-		return dto.OrderView{}, err
-	}
-	return orderView(original, ""), nil
-}
-
-// scopedTo 一个把全部读写都落在给定事务里的 service 副本，只给账务流程用。
-// 放置、等待队列这些进程内状态它没有，也不该在事务里碰。
-func (s *service) scopedTo(tx *repository.GalaxyRepository) *service {
-	// settings 传的是**同一个指针**：副本要是自己去回查，那次查询会落在
-	// 正开着的事务里 —— 一个账务事务因为读了一遍运营开关而变长，没有任何道理。
-	return &service{
-		repository: tx, config: s.config, settings: s.settings,
-		cipher: s.cipher, kinds: s.kinds, metrics: s.metrics,
-	}
-}
-
 // ---------- 分享返现 ----------
 
-// rewardReferrer 给下单人的邀请人返现。失败只记日志 —— 买的人已经拿到东西了，
-// 返现流水按订单号幂等，漏掉的照日志里的订单号再调一次就补上。
-func (s *service) rewardReferrer(ctx context.Context, orderID string) {
-	if err := s.awardReferral(ctx, orderID); err != nil {
-		log.Printf("galaxy 分享返现失败 order=%s: %v", orderID, err)
+// rewardReferrer 给充值到账的那个人的邀请人返现。失败只记日志 ——
+// 充值的人已经拿到积分了，返现按那笔充值的流水号幂等，漏掉的照日志里的流水号再调一次就补上。
+func (s *service) rewardReferrer(ctx context.Context, recharge *repository.GalaxyPointsLedger) {
+	if err := s.awardReferral(ctx, recharge); err != nil {
+		log.Printf("galaxy 分享返现失败 txn=%s: %v", recharge.TxnID, err)
 	}
 }
 
-// awardReferral 按「实付 × 套餐所绑模型的比例」给邀请人返积分。
+// awardReferral 按「这笔充值 × 默认比例」给邀请人返积分。
 //
-// 实付就是订单金额：积分付的是积分，渠道付的是钱，1 积分 = ¥1，两者同一量纲。
-// 比例在返现这一刻取，并记进流水 —— 运营之后改比例，已经返过的不跟着变，账上看得出当时按多少算的。
-func (s *service) awardReferral(ctx context.Context, orderID string) error {
-	order, err := s.repository.FindOrder(ctx, bizLine, orderID)
-	if err != nil {
-		return err
-	}
-	if order.Status != orderFulfilled || order.Amount <= 0 {
+// 返现跟着**充值**走，不跟着消费走：一是被邀请人真金白银付了钱的那一刻才是
+// 平台该分钱的那一刻；二是消费一天几千笔，按笔返会在邀请人的流水里堆出几千行
+// 每行几微的记录，谁也读不懂自己挣了多少。
+//
+// 比例在返现这一刻取，并记进流水 —— 运营之后改比例，已经返过的不跟着变，
+// 账上看得出当时是按多少算的。
+func (s *service) awardReferral(ctx context.Context, recharge *repository.GalaxyPointsLedger) error {
+	if recharge == nil || recharge.Type != dto.PointsRecharge || recharge.Amount <= 0 {
 		return nil
 	}
-	referral, err := s.repository.FindReferralByUser(ctx, bizLine, order.UserID)
+	referral, err := s.repository.FindReferralByUser(ctx, bizLine, recharge.OwnerUserID)
 	if notFound(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if referral.InvitedBy == "" || referral.InvitedBy == order.UserID {
+	if referral.InvitedBy == "" || referral.InvitedBy == recharge.OwnerUserID {
 		return nil
 	}
-	rates, err := s.referralRates(ctx)
+	settings, err := s.ReferralSettings(ctx)
 	if err != nil {
 		return err
 	}
-	bps := rates.of(order.ModelID)
-	cashback := order.Amount * bps / bpsScale
+	bps := settings.DefaultBps
+	cashback := recharge.Amount * bps / bpsScale
 	if cashback <= 0 {
 		return nil
 	}
 	_, err = s.applyPoints(ctx, &repository.GalaxyPointsLedger{
-		BizLine: bizLine, TxnID: "order:" + order.OrderID + ":referral", OwnerUserID: referral.InvitedBy,
-		Type: dto.PointsReferral, Amount: cashback, BaseAmount: order.Amount, RateBps: bps,
-		OrderID: order.OrderID, RelatedUserID: order.UserID, ModelID: order.ModelID,
-	}, nil)
+		BizLine: bizLine, TxnID: recharge.TxnID + ":referral", OwnerUserID: referral.InvitedBy,
+		Type: dto.PointsReferral, Amount: cashback, BaseAmount: recharge.Amount, RateBps: bps,
+		RelatedUserID: recharge.OwnerUserID,
+	}, false, nil)
 	return err
-}
-
-// referralRateTable 此刻生效的返现比例：模型单独设了的用模型的，其余（含通用套餐）用默认。
-type referralRateTable struct {
-	defaultBps int64
-	models     map[string]int64
-}
-
-func (t referralRateTable) of(modelID string) int64 {
-	if bps, ok := t.models[modelID]; ok && modelID != "" {
-		return bps
-	}
-	return t.defaultBps
-}
-
-// inherits 这个模型是不是没单独设、跟着默认走。
-func (t referralRateTable) inherits(modelID string) bool {
-	_, ok := t.models[modelID]
-	return !ok
-}
-
-func (s *service) referralRates(ctx context.Context) (referralRateTable, error) {
-	settings, err := s.ReferralSettings(ctx)
-	if err != nil {
-		return referralRateTable{}, err
-	}
-	// 下架的模型也要在表里：套餐可能还挂着它在卖，返现照它设的比例算。
-	rows, err := s.repository.ListModels(ctx, bizLine, false)
-	if err != nil {
-		return referralRateTable{}, err
-	}
-	table := referralRateTable{defaultBps: settings.DefaultBps, models: map[string]int64{}}
-	for _, row := range rows {
-		if row.ReferralBps != nil {
-			table.models[row.ModelID] = clampBps(*row.ReferralBps)
-		}
-	}
-	return table, nil
 }
 
 func (s *service) ReferralSettings(ctx context.Context) (dto.ReferralSettings, error) {
@@ -483,31 +355,14 @@ func (s *service) ReferralOverview(ctx context.Context, ownerUserID string) (dto
 	if err != nil {
 		return dto.ReferralOverview{}, err
 	}
-	rates, err := s.referralRates(ctx)
+	settings, err := s.ReferralSettings(ctx)
 	if err != nil {
 		return dto.ReferralOverview{}, err
 	}
-	models, err := s.repository.ListModels(ctx, bizLine, true)
-	if err != nil {
-		return dto.ReferralOverview{}, err
-	}
-	view := dto.ReferralOverview{
-		InviteCode: referral.InviteCode, Invitees: invitees, Earned: sums[dto.PointsReferral],
-		DefaultBps: rates.defaultBps, Rates: []dto.ReferralRateView{},
-	}
-	for _, row := range models {
-		bps := rates.of(row.ModelID)
-		if bps <= 0 {
-			// 不返现的模型不列：分享页要回答的是「分享哪个模型能拿到返现」。
-			continue
-		}
-		model := portalModelView(row)
-		view.Rates = append(view.Rates, dto.ReferralRateView{
-			ModelID: row.ModelID, DisplayName: model.DisplayName, Family: model.Family,
-			Bps: bps, Inherited: rates.inherits(row.ModelID),
-		})
-	}
-	return view, nil
+	return dto.ReferralOverview{
+		InviteCode: referral.InviteCode, Invitees: invitees,
+		Earned: sums[dto.PointsReferral], DefaultBps: settings.DefaultBps,
+	}, nil
 }
 
 func (s *service) ListInvitees(ctx context.Context, ownerUserID string, offset, limit int) (dto.InviteePage, error) {

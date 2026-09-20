@@ -20,12 +20,13 @@ use crate::config::schema::{AccessMode, AppConfig, PoolConfig, PoolExportConfig}
 use crate::core::paths::Env;
 use crate::core::request::Cancel;
 use crate::credentials::CredentialRegistry;
+use crate::pool::usage::{UpstreamUsage, UsageSnapshot};
 use crate::{log_debug, log_error, log_info, log_warn};
 use async_stream::stream;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -105,6 +106,11 @@ pub(crate) struct RunnerInner {
     credentials: Arc<CredentialRegistry>,
     http: reqwest::Client,
     env: Env,
+    /// 上游订阅此刻还剩多少（Claude / Codex 各一份）。
+    ///
+    /// 由中转请求的响应头顺手填，心跳读它报给 Hub。挂在 runner 上而不是通道上：
+    /// 一个上游可能对应多条通道，而余量是**账号**的属性，不是通道的。
+    pub(crate) upstream_usage: Arc<UpstreamUsage>,
     // 通道是**跟着 Hub 下发的集合动态增删的**，不是启动时按本地配置建好的。
     pub(crate) lanes: RwLock<HashMap<String, Arc<Lane>>>,
     // inventory 是本机探测到的能力，cid → 建 provider 需要的本地信息。
@@ -215,6 +221,7 @@ pub async fn create_pool_runner_with(
     Ok(PoolRunner {
         inner: Arc::new(RunnerInner {
             credentials: Arc::new(CredentialRegistry::new(http.clone())),
+            upstream_usage: Arc::new(UpstreamUsage::new()),
             cfg,
             settings,
             identity,
@@ -467,6 +474,14 @@ impl PoolRunner {
         &self.inner.access.mode
     }
 
+    /// 各上游订阅此刻还剩多少，按路由键（claude_oauth / codex_chatgpt）。
+    ///
+    /// 只反映**这台机器**看到的 —— 数据是从它自己发出去的那些中转请求的响应头里
+    /// 捎回来的。一次都没跑过就是空的，界面要区分「空」和「0」。
+    pub fn upstream_usage(&self) -> BTreeMap<String, UsageSnapshot> {
+        self.inner.upstream_usage.all()
+    }
+
     /// export 对外声明的公网地址。poll 接入时是 None。
     pub fn public_url(&self) -> Option<String> {
         self.inner.access.endpoint.as_ref().map(|endpoint| endpoint.url.clone())
@@ -602,6 +617,7 @@ impl RunnerInner {
                     Arc::clone(&self.credentials),
                     self.http.clone(),
                     self.env.clone(),
+                    Arc::clone(&self.upstream_usage),
                 )))
             }
             CapabilityBuild::Ffmpeg => Some(Arc::new(FfmpegLocalProvider::new(
@@ -749,6 +765,9 @@ impl RunnerInner {
                     throttled_until: lane.throttled_until_ms().and_then(iso_from_ms),
                     upstream_ok: lane.upstream_ok.load(Ordering::Relaxed),
                     paused: restarting || lane.paused.load(Ordering::Relaxed),
+                    // 按**路由键**取，不是按 cid：余量是那个上游账号的属性，
+                    // 同一个账号下的几条通道看到的是同一份数。
+                    usage: self.upstream_usage.get(&lane.route_key()),
                 })
                 .collect();
             match self.client.heartbeat(&payload, &self.loop_cancel).await {

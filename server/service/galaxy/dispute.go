@@ -291,7 +291,7 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 	}
 	consumer := make([]*repository.GalaxyConsumerLedger, 0, len(refund))
 	provider := make([]*repository.GalaxyProviderLedger, 0, len(refund))
-	var platformLoss int64
+	var platformLoss, refundPoints int64
 	for _, unit := range refund.Units() {
 		amount := refund[unit]
 		price := prices[unit]
@@ -301,6 +301,7 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 			Unit: unit, Amount: amount, Price: price.Price, UnitID: row.UnitID,
 		})
 		cost, share := splitCost(amount, price)
+		refundPoints += cost
 		// 追回记的和当初结算记的是同一个量纲：积分，不是计量数。
 		// 两边不一致的话，对账时「进来过又出去了」这句话就对不平。
 		provider = append(provider, &repository.GalaxyProviderLedger{
@@ -315,15 +316,15 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 	if err := s.repository.SaveProviderLedger(ctx, provider); err != nil {
 		return err
 	}
-	// 额度退回消费者的余额上。UpsertBalance 是累加语义。
-	balances := make([]*repository.GalaxyConsumerBalance, 0, len(refund))
-	for _, unit := range refund.Units() {
-		balances = append(balances, &repository.GalaxyConsumerBalance{
-			BizLine: bizLine, KeyID: row.KeyID, Unit: unit, Balance: refund[unit],
-		})
-	}
-	if err := s.repository.UpsertBalance(ctx, balances); err != nil {
-		return err
+	// 钱退回消费者的积分余额。退的是**当初按同一个算式收的那些**（splitCost），
+	// 不是重新估一遍 —— 两处各算一次，只要取整差一点，退给使用者的和从
+	// 提供者那儿追回的就对不上，差额会悄悄堆在平台账上。
+	//
+	// 退款按工单号幂等，所以同一张工单裁决两次也只退一笔。
+	if refundPoints > 0 {
+		if err := s.refundPoints(ctx, row, refundPoints); err != nil {
+			return err
+		}
 	}
 	if platformLoss > 0 {
 		if err := s.repository.SavePlatformLedger(ctx, []*repository.GalaxyPlatformLedger{{
@@ -351,6 +352,26 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 		_ = s.adjustReputation(ctx, row.CID, delta)
 	}
 	return nil
+}
+
+// refundPoints 把一笔坐实的争议退回使用者的积分余额。
+//
+// 退给**密钥的主人**，不是密钥：余额本来就挂在账户上，而那把密钥可能早就吊销了 ——
+// 退到一把用不了的密钥上，等于没退。
+func (s *service) refundPoints(ctx context.Context, row *repository.GalaxyDispute, amount int64) error {
+	key, err := s.repository.FindConsumerKey(ctx, bizLine, row.KeyID)
+	if err != nil {
+		return err
+	}
+	if key.OwnerUserID == "" {
+		return fmt.Errorf("密钥 %s 没有主人，退款无处可退", row.KeyID)
+	}
+	_, err = s.applyPoints(ctx, &repository.GalaxyPointsLedger{
+		BizLine: bizLine, TxnID: "dispute:" + row.DisputeID + ":refund", OwnerUserID: key.OwnerUserID,
+		Type: dto.PointsRefund, Amount: amount, BaseAmount: amount,
+		UnitID: row.UnitID, Kind: row.Kind,
+	}, false, nil)
+	return err
 }
 
 func (s *service) reloadDispute(ctx context.Context, disputeID string) (dto.DisputeView, error) {

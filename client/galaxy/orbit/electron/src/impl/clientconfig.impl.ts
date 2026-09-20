@@ -104,7 +104,9 @@ export class ClientConfigImpl extends ClientConfigApi {
     const file = configFile(tool);
     const original = await readText(file);
     // 先把新内容算出来：现有文件认不清的话在弹框之前就报错，别让用户确认完了才发现没写。
-    const next = tool === 'claude' ? applyClaudeSettings(original, baseUrl, secret) : applyCodexConfig(original, baseUrl, secret);
+    const model = String(input.model ?? '').trim().slice(0, 96);
+    const next =
+      tool === 'claude' ? applyClaudeSettings(original, baseUrl, secret, model) : applyCodexConfig(original, baseUrl, secret, model);
     const backup = `${file}${BACKUP_SUFFIX}`;
     const backupExists = original !== null && (await readText(backup)) !== null;
 
@@ -112,9 +114,12 @@ export class ClientConfigImpl extends ClientConfigApi {
       `文件：${file}`,
       `地址：${baseUrl}`,
       `密钥：${maskSecret(secret)}`,
+      // 锁了模型就要在确认框里说出来：这一项会覆盖用户原本选的模型，
+      // 而那是他点「写入配置」之前唯一还能反悔的时候。
+      ...(model ? [`模型：${model}（这把密钥只能调它）`] : []),
       tool === 'claude'
-        ? '改动：env 里的 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN（并移除 ANTHROPIC_API_KEY），其余设置不动。'
-        : `改动：顶层 model_provider 设为 ${CODEX_PROVIDER_ID}，[model_providers.${CODEX_PROVIDER_ID}] 整段替换，其余配置不动。`,
+        ? `改动：env 里的 ANTHROPIC_BASE_URL、ANTHROPIC_AUTH_TOKEN${model ? '、ANTHROPIC_MODEL' : ''}（并移除 ANTHROPIC_API_KEY），其余设置不动。`
+        : `改动：顶层 model_provider 设为 ${CODEX_PROVIDER_ID}${model ? '、顶层 model 设为上面那个' : ''}，[model_providers.${CODEX_PROVIDER_ID}] 整段替换，其余配置不动。`,
       original === null ? '这个文件现在不存在，会新建。' : backupExists ? `原件在 ${backup}（之前留的，这次不覆盖）。` : `写之前先把原件存到 ${backup}。`,
       ...(isPlainHttp(baseUrl) ? ['注意：这是明文 http 地址，密钥会在网络上不加密地传输。'] : []),
     ].join('\n');

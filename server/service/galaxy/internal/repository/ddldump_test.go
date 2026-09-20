@@ -33,7 +33,12 @@ func (p *recordingPool) ExecContext(_ context.Context, query string, args ...any
 	return driver.RowsAffected(0), nil
 }
 
-func (p *recordingPool) QueryContext(context.Context, string, ...any) (*sql.Rows, error) {
+// QueryContext 同样抄下来。读语句里也有「错了不会报错、只会悄悄少算一块」的东西：
+// 少一个时间边界就是全表扫，少一个 type = 'settle' 就把退款也算成收入 ——
+// 两种都返回一串看着合理的数字。见 dashboard_test.go。
+func (p *recordingPool) QueryContext(_ context.Context, query string, args ...any) (*sql.Rows, error) {
+	p.statements = append(p.statements, query)
+	p.args = append(p.args, args)
 	return nil, sql.ErrNoRows
 }
 

@@ -16,7 +16,7 @@ import { IconKey, IconLock, IconLogout, IconShield } from "@/components/ui/icons
 import { Btn, Card, CardHead, Loading, Note, Pill, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { clearAuthToken, getAuthUser, isAuthTokenRemembered, setAuthUser, type AuthUser } from "@/utils/auth";
-import { formatCompact } from "@/utils/format";
+import { formatPoints } from "@/utils/format";
 import { acceptNotice, fetchDashboard, fetchNotice, type ConsumerDashboard, type NoticeStatus } from "../../api/consumer.api";
 import { fetchCurrentAccount } from "../api/account.api";
 
@@ -57,8 +57,8 @@ export function AccountPanel() {
     };
   }, [load]);
 
-  // 同密钥卡片：只看输出 token，那才是计费口径。
-  const balance = dashboard?.balance?.["llm.output_tokens"] ?? 0;
+  // 余额是账户级的：名下几把密钥花的是同一份钱。
+  const balance = dashboard?.balance ?? 0;
 
   return (
     <>
@@ -90,7 +90,7 @@ export function AccountPanel() {
                 {t("account.keysHint", { active: dashboard?.activeKeys ?? 0, total: dashboard?.keys ?? 0 })}
               </span>
               <span className="gx-mono" style={{ fontSize: 13 }}>
-                {formatCompact(balance)} tokens
+                {formatPoints(balance)} {t("points.unit")}
               </span>
               <Btn tone="ghost" small onClick={() => router.push("/consumer/keys")}>
                 {t("nav.keys")}

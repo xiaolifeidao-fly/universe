@@ -23,8 +23,8 @@ func (h *Handler) RegisterNative(group *gin.RouterGroup) {
 	group.GET("/artifacts/*objectKey", h.signDownload)
 	group.GET("/usage", h.usage)
 	group.GET("/keys/me", h.describeKey)
-	// 用已有密钥给自己续费或续期。第一把密钥买不了 —— 那要走控制台。
-	group.POST("/orders", h.createOrderWithKey)
+	// 用当前密钥换发自己这一把。没有「下单」这条路了 —— 额度是账户余额，
+	// 充值只能由运营在管理端做。
 	group.POST("/keys/:keyId/renew", h.renewKeyWithKey)
 }
 
@@ -62,29 +62,8 @@ func (h *Handler) signDownload(context *gin.Context) {
 	context.JSON(http.StatusOK, ref)
 }
 
-// createOrderWithKey 是 /v1 上的续费入口：用当前密钥的身份下单，
-// 不填 targetKeyId 就默认充给自己这把密钥。
-func (h *Handler) createOrderWithKey(context *gin.Context) {
-	var req dto.CreateOrderRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "invalid_body", "message": err.Error()}})
-		return
-	}
-	caller := corepkg.CallerFrom(context)
-	req.UserID = caller.OwnerUserID
-	if req.TargetKeyID == "" {
-		req.TargetKeyID = caller.KeyID
-	}
-	view, err := h.service.CreateOrder(context.Request.Context(), req)
-	if err != nil {
-		context.JSON(http.StatusBadRequest, gin.H{"error": gin.H{"type": "order_failed", "message": err.Error()}})
-		return
-	}
-	context.JSON(http.StatusOK, view)
-}
-
 // renewKeyWithKey 换发当前这把密钥。路径里的 id 必须与调用方一致 ——
-// 拿着 A 的密钥去换发 B 的密钥等于把 B 的余额搬走。
+// 拿着 A 的密钥去换发 B 的密钥，等于替别人把凭证换掉。
 func (h *Handler) renewKeyWithKey(context *gin.Context) {
 	caller := corepkg.CallerFrom(context)
 	keyID := context.Param("keyId")

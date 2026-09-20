@@ -1,12 +1,11 @@
 "use client";
 
-import { CheckCircleOutlined, ReloadOutlined, SearchOutlined } from "@ant-design/icons";
-import { Alert, Badge, Button, Empty, Form, Input, Modal, Segmented, Space, Table, Tag, Typography, message } from "antd";
+import { ReloadOutlined, SearchOutlined } from "@ant-design/icons";
+import { Alert, Badge, Button, Empty, Input, Segmented, Space, Table, Tag, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { useCanWrite } from "@/components/permission/WritePermission";
-import { fetchOrders, payOrder, type AdminOrderPage, type AdminOrderView, type OrderStatus } from "../api/galaxy.api";
+import { fetchOrders, type AdminOrderPage, type AdminOrderView, type OrderStatus } from "../api/galaxy.api";
 
 const PAGE_SIZE = 20;
 /** 金额在库里是微分：除以它得到元。 */
@@ -27,27 +26,21 @@ function compact(value: number): string {
 }
 
 /**
- * 订单。
+ * 订单：**只读的历史**。
  *
- * 「人工确认到账」这条接口（/orders/pay）一直都在，用来补线下转账和丢掉的渠道回调 ——
- * 但**从来没有地方列得出订单**：运营手上是一个渠道流水号，而那条接口要的是单号，
- * 中间没有桥。于是那两种补单场景实际上办不了，除非有人去库里 SELECT 一遍。
+ * 额度包已经下架，不会再有新订单 —— 使用端不下单，也没有支付渠道可确认。
+ * 这一页留着是因为库里还有买过的记录：运营要答得出「这个人当初买的是什么、
+ * 花了多少、发到哪把密钥上」。
  *
- * 所以这一页的搜索认单号、认下单人，也**认流水号**。
- *
- * 状态是一条单行道：pending →（收到钱）paid →（发额度）fulfilled。确认到账做的是
- * 第一跳，随后由服务端接着履约；流水号同时是幂等键，同一个号补两次不会发两次额度。
+ * 搜索认单号、认下单人，也认流水号 —— 运营手上常常只有渠道那边的一串号。
  */
 export function OrderList() {
   const { t } = useLocale();
-  // 确认到账会真的把额度发出去，只读角色看不到入口。
-  const canWrite = useCanWrite();
-  const [status, setStatus] = useState<OrderStatus | "all">("pending");
+  const [status, setStatus] = useState<OrderStatus | "all">("all");
   const [keyword, setKeyword] = useState("");
   const [pageIndex, setPageIndex] = useState(1);
   const [page, setPage] = useState<AdminOrderPage | null>(null);
   const [loading, setLoading] = useState(true);
-  const [target, setTarget] = useState<AdminOrderView | null>(null);
   const latest = useRef(0);
 
   const load = useCallback(async () => {
@@ -142,19 +135,6 @@ export function OrderList() {
       width: 165,
       render: (value: string) => (value ? new Date(value).toLocaleString() : "-"),
     },
-    {
-      title: t("galaxy.actions"),
-      key: "actions",
-      width: 140,
-      fixed: "right",
-      render: (_, row) =>
-        // 只有还没收到钱的单子要补。paid 之后由服务端接着履约，再点一次也只会被幂等挡回来。
-        canWrite && row.status === "pending" ? (
-          <Button type="link" size="small" icon={<CheckCircleOutlined />} onClick={() => setTarget(row)}>
-            {t("galaxy.order.markPaid")}
-          </Button>
-        ) : null,
-    },
   ];
 
   return (
@@ -235,72 +215,6 @@ export function OrderList() {
         locale={{ emptyText: <Empty description={t("galaxy.order.empty")} /> }}
       />
 
-      <MarkPaidModal order={target} onClose={() => setTarget(null)} onPaid={load} />
     </div>
-  );
-}
-
-function MarkPaidModal({
-  order,
-  onClose,
-  onPaid,
-}: {
-  order: AdminOrderView | null;
-  onClose: () => void;
-  onPaid: () => void;
-}) {
-  const { t } = useLocale();
-  const [form] = Form.useForm<{ paymentRef: string }>();
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (order) form.setFieldsValue({ paymentRef: "" });
-  }, [order, form]);
-
-  const submit = async () => {
-    if (!order) return;
-    const values = await form.validateFields();
-    setSubmitting(true);
-    try {
-      await payOrder(order.orderId, values.paymentRef.trim());
-      message.success(t("galaxy.order.paid"));
-      onClose();
-      onPaid();
-    } catch (error) {
-      message.error((error as Error).message || t("galaxy.actionFailed"));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={order !== null}
-      title={t("galaxy.order.markPaidTitle")}
-      okText={t("galaxy.confirm")}
-      cancelText={t("galaxy.cancel")}
-      confirmLoading={submitting}
-      onOk={() => void submit()}
-      onCancel={onClose}
-      destroyOnClose
-    >
-      <Alert
-        type="warning"
-        showIcon
-        style={{ marginBottom: 16 }}
-        message={t("galaxy.order.markPaidHint").replace("{amount}", ((order?.amount ?? 0) / MICRO).toFixed(2))}
-      />
-      <Form form={form} layout="vertical">
-        {/* 流水号同时是幂等键：同一个号补两次不会发两次额度，所以它必填，也别随手编一个。 */}
-        <Form.Item
-          name="paymentRef"
-          label={t("galaxy.order.paymentRef")}
-          rules={[{ required: true, message: t("galaxy.order.paymentRefRequired") }]}
-          extra={t("galaxy.order.paymentRefHint")}
-        >
-          <Input className="manager-mono" maxLength={128} placeholder={t("galaxy.order.paymentRefPlaceholder")} />
-        </Form.Item>
-      </Form>
-    </Modal>
   );
 }

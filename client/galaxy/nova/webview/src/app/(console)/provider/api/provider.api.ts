@@ -29,6 +29,50 @@ export class QuotaStatus {
   warned = false;
 }
 
+/**
+ * 上游订阅自己报的余量（Claude / Codex 的 5 小时、周限额之类）。
+ *
+ * 和主人设的那份额度（QuotaStatus）是**两回事**：那份是「打算放多少出去」，
+ * 这份是「上游实际还让跑多少」。前者填得比后者宽，机器就会在上游那儿撞限流，
+ * 而平台这边看到的是「额度还剩大半」。
+ *
+ * 数据来自节点本来就要发的那些中转请求的响应头 —— **不额外打上游**。代价是
+ * 机器闲着的时候它不更新，所以 observedAt 必须显示出来。
+ */
+export class UsageBucket {
+  /** 桶名，原样保留：unified-5h / requests / tokens…… */
+  bucket = "";
+
+  /** 从桶名里认出来的时间窗，如 5h / 7d。认不出来是空串。 */
+  window = "";
+
+  /** 下面这几项**可能是 undefined**：上游没报就没有。别用 ?? 0 兜底 —— 「没报」和「剩 0」不是一回事。 */
+  limit?: number;
+
+  remaining?: number;
+
+  used?: number;
+
+  usedPercent?: number;
+
+  /** 归零时刻，原样的字符串：可能是 unix 秒、ISO 时间，也可能是 6ms 这种时长。 */
+  reset = "";
+
+  status = "";
+}
+
+export class UpstreamUsage {
+  buckets: UsageBucket[] = [];
+
+  /** 原样的限流头。归一化认不出来的东西全靠它。 */
+  raw: Record<string, string> = {};
+
+  /** 节点观测到的时刻。**必须显示** —— 闲置的机器这个数会一直是旧的。 */
+  observedAt = "";
+
+  source = "";
+}
+
 export class ScheduleWindow {
   from = "";
 
@@ -101,6 +145,14 @@ export class ContributionView {
   seatsBound = 0;
 
   quota: QuotaStatus[] = [];
+
+  /**
+   * 上游账号此刻还剩多少。undefined = 这台机器还没观测到过（一次中转都没跑过，
+   * 或者这一版 ai-bridge 还不报）—— 和「剩 0」不是一回事，界面要分开。
+   */
+  upstreamUsage?: UpstreamUsage;
+
+  upstreamUsageAt?: string;
 
   schedule: ScheduleWindow[] = [];
 

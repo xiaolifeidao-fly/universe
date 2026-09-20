@@ -18,35 +18,37 @@ import (
 // ConsumerDashboard 密钥页与使用记录页共用的那排数字。
 func (s *service) ConsumerDashboard(ctx context.Context, ownerUserID string, days int) (dto.ConsumerDashboard, error) {
 	view := dto.ConsumerDashboard{
-		Balance: contract.Metering{}, Days: pageLimit(days, 10, 90), Currency: "CNY",
+		Days: pageLimit(days, 10, 90), Currency: "CNY",
 		Today: dto.DayStats{Usage: contract.Metering{}},
+	}
+
+	// 余额挂在账户上，和有几把密钥无关 —— 一把都没有也要报得出这个数，
+	// 否则新账号打开页面看到的是「余额 0」，而他刚充过钱。
+	account, err := s.repository.FindPointsAccount(ctx, bizLine, ownerUserID)
+	if err != nil && !notFound(err) {
+		return view, err
+	}
+	if account != nil {
+		view.Balance = account.Balance
 	}
 
 	rows, err := s.repository.ListConsumerKeys(ctx, bizLine, ownerUserID)
 	if err != nil {
 		return view, err
 	}
+	now := time.Now()
 	keys := make([]string, 0, len(rows))
 	for _, row := range rows {
 		keys = append(keys, row.KeyID)
 		view.Keys++
-		if row.Status == keyStatusActive {
+		if usableKey(row, now) {
 			view.ActiveKeys++
-		}
-		balances, err := s.repository.ListBalances(ctx, bizLine, row.KeyID)
-		if err != nil {
-			return view, err
-		}
-		for _, balance := range balances {
-			// 余额按单位合并：两把密钥各有 output_tokens，页头那个数字是它们的和。
-			view.Balance[contract.MeterUnit(balance.Unit)] += balance.Balance
 		}
 	}
 	if len(keys) == 0 {
 		return view, nil
 	}
 
-	now := time.Now()
 	dayStart := startOfDay(now)
 	summary, err := s.repository.SummariseUnits(ctx, repository.UnitQuery{
 		BizLine: bizLine, ConsumerKeys: keys, From: dayStart, To: dayStart.AddDate(0, 0, 1),

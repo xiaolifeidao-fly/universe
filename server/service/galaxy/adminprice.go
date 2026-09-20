@@ -164,11 +164,15 @@ func priceKey(kind, model, unit string) string { return kind + "\x00" + model + 
 // knownMeterUnits contract 里登记过的计量单位。单位是注册制的，这份只是候选提示，
 // 不是白名单 —— 新业务自带的单位照样能在界面上手填。
 //
-// llm.total_tokens 刻意不在这里：它是四个 token 桶的合计，给它定价就是把每一笔
-// 都收两遍。但正因为这份清单不是白名单，真正的闸在 billing.go 的 derivedUnits。
+// llm.total_tokens 与 llm.cache_write_tokens 刻意不在这里：前者是四个 token 桶的合计，
+// 后者是缓存写入两个 TTL 桶的合计，给合计定价就是把每一笔都收两遍。真正进账本的是
+// 5m / 1h 那两个分项，所以候选里给的是它们。这份清单不是白名单（运营照样能手填），
+// 真正的闸在 billing.go 的 derivedUnits —— 但候选摆错会直接把人引到那个坑里。
 var knownMeterUnits = []contract.MeterUnit{
 	contract.UnitInputTokens, contract.UnitOutputTokens,
-	contract.UnitCacheReadTokens, contract.UnitCacheWriteTokens, contract.UnitCalls,
+	contract.UnitCacheReadTokens,
+	contract.UnitCacheWrite5mTokens, contract.UnitCacheWrite1hTokens,
+	contract.UnitCalls,
 	contract.UnitTimeSeconds,
 	contract.UnitVideoOutputSeconds, contract.UnitVideoInputSeconds, contract.UnitVideoFrames,
 	contract.UnitGPUSeconds, contract.UnitCPUSeconds,

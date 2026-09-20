@@ -114,7 +114,7 @@ func (h *Handler) pricing(context *gin.Context) {
 		return
 	}
 	httpx.JSON(context, gin.H{
-		"endpoint": view.Endpoint, "packages": view.Packages, "prices": view.Prices,
+		"endpoint": view.Endpoint, "prices": view.Prices,
 		"models": view.Models, "stats": view.Stats, "updatedAt": view.UpdatedAt,
 	}, nil)
 }

@@ -54,6 +54,50 @@ export class QuotaStatus {
   warned = false;
 }
 
+/**
+ * 上游订阅自己报的余量（Claude / Codex 的 5 小时、周限额之类）。
+ *
+ * 和主人设的那份额度（QuotaStatus）是**两回事**：那份是「打算放多少出去」，
+ * 这份是「上游实际还让跑多少」。前者填得比后者宽，机器就会在上游那儿撞限流，
+ * 而平台这边看到的是「额度还剩大半」。
+ *
+ * 数据来自节点本来就要发的那些中转请求的响应头 —— **不额外打上游**。代价是
+ * 机器闲着的时候它不更新，所以 observedAt 必须显示出来。
+ */
+export class UsageBucket {
+  /** 桶名，原样保留：unified-5h / requests / tokens…… */
+  bucket = "";
+
+  /** 从桶名里认出来的时间窗，如 5h / 7d。认不出来是空串。 */
+  window = "";
+
+  /** 下面这几项**可能是 undefined**：上游没报就没有。别用 ?? 0 兜底 —— 「没报」和「剩 0」不是一回事。 */
+  limit?: number;
+
+  remaining?: number;
+
+  used?: number;
+
+  usedPercent?: number;
+
+  /** 归零时刻，原样的字符串：可能是 unix 秒、ISO 时间，也可能是 6ms 这种时长。 */
+  reset = "";
+
+  status = "";
+}
+
+export class UpstreamUsage {
+  buckets: UsageBucket[] = [];
+
+  /** 原样的限流头。归一化认不出来的东西全靠它。 */
+  raw: Record<string, string> = {};
+
+  /** 节点观测到的时刻。**必须显示** —— 闲置的机器这个数会一直是旧的。 */
+  observedAt = "";
+
+  source = "";
+}
+
 export class ContributionView {
   cid = "";
 
@@ -76,6 +120,11 @@ export class ContributionView {
   online = false;
 
   quota: QuotaStatus[] = [];
+
+  /** 这条通道背后那个上游账号此刻还剩多少。undefined = 这台机器还没观测到过。 */
+  upstreamUsage?: UpstreamUsage;
+
+  upstreamUsageAt?: string;
 }
 
 export class AdminNodeView {
@@ -270,74 +319,6 @@ export async function resetGalaxyUserPassword(side: GalaxySide, userId: string, 
   return unwrapApiResponse(response.data);
 }
 
-/* ---------- 额度包 ---------- */
-
-/**
- * 一个额度商品。运营这条接口列的是**全部**商品，含已下架的；
- * 消费者那条（client/galaxy 的 /galaxy/consumer/packages）只给上架的。
- */
-export class GalaxyPackageView {
-  /** 商品码。建了就别改：历史订单按它记录买的是什么。 */
-  packageCode = "";
-
-  title = "";
-
-  /** 这份商品给的额度：单位 → 数量。 */
-  units: Record<string, number> = {};
-
-  /** 售价，整数微元；除以 1_000_000 得到「元」。 */
-  amount = 0;
-
-  currency = "CNY";
-
-  /** 这份商品签发出的密钥有效期。 */
-  ttlDays = 30;
-
-  /** 空数组 = 不限制。 */
-  allowedKinds: string[] = [];
-
-  modelTier: string[] = [];
-
-  concurrency = 0;
-
-  rpm = 0;
-
-  /** 绑定的模型（模型目录里的 modelId），空是通用套餐。分享返现按这个模型的比例算。 */
-  modelId = "";
-
-  listed = false;
-
-  sortOrder = 0;
-}
-
-export async function fetchGalaxyPackages() {
-  return getDataList(GalaxyPackageView, "/galaxy/admin/packages");
-}
-
-/**
- * 新建或保存一个商品。语义是**整行覆盖**，不是打补丁 —— 少带一个字段就是把它清零，
- * 所以调用方必须把当前值全部带上。改价改量都不影响已经下过的单：
- * 下单那一刻额度与价格已经快照进订单了。
- */
-export async function saveGalaxyPackage(payload: {
-  packageCode: string;
-  title: string;
-  units: Record<string, number>;
-  amount: number;
-  currency: string;
-  ttlDays: number;
-  allowedKinds: string[];
-  modelTier: string[];
-  concurrency: number;
-  rpm: number;
-  modelId: string;
-  listed: boolean;
-  sortOrder: number;
-}) {
-  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/packages/save", payload);
-  return unwrapApiResponse(response.data);
-}
-
 /* ---------- 争议工单 ---------- */
 
 export class AdminDisputeView {
@@ -413,6 +394,15 @@ export class GalaxyModelView {
 
   maxOutputTokens = 0;
 
+  /**
+   * 我们自己此刻对外收的单价，每百万 token 微元。四个桶互不重叠：inputPrice 只算
+   * **未命中缓存的新增输入**，命中的走 cachePrice，缓存写入取 5 分钟那一档。
+   *
+   * **库里不存这几个数**，服务端按「能力 × 模型 × 计量单位」从价目表现算了下发，
+   * 和门户卡片、使用端模型广场走的是同一段代码 —— 运营台是用来核对门户标了多少的，
+   * 再自己算一遍的话，两处迟早显示两个数。priced 为 false 表示这几个数来自
+   * 该 kind 的兜底价，不是这个模型自己的行。改它们要走「定价」，不是「基础配置」。
+   */
   inputPrice = 0;
 
   outputPrice = 0;
@@ -421,10 +411,17 @@ export class GalaxyModelView {
 
   cacheWritePrice = 0;
 
-  /** 官方参考价，口径与上面几档一致（每百万 token 微积分）。0 = 没填，卡片上不划线也不标折扣。 */
+  /**
+   * 官方参考价（别人家的价），每百万 token 微元。0 = 那一档不划线。
+   *
+   * 这是唯一存在模型行上的价 —— 它是**声明**，不是我们收的钱。
+   * 我们自己的单价只有价目表一个出处（见上面几档）。
+   */
   listInputPrice = 0;
 
   listOutputPrice = 0;
+
+  listCachePrice = 0;
 
   /** 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端按输出价算好下发。 */
   discountBps = 0;
@@ -447,7 +444,6 @@ export class GalaxyModelView {
   sortOrder = 0;
 
   /** 分享返现比例，万分之一（1000 = 10%）。没有这个字段表示没单独设、走默认比例。 */
-  referralBps?: number;
 
   listed?: boolean;
 }
@@ -456,7 +452,7 @@ export async function fetchGalaxyModels() {
   return getDataList(GalaxyModelView, "/galaxy/admin/portal/models");
 }
 
-/** 保存一个模型。**整行覆盖**：没带的字段就是清零，所以编辑框要用当前值预填。referralBps 传 null 表示走默认比例。 */
+/** 保存一个模型。**整行覆盖**：没带的字段就是清零，所以编辑框要用当前值预填。 */
 export async function saveGalaxyModel(payload: {
   modelId: string;
   displayName: string;
@@ -465,18 +461,14 @@ export async function saveGalaxyModel(payload: {
   kind: string;
   contextTokens: number;
   maxOutputTokens: number;
-  inputPrice: number;
-  outputPrice: number;
-  cachePrice: number;
-  cacheWritePrice: number;
   listInputPrice: number;
   listOutputPrice: number;
+  listCachePrice: number;
   currency: string;
   tags: string[];
   summary: string;
   badgeText: string;
   badgeTone: string;
-  referralBps: number | null;
   listed: boolean;
   featured: boolean;
   sortOrder: number;
@@ -611,7 +603,8 @@ export class AdminKeyView {
 
   expiresAt = "";
 
-  balance: Record<string, number> = {};
+  /** 主人账户此刻的积分余额（微积分）。额度不在密钥上，几把密钥花的是同一份钱。 */
+  balance = 0;
 
   ownerUserId = "";
 
@@ -827,7 +820,13 @@ export class DesktopReleaseView {
 export class DesktopReleasePage {
   releases: DesktopReleaseView[] = [];
 
-  /** 清单与安装包在对象存储上的目录，**含部署配置的 dirPrefix**。运营拿它拼客户端的更新地址。 */
+  /** 服务端配了对象存储没有。没配这一页发不了版，而 objectRoot 的空串也不再是「桶根目录」的意思。 */
+  configured = false;
+
+  /**
+   * 两个端目录的父目录（部署配置的 dirPrefix，没配就是空串 = 桶根）。
+   * 清单与安装包落在 `<objectRoot>/<端>/` 下，运营拿它拼客户端的更新地址。
+   */
   objectRoot = "";
 
   products: string[] = [];
@@ -1249,20 +1248,6 @@ export async function fetchOrders(query: {
   });
 }
 
-/**
- * 人工确认到账：线下转账、或者渠道回调丢了要补单。
- *
- * paymentRef 同时是幂等键 —— 同一个流水号补两次，第二次不会重复履约。
- * 渠道回调那条验签的路仍在 galaxy-api，不走这里。
- */
-export async function payOrder(orderId: string, paymentRef: string) {
-  const response = await instance.post<ApiResponse<AdminOrderView>>("/galaxy/admin/orders/pay", {
-    orderId,
-    paymentRef,
-  });
-  return plainToInstance(AdminOrderView, unwrapApiResponse(response.data));
-}
-
 /* ---------- 封禁名单 ---------- */
 
 /** 封禁名单上一台设备底下还留着的节点记录，含已撤销的。 */
@@ -1331,6 +1316,12 @@ export class IssuedKeyView {
  *
  * 不走订单，也不扣积分。grants 是初始额度余额，按计量单位填。
  */
+/**
+ * 代签一把密钥。
+ *
+ * 不发额度 —— 额度是账户里的积分，要给人额度就去「积分」页充值。
+ * 使用者自己也能在 Orbit 上签发，这条路留给「帮人排查」和内部用途。
+ */
 export async function issueKey(payload: {
   ownerUserId: string;
   alias?: string;
@@ -1338,7 +1329,6 @@ export async function issueKey(payload: {
   concurrency?: number;
   rpm?: number;
   modelId?: string;
-  grants?: Record<string, number>;
 }) {
   const response = await instance.post<ApiResponse<IssuedKeyView>>("/galaxy/admin/keys/issue", {
     ...payload,

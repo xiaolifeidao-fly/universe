@@ -9,9 +9,8 @@
 -- AutoMigrate 会把「库里有、模型里没有」判定为差异并改回去。字段说明放在行注释里。
 -- 整型统一 bigint —— Go 的 int 在 64 位下映射过来就是它。
 --
--- galaxyinit 除了建表还会写入默认定价（zt_galaxy_price）与额度包（zt_galaxy_package）。
--- 只跑这份 SQL 的话这两张表是空的：请求会因为「未定价」而只计量不计费，
--- 控制台的「额度与订单」也会显示「暂时没有上架的额度包」。
+-- galaxyinit 除了建表还会写入默认定价（zt_galaxy_price）。只跑这份 SQL 的话那张表是空的：
+-- 请求会因为「未定价」而只计量不计费，也就是谁调都不扣钱。
 -- 不想跑 galaxyinit 的话，接着跑一遍 server/galaxy_seed.sql（可重复执行）。
 --
 -- 库：galaxy-api 的 application.properties 里 sqlconn 指向的那个
@@ -61,7 +60,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_provider_user` (
   INDEX `idx_gx_user_status` (`biz_line`,`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 使用端（Orbit）：花积分买额度的人。积分、邀请码、订单都挂在这批账号上。
+-- 使用端（Orbit）：花积分调模型的人。积分余额、密钥、邀请码都挂在这批账号上。
 CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_user` (
   `id`                   bigint AUTO_INCREMENT,
   `biz_line`             varchar(32),                             -- 业务线，池内固定 galaxy
@@ -230,11 +229,15 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `models_allow_json` varchar(1024),                                -- 模型白名单模式数组
   `models_available_json` varchar(4096) DEFAULT NULL,               -- 节点上报的上游可用模型名，仅作控制台候选项
   `models_deny_json`  varchar(1024),                                -- 模型黑名单模式数组
+  `upstream_usage_json` varchar(4096),                              -- 节点自报的上游订阅余量（Claude / Codex 自己的 5 小时、周限额），只给人看，不参与派单与计费
+  `upstream_usage_at` timestamp NULL DEFAULT NULL,                  -- 上面那份数的观测时刻。机器闲着时不更新，界面必须显示它
   `seats`             bigint DEFAULT 3,                             -- 同时服务的消费者数量上限
   `seat_concurrency`  bigint DEFAULT 2,                             -- 单座位并发上限
   `schedule_json`     varchar(512),                                 -- 挂机时段
   `status`            varchar(16),                                  -- active/draining/paused/disabled
   `pending_status`    varchar(16) DEFAULT NULL,                     -- 主人点了关闭、等在途请求跑完之后要落到的状态
+  `available`         boolean,                                      -- 节点报上来的事实：上游此刻能不能接活，和 status 是两回事
+  `unavailable_reason` varchar(256),                                -- 接不了活的原因，原样展示给主人
   `created_time`      datetime(3) NULL,
   `updated_time`      datetime(3) NULL,
   PRIMARY KEY (`id`),
@@ -266,7 +269,11 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_quota_window` (
   `reserved`    bigint,
   `snapshot_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE INDEX `uk_gx_quota_window` (`biz_line`,`cid`,`unit`,`window_key`)
+  UNIQUE INDEX `uk_gx_quota_window` (`biz_line`,`cid`,`unit`,`window_key`),
+  -- 窗口键单独再进一条：唯一键按 cid 打头，而「全池此刻还剩多少额度」那个查询
+  -- 手上只有窗口键、没有 cid，跳过第二列就用不上唯一键。这张表按
+  -- (cid, unit, 窗口键) 一行一行地堆、旧窗口不清，所以它不是一张小表。
+  INDEX `idx_gx_quota_window_key` (`biz_line`,`window_key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_seat_binding` (
@@ -374,12 +381,15 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_usage_mismatch` (
 
 
 -- -------------------------------------------------------------------------
--- 3. 消费者：密钥、余额、商品与订单
+-- 3. 消费者：密钥（+ 额度包时期留下的余额、商品与订单三张表）
 -- 算力密钥鉴权只按 sha256 查。2026-09-12 起明文另外加密存一份（secret_cipher，
 -- 加密密钥在 galaxy.key_cipher_secret，不进库），给使用端「一键使用」和运营转交用；
 -- 更早签发的只有哈希，取不回，换发一次即可。
--- 支付与履约分两步：回调只把订单推到 paid，履约单独一步且幂等 ——
--- 渠道重推同一条通知不会重复发额度。
+--
+-- **密钥不带额度**（2026-09-20 起）：额度是账户里的积分余额（见第 7 段），
+-- 名下几把密钥花的是同一份钱，一次请求扣一笔。下面三张表 ——
+-- zt_galaxy_consumer_balance / _package / _order —— 是额度包那一版留下的，
+-- 只剩历史数据可查，没有任何代码再往里写。
 -- -------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_key` (
@@ -390,8 +400,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_key` (
   `secret_cipher`          varchar(256),                                   -- sk- 明文的 AES-GCM 密文，空表示取不回
   `alias`                  varchar(64),                                    -- 日志与账单里的可读名
   `owner_user_id`          varchar(64),
-  `order_id`               varchar(64),
-  `model_id`               varchar(96),                                    -- 来源套餐绑定的模型，只用于认类别（Claude / Codex）与展示
+  `order_id`               varchar(64),                                    -- 历史：买额度包签出来的那一单
+  `model_id`               varchar(96),                                    -- 钉住的模型，只用于认类别（Claude / Codex）与展示
   `allowed_kinds_json`     varchar(512),                                   -- 空数组表示不限
   `allowed_providers_json` varchar(512),
   `model_tier_json`        varchar(1024),                                  -- 允许的模型模式
@@ -416,12 +426,13 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_balance` (
   `id`           bigint AUTO_INCREMENT,
   `biz_line`     varchar(32),
   `key_id`       varchar(64),
+  `model_id`     varchar(96) NOT NULL DEFAULT '',                         -- 模型名，空=通用额度（任何模型都能用）；唯一索引不拦 NULL，所以这列不能可空
   `unit`         varchar(48),
   `balance`      bigint,
   `frozen`       bigint,
   `updated_time` datetime(3) NULL,
   PRIMARY KEY (`id`),
-  UNIQUE INDEX `uk_gx_consumer_balance` (`biz_line`,`key_id`,`unit`)
+  UNIQUE INDEX `uk_gx_consumer_balance` (`biz_line`,`key_id`,`model_id`,`unit`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_consent_record` (
@@ -475,8 +486,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_package` (
   `biz_line`           varchar(32),
   `package_code`       varchar(64),
   `title`              varchar(128),
-  `units_json`         varchar(1024),
-  `amount`             bigint,
+  `items_json`         text,                                     -- 按模型拆开的构成 [{modelId,kind,units,discountBps}]，空为遗留包
+  `units_json`         varchar(1024),                            -- 模型包由 items_json 摊平而来；发额度按 items_json 分模型发，不按它
+  `amount`             bigint,                                   -- 成交价（微元）。模型包由服务端按 数量 × 对外单价 × 折扣 算出来，请求体传进来的不看
   `currency`           varchar(8) DEFAULT 'CNY',
   `ttl_days`           bigint DEFAULT 30,
   `allowed_kinds_json` varchar(512),
@@ -502,6 +514,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_order` (
   `amount`        bigint,
   `currency`      varchar(8) DEFAULT 'CNY',
   `units_json`    varchar(1024),
+  `items_json`    text,                                                     -- 按模型拆开的额度快照，履约照它发；空则整份落进通用额度（老订单）
   `target_key_id` varchar(64),                                              -- 非空表示给这把已有密钥充值，空表示签发新密钥
   `key_id`        varchar(64),                                              -- 履约后落到哪把密钥
   `model_id`      varchar(96),                                              -- 下单时套餐绑定的模型快照
@@ -633,6 +646,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_provider_ledger` (
   `amount`        bigint,                                             -- unit=credit 时为积分
   `price`         bigint,
   `unit_id`       varchar(40),
+  `related_user_id` varchar(64),                                      -- 返现：下单的被邀请人。其它类型为空
   `created_at`    datetime(3) NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_provider_ledger` (`biz_line`,`txn_id`),
@@ -745,10 +759,6 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_model` (
   `kind`              varchar(64),                                        -- 计价所属 kind，默认 llm.chat
   `context_tokens`    bigint DEFAULT 0,                                   -- 上下文窗口 token 数，0 表示未声明
   `max_output_tokens` bigint DEFAULT 0,
-  `input_price`       bigint DEFAULT 0,                                   -- 每百万新增 input token 微分，0=按 kind 统一价
-  `output_price`      bigint DEFAULT 0,                                   -- 每百万 output token 微分，0=按 kind 统一价
-  `cache_price`       bigint DEFAULT 0,                                   -- 每百万 cache_read token 微分，0=按 kind 统一价
-  `cache_write_price` bigint DEFAULT 0,                                   -- 每百万 cache_write token 微分，0=按 kind 统一价
   `list_input_price`  bigint DEFAULT 0,                                   -- 官方参考价：每百万 input token 微分，0=不显示划线价
   `list_output_price` bigint DEFAULT 0,                                   -- 官方参考价：每百万 output token 微分，0=不显示划线价
   `currency`          varchar(8) DEFAULT 'CNY',
@@ -795,7 +805,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_lead` (
 -- -------------------------------------------------------------------------
 -- 7. 使用者积分与分享
 -- 使用者的钱只有积分一种形态，1 积分 = ¥1，库里存「微积分」（与 amount / price 同量纲）。
--- 运营在管理端充进来，买套餐花掉，邀请来的人买套餐时按套餐所绑模型的比例返给邀请人。
+-- 运营在管理端充进来，调模型时按单价逐笔扣掉，邀请来的人充值时按比例返给邀请人。
 -- 余额的每次变动都和 points_ledger 的一行在同一个事务里，txn_id 是幂等键；
 -- 管理端的「充值明细」就是 type=recharge 的那些流水，不另建表。
 -- 和提供者的 credit_account 不是一回事：那本是出算力赚的、按 payout_rate 提现的。
@@ -814,15 +824,17 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_points_account` (
 CREATE TABLE IF NOT EXISTS `zt_galaxy_points_ledger` (
   `id`              bigint AUTO_INCREMENT,
   `biz_line`        varchar(32),
-  `txn_id`          varchar(96),                                    -- 幂等键：recharge:<请求号> / order:<订单号>:pay|referral
+  `txn_id`          varchar(96),                                    -- 幂等键：recharge:<请求号> / usage:<单元>:<尝试> / dispute:<工单>:refund / <充值流水>:referral
   `owner_user_id`   varchar(64),
-  `type`            varchar(16),                                    -- recharge/purchase/referral
+  `type`            varchar(16),                                    -- recharge/usage/refund/referral；purchase 只剩历史
   `amount`          bigint,                                         -- 微积分，入账为正、出账为负
   `balance_after`   bigint,
-  `base_amount`     bigint,                                         -- 充值=实付金额（微元）；返现=那笔购买实付的积分
+  `base_amount`     bigint,                                         -- 充值=实付金额（微元）；返现=那笔充值的积分
   `rate_bps`        bigint,                                         -- 返现比例快照（万分之一）
-  `order_id`        varchar(64),
-  `related_user_id` varchar(64),                                    -- 返现：下单的被邀请人
+  `order_id`        varchar(64),                                    -- 历史：买额度包那一单
+  `unit_id`         varchar(64),                                    -- 按量扣费对应的工作单元
+  `kind`            varchar(32),                                    -- 按量扣费：调的哪类能力
+  `related_user_id` varchar(64),                                    -- 返现：充值的被邀请人
   `model_id`        varchar(96),
   `remark`          varchar(256),                                   -- 运营备注，使用端看不到
   `operator`        varchar(64),                                    -- 运营充值：经手的管理端账号
@@ -830,7 +842,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_points_ledger` (
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_points_ledger` (`biz_line`,`txn_id`),
   INDEX `idx_gx_points_ledger_owner` (`biz_line`,`owner_user_id`,`created_at`),
-  INDEX `idx_gx_points_ledger_type` (`biz_line`,`type`,`created_at`)
+  INDEX `idx_gx_points_ledger_type` (`biz_line`,`type`,`created_at`),
+  INDEX `idx_gx_points_ledger_unit` (`biz_line`,`unit_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 邀请关系。一个使用端账号一行；老账号第一次打开分享页时补上（邀请人留空）。
@@ -849,7 +862,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_referral` (
   INDEX `idx_gx_referral_inviter` (`biz_line`,`invited_by`,`created_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 运营在后台随时要改、改完不该重启的零散开关。目前只有 referral.default_bps（通用套餐的返现比例）。
+-- 运营在后台随时要改、改完不该重启的零散开关。目前只有 referral.default_bps
+-- （分享返现比例，按被邀请人的充值额算）。
 CREATE TABLE IF NOT EXISTS `zt_galaxy_setting` (
   `id`           bigint AUTO_INCREMENT,
   `biz_line`     varchar(32),
@@ -927,4 +941,35 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_provider_referral` (
   UNIQUE INDEX `uk_gx_provider_referral_user` (`biz_line`,`user_id`),
   UNIQUE INDEX `uk_gx_provider_referral_code` (`biz_line`,`invite_code`),
   INDEX `idx_gx_provider_referral_inviter` (`biz_line`,`invited_by`,`created_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- -------------------------------------------------------------------------
+-- 8. 管理端仪表盘的用量汇总
+-- 派生数据：删了能从计量流水和两本账重算出来，所以它不是账的一部分。
+--
+-- 为什么要它：仪表盘要「今天消耗了多少 token、收了多少、结出去多少，按 Claude /
+-- Codex 分开」。量在 meter_record 上、钱在两本账上、而「是 Claude 还是 Codex」
+-- 只有 unit 表上的模型说得清 —— 每问一次就要把当天最大的三张表各扫一遍、
+-- 每行再回 unit 表查一次模型。而仪表盘是会挂在大屏上自动刷新的页面。
+--
+-- 按小时而不是按天：小时桶封口之后就不会再变（行的 created_at 就是它自己的写入
+-- 时刻，没有迟到的行），算一次能一直用。按天的话当天那一桶到半夜前一直是活的。
+--
+-- 谁写：Hub 巡检每轮把刚封口的小时补上；仪表盘读到没算过的小时也会现算一次写回去。
+-- 两条路写同一份绝对值、按唯一键整行覆盖，重复跑和并发跑都没有副作用。
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_usage_rollup` (
+  `id`              bigint AUTO_INCREMENT,
+  `biz_line`        varchar(32),
+  `stat_hour`       datetime(3),                                  -- 小时桶起点，整点
+  `category`        varchar(16),                                  -- claude/codex/video/other；空串是这个小时的标记行
+  `unit`            varchar(48),                                  -- 计量单位，与 zt_galaxy_meter_record.unit 同一套
+  `amount`          bigint,                                       -- 该计量单位的合计，量纲随 unit 而定，跨单位相加没有意义
+  `consumer_amount` bigint,                                       -- 使用端结算金额（微元），取自消费侧账本 type=settle
+  `provider_amount` bigint,                                       -- 共享端结算金额（微元），取自供给侧账本 type=settle
+  `rolled_at`       timestamp NULL DEFAULT NULL,                  -- 这一桶最近一次算出来的时刻
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_usage_rollup` (`biz_line`,`stat_hour`,`category`,`unit`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

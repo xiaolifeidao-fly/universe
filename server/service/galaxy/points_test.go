@@ -73,29 +73,6 @@ func TestScopeCategory(t *testing.T) {
 	}
 }
 
-// TestReferralRateTable 模型单独设过的用自己的（包括显式设成 0 = 不返），没设的走默认。
-func TestReferralRateTable(t *testing.T) {
-	table := referralRateTable{defaultBps: 500, models: map[string]int64{"claude-opus-5": 1500, "gpt-5.6-terra": 0}}
-	cases := []struct {
-		modelID   string
-		want      int64
-		inherited bool
-	}{
-		{"claude-opus-5", 1500, false},
-		{"gpt-5.6-terra", 0, false},
-		{"claude-sonnet-5", 500, true},
-		{"", 500, true},
-	}
-	for _, item := range cases {
-		if got := table.of(item.modelID); got != item.want {
-			t.Errorf("%q 的比例 = %d，应为 %d", item.modelID, got, item.want)
-		}
-		if got := table.inherits(item.modelID); got != item.inherited {
-			t.Errorf("%q 是否走默认 = %v，应为 %v", item.modelID, got, item.inherited)
-		}
-	}
-}
-
 // TestInviteCode 邀请码只用好认的字符，大小写、空格、连字符都能被收回同一个码。
 func TestInviteCode(t *testing.T) {
 	seen := map[string]bool{}

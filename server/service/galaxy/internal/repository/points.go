@@ -27,6 +27,41 @@ func (r *GalaxyRepository) FindPointsAccount(ctx context.Context, bizLine, owner
 	return &row, nil
 }
 
+// SumPointsBalances 一次取回几个人的余额。运营翻密钥、翻账号时一页查一次，
+// 不按行查 —— 一页二十行就是二十次往返。查不到的人不出现在结果里，按 0 读。
+func (r *GalaxyRepository) SumPointsBalances(ctx context.Context, bizLine string, ownerUserIDs []string) (map[string]int64, error) {
+	balances := map[string]int64{}
+	ids := uniqueNonEmpty(ownerUserIDs)
+	if len(ids) == 0 {
+		return balances, nil
+	}
+	var rows []*GalaxyPointsAccount
+	err := r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).Where("owner_user_id IN ?", ids).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		balances[row.OwnerUserID] = row.Balance
+	}
+	return balances, nil
+}
+
+func uniqueNonEmpty(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
 // CreditPoints 加积分，账户不存在就建。返回加完之后的余额。
 func (r *GalaxyRepository) CreditPoints(ctx context.Context, bizLine, ownerUserID string, amount int64) (int64, error) {
 	err := r.Db.WithContext(ctx).Clauses(clause.OnConflict{

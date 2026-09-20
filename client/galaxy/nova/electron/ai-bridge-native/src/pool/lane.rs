@@ -60,6 +60,11 @@ impl Lane {
     pub fn cid(&self) -> String {
         self.config.read().unwrap().id.clone()
     }
+    /// 放置用的 provider 路由键（claude_oauth / codex_chatgpt）。
+    /// 上游余量按它取 —— 那是账号的属性，不是通道的，同一个账号下的几条通道共用一份。
+    pub fn route_key(&self) -> String {
+        self.config.read().unwrap().provider.clone()
+    }
     pub fn config(&self) -> LaneConfig {
         self.config.read().unwrap().clone()
     }

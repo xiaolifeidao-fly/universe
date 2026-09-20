@@ -12,7 +12,14 @@ import (
 // TestPricedNeedsBothOwnPrices 半份价格比没有价格更危险。
 //
 // 只填了 input 的那一行如果被当成「已定价」，门户就不再标「统一价」，
-// 而 output 那格显示的其实是 kind 的通用价 —— 访问者会把它读成这个模型的真实输出价。
+// Priced 说的是「卡片上这几个数字是不是这个模型专属的」。
+//
+// 它只看计价表里有没有这个模型自己的那一行 —— 模型目录上曾经也存过四档展示价，
+// 那是第二份数据：门户照目录标、账上照计价表扣，对不上时两边都不报错，
+// 而访问者看到的是一个他付不到的价。现在目录只管「这个模型是什么」。
+//
+// 要**输入和输出都是**它自己的行才算数。用 || 的话，只有一档专属的模型会被当成
+// 整份都专属，另一档其实是该能力的统一价 —— 半份专属价比没有专属价更误导人。
 func TestPricedNeedsBothOwnPrices(t *testing.T) {
 	table := map[contract.MeterUnit]priceRow{
 		contract.UnitInputTokens:     {Price: 3_000_000, Currency: "CNY"},
@@ -21,54 +28,54 @@ func TestPricedNeedsBothOwnPrices(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		input       int64
-		output      int64
-		wantPriced  bool
-		wantOutputs int64
+		name       string
+		own        map[contract.MeterUnit]bool
+		wantPriced bool
 	}{
-		{"两项都填了才算自己的价", 14_800_000, 88_800_000, true, 88_800_000},
-		{"只填了输入价，仍然算统一价", 14_800_000, 0, false, 15_000_000},
-		{"只填了输出价，仍然算统一价", 0, 88_800_000, false, 88_800_000},
-		{"一项都没填", 0, 0, false, 15_000_000},
+		{"两档都是模型自己的行", map[contract.MeterUnit]bool{
+			contract.UnitInputTokens: true, contract.UnitOutputTokens: true}, true},
+		{"只有输入是自己的，输出还是统一价", map[contract.MeterUnit]bool{
+			contract.UnitInputTokens: true}, false},
+		{"只有输出是自己的", map[contract.MeterUnit]bool{
+			contract.UnitOutputTokens: true}, false},
+		{"整个能力一个统一价", nil, false},
 	}
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			view := portalModelView(&repository.GalaxyModel{
-				ModelID: "claude-opus-5", InputPrice: testCase.input, OutputPrice: testCase.output,
-			})
-			applyKindPrice(&view, table, nil)
+			view := portalModelView(&repository.GalaxyModel{ModelID: "claude-opus-5"})
+			applyKindPrice(&view, table, testCase.own)
 			if view.Priced != testCase.wantPriced {
 				t.Errorf("Priced = %v，期望 %v", view.Priced, testCase.wantPriced)
 			}
-			if view.OutputPrice != testCase.wantOutputs {
-				t.Errorf("OutputPrice = %d，期望 %d", view.OutputPrice, testCase.wantOutputs)
+			// 不管专不专属，卡片上那几个数都得来自计价表：目录已经不供价了，
+			// 这里留成 0 就是门户上白着一格。
+			if view.OutputPrice != 15_000_000 {
+				t.Errorf("OutputPrice = %d，期望从计价表取到 15,000,000", view.OutputPrice)
 			}
 		})
 	}
 }
 
-// TestPortalKindsOnlyCoversWhatIsForSale 单价表只列门户上真能买到的能力。
+// TestPortalKindsOnlyCoversWhatIsOnOffer 单价表只列门户上真能用到的能力。
 //
-// 价格表里还有 delivery.task 这种没有对外文案、门户上也买不到的能力，
+// 价格表里还有 delivery.task 这种没有对外文案、门户上也用不上的能力，
 // 摆上去只会让人问「这个怎么用」而我们答不上来。
-func TestPortalKindsOnlyCoversWhatIsForSale(t *testing.T) {
-	models := []dto.PortalModelView{{ModelID: "claude-sonnet-5", Kind: "llm.chat"}}
-	packages := []dto.PackageView{
-		{PackageCode: "starter"}, // 不限，不贡献 kind
-		{PackageCode: "video", AllowedKinds: []string{"video.edit.render"}}, // 显式允许
+func TestPortalKindsOnlyCoversWhatIsOnOffer(t *testing.T) {
+	models := []dto.PortalModelView{
+		{ModelID: "claude-sonnet-5", Kind: "llm.chat"},
+		{ModelID: "sora-2", Kind: "video.edit.render"},
 	}
 
-	kinds := portalKinds(models, packages)
+	kinds := portalKinds(models)
 	if !kinds["llm.chat"] {
 		t.Error("模型目录里的 kind 应该在")
 	}
 	if !kinds["video.edit.render"] {
-		t.Error("上架商品显式允许的 kind 应该在")
+		t.Error("视频模型的 kind 同样在目录里，应该在")
 	}
 	if kinds["delivery.task"] {
-		t.Error("没有模型也没有商品指向 delivery.task，不该出现在单价表里")
+		t.Error("没有模型指向 delivery.task，不该出现在单价表里")
 	}
 }
 

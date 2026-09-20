@@ -44,6 +44,8 @@ func models() []any {
 		&GalaxyPointsAccount{}, &GalaxyPointsLedger{}, &GalaxyReferral{}, &GalaxySetting{},
 		// ai-bridge 与桌面客户端的版本分发，以及共享端的邀请返现
 		&GalaxyBridgeRelease{}, &GalaxyDesktopRelease{}, &GalaxyProviderReferral{},
+		// 管理端仪表盘的按小时用量汇总。派生数据，删了能重算
+		&GalaxyUsageRollup{},
 	}
 }
 

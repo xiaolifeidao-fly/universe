@@ -943,7 +943,10 @@ svg {
 .gp-model__price {
   margin-top: auto;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* 列数跟着格子数走：配了缓存读取价的模型是三格，没配的还是两格。
+     写死 repeat(2, ...) 的话，第三格会掉到第二行独占整行，看起来像漏了一格。 */
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 1px;
   background: var(--gp-line);
   border: 1px solid var(--gp-line);
@@ -954,6 +957,22 @@ svg {
 .gp-model__cell {
   background: var(--gp-surface-2);
   padding: 10px 12px;
+}
+
+/* 三格时每格只剩三分之一宽。「¥0.1250」这种四位小数的价在 14px 等宽下要 60 多像素，
+   和「/ 1M」挤在同一行就会折行 —— 而只有一部分卡片折，一排卡片的价格行高低不齐。
+   所以把单位挪到第二行：所有格子等高，也不再依赖价格有几位。 */
+.gp-model__price--trio .gp-model__cell {
+  padding-inline: 10px;
+}
+
+.gp-model__price--trio .gp-model__cell b {
+  font-size: 13px;
+}
+
+.gp-model__price--trio .gp-model__cell em {
+  display: block;
+  margin-left: 0;
 }
 
 .gp-model__cell span {

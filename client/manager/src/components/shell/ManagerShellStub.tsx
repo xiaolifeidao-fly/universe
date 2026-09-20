@@ -12,21 +12,44 @@
  */
 
 import {
+  AccountBookOutlined,
+  AlertOutlined,
+  ApiOutlined,
   BranchesOutlined,
   ClusterOutlined,
+  ContactsOutlined,
   ControlOutlined,
+  CreditCardOutlined,
   DashboardOutlined,
+  DatabaseOutlined,
+  DeploymentUnitOutlined,
+  DesktopOutlined,
+  ExperimentOutlined,
   FolderOutlined,
+  FundOutlined,
   GlobalOutlined,
   KeyOutlined,
   LogoutOutlined,
   LockOutlined,
   MenuOutlined,
+  MoneyCollectOutlined,
+  ProfileOutlined,
   RiseOutlined,
   SafetyCertificateOutlined,
+  SafetyOutlined,
   SettingOutlined,
+  ShareAltOutlined,
+  ShoppingOutlined,
+  SlidersOutlined,
+  SolutionOutlined,
   StarFilled,
+  StarOutlined,
+  StopOutlined,
+  TagsOutlined,
   TeamOutlined,
+  TransactionOutlined,
+  UserOutlined,
+  UserSwitchOutlined,
   WalletOutlined,
 } from "@ant-design/icons";
 import { Button, Dropdown, Layout, Menu, Select, Skeleton, Space, message } from "antd";
@@ -72,9 +95,7 @@ const FALLBACK_PAGE_TITLES: Record<string, [TranslationKey, TranslationKey]> = {
   "/galaxy/probes": ["nav.galaxyProbes", "galaxy.probes.subtitle"],
   "/galaxy/disputes": ["nav.galaxyDisputes", "galaxy.disputes.subtitle"],
   "/galaxy/leads": ["nav.galaxyLeads", "galaxy.leads.subtitle"],
-  "/galaxy/packages": ["nav.galaxyPackages", "galaxy.packages.subtitle"],
-  "/galaxy/pricing": ["nav.galaxyPricing", "galaxy.pricing.subtitle"],
-  "/galaxy/models": ["nav.galaxyModels", "galaxy.models.subtitle"],
+  "/galaxy/commerce": ["nav.galaxyCommerce", "galaxy.commerce.subtitle"],
   "/galaxy/points": ["nav.galaxyPoints", "galaxy.points.subtitle"],
   "/galaxy/keys": ["nav.galaxyKeys", "galaxy.keys.subtitle"],
   "/galaxy/settlement": ["nav.galaxySettlement", "galaxy.settlement.subtitle"],
@@ -104,11 +125,11 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <GlobalOutlined />,
     labelKey: "nav.galaxyOverview",
     children: [
-      { key: "/galaxy/overview", labelKey: "nav.galaxyHome" },
-      { key: "/galaxy/pool", labelKey: "nav.galaxyPool" },
-      { key: "/galaxy/units", labelKey: "nav.galaxyUnits" },
-      { key: "/galaxy/settlement", labelKey: "nav.galaxySettlement" },
-      { key: "/galaxy/ledger", labelKey: "nav.galaxyLedger" },
+      { key: "/galaxy/overview", icon: <FundOutlined />, labelKey: "nav.galaxyHome" },
+      { key: "/galaxy/pool", icon: <DatabaseOutlined />, labelKey: "nav.galaxyPool" },
+      { key: "/galaxy/units", icon: <ProfileOutlined />, labelKey: "nav.galaxyUnits" },
+      { key: "/galaxy/settlement", icon: <AccountBookOutlined />, labelKey: "nav.galaxySettlement" },
+      { key: "/galaxy/ledger", icon: <TransactionOutlined />, labelKey: "nav.galaxyLedger" },
     ],
   },
   {
@@ -116,8 +137,8 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <ClusterOutlined />,
     labelKey: "nav.galaxySupply",
     children: [
-      { key: "/galaxy/nodes", labelKey: "nav.galaxyNodes" },
-      { key: "/galaxy/payouts", labelKey: "nav.galaxyPayouts" },
+      { key: "/galaxy/nodes", icon: <DeploymentUnitOutlined />, labelKey: "nav.galaxyNodes" },
+      { key: "/galaxy/payouts", icon: <MoneyCollectOutlined />, labelKey: "nav.galaxyPayouts" },
     ],
   },
   {
@@ -125,10 +146,10 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <SafetyCertificateOutlined />,
     labelKey: "nav.galaxyRisk",
     children: [
-      { key: "/galaxy/probes", labelKey: "nav.galaxyProbes" },
-      { key: "/galaxy/mismatches", labelKey: "nav.galaxyMismatches" },
-      { key: "/galaxy/reputation", labelKey: "nav.galaxyReputation" },
-      { key: "/galaxy/bans", labelKey: "nav.galaxyBans" },
+      { key: "/galaxy/probes", icon: <ExperimentOutlined />, labelKey: "nav.galaxyProbes" },
+      { key: "/galaxy/mismatches", icon: <AlertOutlined />, labelKey: "nav.galaxyMismatches" },
+      { key: "/galaxy/reputation", icon: <StarOutlined />, labelKey: "nav.galaxyReputation" },
+      { key: "/galaxy/bans", icon: <StopOutlined />, labelKey: "nav.galaxyBans" },
     ],
   },
   {
@@ -136,11 +157,10 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <WalletOutlined />,
     labelKey: "nav.galaxyDemand",
     children: [
-      { key: "/galaxy/keys", labelKey: "nav.galaxyKeys" },
-      { key: "/galaxy/orders", labelKey: "nav.galaxyOrders" },
-      { key: "/galaxy/points", labelKey: "nav.galaxyPoints" },
-      { key: "/galaxy/packages", labelKey: "nav.galaxyPackages" },
-      { key: "/galaxy/pricing", labelKey: "nav.galaxyPricing" },
+      { key: "/galaxy/keys", icon: <KeyOutlined />, labelKey: "nav.galaxyKeys" },
+      { key: "/galaxy/orders", icon: <ShoppingOutlined />, labelKey: "nav.galaxyOrders" },
+      { key: "/galaxy/points", icon: <CreditCardOutlined />, labelKey: "nav.galaxyPoints" },
+      { key: "/galaxy/commerce", icon: <TagsOutlined />, labelKey: "nav.galaxyCommerce" },
     ],
   },
   {
@@ -148,10 +168,10 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <RiseOutlined />,
     labelKey: "nav.galaxyCustomer",
     children: [
-      { key: "/galaxy/accounts", labelKey: "nav.galaxyAccounts" },
-      { key: "/galaxy/disputes", labelKey: "nav.galaxyDisputes" },
-      { key: "/galaxy/leads", labelKey: "nav.galaxyLeads" },
-      { key: "/galaxy/referrals", labelKey: "nav.galaxyReferrals" },
+      { key: "/galaxy/accounts", icon: <UserOutlined />, labelKey: "nav.galaxyAccounts" },
+      { key: "/galaxy/disputes", icon: <SolutionOutlined />, labelKey: "nav.galaxyDisputes" },
+      { key: "/galaxy/leads", icon: <ContactsOutlined />, labelKey: "nav.galaxyLeads" },
+      { key: "/galaxy/referrals", icon: <ShareAltOutlined />, labelKey: "nav.galaxyReferrals" },
     ],
   },
   {
@@ -159,10 +179,9 @@ const FALLBACK_NAV: FallbackNavEntry[] = [
     icon: <ControlOutlined />,
     labelKey: "nav.galaxyPlatform",
     children: [
-      { key: "/galaxy/settings", labelKey: "nav.galaxySettings" },
-      { key: "/galaxy/models", labelKey: "nav.galaxyModels" },
-      { key: "/galaxy/bridge-releases", labelKey: "nav.galaxyBridgeReleases" },
-      { key: "/galaxy/desktop-releases", labelKey: "nav.galaxyDesktopReleases" },
+      { key: "/galaxy/settings", icon: <SlidersOutlined />, labelKey: "nav.galaxySettings" },
+      { key: "/galaxy/bridge-releases", icon: <ApiOutlined />, labelKey: "nav.galaxyBridgeReleases" },
+      { key: "/galaxy/desktop-releases", icon: <DesktopOutlined />, labelKey: "nav.galaxyDesktopReleases" },
     ],
   },
 ];
@@ -188,6 +207,34 @@ const MENU_ICONS: Record<string, ReactNode> = {
   WalletOutlined: <WalletOutlined />,
   RiseOutlined: <RiseOutlined />,
   ControlOutlined: <ControlOutlined />,
+  // 二级菜单的图标。二十多个子项原先一个图标都没有，展开之后是一整列纯文字，
+  // 扫的时候只能逐行读 —— 图标才是那种「看一眼就知道是哪一项」的锚点。
+  //
+  // 同一个分组里的几个必须互不相同，**跨分组重复也要避开**：子项的图标没有底托，
+  // 比一级的药丸弱一档，两个长得像的挨在一起就等于没有。
+  FundOutlined: <FundOutlined />,
+  DatabaseOutlined: <DatabaseOutlined />,
+  ProfileOutlined: <ProfileOutlined />,
+  AccountBookOutlined: <AccountBookOutlined />,
+  TransactionOutlined: <TransactionOutlined />,
+  DeploymentUnitOutlined: <DeploymentUnitOutlined />,
+  MoneyCollectOutlined: <MoneyCollectOutlined />,
+  ExperimentOutlined: <ExperimentOutlined />,
+  AlertOutlined: <AlertOutlined />,
+  StarOutlined: <StarOutlined />,
+  StopOutlined: <StopOutlined />,
+  ShoppingOutlined: <ShoppingOutlined />,
+  CreditCardOutlined: <CreditCardOutlined />,
+  TagsOutlined: <TagsOutlined />,
+  UserOutlined: <UserOutlined />,
+  SolutionOutlined: <SolutionOutlined />,
+  ContactsOutlined: <ContactsOutlined />,
+  ShareAltOutlined: <ShareAltOutlined />,
+  SlidersOutlined: <SlidersOutlined />,
+  ApiOutlined: <ApiOutlined />,
+  DesktopOutlined: <DesktopOutlined />,
+  UserSwitchOutlined: <UserSwitchOutlined />,
+  SafetyOutlined: <SafetyOutlined />,
 };
 
 const LOCALE_OPTIONS = [
@@ -359,7 +406,12 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
         <Layout className="manager-shell-layout" style={{ height: "100%", minHeight: 0, background: "transparent" }}>
           <Sider
             className={`manager-shell-sider${isMobile && mobileMenuOpen ? " manager-shell-sider--mobile-open" : ""}`}
-            width={236}
+            // 260 而不是原来的 236：二级菜单加上图标之后，子项的文字被往右推了一列。
+            // 英文下「Roles & permissions」「Customers & growth」这几条在 236 里会
+            // 截成省略号 —— 侧栏的标签一旦要猜，图标带来的那点速度就全还回去了。
+            // 这个值和 globals.css 里给折叠箭头留的 30px 右内边距是配套算出来的，
+            // 改一个要连着验另一个（窄了的症状是最长那条英文标签压在箭头上）。
+            width={260}
             breakpoint="lg"
             collapsedWidth={72}
             collapsible

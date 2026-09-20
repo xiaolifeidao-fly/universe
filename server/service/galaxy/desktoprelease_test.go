@@ -185,11 +185,12 @@ func TestSortDesktopReleasesOrdersByProductThenVersion(t *testing.T) {
 // 对象键必须把部署配置的 dirPrefix 带上：清单由服务端写、安装包由浏览器直传，
 // 两条路只要有一条漏了前缀，它们就会落在两个目录里 —— 发布成功，客户端 404。
 func TestDesktopObjectKeyCarriesTheDeploymentPrefix(t *testing.T) {
-	store := prefixStore("universe/galaxy")
-	if got := desktopObjectKey(store, "nova", "latest-mac.yml"); got != "universe/galaxy/desktop/nova/latest-mac.yml" {
+	// 端目录直接挂在部署前缀下，和 ai-bridge 的包平级（<prefix>/ai-bridge/…）。
+	store := prefixStore("galaxy/app")
+	if got := desktopObjectKey(store, "nova", "latest-mac.yml"); got != "galaxy/app/nova/latest-mac.yml" {
 		t.Fatalf("对象键不对：%q", got)
 	}
-	if got := desktopObjectKey(prefixStore(""), "orbit", "Orbit-0.1.1-arm64-mac.zip"); got != "desktop/orbit/Orbit-0.1.1-arm64-mac.zip" {
+	if got := desktopObjectKey(prefixStore(""), "orbit", "Orbit-0.1.1-arm64-mac.zip"); got != "orbit/Orbit-0.1.1-arm64-mac.zip" {
 		t.Fatalf("没配前缀时的对象键不对：%q", got)
 	}
 }

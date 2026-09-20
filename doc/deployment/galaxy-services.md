@@ -5,7 +5,7 @@ Galaxy 拆为三个独立 Go 模块、二进制和进程。三个 API 模块各�
 | 服务 | 默认端口 | 职责与路由 |
 | --- | --- | --- |
 | galaxy-api | 10004 | Nova 提供端控制台、提供端账号：`/api/galaxy/provider/*` |
-| galaxy-consumer-api | 10005 | Orbit 使用端控制台与账号：`/api/galaxy/consumer/*`；门户：`/api/galaxy/portal/*`；支付回调：`/galaxy/payments/*` |
+| galaxy-consumer-api | 10005 | Orbit 使用端控制台与账号：`/api/galaxy/consumer/*`；门户：`/api/galaxy/portal/*` |
 | galaxy-hub-api | 10006 | 消费者 SDK：`/v1/*`；bridge 注册、配对、心跳、领任务、回传、升级：`/agent/v1/*`；bridge 安装下载：`/agent/v1/bridge/*`。对外这两段都挂在 `/hub-api` 前缀下，由 nginx 剥掉，服务自己不认前缀 |
 
 每个服务保留 `/healthz` 和 `/metrics`。运营接口仍归 manager-api。
@@ -13,9 +13,9 @@ Galaxy 拆为三个独立 Go 模块、二进制和进程。三个 API 模块各�
 ## 代码归属
 
 - `galaxy-api/pkg/{auth,providers}`：提供端登录入口和控制台 Handler。
-- `galaxy-consumer-api/pkg/{auth,consumers,portal}`：使用端登录入口、控制台、支付回调和门户 Handler。
+- `galaxy-consumer-api/pkg/{auth,consumers,portal}`：使用端登录入口、控制台和门户 Handler。
 - `galaxy-hub-api/pkg/{agent,bridge,native,exportdispatch,local}`：节点与安装下载 Handler、SDK 原生 Handler、派单器、抽检重放；`adapters/{core,relay,delivery,videofarm}` 为 Hub 模块内的传输与业务适配器。
-- `galaxy-common/{auth,bootstrap,kinds,local,metrics,payments}`：共用鉴权实现、领域服务初始化与配置、能力契约、对象存储签名、指标和支付验签。它不依赖任何 API 模块，也不集中注册业务路由。
+- `galaxy-common/{auth,bootstrap,kinds,local,metrics}`：共用鉴权实现、领域服务初始化与配置、能力契约、对象存储签名和指标。它不依赖任何 API 模块，也不集中注册业务路由。
 - 各服务的 `routers` 只装配本服务接口。Hub 的 `runtime` 独占后台任务；两个控制台不会创建 Exchange、Journal、传输适配器或后台派单器。
 
 各模块均可 `GOWORK=off go build .`。适配器原来的四个嵌套 Go 模块已并入 `galaxy-hub-api`，执行 Hub 的 `go test ./...` 即包含它们。
@@ -47,9 +47,9 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 
 | `galaxy.reputation_recovery_per_day` | galaxy-api、galaxy-hub-api | 页面显示的回血速度不是实际的 |
 | `galaxy.referral.rate` / `.days` | galaxy-api、galaxy-hub-api | 页面写着返现比例，结算时按另一个值发 |
-| `oss.*` | galaxy-consumer-api、galaxy-hub-api | 一边传上去、另一边签不出下载地址 |
+| `oss.*` | galaxy-consumer-api、galaxy-hub-api（manager-api 同一个桶） | 一边传上去、另一边签不出下载地址；和 manager-api 不同桶时，Hub 给 ai-bridge 安装包签出来的地址指向一个不存在的对象 |
 
-各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的下载地址，只在密钥页展示；不配就是那一块不显示。它只是**默认值** —— 管理端「ai-bridge 版本」页上的「客户端安装包下载地址」改的是数据库里的 `client.consumer_download_url`，盖过这里；共享端 Nova 的地址 `client.provider_download_url` 只在那张卡片上，没有配置项）、`galaxy.portal.*`、`galaxy.payment.*`（Hub 的 `/v1/orders` 只建待支付订单，验签与到账都在使用端服务，Hub 不需要支付配置）；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
+各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的下载地址，只在密钥页展示；不配就是那一块不显示。它只是**默认值** —— 管理端「ai-bridge 版本」页上的「客户端安装包下载地址」改的是数据库里的 `client.consumer_download_url`，盖过这里；共享端 Nova 的地址 `client.provider_download_url` 只在那张卡片上，没有配置项）、`galaxy.portal.*`；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
 
 ### 三个「对外地址」必须和 nginx 上那条 location 对齐
 
@@ -104,21 +104,24 @@ galaxy.instance = https://www.example.com/instance/{hostname}
 ### 桌面客户端的自动更新：地址在界面那一侧，不在这三个服务里
 
 Nova / Orbit 的壳按 electron-updater 的规矩，**直接去 OSS 上取清单**
-（`<前缀>/desktop/<端>/latest-mac.yml` 之类），不打这三个服务的任何接口。所以它没有
-`galaxy.*` 配置项，要配的是两个端**界面部署机**上的 `runtime.json`：
+（`<oss.dirPrefix>/<端>/latest-mac.yml` 之类，和 `<oss.dirPrefix>/ai-bridge/` 平级），
+不打这三个服务的任何接口。所以它没有 `galaxy.*` 配置项，要配的是两个端**界面部署机**上的
+`runtime.json`：
 
 ```json
-{ "GALAXY_UPDATE_FEED_URL": "https://<桶>.<endpoint>/<oss.dirPrefix>/desktop" }
+{ "GALAXY_UPDATE_FEED_URL": "https://<桶>.<endpoint>/<oss.dirPrefix>" }
 ```
 
-两个端填**同一个值**（各端的 `/api/desktop-health` 自己补上 `/nova`、`/orbit` 那一段再交给壳）。
-路径里的 `<oss.dirPrefix>` 不能省 —— 管理端写清单走的是 `oss.dirPrefix`，漏了那一段
-客户端取到的就是 404。不配就是这个部署的桌面端不检查更新，**不是故障**。
+两个端填**同一个值**，而且**不带端名那一段**（各端的 `/api/desktop-health` 自己补上
+`/nova`、`/orbit` 再交给壳）。路径里的 `<oss.dirPrefix>` 不能省 —— 管理端写清单走的是
+`oss.dirPrefix`，漏了那一段客户端取到的就是 404。不配就是这个部署的桌面端不检查更新，**不是故障**。
 
 桶那一侧还有两条，配不对时症状分别是「谁都收不到更新」和「运营传不上去」：
 
-- `<dirPrefix>/desktop/` 下必须**公开读**（或前面挂 CDN）。客户端拿不到签名地址，
-  它连我们的接口都不打。CDN 上给 `latest*.yml` 一个短缓存，安装包可以长缓存（文件名带版本号）。
+- `<dirPrefix>/nova/` 与 `<dirPrefix>/orbit/` 必须**公开读**（或前面挂 CDN）。客户端拿不到
+  签名地址，它连我们的接口都不打。只放开这两个前缀，别整个 `<dirPrefix>` 放开 ——
+  隔壁 `ai-bridge/` 的包走的是 Hub 当场签发的地址，公开读会把那条约束一起拆了。
+  CDN 上给 `latest*.yml` 一个短缓存，安装包可以长缓存（文件名带版本号）。
 - 桶要允许**管理端那个域名跨域 PUT**。安装包一百多兆，是管理端浏览器拿签名地址直传的，
   不经过 manager-api（那条路中间还隔着 Next.js 的通配代理，只转发 JSON）。
 
@@ -183,6 +186,6 @@ Hub 上 K8s 要用 StatefulSet：节点的上行必须回到持有消费者连�
 2. 启动新的 Hub 与使用端服务；将 Nova 的 `SERVER_TARGET` 指向 galaxy-api，Orbit 和门户的 `SERVER_TARGET` 指向 galaxy-consumer-api。已有 `.env` 需要显式更新，示例文件不会覆盖部署配置。
 3. 将 SDK 的 base URL 和 bridge 的 `pool.hubURL` 更新为 Hub 地址；旧 bridge 安装下载链接也改为 Hub。若保留统一外部域名，在现有部署网关按上表将路径直接路由到所属服务。
 4. 排空旧聚合进程中的请求，再将 galaxy-api 更新为仅提供端控制台的版本。新 galaxy-api 不再接受 `/v1/*`、`/agent/v1/*` 和使用端路由，旧客户端继续打旧端口会得到 404。
-5. 检查三个健康接口，分别验证两端登录、bridge 注册与心跳、真实 SDK 流式调用及支付回调。
+5. 检查三个健康接口，分别验证两端登录、bridge 注册与心跳、真实 SDK 流式调用与按量扣费。
 
-代码验证包括三个模块的独立编译、路由隔离测试以及已有 agent、bridge、auth、consumer 和适配器测试。真实数据库、Redis、已登录客户端和支付渠道联调需要在部署环境执行。
+代码验证包括三个模块的独立编译、路由隔离测试以及已有 agent、bridge、auth、consumer 和适配器测试。真实数据库、Redis 和已登录客户端的联调需要在部署环境执行。

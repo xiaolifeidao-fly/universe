@@ -3,7 +3,7 @@
 -- 客户端那一侧是 electron-updater：应用按平台去 OSS 上取一个固定文件名的清单
 -- （latest-mac.yml / latest.yml / latest-linux.yml），比版本号，下载清单里指的包，
 -- 校验 sha512，装上。**它不经过服务端的任何接口** —— 清单和包都在公开读的 OSS 目录里
--- （<oss.dirPrefix>/desktop/<端>/），地址由两个端 webview 的 runtime.json 配，
+-- （<oss.dirPrefix>/<端>/，和 ai-bridge 的包平级），地址由两个端 webview 的 runtime.json 配，
 -- 桌面壳启动探 /api/desktop-health 时带走。
 --
 -- 所以这张表不是「客户端要查的东西」，是运营那一侧的账：发过哪些版本、谁发的、

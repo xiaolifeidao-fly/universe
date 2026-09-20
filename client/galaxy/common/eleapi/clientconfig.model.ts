@@ -9,6 +9,16 @@ export interface ApplyKeyInput {
   secret: string;
   /** 用来在密钥卡片上标「使用中」，不参与写配置。 */
   keyId: string;
+  /**
+   * 密钥被锁定的那个模型，非空时一起写进客户端配置
+   * （Claude 的 ANTHROPIC_MODEL / Codex 的顶层 model）。
+   *
+   * 额度按模型卖之后，一份 Opus 的额度签出来的密钥只允许调 Opus。不写这一项，
+   * 客户端会按它自己的默认模型发请求，接上去之后每一句都被拒 —— 而人刚买的
+   * 就是这个模型。密钥没锁模型时留空：替他写死一个，等于悄悄把一把什么都能调的
+   * 密钥限制住，而界面上看不出是谁干的。
+   */
+  model?: string;
 }
 
 export interface ApplyKeyResult {

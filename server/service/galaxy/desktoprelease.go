@@ -34,13 +34,14 @@ import (
 // 不受影响 —— 桌面应用不会自己降级）。
 
 const (
-	// desktopObjectPrefix OSS 上的落点：<dirPrefix>/desktop/<端>/<文件名>。
+	// OSS 上的落点是 <oss.dirPrefix>/<端>/<文件名> —— 端目录直接挂在部署前缀下，
+	// 和 ai-bridge 的包（<dirPrefix>/ai-bridge/…）是平级的：它们本来就是同一类东西，
+	// 「某个客户端的安装包」。中间不再多一层 desktop/，那一层除了让人多点一次没有作用。
 	//
-	// 平铺在端目录下、不按版本分子目录：electron-updater 是拿**清单所在目录**
+	// 端目录里**平铺**，不按版本分子目录：electron-updater 是拿**清单所在目录**
 	// 去拼清单里的文件名的，包放进子目录就要改写清单里的 path/url，
 	// 而那份清单恰恰是我们最不该改的东西（它是 electron-builder 的产物）。
 	// 文件名自带版本号，不会撞。
-	desktopObjectPrefix = "desktop"
 
 	// desktopUploadTTL 直传地址的有效期。给两小时不是随手写的：一百多兆的包
 	// 走一条几兆的上行要十几分钟，运营还可能选完文件去接个电话。
@@ -412,7 +413,10 @@ func (s *service) ListDesktopReleases(ctx context.Context) (dto.DesktopReleasePa
 		Channels: desktopChannels,
 	}
 	if s.desktop != nil {
-		page.ObjectRoot = s.desktop.ResolveKey(desktopObjectPrefix)
+		// 两个端目录的**父目录**（也就是部署配置的 dirPrefix，没配就是桶根）。
+		// 运营拿它拼客户端的更新地址，所以由服务端给：前端自己拼必然漏掉 dirPrefix，
+		// 而漏掉之后客户端取清单是 404。
+		page.Configured, page.ObjectRoot = true, s.desktop.ResolveKey("")
 	}
 	for _, row := range rows {
 		isCurrent := row.Status == dto.DesktopPublished && current[row.Product+"/"+row.Channel] == row.Version
@@ -455,7 +459,7 @@ func (s *service) syncDesktopChannel(ctx context.Context, product, channel strin
 	return current, nil
 }
 
-// desktopObjectKey 相对键补上部署配置的 dirPrefix。
+// desktopObjectKey 这个端这个文件的真正对象键：<dirPrefix>/<端>/<文件名>。
 //
 // 清单由服务端写、安装包由浏览器拿签名地址直传，两条路在这里对齐成同一套键 ——
 // 不对齐的话它们会安静地落在两个目录里：发布成功，客户端 404。
@@ -463,7 +467,7 @@ func (s *service) syncDesktopChannel(ctx context.Context, product, channel strin
 // 参数收窄到 keyResolver 而不是整个 DesktopStore：这个函数只需要那一个方法，
 // 收窄之后用例里给一个两行的桩就能把「前缀有没有带上」钉住。
 func desktopObjectKey(store keyResolver, product, name string) string {
-	return store.ResolveKey(path.Join(desktopObjectPrefix, product, name))
+	return store.ResolveKey(path.Join(product, name))
 }
 
 type keyResolver interface {

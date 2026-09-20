@@ -1,6 +1,6 @@
 # client/manager
 
-掌天瓶**管理端**——和 `client/web`（运营控制台）并列的第二个前端应用。Next.js 14 App Router + React 18 + Ant Design 5 + TypeScript，技术选型和 `client/web` 对齐（细节见下）。
+Galaxy **管理端**——和 `client/web`（运营控制台）并列的第二个前端应用。Next.js 14 App Router + React 18 + Ant Design 5 + TypeScript，技术选型和 `client/web` 对齐（细节见下）。
 
 目前只是一个可运行的**骨架**：登录页 + 一个空仪表盘，没有任何真实业务功能。
 

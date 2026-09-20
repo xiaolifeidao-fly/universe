@@ -105,7 +105,7 @@ export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
             },
             {
               key: "price",
-              title: t("store.total"),
+              title: t("usage.unitPrice"),
               width: "120px",
               align: "right",
               render: (row: UsageLine) =>

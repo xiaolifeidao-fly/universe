@@ -56,8 +56,6 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.POST("/provider/type", h.setProviderType)
 	admin.GET("/disputes", h.disputes)
 	admin.POST("/disputes/resolve", h.resolveDispute)
-	admin.GET("/packages", h.packages)
-	admin.POST("/packages/save", h.savePackage)
 
 	// Galaxy 账号：两端各一批人。散户 / 工作室走上面那条 /provider/type。
 	admin.GET("/users", h.users)
@@ -65,10 +63,9 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.POST("/users/password", h.resetUserPassword)
 
 	// 以下原来在 galaxy-api 上，认任务宇宙的管理员。
-	// 给内测用户发密钥（C-10）。明文只在这一次响应里，运营要当场转交。
+	// 代签密钥。明文只在这一次响应里，运营要当场转交 ——
+	// 使用者自己也能在 Orbit 上签，这条路留给「帮人排查」和内部用途。
 	admin.POST("/keys/issue", h.issueKey)
-	// 人工确认到账：线下转账、渠道回调丢了要补单。渠道回调那条验签的路仍在 galaxy-api。
-	admin.POST("/orders/pay", h.payOrder)
 	// 全站算力密钥与明文。运营要随时看得到密钥，连同接入地址一起转交给对方。
 	// 取明文用 POST：只读角色只授 GET，明文天然就不在它的授权范围里。
 	admin.GET("/keys", h.keys)
@@ -79,7 +76,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.GET("/points/ledger", h.pointsLedger)
 	admin.GET("/points/summary", h.pointsSummary)
 	admin.POST("/points/recharge", h.rechargePoints)
-	// 分享返现：通用套餐（没绑模型）的默认比例。各模型自己的比例随门户模型目录一起保存（referralBps）。
+	// 分享返现：被邀请人每充一笔，按这个比例返给邀请人。只有一个比例 ——
+	// 返现跟着充值走，而充值不挑模型。
 	admin.GET("/referral/settings", h.referralSettings)
 	admin.POST("/referral/settings/save", h.saveReferralSettings)
 
@@ -131,6 +129,11 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 运营总览：各页的待办计数一次取回。共享池的运营散在十几个页面上，
 	// 没有它，判断「有没有事要处理」只能一页页翻。
 	admin.GET("/overview", h.overview)
+
+	// 仪表盘：今天登录了多少人、此刻多少机器在线、今天跑了多少量收了多少钱、
+	// 池子还剩多少额度。和上面那条是两页 —— 一个数待办，一个数经营。
+	// 管理端首页（/dashboard）读的就是它。
+	admin.GET("/dashboard", h.dashboard)
 
 	// 用量偏差。这张表此前只写不读：节点自报和 Hub 解析对不上就落一行，
 	// 然后没有任何地方看得见它 —— 虚报在库里有据可查，在管理端查不出来。
@@ -246,6 +249,16 @@ func (h *Handler) overview(context *gin.Context) {
 		return
 	}
 	view, err := h.service.AdminOverview(context.Request.Context())
+	httpx.JSON(context, view, err)
+}
+
+// dashboard 经营数字。这一条**只读**，而且每一块都自带时间与口径 ——
+// 页面会挂着自动刷新，看的人必须知道眼前的数是哪一天、几分钟前的。
+func (h *Handler) dashboard(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	view, err := h.service.AdminDashboard(context.Request.Context())
 	httpx.JSON(context, view, err)
 }
 
@@ -647,32 +660,6 @@ func (h *Handler) resolveDispute(context *gin.Context) {
 	httpx.JSON(context, view, err)
 }
 
-// packages 商品目录。列的是**全部**商品，含已下架的：一个商品下架之后仍然被历史
-// 订单引用，列表里看不到它，运营就只能靠记忆判断某个 packageCode 是不是自己下架的那个。
-func (h *Handler) packages(context *gin.Context) {
-	if !h.enabled(context) {
-		return
-	}
-	views, err := h.service.ListPackages(context.Request.Context(), false)
-	httpx.JSON(context, views, err)
-}
-
-// savePackage 新建或整行覆盖一个商品。
-//
-// 语义是**整行覆盖**而不是打补丁：调用方必须把所有字段都带上，
-// 少带一个就是把它清零。前端的编辑框因此要用当前值预填，不能只提交改动的那几项。
-func (h *Handler) savePackage(context *gin.Context) {
-	if !h.enabled(context) {
-		return
-	}
-	var req dto.SavePackageRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	httpx.JSON(context, req.PackageCode, h.service.SavePackage(context.Request.Context(), req))
-}
-
 // ---------- Galaxy 账号 ----------
 
 func (h *Handler) accountsEnabled(context *gin.Context) bool {
@@ -743,19 +730,6 @@ func (h *Handler) issueKey(context *gin.Context) {
 		req.NoticeVersion = h.service.Config().ConsumerNoticeVersion
 	}
 	view, err := h.service.IssueKey(context.Request.Context(), req)
-	httpx.JSON(context, view, err)
-}
-
-func (h *Handler) payOrder(context *gin.Context) {
-	if !h.enabled(context) {
-		return
-	}
-	var req dto.PayOrderRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	view, err := h.service.PayOrder(context.Request.Context(), req)
 	httpx.JSON(context, view, err)
 }
 

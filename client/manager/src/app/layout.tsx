@@ -5,8 +5,8 @@ import { AppLocaleProvider } from "@/i18n/LocaleProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "掌天瓶管理端",
-  description: "掌天瓶管理端 · 账号、配置与系统状态",
+  title: "Galaxy 管理端",
+  description: "Galaxy 管理端 · 账号、配置与系统状态",
 };
 
 export default function RootLayout({

@@ -1,5 +1,5 @@
 -- =========================================================================
--- 管理端权限资源：共享算力池运营接口（34 条）
+-- 管理端权限资源：共享算力池运营接口（31 条）
 --
 -- 首选做法**不是**跑这份 SQL，而是：
 --
@@ -14,7 +14,7 @@
 --
 -- 中间 10 条是 Galaxy 账号体系独立出来时加的（2026-09-11）：Galaxy 账号的列表 / 停用 /
 -- 重置密码，以及原来挂在 galaxy-api、认任务宇宙管理员的那几条运营接口
--- （发内测密钥、人工确认到账、门户模型目录、门户线索）。galaxy-api 上已经没有运营接口了。
+-- （代签密钥、门户模型目录、门户线索）。galaxy-api 上已经没有运营接口了。
 --
 -- 最后 4 条是桌面客户端热更新上线时加的（2026-09-18）：Nova / Orbit 安装包的发版。
 -- 那一页还要一条页面资源（galaxyDesktopReleases），在
@@ -70,11 +70,6 @@ FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.
 
 INSERT INTO zt_manager_resource
   (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
-SELECT 0, 'api.get.api.galaxy.admin.packages', 'GET /api/galaxy/admin/packages', 'api', 'GET', '/api/galaxy/admin/packages', '', '', 0, 'active', NOW(3), NOW(3)
-FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.get.api.galaxy.admin.packages');
-
-INSERT INTO zt_manager_resource
-  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
 SELECT 0, 'api.post.api.galaxy.admin.node.ban', 'POST /api/galaxy/admin/node/ban', 'api', 'POST', '/api/galaxy/admin/node/ban', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.node.ban');
 
@@ -88,11 +83,6 @@ INSERT INTO zt_manager_resource
   (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
 SELECT 0, 'api.post.api.galaxy.admin.disputes.resolve', 'POST /api/galaxy/admin/disputes/resolve', 'api', 'POST', '/api/galaxy/admin/disputes/resolve', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.disputes.resolve');
-
-INSERT INTO zt_manager_resource
-  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
-SELECT 0, 'api.post.api.galaxy.admin.packages.save', 'POST /api/galaxy/admin/packages/save', 'api', 'POST', '/api/galaxy/admin/packages/save', '', '', 0, 'active', NOW(3), NOW(3)
-FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.packages.save');
 
 -- Galaxy 账号列表：共享端、使用端两批人，按端翻。
 INSERT INTO zt_manager_resource
@@ -117,12 +107,6 @@ INSERT INTO zt_manager_resource
   (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
 SELECT 0, 'api.post.api.galaxy.admin.keys.issue', 'POST /api/galaxy/admin/keys/issue', 'api', 'POST', '/api/galaxy/admin/keys/issue', '', '', 0, 'active', NOW(3), NOW(3)
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.keys.issue');
-
--- 人工确认到账。等于发额度，只给运营。
-INSERT INTO zt_manager_resource
-  (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
-SELECT 0, 'api.post.api.galaxy.admin.orders.pay', 'POST /api/galaxy/admin/orders/pay', 'api', 'POST', '/api/galaxy/admin/orders/pay', '', '', 0, 'active', NOW(3), NOW(3)
-FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM zt_manager_resource WHERE code = 'api.post.api.galaxy.admin.orders.pay');
 
 INSERT INTO zt_manager_resource
   (parent_id, code, name, resource_type, method, resource_url, page_url, icon, sort_id, status, created_time, updated_time)
@@ -268,16 +252,13 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.probes',
     'api.get.api.galaxy.admin.usage',
     'api.get.api.galaxy.admin.disputes',
-    'api.get.api.galaxy.admin.packages',
     'api.post.api.galaxy.admin.node.ban',
     'api.post.api.galaxy.admin.provider.type',
     'api.post.api.galaxy.admin.disputes.resolve',
-    'api.post.api.galaxy.admin.packages.save',
     'api.get.api.galaxy.admin.users',
     'api.post.api.galaxy.admin.users.status',
     'api.post.api.galaxy.admin.users.password',
     'api.post.api.galaxy.admin.keys.issue',
-    'api.post.api.galaxy.admin.orders.pay',
     'api.get.api.galaxy.admin.portal.models',
     'api.post.api.galaxy.admin.portal.models.save',
     'api.post.api.galaxy.admin.portal.models.delete',
@@ -316,16 +297,13 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.probes',
     'api.get.api.galaxy.admin.usage',
     'api.get.api.galaxy.admin.disputes',
-    'api.get.api.galaxy.admin.packages',
     'api.post.api.galaxy.admin.node.ban',
     'api.post.api.galaxy.admin.provider.type',
     'api.post.api.galaxy.admin.disputes.resolve',
-    'api.post.api.galaxy.admin.packages.save',
     'api.get.api.galaxy.admin.users',
     'api.post.api.galaxy.admin.users.status',
     'api.post.api.galaxy.admin.users.password',
     'api.post.api.galaxy.admin.keys.issue',
-    'api.post.api.galaxy.admin.orders.pay',
     'api.get.api.galaxy.admin.portal.models',
     'api.post.api.galaxy.admin.portal.models.save',
     'api.post.api.galaxy.admin.portal.models.delete',
@@ -367,7 +345,6 @@ WHERE r.status = 'active'
     'api.get.api.galaxy.admin.probes',
     'api.get.api.galaxy.admin.usage',
     'api.get.api.galaxy.admin.disputes',
-    'api.get.api.galaxy.admin.packages',
     'api.get.api.galaxy.admin.users',
     'api.get.api.galaxy.admin.portal.models',
     'api.get.api.galaxy.admin.keys',

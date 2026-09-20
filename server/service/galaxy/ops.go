@@ -248,7 +248,19 @@ func (s *service) Sweep(ctx context.Context) error {
 	if _, err := s.RequeueStaleJobs(ctx, now); err != nil {
 		return err
 	}
-	return s.repository.SnapshotQuotaWindow(ctx, windows)
+	if err := s.repository.SnapshotQuotaWindow(ctx, windows); err != nil {
+		return err
+	}
+	// 仪表盘的按小时用量汇总：把刚封口的那个小时算出来存好。
+	//
+	// **排在最后，而且失败不打断巡检**：汇总是派生数据（删了能重算），上面那些是权威数据。
+	// 排在前面的话，一次冷启动要补的几十个小时会把这一轮的超时吃光，
+	// 连带让额度快照写不进去 —— 那才是巡检真正要做的事。
+	//
+	// 错误也不会被咽掉：仪表盘读到没算过的小时时会现算一次，那条路上的失败
+	// 直接回到运营眼前（见 admindashboard.go 的 usageRange）。
+	_ = s.rollupUsage(ctx, now)
+	return nil
 }
 
 // sweepSessions 关掉长期没有回合的会话。座位是稀缺资源：

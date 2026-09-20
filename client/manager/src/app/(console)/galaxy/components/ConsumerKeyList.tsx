@@ -19,11 +19,9 @@ const PAGE_SIZE = 20;
 
 const STATUS_COLORS: Record<string, string> = { active: "success", expired: "warning", frozen: "warning", revoked: "error" };
 
-/** 1.21M / 316k。token 这种大基数要一眼读出量级。 */
-function compact(value: number): string {
-  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
-  if (Math.abs(value) >= 10_000) return `${Math.round(value / 1000)}k`;
-  return value.toLocaleString("en-US");
+/** 积分在库里存「微积分」：除以它得到积分。1 积分 = ¥1。 */
+function points(micros: number): string {
+  return (micros / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 /**
@@ -172,11 +170,13 @@ export function ConsumerKeyList() {
       dataIndex: "balance",
       width: 130,
       align: "right",
-      // 头条只看输出 token：计费按它走，把输入加进来是一个谁都用不上的大数。
-      render: (balance: Record<string, number>) => {
-        const value = balance?.["llm.output_tokens"] ?? Object.values(balance ?? {})[0] ?? 0;
-        return <span className="manager-mono">{compact(value)}</span>;
-      },
+      // 主人**账户**的余额，不是这把密钥的额度 —— 额度不再挂在密钥上。
+      // 排查「这把为什么调不动」第一眼要看的就是它：0 就是余额用完了。
+      render: (balance: number) => (
+        <span className="manager-mono" style={balance > 0 ? undefined : { color: "var(--manager-warn, #d4831f)" }}>
+          {points(balance)}
+        </span>
+      ),
     },
     {
       title: t("galaxy.keys.expiresAt"),
@@ -340,7 +340,6 @@ type IssueForm = {
   ownerUserId: string;
   alias?: string;
   ttlDays?: number;
-  outputTokens?: number;
   concurrency?: number;
   rpm?: number;
 };
@@ -379,8 +378,6 @@ function IssueKeyModal({
         ttlDays: values.ttlDays,
         concurrency: values.concurrency,
         rpm: values.rpm,
-        // 额度按计量单位给。头条是输出 token —— 计费按它走。
-        grants: values.outputTokens ? { "llm.output_tokens": values.outputTokens } : undefined,
       });
       onClose();
       onIssued(view);
@@ -414,9 +411,6 @@ function IssueKeyModal({
         </Form.Item>
         <Form.Item name="alias" label={t("galaxy.keys.issueAlias")}>
           <Input maxLength={64} placeholder={t("galaxy.keys.issueAliasPlaceholder")} />
-        </Form.Item>
-        <Form.Item name="outputTokens" label={t("galaxy.keys.issueGrant")} extra={t("galaxy.keys.issueGrantHint")}>
-          <InputNumber min={0} step={100000} style={{ width: "100%" }} />
         </Form.Item>
         <Space size={12} style={{ display: "flex" }}>
           <Form.Item name="ttlDays" label={t("galaxy.keys.issueTtl")} extra={t("galaxy.keys.issueDefaultHint")}>

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"common/middleware/httpx"
-	"galaxy-common/payments"
 	"service/galaxy"
 )
 
@@ -122,114 +121,6 @@ func LoadAuditConfig() galaxy.AuditConfig {
 	}
 	config.DailyCap = IntProperty("galaxy.audit.daily_cap", config.DailyCap)
 	return config
-}
-
-// LoadPaymentVerifier 按配置组装支付渠道表。
-//
-// 一个渠道都没配就返回 nil：这时回调路由压根不注册，渠道打过来是 404。
-// 比「注册了但不验签」好得多 —— 后者会在没人注意的时候把额度发给任何人。
-//
-// 三组配置，可以同时存在：
-//
-//	galaxy.payment.hmac_secret            单渠道的老写法，渠道码取 galaxy.payment.channel
-//	galaxy.payment.channels = a,b         多渠道，各自的密钥在 galaxy.payment.<code>.*
-//	galaxy.payment.sandbox_channels = c,d 沙箱渠道，不验签、不收回调，本人点一下就算付
-func LoadPaymentVerifier() galaxy.PaymentVerifier {
-	var channels []payments.Channel
-
-	// 老写法：一把密钥挂在一个渠道码上。留着它，已有部署改配置文件才不是必须的。
-	if secret := strings.TrimSpace(httpx.Property("galaxy.payment.hmac_secret")); secret != "" {
-		code := defaultProperty("galaxy.payment.channel", "default")
-		channel, err := hmacChannel(code, "galaxy.payment", secret)
-		if err != nil {
-			log.Printf("galaxy 支付渠道 %s 构造失败，该渠道未启用：%v", code, err)
-		} else {
-			channels = append(channels, channel)
-		}
-	}
-
-	for _, code := range splitCodes(httpx.Property("galaxy.payment.channels")) {
-		prefix := "galaxy.payment." + code
-		secret := strings.TrimSpace(httpx.Property(prefix + ".hmac_secret"))
-		if secret == "" {
-			// 列进来了却没给密钥，多半是配漏了。宁可这个渠道不可用，
-			// 也不能让它带着一个空密钥上线。
-			log.Printf("galaxy 支付渠道 %s 没有配密钥（%s.hmac_secret），该渠道未启用", code, prefix)
-			continue
-		}
-		channel, err := hmacChannel(code, prefix, secret)
-		if err != nil {
-			log.Printf("galaxy 支付渠道 %s 构造失败，该渠道未启用：%v", code, err)
-			continue
-		}
-		channels = append(channels, channel)
-	}
-
-	for _, code := range splitCodes(httpx.Property("galaxy.payment.sandbox_channels")) {
-		channels = append(channels, payments.Channel{
-			Code:    code,
-			Title:   defaultProperty("galaxy.payment."+code+".title", code),
-			Sandbox: true,
-		})
-		// 说重一点：这是一条「点一下就发额度」的路，日志里必须留痕，
-		// 否则它跟着配置文件被复制到生产环境时没人会发现。
-		log.Printf("galaxy 已启用沙箱支付渠道 %s —— 本人点击即视为到账，切勿用于生产", code)
-	}
-
-	registry, err := payments.NewRegistry(channels)
-	if err != nil {
-		log.Printf("galaxy 支付渠道表构造失败，支付相关接口未启用：%v", err)
-		return nil
-	}
-	if registry == nil {
-		log.Print("galaxy 未配置任何支付渠道，回调接口未启用（galaxy.payment.*）")
-		return nil
-	}
-	return registry
-}
-
-// hmacChannel 组一个 HMAC 验签渠道。签名头、时间戳头与容差都可以按渠道覆盖，
-// 没覆盖就落到 galaxy.payment.* 这一层的默认值上。
-func hmacChannel(code, prefix, secret string) (payments.Channel, error) {
-	verifier, err := payments.NewHMACVerifier(payments.HMACConfig{
-		Channel:         code,
-		Secret:          secret,
-		SignatureHeader: defaultProperty(prefix+".signature_header", httpx.Property("galaxy.payment.signature_header")),
-		TimestampHeader: defaultProperty(prefix+".timestamp_header", httpx.Property("galaxy.payment.timestamp_header")),
-		Tolerance: time.Duration(IntProperty(prefix+".tolerance_seconds",
-			IntProperty("galaxy.payment.tolerance_seconds", 300))) * time.Second,
-	})
-	if err != nil {
-		return payments.Channel{}, err
-	}
-	return payments.Channel{
-		Code:     code,
-		Title:    defaultProperty(prefix+".title", code),
-		Verifier: verifier,
-	}, nil
-}
-
-// splitCodes 逗号分隔的渠道码列表，顺手去重、去空白、统一小写 ——
-// 渠道码要进回调路径和支付流水号，不能带着大小写差异到处跑。
-func splitCodes(raw string) []string {
-	seen := map[string]bool{}
-	var codes []string
-	for _, part := range strings.Split(raw, ",") {
-		code := strings.ToLower(strings.TrimSpace(part))
-		if code == "" || seen[code] {
-			continue
-		}
-		seen[code] = true
-		codes = append(codes, code)
-	}
-	return codes
-}
-
-func defaultProperty(key, fallback string) string {
-	if value := strings.TrimSpace(httpx.Property(key)); value != "" {
-		return value
-	}
-	return fallback
 }
 
 // TokenSecret Galaxy 账号令牌的签名密钥。

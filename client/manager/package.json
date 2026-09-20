@@ -2,7 +2,7 @@
   "name": "manager",
   "version": "0.1.0",
   "private": true,
-  "description": "掌天瓶管理端（与 client/web 并列的第二个控制台），Next.js + antd 骨架",
+  "description": "Galaxy 管理端（与 client/web 并列的第二个控制台），Next.js + antd 骨架",
   "scripts": {
     "postinstall": "node scripts/link-shared.js",
     "dev": "next dev -p 7895",

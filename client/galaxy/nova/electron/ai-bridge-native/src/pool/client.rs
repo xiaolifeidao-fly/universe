@@ -5,6 +5,7 @@ use crate::core::request::Cancel;
 use crate::log_warn;
 use bytes::Bytes;
 use futures_util::stream::BoxStream;
+use crate::pool::usage::UsageSnapshot;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -38,6 +39,13 @@ pub struct HeartbeatLane {
     #[serde(rename = "upstreamOK")]
     pub upstream_ok: bool,
     pub paused: bool,
+    /// 这条通道背后那个上游账号此刻还剩多少（Claude / Codex 各自的 5 小时、周限额）。
+    ///
+    /// 和主人设的额度是两回事：那份是「打算放多少出去」，这份是「上游实际还让跑多少」。
+    /// 一次中转都还没跑过的机器上没有这个数 —— 那时整个字段省略，**不发 null**：
+    /// Hub 那边一个显式的 null 会被当成「有快照但空的」，覆盖掉上一次真实的观测。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<UsageSnapshot>,
 }
 
 /// 上报给 Hub 的一项**本机能力**。

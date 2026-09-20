@@ -51,7 +51,7 @@ func Build(database *gorm.DB, registry *galaxy.KindRegistry, replayer galaxy.Sha
 	}
 	metrics := metrics.New()
 	service := galaxy.New(database, galaxy.Ports{Control: control, Signer: signer, Replayer: replayer,
-		Audit: LoadAuditConfig(), Metrics: metrics, Payment: LoadPaymentVerifier()}, registry, LoadConfig())
+		Audit: LoadAuditConfig(), Metrics: metrics}, registry, LoadConfig())
 	return &Assembly{Galaxy: service, Metrics: metrics, Control: control}, nil
 }
 func Accounts(database *gorm.DB) (account.Service, *auth.Gate) {

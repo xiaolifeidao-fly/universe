@@ -1,11 +1,11 @@
 "use client";
 
 /**
- * 模型广场：有哪些模型、每个模型多少钱、有哪些套餐可以买。
+ * 模型广场：有哪些模型、每个模型什么价。
  *
- * 这一页只负责「挑」，不负责「付」：套餐上的购买按钮把人送去购买页，
- * 目标密钥、积分够不够、数据告知这些确认都在那一页。两页各写一遍下单，
- * 迟早有一边漏掉一道校验。
+ * 这一页只回答「多少钱」，没有任何可以点的买卖：额度就是账户里的积分余额，
+ * 由运营充进来，调一次扣一次。所以读它的方式是「我这些余额大概能跑多久」，
+ * 而不是「我该买哪个包」。
  *
  * 数字一律按积分标（1 积分 = ¥1）。单价是「每百万 token」—— 按千 token 标的话，
  * 小数点后面四五位，读不出贵还是便宜。
@@ -19,19 +19,18 @@ import { IconRefresh } from "@/components/ui/icons";
 import { Btn, Card, CardHead, EmptyState, IconBtn, Kpi, Loading, Note, Pill, Tabs } from "@/components/ui/kit";
 import { VendorMark, vendorLabel } from "@shared/brand/VendorMark";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatBps, formatCompact, formatPoints, formatQuota, unitLabel } from "@/utils/format";
+import { formatBps, formatCompact, formatPoints } from "@/utils/format";
 import {
   fetchCatalog,
   fetchPoints,
   type ConsumerCatalog,
   type ConsumerModelView,
-  type PackageView,
   type PointsSummary,
 } from "../../api/consumer.api";
 
 type CategoryTab = "all" | "claude" | "codex" | "other";
 
-/** 模型的类别只有三种；套餐还多一个视频 —— 视频套餐不挂在任何模型下，归到「其他」那一栏。 */
+/** 模型的类别只有三种；认不出族的归到「其他」那一栏。 */
 function inTab(category: string, tab: CategoryTab): boolean {
   if (tab === "all") return true;
   if (tab === "other") return category !== "claude" && category !== "codex";
@@ -64,11 +63,7 @@ export function ModelSquare() {
   }, [load]);
 
   const models = useMemo(() => (catalog?.models ?? []).filter((model) => inTab(model.category, tab)), [catalog, tab]);
-  const general = useMemo(() => (catalog?.packages ?? []).filter((item) => inTab(item.category, tab)), [catalog, tab]);
-  const packageCount = (catalog?.models ?? []).reduce((sum, model) => sum + (model.packages?.length ?? 0), 0) + (catalog?.packages?.length ?? 0);
-  const topRate = Math.max(catalog?.defaultBps ?? 0, ...(catalog?.models ?? []).map((model) => model.referralBps));
-
-  const buy = (item: PackageView) => router.push(`/consumer/store?package=${encodeURIComponent(item.packageCode)}`);
+  const referralBps = catalog?.defaultBps ?? 0;
 
   const header = (
     <PageHeader
@@ -104,7 +99,7 @@ export function ModelSquare() {
     <>
       {header}
       <div className="gx-body">
-        <div className="gx-kpi gx-rise" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
+        <div className="gx-kpi gx-rise" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
           <Kpi
             label={t("models.kpi.points")}
             value={points ? formatPoints(points.balance) : "-"}
@@ -115,10 +110,9 @@ export function ModelSquare() {
             }
           />
           <Kpi label={t("models.kpi.models")} value={catalog?.models.length ?? 0} />
-          <Kpi label={t("models.kpi.packages")} value={packageCount} />
           <Kpi
             label={t("models.kpi.referral")}
-            value={topRate > 0 ? t("models.kpi.referralUpTo", { rate: formatBps(topRate) }) : "-"}
+            value={referralBps > 0 ? formatBps(referralBps) : "-"}
             hint={
               <button type="button" className="gx-link" onClick={() => router.push("/consumer/points")}>
                 {t("models.kpi.referralHint")}
@@ -127,7 +121,7 @@ export function ModelSquare() {
           />
         </div>
 
-        {models.length === 0 && general.length === 0 ? (
+        {models.length === 0 ? (
           <Card className="gx-rise gx-rise--1">
             <EmptyState title={t("models.empty")} />
           </Card>
@@ -136,20 +130,9 @@ export function ModelSquare() {
         {models.length > 0 ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))", gap: 14 }}>
             {models.map((model) => (
-              <ModelCard key={model.modelId} model={model} onBuy={buy} />
+              <ModelCard key={model.modelId} model={model} />
             ))}
           </div>
-        ) : null}
-
-        {general.length > 0 ? (
-          <Card className="gx-rise gx-rise--2">
-            <CardHead title={t("models.general")} hint={t("models.generalHint")} />
-            <div style={{ padding: "0 18px 18px", display: "grid", gap: 10 }}>
-              {general.map((item) => (
-                <PackageLine key={item.packageCode} item={item} onBuy={buy} showCategory />
-              ))}
-            </div>
-          </Card>
         ) : null}
 
         <Note>{t("models.billing")}</Note>
@@ -203,7 +186,7 @@ function points(value: number): string {
   return value > 0 ? formatPoints(value) : "-";
 }
 
-function ModelCard({ model, onBuy }: { model: ConsumerModelView; onBuy: (item: PackageView) => void }) {
+function ModelCard({ model }: { model: ConsumerModelView }) {
   const { t } = useLocale();
   const vendor = vendorLabel(model.vendor);
   // 划线价两档只要有一档填了就显示：只填了输出价的那一行也该看得见对比，
@@ -211,7 +194,9 @@ function ModelCard({ model, onBuy }: { model: ConsumerModelView; onBuy: (item: P
   //
   // 但自家价一个都没有时（模型没定价、kind 统一价也还是空的）不显示：
   // 划掉官方价却给不出替代的数，等于说「这个价不算数」然后没有下文。
-  const listed = (model.listInputPrice > 0 || model.listOutputPrice > 0) && (model.inputPrice > 0 || model.outputPrice > 0);
+  const listed =
+    (model.listInputPrice > 0 || model.listOutputPrice > 0 || model.listCachePrice > 0) &&
+    (model.inputPrice > 0 || model.outputPrice > 0);
   // 缓存两档退到小字。它们是「便宜在哪」的注脚，而卡片第一眼要回答的是「多少钱」——
   // 四个数一样大的时候，没有一个数是重点。
   const cache = [
@@ -238,7 +223,6 @@ function ModelCard({ model, onBuy }: { model: ConsumerModelView; onBuy: (item: P
           </span>
         </span>
         <span style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {model.referralBps > 0 ? <Pill tone="accent">{t("models.referral", { rate: formatBps(model.referralBps) })}</Pill> : null}
           {model.badgeText ? <Pill tone={BADGE_TONES[model.badgeTone] ?? "default"}>{model.badgeText}</Pill> : null}
         </span>
       </div>
@@ -281,8 +265,10 @@ function ModelCard({ model, onBuy }: { model: ConsumerModelView; onBuy: (item: P
           {listed ? (
             <span className="gx-mono" style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>
               {t("models.listPrice")}{" "}
+              {/* 官方缓存价只在声明过时才多出一段，理由同门户卡片。 */}
               <s>
                 {points(model.listInputPrice)} / {points(model.listOutputPrice)}
+                {model.listCachePrice > 0 ? ` / ${points(model.listCachePrice)}` : ""}
               </s>
             </span>
           ) : null}
@@ -294,55 +280,7 @@ function ModelCard({ model, onBuy }: { model: ConsumerModelView; onBuy: (item: P
           </span>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <span className="gx-label">{t("models.packages")}</span>
-          {(model.packages?.length ?? 0) === 0 ? (
-            <span className="gx-card__hint">{t("models.noPackages")}</span>
-          ) : (
-            model.packages.map((item) => <PackageLine key={item.packageCode} item={item} onBuy={onBuy} />)
-          )}
-        </div>
       </div>
     </Card>
-  );
-}
-
-/** 一个套餐一行：名字、给多少、多久有效、多少积分、买。 */
-function PackageLine({ item, onBuy, showCategory }: { item: PackageView; onBuy: (item: PackageView) => void; showCategory?: boolean }) {
-  const { t } = useLocale();
-  const units = Object.entries(item.units ?? {})
-    .map(([unit, value]) => `${formatQuota(unit, value)} ${unitLabel(unit, t)}`)
-    .join(" · ");
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(0, 1fr) auto auto",
-        alignItems: "center",
-        gap: 14,
-        padding: "12px 14px",
-        borderRadius: 10,
-        border: "1px solid var(--gx-line)",
-      }}
-    >
-      <span style={{ minWidth: 0 }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{item.title}</span>
-          {showCategory ? <Pill>{t(`store.category.${item.category}`)}</Pill> : null}
-        </span>
-        <span className="gx-mono" style={{ display: "block", marginTop: 4, fontSize: 11.5, color: "var(--gx-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {units} · {t("models.ttl", { days: item.ttlDays })}
-        </span>
-      </span>
-      <span style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-        <span className="gx-serif" style={{ fontSize: 24, lineHeight: 1 }}>
-          {formatPoints(item.amount)}
-        </span>
-        <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("points.unit")}</span>
-      </span>
-      <Btn tone="accent" small onClick={() => onBuy(item)}>
-        {t("models.buy")}
-      </Btn>
-    </div>
   );
 }

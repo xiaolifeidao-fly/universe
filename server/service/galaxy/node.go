@@ -617,6 +617,10 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	for _, row := range rows {
 		byCID[row.CID] = row
 	}
+	// 上游余量：节点报上来的事实，只给人看。变了才写库 —— 一份不变的快照
+	// 每 15 秒写一次，是按机器数乘以 240 的空写。
+	s.recordUpstreamUsage(ctx, req.NodeID, req.Lanes, byCID, now)
+
 	result := dto.HeartbeatResult{HubURL: s.cfg().ProviderHubURL, Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
 	for _, snapshot := range snapshots {
 		s.observeLane(snapshot, now)
@@ -820,6 +824,10 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		// 早就不成立的「请运行 claude auth login」。
 		UnavailableReason: unavailableReason(row),
 		SeatsBound:        snapshot.SeatsUsed,
+		// 上游余量与它的观测时刻一起给，缺一不可：只给数字的话，一台三小时
+		// 没接过活的机器会把三小时前的余量显示成此刻的。
+		UpstreamUsage:   decodeUpstreamUsage(row.UpstreamUsageJSON),
+		UpstreamUsageAt: row.UpstreamUsageAt,
 	}
 	if !snapshot.ThrottledUntil.IsZero() && snapshot.ThrottledUntil.After(now) {
 		throttled := snapshot.ThrottledUntil
@@ -1472,4 +1480,84 @@ func toQuotaRows(cid string, grants []QuotaGrant) []*repository.GalaxyQuotaGrant
 		})
 	}
 	return rows
+}
+
+// upstreamUsageLimit 一条贡献的上游余量快照最多存这么长。
+//
+// 这份东西是**上游说了算**的：它回几个头、头名多长，我们说不上话。列宽 4096，
+// 留出余量截断 —— 超长不该让整次心跳写库失败，那会把一台正常机器的
+// 「还剩多少」连同下一次观测一起丢掉。
+const upstreamUsageLimit = 3500
+
+// usageWrite 一条要落库的上游余量。
+type usageWrite struct {
+	CID     string
+	Payload string
+}
+
+// pendingUsageWrites 从这一轮心跳里挑出**真的变了**的那几条。
+//
+// 单独拆出来是因为这段判断是整件事里唯一会出错的地方，而它不需要库也不需要
+// 控制面就能验：心跳 15 秒一次，而这份数只在机器真跑了活之后才会变。
+// 少一道比对，就是每台机器每天四千多次空 UPDATE，全都落在 zt_galaxy_contribution
+// 这张派单路径上要读的表上。
+//
+// 比的是**序列化之后的字符串**，不是结构体：库里存的就是它，存进去的和比出来的
+// 是同一个东西，不会出现「结构相等但 JSON 不同、于是每次都写」。
+func pendingUsageWrites(nodeID string, lanes []dto.LaneInput, byCID map[string]*repository.GalaxyContribution) []usageWrite {
+	var writes []usageWrite
+	for _, lane := range lanes {
+		if lane.Usage == nil {
+			// 没报不等于清空：一次中转都还没跑过的机器、以及老版本节点，
+			// 都不该把上一次的观测抹掉。
+			continue
+		}
+		// 心跳里的 cid 是去掉节点前缀的短名，库里那张表用的是全名。
+		row, ok := byCID[scopedCID(nodeID, lane.CID)]
+		if !ok {
+			continue
+		}
+		payload, err := json.Marshal(lane.Usage)
+		// 超长的整条丢掉，不截断：截一半的 JSON 存进去，下次解不动就成了「没有数据」，
+		// 而且**每次心跳都会重写一遍**（截断后的串和上一次不一定一样）。
+		if err != nil || len(payload) > upstreamUsageLimit {
+			continue
+		}
+		if string(payload) == row.UpstreamUsageJSON {
+			continue
+		}
+		writes = append(writes, usageWrite{CID: row.CID, Payload: string(payload)})
+	}
+	return writes
+}
+
+// recordUpstreamUsage 把变了的那几条落库，并把内存里的行也跟着更新 ——
+// 同一次心跳后面还要拿这些行建视图。
+func (s *service) recordUpstreamUsage(ctx context.Context, nodeID string, lanes []dto.LaneInput, byCID map[string]*repository.GalaxyContribution, now time.Time) {
+	for _, write := range pendingUsageWrites(nodeID, lanes, byCID) {
+		if err := s.repository.SaveUpstreamUsage(ctx, bizLine, write.CID, write.Payload, now); err != nil {
+			// 写不进去不该打断心跳：这是给人看的数，而心跳还担着取消下发、
+			// 排空判定和配置生效 —— 为一份展示数据把那些一起丢掉是不划算的。
+			continue
+		}
+		row := byCID[write.CID]
+		row.UpstreamUsageJSON = write.Payload
+		row.UpstreamUsageAt = &now
+	}
+}
+
+// decodeUpstreamUsage 把库里那段 JSON 解回视图。
+//
+// 解不动就返回 nil，不返回一个空壳：这一列存的是**上游说了算**的形状，
+// 上游改一次头名、我们改一次结构，老行就可能解不动。那时界面该显示「没有数据」，
+// 而不是一份所有数字都是 0 的快照 —— 后者会被读成「额度用完了」。
+func decodeUpstreamUsage(payload string) *dto.UpstreamUsage {
+	if strings.TrimSpace(payload) == "" {
+		return nil
+	}
+	var usage dto.UpstreamUsage
+	if json.Unmarshal([]byte(payload), &usage) != nil {
+		return nil
+	}
+	return &usage
 }

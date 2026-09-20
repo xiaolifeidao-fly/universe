@@ -10,69 +10,6 @@ import (
 // service/galaxy 的对外依赖全部收在这一个文件里。领域包不认识 Redis、不认识 OSS、
 // 不认识 gin —— 它只认这些接口，由 galaxy-api 的装配层注入实现。
 
-// ---------- 支付渠道 ----------
-
-// PaymentCallback 是支付渠道打回来的一次通知的原样内容。
-//
-// Body 必须是**未经解析的原始字节**：所有渠道的签名都覆盖原始报文，
-// 反序列化再序列化一次，字段顺序和空白就变了，验签必然失败。
-type PaymentCallback struct {
-	Channel    string
-	Headers    map[string]string
-	Body       []byte
-	ReceivedAt time.Time
-}
-
-// PaymentResult 是验签通过之后，渠道对这笔支付的认定。
-// 金额与币种一定要带上：领域层要拿它和订单原价核对，
-// 光有一个合法签名不代表付的是这个数。
-type PaymentResult struct {
-	OrderID    string
-	PaymentRef string
-	AmountPaid int64
-	Currency   string
-	// Paid 为假表示这条通知不是「支付成功」（关单、退款、状态查询回执等）。
-	Paid bool
-}
-
-// PaymentVerifier 校验支付渠道回调的真实性。
-//
-// 领域层只认这个接口：支付宝的 RSA2、微信 V3 的 SHA256-RSA、Stripe 的 HMAC
-// 各有各的签名法，但对共享池来说它们回答的是同一个问题 ——
-// 「这条通知真是渠道发的吗，说的是哪一单、付了多少」。
-//
-// 没配 Verifier 时回调接口整体关闭：一个不验签的支付回调等于把发额度的
-// 权限挂在公网上，任何人都能 POST 一个订单号把货提走。
-//
-// 多渠道由装配层的 payments.Registry 按 PaymentCallback.Channel 分发，
-// 领域层看到的仍然只有这一个接口。
-type PaymentVerifier interface {
-	Verify(ctx context.Context, callback PaymentCallback) (PaymentResult, error)
-}
-
-// PaymentChannel 一个已接入渠道对外的样子。控制台按它渲染收银台。
-type PaymentChannel struct {
-	// Code 渠道码，同时是回调路径里的那一段：POST /galaxy/payments/{code}/callback。
-	Code string
-	// Title 给人看的名字。
-	Title string
-	// Sandbox 为真表示这个渠道不向任何外部收银台要钱 —— 本人点一下就算付成功。
-	// 它必须一路标到界面上：把一个沙箱渠道混在真渠道里而不标注，
-	// 运营会以为钱进来了。
-	Sandbox bool
-}
-
-// PaymentDirectory 报告这套部署接了哪些渠道。
-//
-// 和 PaymentVerifier 分开而不是并成一个接口：验签是每条回调都要走的路，
-// 列渠道是控制台偶尔一次的读。并在一起，只想接一种签名法的实现方
-// 就得凭空编一个渠道清单出来。
-//
-// 装配层的实现可以两个都满足（payments.Registry 就是），领域层用类型断言取。
-type PaymentDirectory interface {
-	Channels() []PaymentChannel
-}
-
 // ---------- 控制面 ----------
 
 // ScheduleWindow 挂机时段。时段外的贡献自动排空、不参与放置（P-07）。

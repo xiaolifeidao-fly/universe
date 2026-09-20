@@ -16,7 +16,7 @@ import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconDownload, IconRefresh, IconSearch } from "@/components/ui/icons";
 import { Card, DataTable, IconBtn, Kpi, Loading, Pager, Pill, Seg, Tabs } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { DERIVED_TOKEN_UNITS, formatCny, formatCompact, formatDateTime, formatInt, formatMillis } from "@/utils/format";
+import { DERIVED_TOKEN_UNITS, formatCny, formatCompact, formatDateTime, formatInt, formatMillis, formatPoints } from "@/utils/format";
 import {
   fetchDashboard,
   fetchKeys,
@@ -100,8 +100,8 @@ export function UsageBoard() {
   }, [keyword, result]);
 
   const alias = new Map(keys.map((key) => [key.keyId, key.alias || key.keyId]));
-  // 同密钥卡片：只看输出 token，那才是计费口径。
-  const balance = dashboard?.balance?.["llm.output_tokens"] ?? 0;
+  // 余额是账户级的：名下几把密钥花的是同一份钱，扣光了一起停。
+  const balance = dashboard?.balance ?? 0;
 
   const exportCsv = () => {
     // input 是**未命中缓存的新增输入**，缓存命中单独一列 —— 两个数互不重叠，
@@ -159,7 +159,7 @@ export function UsageBoard() {
             value={formatMillis(dashboard?.avgFirstByteMs ?? 0)}
             hint={t("usage.firstByteHint")}
           />
-          <Kpi label={t("usage.left")} value={formatCompact(balance)} hint={t("usage.leftHint", { keys: dashboard?.keys ?? 0 })} />
+          <Kpi label={t("usage.left")} value={formatPoints(balance)} hint={t("usage.leftHint")} />
         </div>
 
         <div className="gx-rise gx-rise--1" style={{ display: "flex", alignItems: "center", gap: 12 }}>

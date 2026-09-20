@@ -1,10 +1,7 @@
-// Package consumers 提供使用端控制台接口和支付回调。
+// Package consumers 提供使用端控制台接口。
 package consumers
 
 import (
-	"io"
-	"log"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +40,9 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	console.GET("/notice", h.currentNotice)
 	console.POST("/notice/accept", h.acceptNotice)
 	console.GET("/keys", h.listKeys)
+	// 自助签发：不用买、不用运营代发，最多 5 把有效的。额度在账户余额上，
+	// 几把密钥花的是同一份钱，所以新建一把只是多一串凭证。
+	console.POST("/keys", h.createKey)
 	console.POST("/keys/revoke", h.revokeKey)
 	console.GET("/usage", h.consoleUsage)
 	// 逐笔扣费与页头那排数字。汇总回答「这个月花了多少」，逐笔回答
@@ -63,134 +63,20 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	console.GET("/disputes", h.consoleDisputes)
 	console.POST("/disputes", h.consoleFileDispute)
 	console.POST("/disputes/:disputeId/withdraw", h.consoleWithdrawDispute)
-	console.GET("/packages", h.listPackages)
-	// 模型广场与积分购买。积分只能由运营在 manager-api 里充进来，这里只有看和花。
+	// 模型广场与余额。**这一端不卖任何东西**：积分只能由运营在 manager-api 里充进来，
+	// 调模型时按单价逐笔从余额里扣。所以没有商品、没有下单、没有支付。
 	console.GET("/catalog", h.catalog)
 	console.GET("/points", h.pointsSummary)
 	console.GET("/points/ledger", h.pointsLedger)
-	console.POST("/points/purchase", h.purchaseWithPoints)
-	// 分享：自己的邀请码、邀请来的人。返现不用调接口，被邀请人买的那一单交付时服务端自己记。
+	// 分享：自己的邀请码、邀请来的人。返现不用调接口，被邀请人充值到账时服务端自己记。
 	console.GET("/referral", h.referral)
 	console.GET("/referral/invitees", h.invitees)
 	// 取回密钥明文：「使用」按钮写本机配置、复制带密钥的接入命令都要它。
 	// 用 POST 而不是 GET：keyId 放在请求体里，明文所在的这次请求不会被当成可缓存的资源。
 	console.POST("/keys/secret", h.revealKey)
-	console.GET("/payments/channels", h.paymentChannels)
-	console.POST("/orders", h.createOrder)
-	console.GET("/orders", h.listOrders)
-	console.POST("/orders/cancel", h.cancelOrder)
-	// 沙箱支付。它不是「管理员确认到账」的简写：认的是本人，且只对配置里
-	// 显式标成沙箱的渠道生效，没配沙箱的部署调进来只会拿到错误。
-	console.POST("/orders/pay/sandbox", h.paySandbox)
-	// 给人发内测密钥（C-10）和人工确认到账不在这里，在 manager-api 的 /api/galaxy/admin/*：
+	// 充积分和运营代签密钥不在这里，在 manager-api 的 /api/galaxy/admin/*：
 	// 它们原来靠 httpx.RequirePlatformAdmin 认任务宇宙的管理员，而 Galaxy 的账号体系里
 	// 只有共享端和使用端的人，没有运营。运营身份在管理端（zt_manager_*）。
-}
-
-// RegisterCallbacks 挂支付渠道回调。
-//
-// 它不在 /api/galaxy 下，也不带任何用户鉴权 —— 打过来的是支付渠道的服务器，
-// 手里没有、也不该有用户令牌。它的身份由**报文签名**证明，验签在
-// service 那一层做（galaxy.PaymentVerifier）。
-//
-// 没接渠道时这组路由压根不注册：一个能被任何人 POST 的支付回调，
-// 等于把「发额度」这件事挂在公网上。
-func (h *Handler) RegisterCallbacks(group *gin.RouterGroup) {
-	if !h.service.PaymentEnabled() {
-		return
-	}
-	group.POST("/payments/:channel/callback", h.paymentCallback)
-}
-
-// callbackBodyLimit 回调报文的上限。渠道通知都是几百字节的小报文，
-// 留 64KB 已经很宽松 —— 这道闸挡的是拿未鉴权入口灌内存。
-const callbackBodyLimit = 64 << 10
-
-func (h *Handler) paymentCallback(context *gin.Context) {
-	body, err := io.ReadAll(io.LimitReader(context.Request.Body, callbackBodyLimit+1))
-	if err != nil || len(body) > callbackBodyLimit {
-		context.JSON(http.StatusBadRequest, gin.H{"code": "FAIL", "message": "报文过大或无法读取"})
-		return
-	}
-	headers := make(map[string]string, len(context.Request.Header))
-	for name := range context.Request.Header {
-		headers[name] = context.GetHeader(name)
-	}
-	view, err := h.service.PayOrderByCallback(context.Request.Context(), galaxy.PaymentCallback{
-		Channel: context.Param("channel"), Headers: headers, Body: body, ReceivedAt: time.Now(),
-	})
-	if err != nil {
-		// 4xx 而不是 5xx：验签不过、金额对不上这类问题重推一百次也不会变好，
-		// 让渠道停下来，人去查。日志里只留订单号与原因，不留报文。
-		log.Printf("galaxy payment callback rejected: channel=%s err=%v", context.Param("channel"), err)
-		context.JSON(http.StatusBadRequest, gin.H{"code": "FAIL", "message": err.Error()})
-		return
-	}
-	// 渠道认 2xx 就停止重推。回的是它自己的形态，不套控制台信封。
-	//
-	// 只回订单号和状态，**不能**把 view 整个丢出去：履约签发新密钥那一次，
-	// view.IssuedSecret 里是 sk- 明文，而收这条响应的是支付渠道。
-	context.JSON(http.StatusOK, gin.H{"code": "SUCCESS", "orderId": view.OrderID, "status": view.Status})
-}
-
-// ---------- 额度商品与订单 ----------
-
-func (h *Handler) listPackages(context *gin.Context) {
-	views, err := h.service.ListPackages(context.Request.Context(), true)
-	httpx.JSON(context, views, err)
-}
-
-func (h *Handler) createOrder(context *gin.Context) {
-	var req dto.CreateOrderRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	req.UserID = auth.UserID(context)
-	view, err := h.service.CreateOrder(context.Request.Context(), req)
-	httpx.JSON(context, view, err)
-}
-
-func (h *Handler) listOrders(context *gin.Context) {
-	limit, _ := strconv.Atoi(context.DefaultQuery("limit", "50"))
-	views, err := h.service.ListOrders(context.Request.Context(), auth.UserID(context), limit)
-	httpx.JSON(context, views, err)
-}
-
-func (h *Handler) cancelOrder(context *gin.Context) {
-	var req struct {
-		OrderID string `json:"orderId" binding:"required"`
-	}
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	httpx.JSON(context, req.OrderID, h.service.CancelOrder(context.Request.Context(), auth.UserID(context), req.OrderID))
-}
-
-// paymentChannels 收银台上能选哪几个渠道。沙箱渠道也在这个列表里，
-// 但带着 sandbox 标记 —— 界面必须把它标出来。
-func (h *Handler) paymentChannels(context *gin.Context) {
-	channels := h.service.PaymentChannels()
-	views := make([]dto.PaymentChannelView, 0, len(channels))
-	for _, channel := range channels {
-		views = append(views, dto.PaymentChannelView{
-			Code: channel.Code, Title: channel.Title, Sandbox: channel.Sandbox,
-		})
-	}
-	httpx.JSON(context, views, nil)
-}
-
-func (h *Handler) paySandbox(context *gin.Context) {
-	var req dto.PaySandboxRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	// 归属校验的依据只能是令牌里的人。请求体里的 UserID 有 json:"-"，绑不进来。
-	req.UserID = auth.UserID(context)
-	view, err := h.service.PaySandbox(context.Request.Context(), req)
-	httpx.JSON(context, view, err)
 }
 
 // ---------- 模型广场、积分与分享 ----------
@@ -215,18 +101,6 @@ func (h *Handler) pointsLedger(context *gin.Context) {
 	query.Operator, query.OwnerUserID, query.OwnerKeyword = false, auth.UserID(context), ""
 	page, err := h.service.PointsLedger(context.Request.Context(), query)
 	httpx.JSON(context, page, err)
-}
-
-func (h *Handler) purchaseWithPoints(context *gin.Context) {
-	var req dto.PurchaseRequest
-	if err := context.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(context, err.Error())
-		return
-	}
-	req.UserID = auth.UserID(context)
-	view, err := h.service.PurchaseWithPoints(context.Request.Context(), req)
-	noStore(context)
-	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) referral(context *gin.Context) {
@@ -256,6 +130,20 @@ func (h *Handler) revealKey(context *gin.Context) {
 // noStore 响应里带着密钥明文时用：任何一层代理、浏览器缓存都不该留一份。
 func noStore(context *gin.Context) {
 	context.Header("Cache-Control", "no-store")
+}
+
+// createKey 自助新建一把密钥。明文只在这一次响应里出现 —— 前端拿到就存进
+// 本机保险箱；之后再要，走 /keys/secret 单独取。
+func (h *Handler) createKey(context *gin.Context) {
+	var req dto.CreateConsumerKeyRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	req.UserID = auth.UserID(context)
+	view, err := h.service.CreateConsumerKey(context.Request.Context(), req)
+	noStore(context)
+	httpx.JSON(context, view, err)
 }
 
 func (h *Handler) renewKey(context *gin.Context) {

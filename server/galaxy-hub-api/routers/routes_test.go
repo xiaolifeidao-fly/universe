@@ -38,7 +38,7 @@ func TestOwnedRoutes(t *testing.T) {
 			}
 		}
 	}
-	for _, r := range []string{"POST /v1/chat/completions", "POST /v1/messages", "GET /v1/models", "GET /v1/keys/me", "POST /v1/artifacts", "GET /v1/artifacts/*objectKey", "GET /v1/usage", "POST /v1/orders", "POST /v1/keys/:keyId/renew", "POST /agent/v1/register", "POST /agent/v1/heartbeat", "POST /agent/v1/next", "POST /agent/v1/units/:unitId/stream", "GET /agent/v1/bridge/install.sh"} {
+	for _, r := range []string{"POST /v1/chat/completions", "POST /v1/messages", "GET /v1/models", "GET /v1/keys/me", "POST /v1/artifacts", "GET /v1/artifacts/*objectKey", "GET /v1/usage", "POST /v1/keys/:keyId/renew", "POST /agent/v1/register", "POST /agent/v1/heartbeat", "POST /agent/v1/next", "POST /agent/v1/units/:unitId/stream", "GET /agent/v1/bridge/install.sh"} {
 		if !registered[r] {
 			t.Errorf("missing route %s", r)
 		}

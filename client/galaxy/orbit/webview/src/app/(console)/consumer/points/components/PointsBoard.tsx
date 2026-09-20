@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * 积分与分享。
+ * 余额（积分）与分享。
  *
- * 积分只有两个来路：平台运营充值（线下付款之后），和分享返现。去处只有一个：买套餐。
- * 所以这一页回答三件事 —— 还剩多少、从哪来到哪去了（明细）、怎么多拿一点（分享）。
+ * 积分只有两个来路：平台运营充值（线下付款之后），和分享返现。去处只有一个：
+ * 调模型 —— 每次请求按单价扣一笔，扣的就是这里的余额。所以这一页回答三件事：
+ * 还剩多少、从哪来到哪去了（明细）、怎么多拿一点（分享）。
  *
- * 分享链接就是本控制台的注册页带上邀请码。通过它注册的人，之后每买一单，
- * 按那个套餐所属模型的比例把返现记给邀请人；比例由平台定，页上列的就是此刻生效的。
+ * 分享链接就是本控制台的注册页带上邀请码。通过它注册的人，之后**每充一笔值**，
+ * 按比例把返现记给邀请人；比例由平台定，页上写的就是此刻生效的那个。
  */
 
 import { message } from "antd";
@@ -121,7 +122,7 @@ export function PointsBoard() {
         <div className="gx-kpi gx-rise" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))" }}>
           <Kpi label={t("points.kpi.balance")} value={formatPoints(summary?.balance ?? 0)} hint={t("points.kpi.balanceHint")} />
           <Kpi label={t("points.kpi.recharged")} value={formatPoints(summary?.recharged ?? 0)} />
-          <Kpi label={t("points.kpi.spent")} value={formatPoints(summary?.spent ?? 0)} />
+          <Kpi label={t("points.kpi.used")} value={formatPoints(summary?.used ?? 0)} hint={t("points.kpi.usedHint")} />
           <Kpi label={t("points.kpi.referral")} value={formatPoints(summary?.referral ?? 0)} />
         </div>
 
@@ -152,32 +153,16 @@ export function PointsBoard() {
           <Card className="gx-rise gx-rise--2">
             <CardHead title={t("points.rates.title")} hint={t("points.rates.hint")} />
             <div style={{ padding: "0 18px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
-              {(referral?.rates.length ?? 0) === 0 && (referral?.defaultBps ?? 0) === 0 ? (
+              {/* 只有一个比例：返现按好友**充值**的金额算，而充值不挑模型。 */}
+              {(referral?.defaultBps ?? 0) === 0 ? (
                 <span className="gx-card__hint">{t("points.rates.none")}</span>
               ) : (
-                <>
-                  {(referral?.rates ?? []).map((rate) => (
-                    <div key={rate.modelId} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, fontSize: 12.5 }}>
-                      <span style={{ minWidth: 0 }}>
-                        <span>{rate.displayName}</span>
-                        <span className="gx-mono gx-muted" style={{ marginLeft: 8, fontSize: 11.5 }}>
-                          {rate.modelId}
-                        </span>
-                      </span>
-                      <span className="gx-mono" style={{ fontWeight: 600, color: "var(--gx-accent)" }}>
-                        {formatBps(rate.bps)}
-                      </span>
-                    </div>
-                  ))}
-                  {(referral?.defaultBps ?? 0) > 0 ? (
-                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, fontSize: 12.5 }}>
-                      <span className="gx-soft">{t("points.rates.general")}</span>
-                      <span className="gx-mono" style={{ fontWeight: 600 }}>
-                        {formatBps(referral?.defaultBps ?? 0)}
-                      </span>
-                    </div>
-                  ) : null}
-                </>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span className="gx-serif" style={{ fontSize: 30, lineHeight: 1, color: "var(--gx-accent)" }}>
+                    {formatBps(referral?.defaultBps ?? 0)}
+                  </span>
+                  <span className="gx-card__hint">{t("points.rates.ofRecharge")}</span>
+                </div>
               )}
               <Note>{t("points.rates.rule")}</Note>
             </div>
@@ -198,7 +183,7 @@ export function PointsBoard() {
                   options={[
                     { value: "" as const, label: t("common.all") },
                     { value: "recharge" as const, label: t("points.type.recharge") },
-                    { value: "purchase" as const, label: t("points.type.purchase") },
+                    { value: "usage" as const, label: t("points.type.usage") },
                     { value: "referral" as const, label: t("points.type.referral") },
                   ]}
                 />
@@ -217,7 +202,9 @@ export function PointsBoard() {
                   title: t("points.col.type"),
                   width: "90px",
                   render: (row: PointsLedgerEntry) => (
-                    <Pill tone={row.type === "recharge" ? "ok" : row.type === "referral" ? "accent" : "default"}>{t(`points.type.${row.type}`)}</Pill>
+                    <Pill tone={row.type === "recharge" || row.type === "refund" ? "ok" : row.type === "referral" ? "accent" : "default"}>
+                      {t(`points.type.${row.type}`)}
+                    </Pill>
                   ),
                 },
                 {
@@ -307,6 +294,13 @@ export function PointsBoard() {
 function ledgerDetail(row: PointsLedgerEntry, t: (key: string, vars?: Record<string, string | number>) => string): string {
   if (row.type === "recharge") {
     return row.baseAmount > 0 ? t("points.detail.recharge", { paid: formatCny(row.baseAmount) }) : t("points.detail.gift");
+  }
+  // 消费与退款都指向同一次请求：把 unitId 摆出来，账单和申诉才接得上。
+  if (row.type === "usage") {
+    return t("points.detail.usage", { model: row.modelId || row.kind || "-", unit: row.unitId });
+  }
+  if (row.type === "refund") {
+    return t("points.detail.refund", { unit: row.unitId });
   }
   if (row.type === "purchase") {
     return t("points.detail.purchase", { order: row.orderId });

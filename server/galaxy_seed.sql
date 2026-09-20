@@ -1,19 +1,18 @@
 -- =========================================================================
--- galaxy 内测种子数据：定价 + 额度包。
+-- galaxy 内测种子数据：定价 + 门户模型目录。
 --
 -- 这份文件对应 galaxyinit 里除建表以外的那一半。已经跑过 galaxyinit 的库不用再跑；
--- 只跑了 server/galaxy.sql（建表）的库需要跑它，否则：
---   - 定价表空 → 请求只计量不计费（billing.go 找不到价直接跳过入账）
---   - 商品表空 → 控制台「额度与订单」显示「暂时没有上架的额度包」，买不了东西
+-- 只跑了 server/galaxy.sql（建表）的库需要跑它，否则定价表是空的
+-- → 请求只计量不计费（billing.go 找不到价直接跳过入账），也就是谁调都不扣钱。
 --
--- 支付渠道**不在这份文件里，也不在任何表里**：它是 galaxy-api 的配置
--- （galaxy.payment.*），进程启动时读进内存组成 payments.Registry。
--- 见本文件末尾的说明。
+-- 没有额度包，也没有支付渠道：使用端不卖任何东西。额度就是账户里的积分余额，
+-- 由运营在管理端充进来（zt_galaxy_points_account / _ledger），调模型时按单价逐笔扣。
 --
 -- 金额与单价的量纲：整数微元，除以 1_000_000 得到「元」。
 --   amount = 9_900_000  → ¥9.90
 --   price  = 3_000_000  → ¥3.00 / 每百万单位
--- 计费口径是 cost = amount × price ÷ 1_000_000（billing.go 的 priceScale）。
+-- 计费口径是 cost = amount × price ÷ 1_000_000（billing.go 的 priceScale），
+-- 算出来的这笔钱直接从使用者的积分余额里扣（1 积分 = ¥1，同一量纲）。
 --
 -- 全部写成 upsert，重复执行安全。
 -- 库：galaxy-api 的 application.properties 里 sqlconn 指向的那个
@@ -35,9 +34,13 @@
 -- 恰好取了七成，但调其中一个不会自动改另一个。provider_share 是老口径，
 -- 只在 provider_price = 0 时兜底，新装的库一开始就不该走到它。
 --
--- 四个 token 桶互不重叠：新增输入（未命中缓存那部分）/ 输出 / 缓存读 / 缓存写。
--- 缓存写原先漏了，于是这个单位一直「有量无价」、账上静默算 0 ——
--- 这里按上游通行的 1.25 倍输入价补上。
+-- 缓存写入要给**两个 TTL 桶**定价，不是给合计定价：llm.cache_write_tokens 是
+-- 5m 与 1h 的合计，billing 的 derivedUnits 把它挡在账本外，给合计填价一分钱
+-- 都收不到（而界面上看着像已经定过了）。真正进账本的是下面那两个分项，
+-- 倍率按上游通行的：5 分钟 = 输入价 × 1.25，1 小时 = 输入价 × 2。
+--
+-- delivery.task 只计量 input / output（回合在节点本机跑，Hub 解析不了缓存桶），
+-- 所以缓存那几档在那个 kind 下不铺 —— 填了也永远没有量。
 -- -------------------------------------------------------------------------
 
 -- model_id 一律留空 = 该 kind 的**兜底价**。默认值不替运营决定「哪个模型贵」，
@@ -50,14 +53,13 @@ VALUES
   ('galaxy', 'llm.chat',          '', 'llm.input_tokens',       '2026-01-01 00:00:00',  3000000, 'CNY',  2100000, 0.7),
   ('galaxy', 'llm.chat',          '', 'llm.output_tokens',      '2026-01-01 00:00:00', 15000000, 'CNY', 10500000, 0.7),
   ('galaxy', 'llm.chat',          '', 'llm.cache_read_tokens',  '2026-01-01 00:00:00',   300000, 'CNY',   210000, 0.7),
-  ('galaxy', 'llm.chat',          '', 'llm.cache_write_tokens', '2026-01-01 00:00:00',  3750000, 'CNY',  2625000, 0.7),
+  ('galaxy', 'llm.chat',          '', 'llm.cache_write_5m_tokens', '2026-01-01 00:00:00',  3750000, 'CNY',  2625000, 0.7),
+  ('galaxy', 'llm.chat',          '', 'llm.cache_write_1h_tokens', '2026-01-01 00:00:00',  6000000, 'CNY',  4200000, 0.7),
 
   -- 任务宇宙：一个回合背后就是若干次 LLM 调用，换个计价单位只会让同一件事
   -- 在两张账单上对不上，所以和 llm.chat 同价。
   ('galaxy', 'delivery.task',     '', 'llm.input_tokens',       '2026-01-01 00:00:00',  3000000, 'CNY',  2100000, 0.7),
   ('galaxy', 'delivery.task',     '', 'llm.output_tokens',      '2026-01-01 00:00:00', 15000000, 'CNY', 10500000, 0.7),
-  ('galaxy', 'delivery.task',     '', 'llm.cache_read_tokens',  '2026-01-01 00:00:00',   300000, 'CNY',   210000, 0.7),
-  ('galaxy', 'delivery.task',     '', 'llm.cache_write_tokens', '2026-01-01 00:00:00',  3750000, 'CNY',  2625000, 0.7),
 
   -- 视频渲染：按输出时长与算力秒计价（O-01 口径）
   ('galaxy', 'video.edit.render', '', 'video.output_seconds',   '2026-01-01 00:00:00', 20000000, 'CNY', 14000000, 0.7),
@@ -70,100 +72,20 @@ ON DUPLICATE KEY UPDATE
 
 
 -- -------------------------------------------------------------------------
--- 2. 额度包
---
--- 商品是运营配置，不是代码常量 —— 调价与上下架不该走发版。下面几行是内测口径，
--- 价格与额度都按运营的意思再改；改完不用重启，控制台下次刷新就是新的。
---
--- units_json  这份商品给的额度：单位 → 数量。下单那一刻会快照进订单，
---             之后改商品不影响已经下过的单。
--- ttl_days    这份商品签发出的密钥有效期。
--- allowed_kinds_json / model_tier_json  留空字符串 = 不限制。
---             要限制就写 JSON 数组，例如 '["llm.chat"]'。
--- listed      下架只把它置 0，不要 DELETE：删了的话，已经引用这个 package_code
---             的历史订单就查不到自己买的是什么了。
--- sort_order  控制台里的排列顺序，小的在前。
--- -------------------------------------------------------------------------
-
-INSERT INTO `zt_galaxy_package`
-  (`biz_line`, `package_code`, `title`, `units_json`, `amount`, `currency`, `ttl_days`,
-   `allowed_kinds_json`, `model_tier_json`, `concurrency`, `rpm`, `listed`, `sort_order`,
-   `created_time`, `updated_time`)
-VALUES
-  ('galaxy', 'starter', '入门包',
-   '{"llm.input_tokens":5000000,"llm.output_tokens":1000000}',
-   9900000, 'CNY', 30, '', '', 4, 120, 1, 10, NOW(3), NOW(3)),
-
-  ('galaxy', 'standard', '标准包',
-   '{"llm.input_tokens":30000000,"llm.output_tokens":6000000,"llm.cache_read_tokens":30000000}',
-   99000000, 'CNY', 90, '', '', 8, 300, 1, 20, NOW(3), NOW(3)),
-
-  ('galaxy', 'team', '团队包',
-   '{"llm.input_tokens":200000000,"llm.output_tokens":40000000,"llm.cache_read_tokens":200000000}',
-   499000000, 'CNY', 180, '', '', 16, 600, 1, 30, NOW(3), NOW(3)),
-
-  -- 视频渲染单独一份：它和 token 不是一个计价维度，混在一个包里没法算价。
-  ('galaxy', 'video_starter', '视频渲染入门包',
-   '{"video.output_seconds":3600,"cpu.seconds":36000}',
-   19900000, 'CNY', 90, '["video.edit.render"]', '', 2, 60, 1, 40, NOW(3), NOW(3))
-ON DUPLICATE KEY UPDATE
-  `title`              = VALUES(`title`),
-  `units_json`         = VALUES(`units_json`),
-  `amount`             = VALUES(`amount`),
-  `currency`           = VALUES(`currency`),
-  `ttl_days`           = VALUES(`ttl_days`),
-  `allowed_kinds_json` = VALUES(`allowed_kinds_json`),
-  `model_tier_json`    = VALUES(`model_tier_json`),
-  `concurrency`        = VALUES(`concurrency`),
-  `rpm`                = VALUES(`rpm`),
-  `listed`             = VALUES(`listed`),
-  `sort_order`         = VALUES(`sort_order`),
-  `updated_time`       = NOW(3);
-
-
--- -------------------------------------------------------------------------
--- 3. 支付渠道：没有表，不用 SQL
---
--- 渠道由 galaxy-api/configs/application.properties 定义，进程启动时读进内存
--- （routers.loadPaymentVerifier → payments.NewRegistry）。刻意不落库：
---
---   - 渠道背后是**验签密钥**。放进表里等于多一个泄露面 —— 一次 SQL 注入、
---     一份误导出的数据、一个有读权限的运维，都能把它带走，而拿到密钥的人
---     可以伪造「已支付」的回调，凭空把额度提走。
---   - 「有哪些渠道可用」必须在**路由注册之前**就定下来：一个已验签渠道都没有时
---     那条未鉴权的回调路由整个不注册。启动后才查库就晚了。
---
--- 内测（本人点击即到账，不经收银台）：
---
---   galaxy.payment.sandbox_channels = wechat_sandbox,alipay_sandbox,card_sandbox
---   galaxy.payment.wechat_sandbox.title = 微信支付（沙箱）
---   galaxy.payment.alipay_sandbox.title = 支付宝（沙箱）
---   galaxy.payment.card_sandbox.title   = 银行卡（沙箱）
---
--- 接真渠道（回调验签，走 POST /galaxy/payments/{code}/callback）：
---
---   galaxy.payment.channels = wechat,alipay
---   galaxy.payment.wechat.title       = 微信支付
---   galaxy.payment.wechat.hmac_secret = <与渠道共享的密钥>
---   galaxy.payment.alipay.title       = 支付宝
---   galaxy.payment.alipay.hmac_secret = <与渠道共享的密钥>
---
--- 对外开放之前必须把 sandbox_channels 清空：留着它，任何能登录控制台的人
--- 都能给自己发额度。改完配置重启 galaxy-api 生效。
--- -------------------------------------------------------------------------
-
-
--- -------------------------------------------------------------------------
 -- 门户模型目录（zt_galaxy_model）
 --
 -- 这张表只管**门户上怎么把这个模型讲清楚**，不参与计价也不参与派单：
 --   · 客户端能填哪些模型名 → galaxy.models（relay 的 /v1/models 读它）
---   · 一次请求扣多少钱     → zt_galaxy_price，按 kind 计价，与模型无关
+--   · 一次请求扣多少钱     → zt_galaxy_price，按「能力 × 模型 × 计量单位」
 --
--- 所以下面三个单价一律留 0 —— 0 的含义是「按 kind 的统一价显示」，不是免费。
--- 计费引擎目前就是按 kind 统一计价的，在这里填一个按模型的价，门户上写的
--- 和账单上扣的会对不上，那是最不该出现的一种不一致。等按模型计价真的落地
--- 之后再回来填这三列。
+-- 单价**不在这张表里**。它曾经有过四列展示价，于是同一个模型的价在库里有两份、
+-- 谁也不校验谁：门户照这份标、账上照计价表扣，对不上时两边都不报错，
+-- 而访问者看到的是一个他付不到的价。按模型计价落地之后那四列就删了
+-- （migrations/20260920_galaxy_model_drop_display_price.sql），
+-- 门户上标的数直接来自计价表。
+--
+-- 留下的 list_input_price / list_output_price 是**官方参考价**（别人家的价，
+-- 用来划线和算「省 X%」），和我们自己的单价是两回事，所以还在。
 --
 -- context_tokens 是**默认值，上线前请按上游实际能力核对**：Claude 一族按公开
 -- 的 200K 上下文填；其余留 0（未声明），门户上那一行就不显示。
@@ -171,32 +93,32 @@ ON DUPLICATE KEY UPDATE
 
 INSERT INTO `zt_galaxy_model`
   (`biz_line`, `model_id`, `display_name`, `vendor`, `family`, `kind`,
-   `context_tokens`, `max_output_tokens`, `input_price`, `output_price`, `cache_price`, `cache_write_price`,
+   `context_tokens`, `max_output_tokens`,
    `currency`, `tags_json`, `summary`, `listed`, `featured`, `sort_order`,
    `created_time`, `updated_time`)
 VALUES
   ('galaxy', 'claude-opus-5', 'Claude Opus 5', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 0, 'CNY', '["复杂推理","长代码库","Agent"]',
+   200000, 0, 'CNY', '["复杂推理","长代码库","Agent"]',
    'Anthropic 目前最强的一档，交给它的是那种想清楚比写得快更重要的活。',
    1, 1, 10, NOW(3), NOW(3)),
 
   ('galaxy', 'claude-sonnet-5', 'Claude Sonnet 5', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 0, 'CNY', '["日常编码","速度均衡","Claude Code"]',
+   200000, 0, 'CNY', '["日常编码","速度均衡","Claude Code"]',
    '日常写代码的默认选择，快、稳、便宜，Claude Code 里跑得最多的就是它。',
    1, 1, 20, NOW(3), NOW(3)),
 
   ('galaxy', 'claude-fable-5-1', 'Claude Fable 5.1', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 0, 'CNY', '["长文本","写作"]',
+   200000, 0, 'CNY', '["长文本","写作"]',
    '偏长文本与写作的一档。',
    1, 0, 30, NOW(3), NOW(3)),
 
   ('galaxy', 'claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'anthropic', 'claude', 'llm.chat',
-   200000, 0, 0, 0, 0, 0, 'CNY', '["低延迟","批量","便宜"]',
+   200000, 0, 'CNY', '["低延迟","批量","便宜"]',
    '最轻的一档，适合分类、抽取、批量跑这类量大而单次简单的活。',
    1, 0, 40, NOW(3), NOW(3)),
 
   ('galaxy', 'gpt-5.6-terra', 'GPT-5.6 Terra', 'openai', 'gpt', 'llm.chat',
-   0, 0, 0, 0, 0, 0, 'CNY', '["OpenAI 兼容","Codex"]',
+   0, 0, 'CNY', '["OpenAI 兼容","Codex"]',
    'OpenAI 一族，Codex CLI 与 OpenAI SDK 直接指过来就能用。',
    1, 1, 50, NOW(3), NOW(3))
 ON DUPLICATE KEY UPDATE

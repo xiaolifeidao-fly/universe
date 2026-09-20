@@ -20,6 +20,5 @@ func route(assembly *Assembly, drain *bootstrap.Drain) *gin.Engine {
 	assembly.Auth.RegisterHandler(console)
 	assembly.Consumers.RegisterConsole(console)
 	assembly.Portal.RegisterHandler(console)
-	assembly.Consumers.RegisterCallbacks(engine.Group("/galaxy"))
 	return engine
 }

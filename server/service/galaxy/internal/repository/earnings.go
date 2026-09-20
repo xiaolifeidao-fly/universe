@@ -125,7 +125,7 @@ type ModelAmount struct {
 // 丢掉它们会让这一页的合计比收益页少一截，而两页对不上比少一行信息更难查。
 func (r *GalaxyRepository) SumProviderLedgerByModel(ctx context.Context, q LedgerQuery) ([]ModelAmount, error) {
 	tx := r.Db.WithContext(ctx).
-		Table((&GalaxyProviderLedger{}).TableName()+" AS l").
+		Table((&GalaxyProviderLedger{}).TableName() + " AS l").
 		Joins("LEFT JOIN " + (&GalaxyUnit{}).TableName() + " AS u ON u.biz_line = l.biz_line AND u.unit_id = l.unit_id")
 	var rows []ModelAmount
 	err := scopeProviderLedger(tx, q, "l").

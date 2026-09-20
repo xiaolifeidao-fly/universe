@@ -98,10 +98,17 @@ func providerModelView(
 		BadgeText: row.BadgeText, BadgeTone: badgeTone(row.BadgeText, row.BadgeTone),
 		// 结算价，不是对外价。settleUnitPrice 会把还没填结算价的行按老比例折出来，
 		// 和真正记进账本的数是同一个算式 —— 这一页说的数必须等于收益页加出来的数。
-		InputPrice:      settleUnitPrice(table[contract.UnitInputTokens]),
-		OutputPrice:     settleUnitPrice(table[contract.UnitOutputTokens]),
-		CachePrice:      settleUnitPrice(table[contract.UnitCacheReadTokens]),
-		CacheWritePrice: settleUnitPrice(table[contract.UnitCacheWriteTokens]),
+		InputPrice:  settleUnitPrice(table[contract.UnitInputTokens]),
+		OutputPrice: settleUnitPrice(table[contract.UnitOutputTokens]),
+		CachePrice:  settleUnitPrice(table[contract.UnitCacheReadTokens]),
+		// 缓存写入卡片上只有一格，取 5 分钟那一档 —— 绝大多数请求命中的就是它，
+		// 和使用端模型广场（portal 的 applyKindPrice）取的是同一档，两端说的话一致。
+		//
+		// 原先这里取的是合计（llm.cache_write_tokens）。那个单位是 5m + 1h 的和、
+		// **永远不进账本**（billing 的 derivedUnits），因此价目表里通常压根没有它的价 ——
+		// 于是这一格恒为 0，共享者看到「缓存写入 0 积分」，以为跑缓存白干。
+		// 他实际是按 5m / 1h 两档分别拿钱的。
+		CacheWritePrice: settleUnitPrice(table[contract.UnitCacheWrite5mTokens]),
 		// 要「输入和输出都是这个模型自己的行」才算它有专属价。只有一档是专属的
 		// 那些模型，另一档其实还是兜底价，说成专属会让人按错的数做决定。
 		Priced:    own[contract.UnitInputTokens] && own[contract.UnitOutputTokens],

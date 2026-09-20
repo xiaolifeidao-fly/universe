@@ -276,3 +276,13 @@ func (r *GalaxyRepository) ContributionOwnersByCIDs(ctx context.Context, bizLine
 	}
 	return owners, err
 }
+
+// SaveUpstreamUsage 落一条贡献的上游余量快照。
+//
+// 心跳每 15 秒带一次，但这里**只在变了的时候才被调用**（见 service 的 Heartbeat）：
+// 一条不变的快照每 15 秒写一次库，是按机器数乘以 240 的空写。
+func (r *GalaxyRepository) SaveUpstreamUsage(ctx context.Context, bizLine, cid, payload string, at time.Time) error {
+	return r.Db.WithContext(ctx).Model(&GalaxyContribution{}).
+		Where("biz_line = ?", bizLine).Where("cid = ?", cid).
+		Updates(map[string]any{"upstream_usage_json": payload, "upstream_usage_at": at}).Error
+}

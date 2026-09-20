@@ -14,11 +14,30 @@ import (
 // 引擎本身只认「任意计量单位集合」，视频类 kind 用自己的单位，同一套规则（三维额度规则第 9 条）。
 
 const (
-	// WindowDay 等四种窗口。窗口决定计数器的 key 后缀与过期时刻。
+	// Window5H 等五种窗口。窗口决定计数器的 key 后缀与过期时刻。
+	//
+	// 5h 是后加的一档，因为共享者手上那些订阅（Claude Code、Codex）本来就是按
+	// **5 小时一轮**刷新的。没有这一档时，主人只能把上游的「每 5 小时多少」自己
+	// 换算成「一天多少」填进来 —— 换算出来的数在任何一个 5 小时里都不成立：
+	// 摊平成日额度，早上就能把一天的量跑完，然后在上游那儿撞限流，
+	// 而平台这边看到的是「额度还剩大半」。
+	Window5H    = "5h"
 	WindowDay   = "day"
 	WindowWeek  = "week"
 	WindowMonth = "month"
 	WindowTotal = "total"
+
+	// fiveHourBlockHours 5h 窗口的长度。一天切成 [0,5) [5,10) [10,15) [15,20) [20,24)
+	// **五段，最后一段只有四小时** —— 24 不是 5 的整数倍，总得有个地方对不齐。
+	//
+	// 为什么对齐到日界，而不是从 Unix 纪元起每 5 小时切一刀：纪元对齐的话，
+	// 每天的归零时刻都比前一天早四小时，一路绕着表盘走。主人填的是
+	// 「我这台机器每 5 小时放多少出去」，他要能说得出下一次归零是几点。
+	//
+	// 最后那段短一小时，意味着 20:00–24:00 这四个小时里能放出整整一段的量。
+	// 这和 day / week 窗口在窗口边界上的行为是同一件事（固定窗口都能在交界处
+	// 连着放两段），不是 5h 独有的洞。
+	fiveHourBlockHours = 5
 
 	// QuotaWarnRatio 软阈值：到 80% 通知主人（P-10）。
 	QuotaWarnRatio = 0.8
@@ -38,6 +57,8 @@ type QuotaGrant struct {
 
 func (g QuotaGrant) normalizedWindow() string {
 	switch strings.ToLower(strings.TrimSpace(g.Window)) {
+	case Window5H:
+		return Window5H
 	case WindowWeek:
 		return WindowWeek
 	case WindowMonth:
@@ -95,6 +116,9 @@ func (g QuotaGrant) WindowKey(now time.Time) string {
 	}
 	shifted := now.UTC().Add(g.offset())
 	switch window {
+	case Window5H:
+		// 日期 + 第几段。一天五段，所以同一天的五把计数器互不相干。
+		return fmt.Sprintf("%sH%d", shifted.Format("20060102"), shifted.Hour()/fiveHourBlockHours)
 	case WindowWeek:
 		year, week := shifted.ISOWeek()
 		return fmt.Sprintf("%04dW%02d", year, week)
@@ -114,6 +138,9 @@ func (g QuotaGrant) WindowStart(now time.Time) time.Time {
 	case WindowTotal:
 		// total 没有起点；退回一年前，让 burn 的分母不为 0 又不至于失真。
 		return now.UTC().AddDate(-1, 0, 0)
+	case Window5H:
+		block := shifted.Hour() / fiveHourBlockHours
+		start = time.Date(shifted.Year(), shifted.Month(), shifted.Day(), block*fiveHourBlockHours, 0, 0, 0, time.UTC)
 	case WindowWeek:
 		weekday := (int(shifted.Weekday()) + 6) % 7 // 周一为 0
 		start = time.Date(shifted.Year(), shifted.Month(), shifted.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -weekday)
@@ -131,6 +158,15 @@ func (g QuotaGrant) WindowEnd(now time.Time) time.Time {
 	case WindowTotal:
 		// total 没有窗口末尾；给一个足够远的时刻，让计数器不过期。
 		return now.UTC().AddDate(10, 0, 0)
+	case Window5H:
+		// 起点 + 5 小时，但不跨过日界 —— 最后一段（20:00 起）只有四小时，
+		// 到 24:00 就该翻到下一天的第 0 段，否则它会和次日 00:00–01:00 重叠，
+		// 而那一小时的用量已经记在次日第 0 段的计数器上了。
+		end := g.WindowStart(now).Add(fiveHourBlockHours * time.Hour)
+		if dayEnd := g.dayEnd(now); end.After(dayEnd) {
+			return dayEnd
+		}
+		return end
 	case WindowWeek:
 		return g.WindowStart(now).AddDate(0, 0, 7)
 	case WindowMonth:
@@ -138,6 +174,15 @@ func (g QuotaGrant) WindowEnd(now time.Time) time.Time {
 	default:
 		return g.WindowStart(now).AddDate(0, 0, 1)
 	}
+}
+
+// dayEnd 当前这一天的结束时刻（UTC 实际时刻，已经还原过 offset）。
+// 只有 5h 用得上：它是唯一一个长度不能整除所在周期的窗口。
+func (g QuotaGrant) dayEnd(now time.Time) time.Time {
+	offset := g.offset()
+	shifted := now.UTC().Add(offset)
+	start := time.Date(shifted.Year(), shifted.Month(), shifted.Day(), 0, 0, 0, 0, time.UTC)
+	return start.AddDate(0, 0, 1).Add(-offset)
 }
 
 // CounterTTL 计数器存活到窗口末 + 1 天，留出对账余量（设计文档 5.2）。

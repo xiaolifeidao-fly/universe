@@ -175,3 +175,61 @@ test('Codex：顶层用内联表写 model_providers 时拒绝', () => {
   assert.throws(() => applyCodexConfig('model_providers = { galaxy = { name = "x" } }\n', BASE, SECRET), /内联表/);
   assert.throws(() => applyCodexConfig('model_providers.galaxy.name = "x"\n', BASE, SECRET), /内联表/);
 });
+
+/**
+ * 密钥锁了模型，配置里就要写死那个模型。
+ *
+ * 额度按模型卖之后，一份 Opus 的额度签出来的密钥只允许调 Opus。不写这一项，
+ * 客户端按它自己的默认模型发请求 —— 接上去之后每一句都被拒，而人刚买的就是这个模型。
+ */
+test('锁了模型就连模型一起写进 Claude 的 settings.json', () => {
+  const written = JSON.parse(applyClaudeSettings(null, BASE, SECRET, 'claude-opus-5')) as {
+    env: Record<string, string>;
+  };
+  assert.equal(written.env.ANTHROPIC_MODEL, 'claude-opus-5');
+  assert.equal(written.env.ANTHROPIC_BASE_URL, 'https://hub.example.com');
+});
+
+// 反过来同样要紧：没锁模型的密钥不能被悄悄钉在某一个模型上 ——
+// 那会把一把什么都能调的密钥限制住，而用户从界面上看不出是谁干的。
+test('没锁模型就一个字都不写', () => {
+  for (const model of [undefined, '', '   ']) {
+    const written = JSON.parse(applyClaudeSettings(null, BASE, SECRET, model)) as { env: Record<string, string> };
+    assert.equal('ANTHROPIC_MODEL' in written.env, false, `model=${JSON.stringify(model)} 时不该写这一项`);
+  }
+});
+
+// 用户自己写过 ANTHROPIC_MODEL 的，接进来要换成这把密钥能调的那个，而不是留着原来那个。
+test('原来写过别的模型就改掉它', () => {
+  const before = JSON.stringify({ env: { ANTHROPIC_MODEL: 'claude-sonnet-5', FOO: 'bar' } });
+  const written = JSON.parse(applyClaudeSettings(before, BASE, SECRET, 'claude-opus-5')) as {
+    env: Record<string, string>;
+  };
+  assert.equal(written.env.ANTHROPIC_MODEL, 'claude-opus-5');
+  assert.equal(written.env.FOO, 'bar', '别人的设置不该被动');
+});
+
+test('Codex 的顶层 model 同理', () => {
+  const written = applyCodexConfig(null, BASE, SECRET, 'gpt-5.6-terra');
+  assert.match(written, /^model = "gpt-5\.6-terra"$/m);
+  assert.match(written, /^model_provider = "galaxy"$/m);
+  // 两个顶层 key 都要落在第一个表头**之前**：插到表里面去，TOML 里那是另一件事。
+  const lines = written.split('\n');
+  const firstHeader = lines.findIndex((line) => line.startsWith('['));
+  assert.ok(lines.findIndex((line) => line.startsWith('model =')) < firstHeader);
+  assert.ok(lines.findIndex((line) => line.startsWith('model_provider =')) < firstHeader);
+});
+
+test('Codex 原来写过 model 就改那一行，不新增一行', () => {
+  const before = 'model = "gpt-4"\napproval_policy = "never"\n';
+  const written = applyCodexConfig(before, BASE, SECRET, 'gpt-5.6-terra');
+  assert.equal(written.split('\n').filter((line) => /^model\s*=/.test(line)).length, 1);
+  assert.match(written, /^model = "gpt-5\.6-terra"$/m);
+  assert.match(written, /^approval_policy = "never"$/m);
+});
+
+test('Codex 没锁模型时不写 model', () => {
+  const written = applyCodexConfig(null, BASE, SECRET);
+  assert.equal(/^model\s*=/m.test(written), false);
+  assert.match(written, /^model_provider = "galaxy"$/m);
+});

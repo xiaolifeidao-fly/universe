@@ -65,7 +65,12 @@ type DesktopReleaseView struct {
 // DesktopReleasePage 管理端那一页要的全部东西。
 type DesktopReleasePage struct {
 	Releases []DesktopReleaseView `json:"releases"`
-	// ObjectRoot 清单与安装包在对象存储上的目录（**含部署配置的 dirPrefix**）。
+	// Configured 服务端装配了对象存储没有。没有的话这一页发不了版，
+	// 而 ObjectRoot 的空串也就不是「桶根目录」的意思了 —— 两件事要分得开。
+	Configured bool `json:"configured"`
+	// ObjectRoot 两个端目录的父目录，也就是部署配置的 dirPrefix（没配就是空串 = 桶根）。
+	// 清单与安装包落在 <ObjectRoot>/<端>/ 下。
+	//
 	// 运营要拿它拼出两个端 runtime.json 里的 GALAXY_UPDATE_FEED_URL，所以由服务端给：
 	// 前端自己拼就会漏掉 dirPrefix 那一段，而漏掉之后客户端取清单是 404。
 	ObjectRoot string `json:"objectRoot"`

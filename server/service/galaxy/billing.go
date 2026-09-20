@@ -3,6 +3,7 @@ package galaxy
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
@@ -12,7 +13,13 @@ import (
 )
 
 // 计量与结算（设计文档第 6 节）。双账本可对平：
-// 消费侧（购买 / 消费 / 退款）、供给侧积分、平台抽成与坏账各记各的。
+// 消费侧（消费 / 退款）、供给侧积分、平台抽成与坏账各记各的。
+//
+// 消费侧有两层，粒度不同，缺一不可：
+//   - zt_galaxy_consumer_ledger：一次请求一个计量单位一行，记「用了多少、什么单价」。
+//     账单、用量页、争议追回都读它。
+//   - zt_galaxy_points_ledger：一次请求一行，记「从余额里扣了多少积分」。
+//     它才是钱，余额的每一次变动都对着这里的一行。
 
 // priceScale 定价按「每百万单位」表示，避免 token 这种大基数上的浮点误差。
 const priceScale = 1_000_000
@@ -56,7 +63,7 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 	meters := make([]*repository.GalaxyMeterRecord, 0, len(actual))
 	consumer := make([]*repository.GalaxyConsumerLedger, 0, len(actual))
 	provider := make([]*repository.GalaxyProviderLedger, 0, len(actual))
-	var platformFee int64
+	var platformFee, charge int64
 
 	for _, unit := range actual.Units() {
 		amount := actual[unit]
@@ -92,12 +99,15 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 			continue
 		}
 		txn := fmt.Sprintf("%s:%d:%s", runtime.RID, runtime.Attempt, unit)
-		// 消费侧记的是**用量**：额度按计量单位发，余额也按单位扣。
+		// 消费侧这一行记的是**用量**：哪个单位用了多少、按什么单价算。
+		// 钱从哪儿扣是另一回事（见下面的 chargeUsage）—— 余额在账户上，
+		// 一次请求只扣一笔总额，而账单要能拆回「输入多少、输出多少」。
 		if cost > 0 {
 			consumer = append(consumer, &repository.GalaxyConsumerLedger{
 				BizLine: bizLine, TxnID: txn, KeyID: runtime.ConsumerKey, Type: "settle",
 				Unit: unit, Amount: amount, Price: price.Price, UnitID: runtime.RID,
 			})
+			charge += cost
 		}
 		// 差额进平台账。它现在可以是负的 —— 结算单价高过对外单价就是平台在倒贴，
 		// 那笔钱确实出去了，不记下来三本账就对不平。
@@ -120,22 +130,19 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 	if err := s.repository.SaveMeterRecords(ctx, meters); err != nil {
 		return err
 	}
-	// 账本一行一行地写，**只对真的插进去的那些动余额**。
-	//
-	// 账本按 (biz_line, txn_id) 幂等，而余额是加减：批量写完再按总额加一次的话，
-	// 一次重放就是白发一笔钱。settle 那边已经有一道重放闸门（见 unit.go 的 settle），
-	// 这里是第二道 —— 钱的事不该只有一层保险，而且这条路还有别的调用方。
+	// 用量流水一行一行地写。按 (biz_line, txn_id) 幂等，重放不会多记一笔。
 	for _, row := range consumer {
-		inserted, err := s.repository.SaveConsumerLedgerRow(ctx, row)
-		if err != nil {
+		if _, err := s.repository.SaveConsumerLedgerRow(ctx, row); err != nil {
 			return err
 		}
-		if !inserted {
-			continue
-		}
-		// 余额扣减：P0 内测密钥可能没有该单位的余额行，扣不动就只记账不阻断。
-		_, _ = s.repository.ConsumeBalance(ctx, bizLine, runtime.ConsumerKey, row.Unit, row.Amount)
 	}
+	// 扣钱只有一笔，幂等键是 (请求, 第几次尝试)。
+	//
+	// 不跟着上面那个循环一行一行扣：那样一次请求会在余额上留下四五笔，
+	// 人翻流水时看到的是「输入扣了 3 微、输出扣了 88 微、缓存读扣了 1 微」，
+	// 而他想知道的是「刚才那次对话花了多少」。拆开的口径在 consumer_ledger 里，
+	// 那才是账单该去的地方。
+	s.chargeUsage(ctx, runtime, charge)
 	var providerCredit int64
 	for _, row := range provider {
 		inserted, err := s.repository.SaveProviderLedgerRow(ctx, row)
@@ -161,6 +168,36 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 		s.rewardProviderReferrer(ctx, runtime, contribution, providerCredit)
 	}
 	return nil
+}
+
+// chargeUsage 把这一次请求的花费从主人的积分余额里扣掉，并记一行消费流水。
+//
+// 允许扣成负数。一次请求要花多少，只有等它跑完、数清 token 才知道 ——
+// 放行的时候（AuthenticateKey 的 requireBalance）余额还是正的，跑完发现不够，
+// 那也是已经烧掉的算力。拒绝扣款会让这笔钱凭空消失在账上，
+// 而余额停在一个假的正数上，下一次照样放行，窟窿越滚越大。
+// 扣成负数则是：这一次照实记，下一次在闸门那里被挡住。
+//
+// 失败只记日志、不阻断收尾：单元的终态、计量流水、供给侧入账都已经落了，
+// 为了一行扣款把整条结算路径退回去，换来的是一个跑完了却没有终态的请求。
+// 幂等键是 (请求, 第几次尝试)，漏掉的照日志补得回来。
+func (s *service) chargeUsage(ctx context.Context, runtime UnitRuntime, cost int64) {
+	if cost <= 0 {
+		return
+	}
+	key, err := s.repository.FindConsumerKey(ctx, bizLine, runtime.ConsumerKey)
+	if err != nil || key.OwnerUserID == "" {
+		log.Printf("galaxy 扣费找不到密钥主人 unit=%s key=%s: %v", runtime.RID, runtime.ConsumerKey, err)
+		return
+	}
+	_, err = s.applyPoints(ctx, &repository.GalaxyPointsLedger{
+		BizLine: bizLine, TxnID: fmt.Sprintf("usage:%s:%d", runtime.RID, runtime.Attempt),
+		OwnerUserID: key.OwnerUserID, Type: dto.PointsUsage, Amount: -cost, BaseAmount: cost,
+		UnitID: runtime.RID, Kind: runtime.Kind, ModelID: runtime.Model,
+	}, true, nil)
+	if err != nil {
+		log.Printf("galaxy 扣费失败 unit=%s owner=%s cost=%d: %v", runtime.RID, key.OwnerUserID, cost, err)
+	}
 }
 
 // splitCost 把一笔用量折成两笔钱：向使用者收的，和付给共享者的。

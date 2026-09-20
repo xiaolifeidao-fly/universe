@@ -54,20 +54,20 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | 表 | 作用 |
 |---|---|
 | `zt_galaxy_provider_user` | 共享端账号。用户名在本端内唯一；`token_version` 签进令牌，改密码、重置、停用都加一 |
-| `zt_galaxy_consumer_user` | 使用端账号。列与共享端那张相同；积分、邀请码、订单都挂在这批账号上 |
+| `zt_galaxy_consumer_user` | 使用端账号。列与共享端那张相同；积分余额、密钥、邀请码都挂在这批账号上 |
 | `zt_galaxy_provider` | 共享端账号的身份：散户 / 工作室。没有行就是散户，只有运营能设成工作室 |
 | `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
 | `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
-| `zt_galaxy_contribution` | 贡献：kind + provider + 模型白名单 + 座位 + 挂机时段 + 信誉 |
-| `zt_galaxy_quota_grant` | 授权行 `(cid, unit, limit, window, reset_at)`；额度以 Hub 为权威 |
-| `zt_galaxy_quota_window` | Redis 计数器的分钟级快照，供对账与控制台展示 |
+| `zt_galaxy_contribution` | 贡献：kind + provider + 模型白名单 + 座位 + 挂机时段 + 信誉。`upstream_usage_json` / `upstream_usage_at` 是节点自报的**上游订阅余量**（Claude / Codex 账号自己的 5 小时、周限额），和 `quota_grant` 讲的不是一件事：那张表是主人打算放多少出去，这两列是上游实际还让跑多少。数据从中转响应的限流头里捎回来，**不额外打上游**，所以机器闲着时不更新 —— 观测时刻单独一列，界面必须一起显示。和 `models_available_json` 同性质：**只给人看**，不参与派单也不参与计费（上游回哪些头它说了算、随时会变，而自报的数没法验证）。心跳 15 秒一次但只在变了时才 UPDATE |
+| `zt_galaxy_quota_grant` | 授权行 `(cid, unit, limit, window, reset_at)`；额度以 Hub 为权威。`window` 是 `5h` / `day` / `week` / `month` / `total`，认不出来的按 `day` 算。**5h 是一天切五段**（最后一段 20:00–24:00 只有四小时，24 不是 5 的整数倍）—— Claude / Codex 的订阅额度本来就按 5 小时一轮刷新，摊平成日额度的话，早上就能把一天的量跑完然后在上游撞限流 |
+| `zt_galaxy_quota_window` | Redis 计数器的分钟级快照，供对账与控制台展示。**旧窗口从不清理**，所以行数是「贡献 × 单位 × 天数」，不是一张小表；`idx_gx_quota_window_key` 给「全池此刻还剩多少额度」用（那个查询手上只有窗口键、没有 cid，走不了按 cid 打头的唯一键） |
 | `zt_galaxy_seat_binding` | 座位绑定留痕；权威在 Redis（带 TTL），这里供审计 |
 | `zt_galaxy_unit` | 工作单元：一次请求 / 一个回合 / 一个任务的权威记录 |
 | `zt_galaxy_unit_event` | 单元事件流；只记结构化事实，不记 body 与凭据 |
 | `zt_galaxy_meter_record` | 计量流水，幂等键 `(unit_id, attempt, unit)`，对账以它求和为准 |
 | `zt_galaxy_usage_mismatch` | 节点自报与 Hub 解析的偏差超阈值的记录，累计影响信誉 |
-| `zt_galaxy_consumer_key` | 算力密钥：鉴权按 sha256 查；`secret_cipher` 是明文的 AES-GCM 密文（加密密钥在配置 `galaxy.key_cipher_secret`，不进库），给「一键使用」和运营转交取回；带有效期、冻结期与允许范围 |
-| `zt_galaxy_consumer_balance` | 密钥的单位余额 |
+| `zt_galaxy_consumer_key` | 算力密钥：鉴权按 sha256 查；`secret_cipher` 是明文的 AES-GCM 密文（加密密钥在配置 `galaxy.key_cipher_secret`，不进库），给「一键使用」和运营转交取回；带有效期、冻结期与允许范围。**不带额度** —— 使用者自助签发，最多 5 把有效的，花的都是同一份账户余额 |
+| `zt_galaxy_consumer_balance` | **历史**：额度包时期按 `(密钥, 模型, 计量单位)` 记的 token 额度。改成按账户积分余额逐笔扣费之后，请求路径一行都不再读它；留着是因为那是买过的记录 |
 | `zt_galaxy_consent_record` | 提供者加入同意与消费者数据告知确认；两者都是硬前置 |
 | `zt_galaxy_price` | 「kind × 模型 × 单位 → 单价」表。两个价：`price` 向使用者收、`provider_price` 结给共享者，差额是平台毛利，都按每百万单位的微分存。`model_id` 空串是**该 kind 的兜底价**，取价先找模型自己的行、按单位找不到才回落。`provider_share` 是老口径，只在 `provider_price` 为 0 时回落。**除唯一键外没有别的索引**：取价靠 `uk_gx_price` 的前缀，所以计费路径一定要带 `kind`，`ORDER BY` 也一定要和索引同向（全升序）—— 见 `ListEffectivePrices` 的注释 |
 | `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
@@ -75,20 +75,21 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
 | `zt_galaxy_payout` | 提现申请。账本只记受理那一笔，待打款/驳回这段状态在这张表上 |
 | `zt_galaxy_audit_probe` | 抽检记录：以 Hub 自有账号影子重放，比对结构相似度 |
-| `zt_galaxy_package` | 额度商品：多少钱换多少额度、密钥有效期多久；`model_id` 绑定模型目录里的模型，分享返现按它的比例算 |
-| `zt_galaxy_order` | 订单。支付与履约分两步，回调只推到 `paid`，履约幂等；`pay_method` 区分积分与支付渠道，积分购买的扣分、推到已付、签发在同一个事务里 |
+| `zt_galaxy_package` | **历史**：额度商品目录。额度包已下架，不再有代码读写这张表 |
+| `zt_galaxy_order` | **历史**：买额度包的订单。不会再有新行 —— 使用端不下单，也没有支付渠道。管理端的订单页只读它，答「这个人当初买过什么、发到哪把密钥上」 |
 | `zt_galaxy_ledger_session` | 有状态会话：钉在哪个贡献、跑到第几回合、工作区在哪个 commit |
 | `zt_galaxy_ledger_turn` | 回合摘要。`(sid, seq)` 是幂等键，重复提交不重跑 |
 | `zt_galaxy_ledger_checkpoint` | 节点侧 CLI 的高保真快照，绑 CLI 版本 |
 | `zt_galaxy_dispute` | 争议工单。`(unit_id, attempt)` 唯一，同一次执行只能有一张 |
-| `zt_galaxy_model` | 门户与使用端模型广场的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时回落到 `galaxy.models` 声明的清单。`referral_bps` 是分享返现比例（万分之一），NULL 走默认 |
+| `zt_galaxy_model` | 门户与模型广场的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时回落到 `galaxy.models` 声明的清单。**单价不在这张表里**：曾经有过四列展示价，和 `zt_galaxy_price` 是两份互不校验的数据，2026-09-20 删掉了（`migrations/20260920_galaxy_model_drop_display_price.sql`）；留下的 `list_*_price` 是官方参考价（别人家的价）。`referral_bps` 也不再读：分享返现改成按充值算，而充值不挑模型 |
 | `zt_galaxy_lead` | 门户「联系我们」线索。**全站唯一被未鉴权接口写入的表**，字段一律短、按 IP 限流、`ip`/`user_agent` 不进任何对外视图 |
-| `zt_galaxy_points_account` | 使用者积分余额（1 积分 = ¥1，存微积分）。和提供者的 `credit_account` 是两本账 |
-| `zt_galaxy_points_ledger` | 积分流水：运营充值 / 买套餐 / 分享返现。和余额变动同一个事务写，`txn_id` 幂等；管理端的充值明细就是 `type=recharge` 的行 |
+| `zt_galaxy_points_account` | 使用者积分余额（1 积分 = ¥1，存微积分）。**名下几把密钥花的是这一份钱**，调一次模型扣一次。和提供者的 `credit_account` 是两本账 |
+| `zt_galaxy_points_ledger` | 积分流水：运营充值 / 按量消费 / 申诉退款 / 分享返现（`purchase` 是额度包时期的历史）。和余额变动同一个事务写，`txn_id` 幂等（消费那一笔是 `usage:<单元>:<尝试>`）；`unit_id` 指回那一次请求，账单与申诉靠它接上 |
 | `zt_galaxy_referral` | 使用者的邀请码与邀请人。注册时和账号一起建，之后邀请人不可改；老账号打开分享页时补码 |
-| `zt_galaxy_setting` | 运营随时要改、改完不该重启的开关，目前只有默认返现比例 `referral.default_bps` |
+| `zt_galaxy_setting` | 运营随时要改、改完不该重启的开关，目前只有分享返现比例 `referral.default_bps`（按被邀请人的充值额算） |
 | `zt_galaxy_bridge_release` | 已发布的 ai-bridge 安装包（一个版本一个平台一行）。字节在 OSS，这里只有 sha256 与 Ed25519 发布签名；节点只装验得过签名的包，下架不删行 |
 | `zt_galaxy_provider_referral` | 共享端的邀请码与邀请人。和使用端的 `zt_galaxy_referral` 是两张表、两套码：两端是两批人，码混在一个命名空间里会「查得到但返错人」 |
+| `zt_galaxy_usage_rollup` | 管理端仪表盘的**按小时用量汇总**，`(小时桶, 类别, 计量单位)` 一行。**派生数据**：量来自 `meter_record`、钱来自两本账、类别由 `unit` 行上的模型推 —— 整表删掉也不丢账，下次读到哪个小时就重算哪个小时。每个算过的小时都有一行**类别与单位都是空串的标记行**，哪怕那个小时没有量；没有它就分不出「没有量」和「还没算过」。Hub 巡检与仪表盘读取都会写，两边写的是同一份绝对值、按唯一键整行覆盖，所以并发与重复都安全 |
 | `zt_galaxy_desktop_release` | 桌面客户端（Nova / Orbit）的发版记录，一个端 × 一个平台通道 × 一个版本一行。存的是要写到 OSS 上的 `latest-*.yml` **原文**；没有 sha256 与发布签名 —— 包一百多兆，字节不经服务端（浏览器拿签名地址直传），校验值在清单里。客户端走 electron-updater 直接读 OSS，不打服务端任何接口 |
 
 **建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，
@@ -112,6 +113,26 @@ AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，�
 `20260912_galaxy_provider_referral.sql` 建共享端邀请表并给供给侧账本加 `related_user_id`。
 这两个**必须先于新版 galaxy-api 发布**：节点行的那十列在每次 hello / 心跳的查询里，
 缺列会让**所有机器**连不上（不是少一个功能，是整个池子掉线）。
+
+下面这两条属于额度包那一版，**新部署不需要**（商品与订单两张表现在只剩历史数据）：
+
+`20260920_galaxy_package_items.sql` 给 `zt_galaxy_package` 与 `zt_galaxy_order` 各加一列 `items_json`，
+把额度包从「一份不分模型的额度 + 一个手填的售价」换成「模型 × 数量 × 折扣，售价算出来」。
+**只加列，一行数据都不改**：存量包的 `items_json` 为空，就是遗留包 —— 照常卖、照常上下架，构成改不了。
+不在 SQL 里反推折扣是有意的：反推要先算 Σ 数量 × 单价，而单价按 `(kind, model_id, unit)` 分层回落
+还带生效时间，在 SQL 里重写一遍这套规则算错了不报错，只会让某个包的价格在运营毫不知情时变掉。
+管理端的编辑框会在打开**绑了模型的**遗留包时当场按当前单价把折扣反推出来摆给运营看，他确认了再存。
+**要先于发版跑**：缺这两列，商品目录的每一次读写都报 1054 —— 运营开不了「商品与定价」，
+使用端的广场和下单也一起挂。
+
+`20260920_galaxy_balance_billing.sql` 给积分流水加 `unit_id` / `kind` 两列与一条按单元回查的索引，
+对应「一次请求扣一笔账户余额」这个新口径。**要先于发版跑**：缺列时每笔结算写流水都报 1054，
+而扣费失败只记日志不阻断 —— 表面上一切正常，只是**谁都不扣钱**。
+它只加列不删任何东西：`zt_galaxy_consumer_balance` 上那些按密钥记的老额度留在原地，
+只是请求路径不再读它们。
+
+`20260920_galaxy_balance_model.sql` 给密钥余额加 `model_id` 并换唯一键，让额度能按模型分账。
+它属于额度包那一版，**新部署不需要**：那张表现在只剩历史数据。
 
 `20260919_galaxy_price_model.sql` 给价目表加 `model_id` 并把唯一键换成
 `(biz_line, kind, model_id, unit, effective_from)`，让同一个 kind 下每个模型能各自定价。

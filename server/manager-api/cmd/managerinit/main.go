@@ -30,6 +30,10 @@ import (
 
 // 页面资源。这一份必须手写 —— 它是 UI 结构，从路由表推导不出来。
 // code 同时是前端取 i18n 文案的键（t("nav." + code)），改它等于改文案键。
+//
+// Icon 是 antd 的图标名，**每条页面资源都要有**：二级菜单没有图标时展开就是一列纯文字。
+// 名字必须在前端 ManagerShellStub 的 MENU_ICONS 白名单里，不在里面的查不到组件，
+// 不报错、只是没图标 —— 加新菜单时两边一起改。
 var pages = []managerdto.SaveResourceRequest{
 	{Code: "dashboard", Name: "仪表盘", ResourceType: manager.ResourcePage, PageURL: "/dashboard", Icon: "DashboardOutlined", SortID: 10},
 	{Code: "users", Name: "用户管理", ResourceType: manager.ResourcePage, PageURL: "/users", Icon: "TeamOutlined", SortID: 20},
@@ -50,44 +54,45 @@ var pages = []managerdto.SaveResourceRequest{
 	{Code: "galaxy", Name: "共享算力池", ResourceType: manager.ResourceMenu, Icon: "GlobalOutlined", SortID: 50, Status: manager.StatusDisabled},
 
 	{Code: "galaxyOverview", Name: "算力总览", ResourceType: manager.ResourceMenu, Icon: "GlobalOutlined", SortID: 50},
-	{Code: "galaxyHome", Name: "运营总览", ResourceType: manager.ResourcePage, PageURL: "/galaxy/overview", SortID: 51},
-	{Code: "galaxyPool", Name: "池水位", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pool", SortID: 52},
-	{Code: "galaxyUnits", Name: "运行工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/units", SortID: 53},
-	{Code: "galaxySettlement", Name: "结算汇总", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settlement", SortID: 54},
-	{Code: "galaxyLedger", Name: "账本流水", ResourceType: manager.ResourcePage, PageURL: "/galaxy/ledger", SortID: 55},
+	{Code: "galaxyHome", Name: "运营总览", ResourceType: manager.ResourcePage, PageURL: "/galaxy/overview", Icon: "FundOutlined", SortID: 51},
+	{Code: "galaxyPool", Name: "池水位", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pool", Icon: "DatabaseOutlined", SortID: 52},
+	{Code: "galaxyUnits", Name: "运行工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/units", Icon: "ProfileOutlined", SortID: 53},
+	{Code: "galaxySettlement", Name: "结算汇总", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settlement", Icon: "AccountBookOutlined", SortID: 54},
+	{Code: "galaxyLedger", Name: "账本流水", ResourceType: manager.ResourcePage, PageURL: "/galaxy/ledger", Icon: "TransactionOutlined", SortID: 55},
 
 	{Code: "galaxySupply", Name: "算力供给", ResourceType: manager.ResourceMenu, Icon: "ClusterOutlined", SortID: 56},
-	{Code: "galaxyNodes", Name: "节点与贡献", ResourceType: manager.ResourcePage, PageURL: "/galaxy/nodes", SortID: 57},
-	{Code: "galaxyPayouts", Name: "提现审批", ResourceType: manager.ResourcePage, PageURL: "/galaxy/payouts", SortID: 58},
+	{Code: "galaxyNodes", Name: "节点与贡献", ResourceType: manager.ResourcePage, PageURL: "/galaxy/nodes", Icon: "DeploymentUnitOutlined", SortID: 57},
+	{Code: "galaxyPayouts", Name: "提现审批", ResourceType: manager.ResourcePage, PageURL: "/galaxy/payouts", Icon: "MoneyCollectOutlined", SortID: 58},
 
 	{Code: "galaxyRisk", Name: "风控与审计", ResourceType: manager.ResourceMenu, Icon: "SafetyCertificateOutlined", SortID: 59},
-	{Code: "galaxyProbes", Name: "抽检", ResourceType: manager.ResourcePage, PageURL: "/galaxy/probes", SortID: 60},
-	{Code: "galaxyMismatches", Name: "用量偏差", ResourceType: manager.ResourcePage, PageURL: "/galaxy/mismatches", SortID: 61},
-	{Code: "galaxyReputation", Name: "信誉", ResourceType: manager.ResourcePage, PageURL: "/galaxy/reputation", SortID: 62},
-	{Code: "galaxyBans", Name: "封禁名单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bans", SortID: 63},
+	{Code: "galaxyProbes", Name: "抽检", ResourceType: manager.ResourcePage, PageURL: "/galaxy/probes", Icon: "ExperimentOutlined", SortID: 60},
+	{Code: "galaxyMismatches", Name: "用量偏差", ResourceType: manager.ResourcePage, PageURL: "/galaxy/mismatches", Icon: "AlertOutlined", SortID: 61},
+	{Code: "galaxyReputation", Name: "信誉", ResourceType: manager.ResourcePage, PageURL: "/galaxy/reputation", Icon: "StarOutlined", SortID: 62},
+	{Code: "galaxyBans", Name: "封禁名单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bans", Icon: "StopOutlined", SortID: 63},
 
 	{Code: "galaxyDemand", Name: "使用与计费", ResourceType: manager.ResourceMenu, Icon: "WalletOutlined", SortID: 64},
-	{Code: "galaxyKeys", Name: "算力密钥", ResourceType: manager.ResourcePage, PageURL: "/galaxy/keys", SortID: 65},
-	{Code: "galaxyOrders", Name: "订单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/orders", SortID: 66},
-	{Code: "galaxyPoints", Name: "积分充值", ResourceType: manager.ResourcePage, PageURL: "/galaxy/points", SortID: 67},
-	{Code: "galaxyPackages", Name: "额度包", ResourceType: manager.ResourcePage, PageURL: "/galaxy/packages", SortID: 68},
-	{Code: "galaxyPricing", Name: "价目表", ResourceType: manager.ResourcePage, PageURL: "/galaxy/pricing", SortID: 69},
+	{Code: "galaxyKeys", Name: "算力密钥", ResourceType: manager.ResourcePage, PageURL: "/galaxy/keys", Icon: "KeyOutlined", SortID: 65},
+	{Code: "galaxyOrders", Name: "订单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/orders", Icon: "ShoppingOutlined", SortID: 66},
+	{Code: "galaxyPoints", Name: "积分充值", ResourceType: manager.ResourcePage, PageURL: "/galaxy/points", Icon: "CreditCardOutlined", SortID: 67},
+	// 模型目录 / 价目表 / 额度包合成了一页（三个页签）：它们讲的是同一件事的三段，
+	// 而且模型目录原先还挂在「算力平台」那一栏，和运行参数、版本发布摆在一起。
+	// 老的三条资源由 migrations/20260920_manager_galaxy_commerce_menu.sql 删掉。
+	{Code: "galaxyCommerce", Name: "商品与定价", ResourceType: manager.ResourcePage, PageURL: "/galaxy/commerce", Icon: "TagsOutlined", SortID: 68},
 
 	{Code: "galaxyCustomer", Name: "客户与增长", ResourceType: manager.ResourceMenu, Icon: "RiseOutlined", SortID: 70},
-	{Code: "galaxyAccounts", Name: "账号", ResourceType: manager.ResourcePage, PageURL: "/galaxy/accounts", SortID: 71},
-	{Code: "galaxyDisputes", Name: "争议工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/disputes", SortID: 72},
-	{Code: "galaxyLeads", Name: "销售线索", ResourceType: manager.ResourcePage, PageURL: "/galaxy/leads", SortID: 73},
-	{Code: "galaxyReferrals", Name: "邀请返现", ResourceType: manager.ResourcePage, PageURL: "/galaxy/referrals", SortID: 74},
+	{Code: "galaxyAccounts", Name: "账号", ResourceType: manager.ResourcePage, PageURL: "/galaxy/accounts", Icon: "UserOutlined", SortID: 71},
+	{Code: "galaxyDisputes", Name: "争议工单", ResourceType: manager.ResourcePage, PageURL: "/galaxy/disputes", Icon: "SolutionOutlined", SortID: 72},
+	{Code: "galaxyLeads", Name: "销售线索", ResourceType: manager.ResourcePage, PageURL: "/galaxy/leads", Icon: "ContactsOutlined", SortID: 73},
+	{Code: "galaxyReferrals", Name: "邀请返现", ResourceType: manager.ResourcePage, PageURL: "/galaxy/referrals", Icon: "ShareAltOutlined", SortID: 74},
 
 	{Code: "galaxyPlatform", Name: "算力平台", ResourceType: manager.ResourceMenu, Icon: "ControlOutlined", SortID: 75},
-	{Code: "galaxySettings", Name: "运行参数", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settings", SortID: 76},
-	{Code: "galaxyModels", Name: "模型目录", ResourceType: manager.ResourcePage, PageURL: "/galaxy/models", SortID: 77},
-	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bridge-releases", SortID: 78},
-	{Code: "galaxyDesktopReleases", Name: "桌面客户端版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/desktop-releases", SortID: 79},
+	{Code: "galaxySettings", Name: "运行参数", ResourceType: manager.ResourcePage, PageURL: "/galaxy/settings", Icon: "SlidersOutlined", SortID: 76},
+	{Code: "galaxyBridgeReleases", Name: "ai-bridge 版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/bridge-releases", Icon: "ApiOutlined", SortID: 78},
+	{Code: "galaxyDesktopReleases", Name: "桌面客户端版本", ResourceType: manager.ResourcePage, PageURL: "/galaxy/desktop-releases", Icon: "DesktopOutlined", SortID: 79},
 
 	{Code: "settings", Name: "系统设置", ResourceType: manager.ResourceMenu, Icon: "SettingOutlined", SortID: 90},
-	{Code: "settingsAccounts", Name: "管理端账号", ResourceType: manager.ResourcePage, PageURL: "/settings/accounts", SortID: 91},
-	{Code: "settingsRoles", Name: "角色与权限", ResourceType: manager.ResourcePage, PageURL: "/settings/roles", SortID: 92},
+	{Code: "settingsAccounts", Name: "管理端账号", ResourceType: manager.ResourcePage, PageURL: "/settings/accounts", Icon: "UserSwitchOutlined", SortID: 91},
+	{Code: "settingsRoles", Name: "角色与权限", ResourceType: manager.ResourcePage, PageURL: "/settings/roles", Icon: "SafetyOutlined", SortID: 92},
 }
 
 // 挂在菜单下面的子页面。父节点在 pages 里排在子页面前面，下面那个循环才查得到它的 id。
@@ -110,8 +115,7 @@ var pageParents = map[string]string{
 	"galaxyKeys":     "galaxyDemand",
 	"galaxyOrders":   "galaxyDemand",
 	"galaxyPoints":   "galaxyDemand",
-	"galaxyPackages": "galaxyDemand",
-	"galaxyPricing":  "galaxyDemand",
+	"galaxyCommerce": "galaxyDemand",
 
 	"galaxyAccounts":  "galaxyCustomer",
 	"galaxyDisputes":  "galaxyCustomer",
@@ -119,7 +123,6 @@ var pageParents = map[string]string{
 	"galaxyReferrals": "galaxyCustomer",
 
 	"galaxySettings":        "galaxyPlatform",
-	"galaxyModels":          "galaxyPlatform",
 	"galaxyBridgeReleases":  "galaxyPlatform",
 	"galaxyDesktopReleases": "galaxyPlatform",
 
@@ -137,9 +140,9 @@ var operatorPages = []string{
 	"galaxyHome", "galaxyPool", "galaxyUnits", "galaxySettlement", "galaxyLedger",
 	"galaxyNodes", "galaxyPayouts",
 	"galaxyProbes", "galaxyMismatches", "galaxyReputation", "galaxyBans",
-	"galaxyKeys", "galaxyOrders", "galaxyPoints", "galaxyPackages", "galaxyPricing",
+	"galaxyKeys", "galaxyOrders", "galaxyPoints", "galaxyCommerce",
 	"galaxyAccounts", "galaxyDisputes", "galaxyLeads", "galaxyReferrals",
-	"galaxySettings", "galaxyModels", "galaxyBridgeReleases", "galaxyDesktopReleases",
+	"galaxySettings", "galaxyBridgeReleases", "galaxyDesktopReleases",
 }
 
 func main() {

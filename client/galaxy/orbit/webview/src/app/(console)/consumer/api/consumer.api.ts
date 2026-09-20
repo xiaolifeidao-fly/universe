@@ -5,6 +5,9 @@ import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } f
 /**
  * 消费者侧接口。密钥列表里没有明文；要明文（「使用」、复制带密钥的命令）单独调 revealKey，
  * 拿到就用、用完就丢，不落进任何存储。
+ *
+ * 这一端**不卖任何东西**：额度就是账户里的积分余额，由运营充进来，调模型时按单价逐笔扣。
+ * 所以没有商品、没有订单、没有支付 —— 密钥只是一串能访问模型的凭证，随手新建、随手作废。
  */
 
 /** claude = 接 Claude Code；codex = 接 Codex；video / other 两个都不对口（other 是范围不限，两个都能接）。 */
@@ -12,6 +15,7 @@ export type KeyCategory = "claude" | "codex" | "video" | "other";
 
 export class ConsumerKeyView {
   keyId = "";
+
 
   alias = "";
 
@@ -41,7 +45,6 @@ export class ConsumerKeyView {
 
   frozenUntil?: string;
 
-  balance: Record<string, number> = {};
 }
 
 export class IssuedKeyView {
@@ -59,78 +62,6 @@ export class NoticeStatus {
   version = "";
 
   accepted = false;
-}
-
-export class PackageView {
-  packageCode = "";
-
-  title = "";
-
-  /**
-   * 商品归属（claude / codex / video / other），由服务端从 kind 与模型档推出来。
-   * 分栏规则放服务端：两个端各写一份匹配规则的话，同一个额度包会落进不同的栏。
-   */
-  category = "other";
-
-  units: Record<string, number> = {};
-
-  amount = 0;
-
-  currency = "CNY";
-
-  ttlDays = 30;
-
-  allowedKinds: string[] = [];
-
-  modelTier: string[] = [];
-
-  concurrency = 0;
-
-  rpm = 0;
-
-  /** 绑定的模型，空是通用套餐。分享返现按这个模型的比例算。 */
-  modelId = "";
-}
-
-export class OrderView {
-  orderId = "";
-
-  packageCode = "";
-
-  units: Record<string, number> = {};
-
-  amount = 0;
-
-  currency = "CNY";
-
-  status = "";
-
-  /** points = 积分；channel = 支付渠道（老订单）。 */
-  payMethod = "channel";
-
-  modelId = "";
-
-  targetKeyId = "";
-
-  keyId = "";
-
-  paidAt?: string;
-
-  fulfilledAt?: string;
-
-  createdTime = "";
-
-  issuedSecret = "";
-}
-
-/** 收银台上能选的一个支付渠道。 */
-export class PaymentChannelView {
-  code = "";
-
-  title = "";
-
-  /** 沙箱渠道点一下就算到账，没有真的收钱。界面必须把它标出来。 */
-  sandbox = false;
 }
 
 export class UsageLine {
@@ -220,46 +151,23 @@ export async function revealKey(keyId: string) {
   return unwrapApiResponse(response.data);
 }
 
-export async function renewKey(keyId: string, ttlDays?: number) {
-  const response = await instance.post<ApiResponse<IssuedKeyView>>("/galaxy/consumer/keys/renew", { keyId, ttlDays });
-  return unwrapApiResponse(response.data);
-}
-
-export async function fetchPackages() {
-  return getDataList(PackageView, "/galaxy/consumer/packages");
-}
-
-export async function createOrder(packageCode: string, targetKeyId: string, noticeVersion: string) {
-  const response = await instance.post<ApiResponse<OrderView>>("/galaxy/consumer/orders", {
-    packageCode,
-    targetKeyId,
+/**
+ * 新建一把密钥。明文只在这一次响应里出现 —— 调用方拿到要立刻存进本机保险箱
+ * （api/keyvault.api.ts），之后再要走 revealKey。最多 5 把有效的，超了服务端会拒。
+ */
+export async function createKey(alias: string, noticeVersion: string) {
+  const response = await instance.post<ApiResponse<IssuedKeyView>>("/galaxy/consumer/keys", {
+    alias,
     noticeVersion,
   });
   return unwrapApiResponse(response.data);
 }
 
-export async function fetchOrders(limit = 50) {
-  return getDataList(OrderView, "/galaxy/consumer/orders", { limit });
-}
+/** 一个人最多几把有效密钥。和服务端的 maxConsumerKeys 对齐，界面据此提前禁用按钮。 */
+export const MAX_KEYS = 5;
 
-export async function cancelOrder(orderId: string) {
-  const response = await instance.post<ApiResponse<string>>("/galaxy/consumer/orders/cancel", { orderId });
-  return unwrapApiResponse(response.data);
-}
-
-export async function fetchPaymentChannels() {
-  return getDataList(PaymentChannelView, "/galaxy/consumer/payments/channels");
-}
-
-/**
- * 沙箱支付。真渠道的到账走渠道回调，不经过这里 ——
- * 服务端只认配置里显式标成沙箱的渠道，而且只让本人付自己的订单。
- */
-export async function paySandbox(orderId: string, channel: string) {
-  const response = await instance.post<ApiResponse<OrderView>>("/galaxy/consumer/orders/pay/sandbox", {
-    orderId,
-    channel,
-  });
+export async function renewKey(keyId: string, ttlDays?: number) {
+  const response = await instance.post<ApiResponse<IssuedKeyView>>("/galaxy/consumer/keys/renew", { keyId, ttlDays });
   return unwrapApiResponse(response.data);
 }
 
@@ -518,7 +426,8 @@ export class ConsumerDashboard {
 
   activeKeys = 0;
 
-  balance: Record<string, number> = {};
+  /** 账户积分余额（微积分）。名下几把密钥花的是同一份钱。 */
+  balance = 0;
 
   today: DayStats = new DayStats();
 
@@ -626,6 +535,9 @@ export class PortalModelView {
   /** 官方参考价，同口径同币种。0 = 运营没声明，卡片上不划线也不标折扣。 */
   listInputPrice = 0;
 
+  /** 官方缓存读取价。0 = 运营没声明，划线价里不出现这一段。 */
+  listCachePrice = 0;
+
   listOutputPrice = 0;
 
   /** 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端按输出价算好，前端不再自己减一遍。 */
@@ -652,11 +564,6 @@ export class PortalModelView {
 
 export class ConsumerModelView extends PortalModelView {
   category: KeyCategory = "other";
-
-  /** 被邀请的人买这个模型的套餐时，按实付积分返给邀请人的比例，万分之一。 */
-  referralBps = 0;
-
-  packages: PackageView[] = [];
 }
 
 export class ConsumerCatalog {
@@ -664,9 +571,7 @@ export class ConsumerCatalog {
 
   models: ConsumerModelView[] = [];
 
-  /** 通用套餐：没绑模型的上架套餐。 */
-  packages: PackageView[] = [];
-
+  /** 分享返现比例，万分之一。按好友**充值**的金额算，所以只有一个比例。 */
   defaultBps = 0;
 
   updatedAt = "";
@@ -677,12 +582,17 @@ export class PointsSummary {
 
   recharged = 0;
 
-  spent = 0;
+  /** 按量消费累计花掉的（正数，已扣掉退款）。 */
+  used = 0;
 
   referral = 0;
+
+  /** 历史额度包购买。额度包已下架，新账号恒为 0。 */
+  spent = 0;
 }
 
-export type PointsType = "recharge" | "purchase" | "referral";
+/** purchase 是历史（额度包已下架），不会再有新的。 */
+export type PointsType = "recharge" | "usage" | "refund" | "referral" | "purchase";
 
 export class PointsLedgerEntry {
   txnId = "";
@@ -693,12 +603,18 @@ export class PointsLedgerEntry {
 
   balanceAfter = 0;
 
-  /** 充值：实付金额（微元）；返现：那笔购买实付的积分。 */
+  /** 充值：实付金额（微元）；返现：那笔充值的积分。 */
   baseAmount = 0;
 
   rateBps = 0;
 
   orderId = "";
+
+  /** 消费与退款指向的那一次请求。账单上的 unitId 就是它。 */
+  unitId = "";
+
+  /** 消费调的是哪类能力。 */
+  kind = "";
 
   /** 返现流水上被邀请人的用户名，打过码。 */
   relatedName = "";
@@ -714,18 +630,6 @@ export class PointsLedgerPage {
   entries: PointsLedgerEntry[] = [];
 }
 
-export class ReferralRateView {
-  modelId = "";
-
-  displayName = "";
-
-  family = "";
-
-  bps = 0;
-
-  inherited = false;
-}
-
 export class ReferralOverview {
   inviteCode = "";
 
@@ -733,9 +637,8 @@ export class ReferralOverview {
 
   earned = 0;
 
+  /** 返现比例，万分之一。按好友**充值**的金额算 —— 充值不挑模型，所以只有一个比例。 */
   defaultBps = 0;
-
-  rates: ReferralRateView[] = [];
 }
 
 export class InviteeView {
@@ -762,20 +665,6 @@ export async function fetchPoints() {
 
 export async function fetchPointsLedger(params: { type?: PointsType | ""; offset?: number; limit?: number }) {
   return getData(PointsLedgerPage, "/galaxy/consumer/points/ledger", { ...params, type: params.type || undefined });
-}
-
-/**
- * 用积分买一个套餐。签发新密钥时回来的订单里带着明文（issuedSecret）。
- * requestId 同一单重试时要带同一个：服务端按它只扣一次，重复的那次拿回的是第一次的订单（不带明文）。
- */
-export async function purchaseWithPoints(packageCode: string, targetKeyId: string, noticeVersion: string, requestId: string) {
-  const response = await instance.post<ApiResponse<OrderView>>("/galaxy/consumer/points/purchase", {
-    packageCode,
-    targetKeyId,
-    noticeVersion,
-    requestId,
-  });
-  return unwrapApiResponse(response.data);
 }
 
 export async function fetchReferral() {

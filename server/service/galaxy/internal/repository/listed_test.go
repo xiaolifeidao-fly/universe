@@ -20,15 +20,15 @@ func (p *recordingPool) Rollback() error { return nil }
 //
 // listed 的标签默认值是 true，GORM 建记录时会把 false 换成默认值插进去，upsert 的
 // VALUES(listed) 跟着也是 true。保存之后必须单独把 listed=false 写一遍。
+//
+// 现在只剩模型目录一张表走这条路（额度包已经下架，连保存方法都没了），
+// 但这个坑属于 GORM 的默认值语义，下一张带上下架的表照样会踩，所以用例留着。
 func TestSaveWritesUnlisted(t *testing.T) {
 	cases := []struct {
 		name  string
 		save  func(repository *GalaxyRepository) error
 		table string
 	}{
-		{"套餐", func(repository *GalaxyRepository) error {
-			return repository.SavePackage(context.Background(), &GalaxyPackage{BizLine: "galaxy", PackageCode: "starter", Title: "入门包", Listed: false})
-		}, "zt_galaxy_package"},
 		{"模型目录", func(repository *GalaxyRepository) error {
 			return repository.SaveModel(context.Background(), &GalaxyModel{BizLine: "galaxy", ModelID: "claude-sonnet-5", Listed: false})
 		}, "zt_galaxy_model"},

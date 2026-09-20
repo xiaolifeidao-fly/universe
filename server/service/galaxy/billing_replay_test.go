@@ -79,7 +79,8 @@ func TestProviderLedgerRecordsCreditsNotMeteredAmount(t *testing.T) {
 	if containsValue(provider, replayTokens) {
 		t.Fatalf("供给侧账本里不该出现计量数 %d（那是 zt_galaxy_meter_record 的事）", replayTokens)
 	}
-	// 消费侧相反：它的额度按计量单位发、余额也按单位扣，所以记的就是用量。
+	// 消费侧那一行相反：它回答的是「用了多少」，所以记的就是计量数。
+	// 「扣了多少钱」是另一张表（见 billing_charge_test.go）。
 	consumerLedger := database.argsOf(t, "zt_galaxy_consumer_ledger")
 	if !containsValue(consumerLedger, replayTokens) {
 		t.Fatalf("消费侧账本应当记用量 %d，实际绑定值：%v", replayTokens, consumerLedger)
@@ -98,9 +99,10 @@ func TestCreditOnlyFollowsLedgerRowsThatWereActuallyInserted(t *testing.T) {
 	if got := database.count("zt_galaxy_credit_account"); got != 0 {
 		t.Fatalf("账本撞了唯一键就不该入账，实际入账 %d 次", got)
 	}
-	// 消费者的额度同理：重复的那一笔不能扣第二次。
-	if got := database.count("zt_galaxy_consumer_balance"); got != 0 {
-		t.Fatalf("账本撞了唯一键就不该扣额度，实际扣了 %d 次", got)
+	// 使用者那边同理，只是护栏长得不一样：改余额和记流水在同一个事务里，
+	// 流水撞了唯一键就整个事务回滚，余额那一笔跟着作废。
+	if database.rollbacks == 0 {
+		t.Fatal("积分流水撞了唯一键，扣款事务必须回滚")
 	}
 }
 
@@ -122,10 +124,16 @@ func billingHarness(t *testing.T, plane ControlPlane) (*service, *billingDB) {
 			"zt_galaxy_price": {{"llm.chat", string(contract.UnitOutputTokens), replayPrice, "CNY", replayProviderShare, time.Now().Add(-time.Hour)}},
 			// 贡献：结算要从它身上取 owner。
 			"zt_galaxy_contribution": {{"n_1:claude", "n_1", "pu_owner"}},
+			// 密钥：扣费要从它身上取「这把是谁的」，钱从那个人的余额里扣。
+			"zt_galaxy_consumer_key": {{"ck_1", "cu_buyer"}},
+			// 账户：改完余额要回读一次 balance_after 记进流水。
+			"zt_galaxy_points_account": {{"cu_buyer", int64(1_000_000)}},
 		},
 		columns: map[string][]string{
-			"zt_galaxy_price":        {"kind", "unit", "price", "currency", "provider_share", "effective_from"},
-			"zt_galaxy_contribution": {"cid", "node_id", "owner_user_id"},
+			"zt_galaxy_price":          {"kind", "unit", "price", "currency", "provider_share", "effective_from"},
+			"zt_galaxy_contribution":   {"cid", "node_id", "owner_user_id"},
+			"zt_galaxy_consumer_key":   {"key_id", "owner_user_id"},
+			"zt_galaxy_points_account": {"owner_user_id", "balance"},
 		},
 	}
 	database, err := gorm.Open(mysql.New(mysql.Config{
@@ -159,6 +167,8 @@ type billingDB struct {
 	queries []string
 	// duplicateLedger 为真时账本插入报「0 行受影响」，也就是撞了唯一键。
 	duplicateLedger bool
+	// rollbacks 事务回滚了几次。
+	rollbacks int
 }
 
 type billingWrite struct {
@@ -203,6 +213,19 @@ func (db *billingDB) argsOf(t *testing.T, table string) []driver.Value {
 	return nil
 }
 
+// writesTo 写到某张表上的全部语句的绑定值，按发生顺序。
+func (db *billingDB) writesTo(table string) [][]driver.Value {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var out [][]driver.Value
+	for _, write := range db.writes {
+		if strings.Contains(write.sql, table) {
+			out = append(out, write.args)
+		}
+	}
+	return out
+}
+
 // queryOf 第一条读某张表的语句。
 func (db *billingDB) queryOf(t *testing.T, table string) string {
 	t.Helper()
@@ -232,12 +255,21 @@ func (c billingConn) Prepare(query string) (driver.Stmt, error) {
 	return billingStmt{db: c.db, query: query}, nil
 }
 func (c billingConn) Close() error              { return nil }
-func (c billingConn) Begin() (driver.Tx, error) { return billingTx{}, nil }
+func (c billingConn) Begin() (driver.Tx, error) { return billingTx{db: c.db}, nil }
 
-type billingTx struct{}
+// billingTx 只记「回滚过没有」。假库照抄每一条写语句、不真的撤销，
+// 所以「事务回滚了」这件事本身就是唯一能断言的痕迹 —— 而扣钱那条路
+// 正是靠回滚来保证重放不会多扣一笔。
+type billingTx struct{ db *billingDB }
 
-func (billingTx) Commit() error   { return nil }
-func (billingTx) Rollback() error { return nil }
+func (t billingTx) Commit() error { return nil }
+
+func (t billingTx) Rollback() error {
+	t.db.mu.Lock()
+	defer t.db.mu.Unlock()
+	t.db.rollbacks++
+	return nil
+}
 
 type billingStmt struct {
 	db    *billingDB

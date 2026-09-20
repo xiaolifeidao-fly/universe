@@ -45,10 +45,9 @@ client/galaxy/
 │   │   └── package.json
 │   └── webview/                    独立 Next.js / React / antd 使用端 UI
 │       ├── src/app/(console)/consumer/
-│       │   ├── keys/               密钥：有效 / 无效分栏，「使用」一键接到本机客户端 + 手动接入命令
-│       │   ├── models/             模型广场：模型、单价、挂在模型下的套餐（按积分标价）
-│       │   ├── store/              购买：用积分买套餐 → 签发或充进已有密钥 + 购买记录
-│       │   ├── points/             积分：余额、流水、分享链接与各模型返现比例、邀请的人
+│       │   ├── keys/               密钥：账户余额条 + 自助新建（最多 5 把）/ 换发 / 失效，「使用」一键接到本机客户端 + 手动接入命令
+│       │   ├── models/             模型广场：有哪些模型、各自什么价（按积分标价，只看不卖）
+│       │   ├── points/             积分：余额、消费与充值流水、分享链接与返现比例、邀请的人
 │       │   ├── usage/              使用记录：逐笔扣费 + 账单 / 会话 / 任务 / 申诉
 │       │   ├── chat/               对话（占位，见文件顶注）
 │       │   └── account/            账户：资料、密钥概况、数据告知、语言
@@ -63,7 +62,7 @@ client/galaxy/
 │   ├── src/app/(site)/
 │   │   ├── page.tsx                首页
 │   │   ├── models/                 模型：全部模型 + 单价 + 能力标签
-│   │   ├── pricing/                定价：计费口径 + 额度包 + 单价表
+│   │   ├── pricing/                定价：计费口径 + 单价表
 │   │   └── contact/                联系我们：留资表单（全站唯一未鉴权写接口）
 │   ├── src/components/{site,home,models,pricing,contact}/
 │   ├── src/app/globals.css         门户自己的设计系统（.gp-*）
@@ -258,7 +257,8 @@ npm run package:nova    →  release/nova/           安装包，不含 Next 服
 |---|---|
 | `build.sh` | 只构建界面，产出 `.desktop/<端>/`。不编 Electron、不编 Rust 桥接 —— 只跑界面的服务器不该为发一个前端装 Rust 工具链 |
 | `package.sh` | 构建 + 打成 `<端>-webview-linux-x64.tar.gz`（含 `start.sh` / `stop.sh`） |
-| `unpack-release.sh` | 在服务器上解包。**放在 tar.gz 旁边跑**，把目录整个换掉、只留 `runtime.json` 与 `logs/`。不带参数时服务还在跑就拒绝动手；`--swap` 自己停、换、起，`--stage` 只解包不碰线上 |
+| `deploy.sh` | 换一版就跑它：`stop → 解包 → start`，一条命令。**和 tar.gz 放同一个目录** |
+| `unpack-release.sh` | 只解包，也放在 tar.gz 旁边。把目录整个换掉、只留 `runtime.json` 与 `logs/`，上一版留在 `<包名>.prev`。不带参数时服务还在跑就拒绝动手；`--swap` 自己停、换、起，`--stage` 只解包不碰线上 |
 | `start.sh` / `stop.sh` | 起停那份 standalone。pid 在 `run/`，日志在 `logs/`。写的是 POSIX sh，`sh start.sh` 掉进 dash 也不会炸 |
 
 解包后就是这几样，没有多余的层级：
@@ -274,18 +274,25 @@ npm run package:nova    →  release/nova/           安装包，不含 Next 服
 └── stop.sh
 ```
 
-换版本不用先手工 `stop.sh`：
+换版本不用一条条敲：
 
 ```sh
-./unpack-release.sh --swap     # 解到旁边 → stop → 换目录 → start
+./deploy.sh                    # stop → 解包 → start
+./unpack-release.sh --swap     # 解到旁边 → stop → 换目录 → start，停机窗口更短
 ./unpack-release.sh --stage    # 只解包，线上照跑；晚点再 --swap 换过去
 ```
+
+`deploy.sh` 就是把手工那三步按顺序跑一遍，出错就停在那一步；`--swap` 把解包挪到服务
+还活着的时候做，停机窗口里只剩 stop 和 start。两条路都在动目录之前先验包（`tar -tzf`
+的退出码要单独接住，不能写成 `tar | sed` —— 半截的包 tar 会把读得到的那部分照常列出来
+再报错，退出码被管道吞掉就会带着一份「看着很正常」的清单往下走）。老目录也都是改名不是删，
+解包中途失败会原样放回去，成功之后它就是 `<包名>.prev`，回滚一条 `mv`。
 
 「先解包再 stop」这个顺序**直接做是不行的**：解包会把整个目录换掉，`run/*.pid` 跟着一起没，
 `stop.sh` 再跑就找不到进程 —— 老进程成了孤儿还占着端口，新的怎么都起不来。`--swap` 就是
 把这个顺序做对：先解到旁边的 `.staging-<包名>/`，停下来之后才 `mv` 换目录（同一个盘，瞬间完成），
-所以停机窗口里只剩 stop 和 start，解包、校验、盘满都挪到了服务还活着的时候。上一版留在
-`<包名>.prev`，回滚就是一条 `mv`；新版本没起来时脚本会把那条命令打出来。`--stage` 把解包
+所以停机窗口里只剩 stop 和 start，解包、校验、盘满都挪到了服务还活着的时候。新版本没起来时
+脚本会把回滚那条命令直接打出来。`--stage` 把解包
 单独拎出来，可以提前很久做，`--swap` 时认出暂存的是同一个包就直接用，不是就重新解一份。
 首次部署不自动起 —— 那会儿 `runtime.json` 刚从模板生成，`SERVER_TARGET` 还是打包机的值。
 
@@ -463,10 +470,13 @@ macOS arm64 可构建未签名 `.app`；Windows/Linux 安装包与真实账户�
 地址由**界面那一侧**给：壳启动本来就要探 `<base>/api/desktop-health`，那一跳顺带把
 这个端的更新目录带回来（部署机 `runtime.json` 里的 `GALAXY_UPDATE_FEED_URL` + `/<端>`）。
 
+OSS 上的落点是 `<oss.dirPrefix>/<端>/`，和 ai-bridge 的包（`<oss.dirPrefix>/ai-bridge/`）平级 ——
+它们本来就是同一类东西，「某个客户端的安装包」。
+
 ```
-runtime.json  GALAXY_UPDATE_FEED_URL = https://<桶>.<endpoint>/<oss.dirPrefix>/desktop
-     ↓  /api/desktop-health
-桌面壳        https://…/desktop/nova/latest-mac.yml、…/Nova-0.1.1-arm64.zip
+runtime.json  GALAXY_UPDATE_FEED_URL = https://<桶>.<endpoint>/<oss.dirPrefix>
+     ↓  /api/desktop-health（自己补上 /nova、/orbit）
+桌面壳        https://…/<oss.dirPrefix>/nova/latest-mac.yml、…/Nova-0.1.1-arm64.zip
 ```
 
 冻进安装包的话，换一次桶就等于所有老版本永远收不到更新 —— 而更新地址恰恰是那种

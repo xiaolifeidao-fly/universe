@@ -82,7 +82,17 @@ function parseSettings(raw: string | null): JsonObject {
  * ANTHROPIC_API_KEY 要删掉：它和 ANTHROPIC_AUTH_TOKEN 同时在时 Claude Code 两个头都发，
  * 原来那把（往往是真的 Anthropic 密钥）就会跟着请求一起发到 Galaxy 去。
  */
-export function applyClaudeSettings(raw: string | null, baseUrl: string, secret: string): string {
+/**
+ * model 非空时连 ANTHROPIC_MODEL 一起写。
+ *
+ * 额度按模型卖之后，一份 Opus 的额度签出来的密钥**只允许调 Opus**（服务端的
+ * AuthorizeRoute 会挡住别的）。而 Claude Code 不写这一项就按它自己的默认模型发请求 ——
+ * 于是接上去之后每一句话都被拒，错误说的是「模型不允许」，而人刚买的就是这个模型。
+ *
+ * 反过来，密钥没限定模型时**不能**替他写死一个：那会把一把什么都能调的密钥
+ * 悄悄锁在一个模型上，而他从界面上看不出是谁锁的。
+ */
+export function applyClaudeSettings(raw: string | null, baseUrl: string, secret: string, model?: string): string {
   const settings = parseSettings(raw);
   const current = settings.env;
   if (current !== undefined && (typeof current !== 'object' || current === null || Array.isArray(current))) {
@@ -92,6 +102,8 @@ export function applyClaudeSettings(raw: string | null, baseUrl: string, secret:
   delete env.ANTHROPIC_API_KEY;
   env.ANTHROPIC_BASE_URL = claudeBaseUrl(baseUrl);
   env.ANTHROPIC_AUTH_TOKEN = normalizeSecret(secret);
+  const pinned = String(model ?? '').trim();
+  if (pinned) env.ANTHROPIC_MODEL = pinned;
   settings.env = env;
   return `${JSON.stringify(settings, null, 2)}\n`;
 }
@@ -195,7 +207,36 @@ function tomlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function applyCodexConfig(raw: string | null, baseUrl: string, secret: string): string {
+/**
+ * 顶层的一个 `key = value`：已经有那一行就改它，没有就插在第一个表头之前。
+ *
+ * 顶层的范围每次重新算：上一次 upsert 插过行之后，第一个表头的下标就变了，
+ * 拿旧的下标去插第二个 key，它会落到某个表**里面**去 —— TOML 里那是另一件事。
+ */
+function upsertTopLevel(lines: TomlLine[], key: string, line: string): void {
+  const firstHeader = lines.findIndex((item) => headerName(item) !== null);
+  const topEnd = firstHeader < 0 ? lines.length : firstHeader;
+  let replaced = false;
+  for (let index = 0; index < topEnd; index += 1) {
+    if (!lines[index].inString && new RegExp(`^\\s*${key}\\s*=`).test(lines[index].text)) {
+      lines[index] = { text: line, inString: false };
+      replaced = true;
+    }
+  }
+  if (replaced) return;
+  // 插在顶层最后一个非空行之后；后面紧跟着表头的话补一个空行，已经有空行就不再多加。
+  let insertAt = topEnd;
+  while (insertAt > 0 && lines[insertAt - 1].text.trim() === '') insertAt -= 1;
+  const inserted = [{ text: line, inString: false }];
+  if (insertAt === topEnd && topEnd < lines.length) inserted.push({ text: '', inString: false });
+  lines.splice(insertAt, 0, ...inserted);
+}
+
+/**
+ * model 非空时连顶层的 `model` 一起写，理由和 applyClaudeSettings 里那段一样：
+ * 密钥锁了模型，客户端还按自己的默认模型发请求的话，接上去每一句都被拒。
+ */
+export function applyCodexConfig(raw: string | null, baseUrl: string, secret: string, model?: string): string {
   const url = codexBaseUrl(baseUrl);
   const token = normalizeSecret(secret);
   const lines = scanLines(raw);
@@ -208,23 +249,10 @@ export function applyCodexConfig(raw: string | null, baseUrl: string, secret: st
     }
   }
 
-  // 1. 顶层的 model_provider：有就改那一行，没有就插在第一个表头之前。
-  const providerLine = `model_provider = ${tomlString(CODEX_PROVIDER_ID)}`;
-  let replaced = false;
-  for (let index = 0; index < topEnd; index += 1) {
-    if (!lines[index].inString && /^\s*model_provider\s*=/.test(lines[index].text)) {
-      lines[index] = { text: providerLine, inString: false };
-      replaced = true;
-    }
-  }
-  if (!replaced) {
-    // 插在顶层最后一个非空行之后；后面紧跟着表头的话补一个空行，已经有空行就不再多加。
-    let insertAt = topEnd;
-    while (insertAt > 0 && lines[insertAt - 1].text.trim() === '') insertAt -= 1;
-    const inserted = [{ text: providerLine, inString: false }];
-    if (insertAt === topEnd && topEnd < lines.length) inserted.push({ text: '', inString: false });
-    lines.splice(insertAt, 0, ...inserted);
-  }
+  // 1. 顶层的 model_provider，以及（密钥锁了模型时）顶层的 model。
+  upsertTopLevel(lines, 'model_provider', `model_provider = ${tomlString(CODEX_PROVIDER_ID)}`);
+  const pinned = String(model ?? '').trim();
+  if (pinned) upsertTopLevel(lines, 'model', `model = ${tomlString(pinned)}`);
 
   // 2. 去掉旧的 [model_providers.galaxy]（连同它的子表），到下一个别人的表头为止。
   const kept: TomlLine[] = [];

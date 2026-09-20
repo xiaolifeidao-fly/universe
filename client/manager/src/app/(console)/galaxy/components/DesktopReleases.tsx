@@ -47,6 +47,11 @@ function fill(template: string, values: Record<string, string | number>) {
   return template.replace(/\{(\w+)\}/g, (whole, key: string) => String(values[key] ?? whole));
 }
 
+/** 一个端在对象存储上的目录。objectRoot 是部署前缀，没配前缀时端目录就在桶根上。 */
+function desktopDir(objectRoot: string, product: string) {
+  return objectRoot ? `${objectRoot}/${product}/` : `${product}/`;
+}
+
 function formatSize(bytes: number) {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -257,12 +262,21 @@ export function DesktopReleases() {
         message={t("galaxy.desktop.feedTitle")}
         description={
           <Space direction="vertical" size={2}>
-            <span>
-              {t("galaxy.desktop.feedRoot")}
-              <Typography.Text code copyable={{ text: page?.objectRoot ?? "" }}>
-                {page?.objectRoot || t("galaxy.desktop.feedRootMissing")}
-              </Typography.Text>
-            </span>
+            {page?.configured ? (
+              // 端目录挂在部署前缀下，客户端取的是 <前缀>/<端>/latest-*.yml。
+              // 把两个端的完整落点都摆出来：运营照着它去桶里对一眼就行。
+              products.map((product) => (
+                <span key={product}>
+                  {PRODUCT_LABELS[product] ?? product}
+                  {t("galaxy.desktop.feedRoot")}
+                  <Typography.Text code copyable={{ text: desktopDir(page.objectRoot, product) }}>
+                    {desktopDir(page.objectRoot, product)}
+                  </Typography.Text>
+                </span>
+              ))
+            ) : (
+              <span>{t("galaxy.desktop.feedRootMissing")}</span>
+            )}
             <Typography.Text type="secondary">{t("galaxy.desktop.feedHint")}</Typography.Text>
           </Space>
         }

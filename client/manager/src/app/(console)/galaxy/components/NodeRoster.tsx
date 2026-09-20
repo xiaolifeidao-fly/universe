@@ -6,6 +6,7 @@ import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useCanWrite } from "@/components/permission/WritePermission";
+import { UpstreamUsagePanel } from "./UpstreamUsagePanel";
 import {
   banNode,
   fetchAdminNodes,
@@ -193,6 +194,12 @@ export function NodeRoster() {
         dataSource={nodes}
         pagination={{ pageSize: 20, showSizeChanger: false }}
         scroll={{ x: 1100 }}
+        expandable={{
+          // 上游余量摊在展开层里，不进主表：它一台机器好几条通道、每条好几个桶，
+          // 挤进一列只能显示成一串看不懂的数字。
+          expandedRowRender: (row) => <UpstreamUsagePanel contributions={row.contributions ?? []} />,
+          rowExpandable: (row) => (row.contributions ?? []).length > 0,
+        }}
       />
     </div>
   );

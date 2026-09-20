@@ -35,6 +35,7 @@ import {
   LinkBtn,
   LiveDot,
   Loading,
+  Meter,
   Note,
   Pill,
   Seg,
@@ -42,7 +43,7 @@ import {
 } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { isStudio } from "@/utils/auth";
-import { formatRelative, unitLabel } from "@/utils/format";
+import { formatCompact, formatRelative, unitLabel } from "@/utils/format";
 import { isDesktop } from "@/utils/product";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
 import { confirmForceClose, isClosing, switchContributions } from "../../contributionClose";
@@ -555,7 +556,10 @@ export function ShareSettings() {
                       edit({ ...form, quota });
                     }}
                   >
-                    {["day", "week", "month", "total"].map((window) => (
+                    {/* 5h 排在最前：Claude / Codex 的订阅额度本来就是每 5 小时刷新一轮，
+                        照上游的说法填，不用自己换算成「一天多少」—— 换算出来的数摊平到
+                        一整天，早上就能把量跑完，然后在上游那儿撞限流。 */}
+                    {["5h", "day", "week", "month", "total"].map((window) => (
                       <option key={window} value={window}>
                         {window}
                       </option>
@@ -587,6 +591,12 @@ export function ShareSettings() {
                 {t("share.quotaAdd")}
               </Btn>
             </div>
+
+            {/* 上游余量紧挨着额度 —— 这两个数放在一起才有意义：
+                上面那个是「你打算放多少出去」，下面这个是「上游此刻还让你跑多少」。
+                上面填得比下面宽，机器就会在 Claude / Codex 那儿撞限流，
+                而共享设置页上看起来一切正常。 */}
+            <UpstreamUsageBlock row={current} />
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
@@ -802,4 +812,58 @@ function CapabilityRow({
       )}
     </div>
   );
+}
+
+
+/**
+ * 这条通道背后那个上游账号此刻还剩多少。
+ *
+ * 数据是节点从**本来就要发的**那些中转请求的响应头里捎回来的 —— 不额外打上游，
+ * 所以不消耗主人的额度、也不在他账号上留下多余的调用。代价是机器闲着时这个数
+ * 不会更新，因此观测时刻必须显示出来：三小时前的余量不能被当成此刻的。
+ *
+ * 上游没报的项显示「未报」而不是 0：那两件事在这一页上会导出完全相反的动作。
+ */
+function UpstreamUsageBlock({ row }: { row: ContributionView | null }) {
+  const { t } = useLocale();
+  const buckets = row?.upstreamUsage?.buckets ?? [];
+  if (!row || buckets.length === 0) {
+    return null;
+  }
+  const observed = row.upstreamUsageAt || row.upstreamUsage?.observedAt || "";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.upstream")}</span>
+        <span className="gx-card__hint">{t("share.upstreamHint", { at: formatObserved(observed) })}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
+        {buckets.map((bucket) => (
+          <div className="gx-quota" key={bucket.bucket}>
+            <div className="gx-quota__label">
+              <span>{bucket.window || bucket.bucket}</span>
+              <span className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>
+                {bucket.remaining === undefined
+                  ? t("share.upstreamUnknown")
+                  : formatCompact(bucket.remaining)}
+                {bucket.limit !== undefined ? (
+                  <span style={{ color: "var(--gx-faint)", fontWeight: 400 }}> / {formatCompact(bucket.limit)}</span>
+                ) : null}
+              </span>
+            </div>
+            {bucket.usedPercent === undefined ? null : (
+              <Meter used={Math.round(bucket.usedPercent)} limit={100} warned={bucket.usedPercent >= 80} />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatObserved(at: string): string {
+  if (!at) return "—";
+  const time = new Date(at);
+  if (Number.isNaN(time.getTime())) return "—";
+  return time.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 }

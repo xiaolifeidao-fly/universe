@@ -272,6 +272,45 @@ type LaneInput struct {
 	UpstreamOK      *bool             `json:"upstreamOK"`
 	Paused          *bool             `json:"paused"`
 	CachedArtifacts []string          `json:"cachedArtifacts"`
+	// Usage 这条通道背后那个上游账号此刻还剩多少。节点从中转响应的限流头里
+	// 捎回来的，nil 表示这台机器还没观测到过 —— 和「余量为 0」不是一回事。
+	Usage *UpstreamUsage `json:"usage"`
+}
+
+// UpstreamUsage 上游订阅自己报的余量（Claude / Codex 的 5 小时、周限额之类）。
+//
+// 和主人设的那份额度（QuotaGrant）是**两回事**，界面上必须分开显示：
+// 那份是「主人打算放多少出去」，这份是「上游实际还让跑多少」。前者填得比后者宽，
+// 机器就会在上游那儿撞限流，而平台这边看到的是「额度还剩大半」。
+//
+// 平台**不用它做任何判定** —— 不拿它派单、不拿它算钱。它是节点自报的事实，
+// 和 AvailableModels 同一个性质：给人看的，不进决策路径。原因有两条：
+// 上游回哪些头由上游说了算、随时可能变；而节点自报的数没法验证。
+type UpstreamUsage struct {
+	// Buckets 认出来的限流桶。解不出来时是空的 —— 空数组和「余量为 0」不一样。
+	Buckets []UsageBucket `json:"buckets"`
+	// Raw 原样的限流头。归一化认不出来的东西全靠它，也是事后补解析器时
+	// 唯一能对照的真实报文。
+	Raw map[string]string `json:"raw"`
+	// ObservedAt 节点观测到的时刻。**一路带到界面上**：数据来自本来就要发的那些
+	// 请求的响应头，机器闲着的时候它不会更新，几小时前的数不能被读成此刻的余量。
+	ObservedAt string `json:"observedAt"`
+	// Source 这份数怎么来的。目前只有 headers。
+	Source string `json:"source"`
+}
+
+// UsageBucket 一个限流桶此刻的状态。桶名原样保留（unified-5h / requests / tokens…）。
+type UsageBucket struct {
+	Bucket string `json:"bucket"`
+	// Window 从桶名里认出来的时间窗，如 5h / 7d。认不出来是空串。
+	Window      string   `json:"window,omitempty"`
+	Limit       *int64   `json:"limit,omitempty"`
+	Remaining   *int64   `json:"remaining,omitempty"`
+	Used        *int64   `json:"used,omitempty"`
+	UsedPercent *float64 `json:"usedPercent,omitempty"`
+	// Reset 归零时刻，原样的字符串：可能是 unix 秒、ISO 时间，也可能是 6ms 这种时长。
+	Reset  string `json:"reset,omitempty"`
+	Status string `json:"status,omitempty"`
 }
 
 type HeartbeatResult struct {
@@ -369,9 +408,7 @@ type IssueKeyRequest struct {
 	// 兜底，而 required 会在那一步之前就把空串打回去，兜底成了永远走不到的死代码。
 	// 结果是运营代签密钥必须自己报一个版本号，报错了还没人拦。
 	NoticeVersion string `json:"noticeVersion"`
-	// Grants 初始额度余额，P0 由后台直接给内测额度。
-	Grants contract.Metering `json:"grants"`
-	// ModelID 来源套餐绑定的模型，只用来认类别与展示。
+	// ModelID 把这把密钥钉在某个模型上，只用来认类别与展示。空表示不钉。
 	ModelID string `json:"modelId"`
 }
 
@@ -393,16 +430,15 @@ type ConsumerKeyView struct {
 	Category string `json:"category"`
 	ModelID  string `json:"modelId,omitempty"`
 	// Revealable 服务端能不能取回明文。老密钥只存了哈希，要换发一次才行。
-	Revealable       bool              `json:"revealable"`
-	AllowedKinds     []string          `json:"allowedKinds"`
-	AllowedProviders []string          `json:"allowedProviders"`
-	ModelTier        []string          `json:"modelTier"`
-	Concurrency      int               `json:"concurrency"`
-	RPM              int               `json:"rpm"`
-	IssuedAt         time.Time         `json:"issuedAt"`
-	ExpiresAt        time.Time         `json:"expiresAt"`
-	FrozenUntil      *time.Time        `json:"frozenUntil,omitempty"`
-	Balance          contract.Metering `json:"balance"`
+	Revealable       bool       `json:"revealable"`
+	AllowedKinds     []string   `json:"allowedKinds"`
+	AllowedProviders []string   `json:"allowedProviders"`
+	ModelTier        []string   `json:"modelTier"`
+	Concurrency      int        `json:"concurrency"`
+	RPM              int        `json:"rpm"`
+	IssuedAt         time.Time  `json:"issuedAt"`
+	ExpiresAt        time.Time  `json:"expiresAt"`
+	FrozenUntil      *time.Time `json:"frozenUntil,omitempty"`
 }
 
 // Caller 是一次消费者请求认定后的身份。适配器用它构造 WorkUnit。
@@ -530,6 +566,12 @@ type ContributionView struct {
 	UnavailableReason string `json:"unavailableReason,omitempty"`
 	// SeatsBound 有多少消费者绑在这条贡献上。大于 0 时不允许下线。
 	SeatsBound int `json:"seatsBound"`
+	// UpstreamUsage 这条通道背后那个上游账号此刻还剩多少（节点自报）。
+	// nil 表示这台机器还没观测到过 —— 一次中转都没跑过的机器就是 nil。
+	UpstreamUsage *UpstreamUsage `json:"upstreamUsage,omitempty"`
+	// UpstreamUsageAt 上面那份数是什么时候观测到的（Hub 收到的时刻）。
+	// 界面必须显示它：闲置的机器这个数会一直是旧的。
+	UpstreamUsageAt *time.Time `json:"upstreamUsageAt,omitempty"`
 }
 
 type QuotaStatusView struct {
@@ -621,68 +663,49 @@ type LaneStatus struct {
 	WaitQueueDepth int    `json:"waitQueueDepth"`
 }
 
-// ---------- 额度商品与订单（P1） ----------
+// ---------- 额度商品与订单（已下架，只剩历史） ----------
+//
+// 额度包卖的是「一把密钥里的 token 额度」。改成按账户积分余额逐笔扣费之后
+// 这门生意没有了：不再有商品目录，也不再能下单。下面两个结构只为**读旧数据**
+// 留着 —— 运营那份订单列表要摆得出当初买的是什么。
 
-// PackageView 一份额度商品。
-type PackageView struct {
-	PackageCode  string            `json:"packageCode"`
-	Title        string            `json:"title"`
-	Units        contract.Metering `json:"units"`
-	Amount       int64             `json:"amount"`
-	Currency     string            `json:"currency"`
-	TTLDays      int               `json:"ttlDays"`
-	AllowedKinds []string          `json:"allowedKinds,omitempty"`
-	ModelTier    []string          `json:"modelTier,omitempty"`
-	Concurrency  int               `json:"concurrency"`
-	RPM          int               `json:"rpm"`
-	// ModelID 绑定的模型，空表示通用套餐。分享返现按这个模型的比例算。
-	ModelID string `json:"modelId,omitempty"`
-	// Category 是商品归属（claude / codex / video / other），由 kind 与模型档推出来。
-	// 派生规则放服务端：控制台按它分栏，两个端各写一份匹配规则的话，
-	// 同一个额度包会在 Nova 和 Orbit 上落进不同的栏。
-	Category string `json:"category"`
-	// Listed / SortOrder 只对运营有意义：消费者那条接口固定 listedOnly=true，
-	// 拿到的 Listed 永远是 true。运营目录要看得见下架的，也要在改一个字段时
-	// 把其余字段原样带回去 —— SavePackage 是整行覆盖，不带回来就等于清零。
-	Listed    bool `json:"listed"`
-	SortOrder int  `json:"sortOrder"`
-}
+// PackageItem 额度包里的一条：一个模型买多少、打几折。
+//
+// 售价是**算出来的**，不是填进来的：数量 × 对外单价 = 原价，原价 × 折扣 = 售价。
+// 原先运营直接敲一个售价，于是「这个包卖 99 元」和「这些额度按单价值多少钱」
+// 互不相干 —— 调一次单价，所有包的实际折扣就悄悄变了，而界面上看不出来。
+//
+// 折扣按模型各给各的：opus 八折、haiku 六折是常见组合，整包一个折扣表达不了。
+type PackageItem struct {
+	ModelID string `json:"modelId"`
+	// Kind 这个模型属于哪种能力，取价要用。存下来而不是每次回查模型目录：
+	// 模型从目录里删掉之后，还在卖的包仍要算得出自己的价。
+	Kind string `json:"kind,omitempty"`
+	// Units 这一条给多少额度，按计量单位分开。数量是原始单位（token 个数），
+	// 不是百万 —— 界面上按百万填，换算在界面里做，库里和账本上始终是同一个量纲。
+	Units contract.Metering `json:"units"`
+	// DiscountBps 折扣，万分比，指的是**成交价占原价的比例**：10000 = 原价，
+	// 8500 = 八五折。和返现比例同一量纲，运营在两处看到的 bps 是一回事。
+	DiscountBps int `json:"discountBps"`
 
-// SavePackageRequest 运营维护商品目录。
-type SavePackageRequest struct {
-	PackageCode  string            `json:"packageCode" binding:"required"`
-	Title        string            `json:"title" binding:"required"`
-	Units        contract.Metering `json:"units" binding:"required"`
-	Amount       int64             `json:"amount"`
-	Currency     string            `json:"currency"`
-	TTLDays      int               `json:"ttlDays"`
-	AllowedKinds []string          `json:"allowedKinds"`
-	ModelTier    []string          `json:"modelTier"`
-	Concurrency  int               `json:"concurrency"`
-	RPM          int               `json:"rpm"`
-	// ModelID 绑定到模型目录里的哪个模型，留空为通用套餐。填了就必须在目录里存在。
-	ModelID   string `json:"modelId"`
-	Listed    *bool  `json:"listed"`
-	SortOrder int    `json:"sortOrder"`
-}
-
-// CreateOrderRequest 下单。TargetKeyID 非空表示给已有密钥充值，
-// 空表示支付成功后签发一把新密钥。
-type CreateOrderRequest struct {
-	UserID      string `json:"-"`
-	PackageCode string `json:"packageCode" binding:"required"`
-	TargetKeyID string `json:"targetKeyId"`
-	// NoticeVersion 只在要签发新密钥时必填：数据告知的确认是签发的硬前置（C-13）。
-	NoticeVersion string `json:"noticeVersion"`
+	// 以下三个是按**当前**价目表算出来的，不存库 —— 存下来就会和单价各改各的。
+	ListAmount int64 `json:"listAmount,omitempty"`
+	Amount     int64 `json:"amount,omitempty"`
+	// Unpriced 这一条里有量却查不到对外单价的计量单位。它们按 0 算进总价，
+	// 也就是白送 —— 保存时会被拒掉，列表里则要标出来。
+	Unpriced []string `json:"unpriced,omitempty"`
 }
 
 type OrderView struct {
 	OrderID     string            `json:"orderId"`
 	PackageCode string            `json:"packageCode"`
 	Units       contract.Metering `json:"units"`
-	Amount      int64             `json:"amount"`
-	Currency    string            `json:"currency"`
-	Status      string            `json:"status"`
+	// Items 下单那一刻这份包按模型拆开的构成，额度就按它发。空的是老订单：
+	// 那时还没有按模型分账，额度整份落在通用额度上。
+	Items    []PackageItem `json:"items,omitempty"`
+	Amount   int64         `json:"amount"`
+	Currency string        `json:"currency"`
+	Status   string        `json:"status"`
 	// PayMethod points=积分；channel=支付渠道。老订单是空串，按 channel 看。
 	PayMethod   string     `json:"payMethod,omitempty"`
 	ModelID     string     `json:"modelId,omitempty"`
@@ -695,29 +718,8 @@ type OrderView struct {
 	IssuedSecret string `json:"issuedSecret,omitempty"`
 }
 
-// PayOrderRequest 支付回调。PaymentRef 是渠道流水号，同时充当幂等键。
-type PayOrderRequest struct {
-	OrderID    string `json:"orderId" binding:"required"`
-	PaymentRef string `json:"paymentRef" binding:"required"`
-}
-
-// PaymentChannelView 一个可选支付渠道。Sandbox 必须一路透到界面上：
-// 沙箱渠道点一下就算付了，混在真渠道里不标注，运营会以为钱进来了。
-type PaymentChannelView struct {
-	Code    string `json:"code"`
-	Title   string `json:"title"`
-	Sandbox bool   `json:"sandbox"`
-}
-
-// PaySandboxRequest 沙箱支付。UserID 由令牌解析，不接受请求体里的值 ——
-// 它是「这单是不是你自己的」这道校验的唯一依据。
-type PaySandboxRequest struct {
-	UserID  string `json:"-"`
-	OrderID string `json:"orderId" binding:"required"`
-	Channel string `json:"channel"`
-}
-
-// RenewKeyRequest 续期换发：新密钥继承余额与允许范围，旧密钥进入冻结。
+// RenewKeyRequest 续期换发：新密钥继承允许范围，旧密钥立刻作废。
+// 额度在账户上，不跟着密钥走，所以换发不搬任何余额。
 type RenewKeyRequest struct {
 	OwnerUserID string `json:"-"`
 	KeyID       string `json:"keyId" binding:"required"`
@@ -1171,10 +1173,12 @@ type CreatePayoutRequest struct {
 
 // ConsumerDashboard 是密钥页与使用记录页共用的那一排数字。
 type ConsumerDashboard struct {
-	Keys       int               `json:"keys"`
-	ActiveKeys int               `json:"activeKeys"`
-	Balance    contract.Metering `json:"balance"`
-	Today      DayStats          `json:"today"`
+	Keys       int `json:"keys"`
+	ActiveKeys int `json:"activeKeys"`
+	// Balance 账户此刻的积分余额（微积分）。所有密钥共用这一份 ——
+	// 额度不再按密钥分账，新建一把密钥不会多出任何额度。
+	Balance int64    `json:"balance"`
+	Today   DayStats `json:"today"`
 	// SpentMicros 最近 N 天的花费（微分），Days 说明是几天。
 	SpentMicros int64  `json:"spentMicros"`
 	Days        int    `json:"days"`
@@ -1229,17 +1233,16 @@ type UsageRecordPage struct {
 
 // PortalOverview 门户一次取回整站要展示的东西。
 //
-// 拆成四条接口没有意义：这四份数据都很小、都随运营改动一起变、都不带用户维度，
-// 而门户的首页本来就要同时用到它们（价格滚动条要模型，CTA 要额度包）。
-// 一次取回还顺带让「模型数」这类统计和列表天然一致 —— 分两条接口取，
-// 中间被改一次目录就会出现「写着 12 个模型，列出来 11 个」。
+// 拆成三条接口没有意义：这几份数据都很小、都随运营改动一起变、都不带用户维度，
+// 而门户的首页本来就要同时用到它们。一次取回还顺带让「模型数」这类统计和
+// 列表天然一致 —— 分两条接口取，中间被改一次目录就会出现
+// 「写着 12 个模型，列出来 11 个」。
 type PortalOverview struct {
 	// Endpoint 是消费者要填进 base_url 的那个地址，服务端给，门户不再配一遍。
 	Endpoint  string             `json:"endpoint"`
 	Stats     PortalStats        `json:"stats"`
 	Families  []PortalFamilyView `json:"families"`
 	Models    []PortalModelView  `json:"models"`
-	Packages  []PackageView      `json:"packages"`
 	Prices    []PortalPriceLine  `json:"prices"`
 	UpdatedAt time.Time          `json:"updatedAt"`
 }
@@ -1249,12 +1252,9 @@ type PortalOverview struct {
 // 每一项都必须是库里真有的事实。像「5000+ 开发者」这种没有出处的数字不放进来 ——
 // 门户上第一眼看到的数字如果是编的，后面写什么都不作数了。
 type PortalStats struct {
-	Models   int `json:"models"`
-	Vendors  int `json:"vendors"`
-	Families int `json:"families"`
-	Packages int `json:"packages"`
-	// MinTopup 上架额度包里最便宜的那个（微分）。0 表示一个包都没上架。
-	MinTopup   int64  `json:"minTopup"`
+	Models     int    `json:"models"`
+	Vendors    int    `json:"vendors"`
+	Families   int    `json:"families"`
 	Currency   string `json:"currency"`
 	MaxContext int64  `json:"maxContext"`
 	// KeyTTLDays / FreezeDays 是密钥的默认有效期与到期后的冻结期，来自部署配置。
@@ -1292,10 +1292,11 @@ type PortalModelView struct {
 	OutputPrice     int64 `json:"outputPrice"`
 	CachePrice      int64 `json:"cachePrice"`
 	CacheWritePrice int64 `json:"cacheWritePrice"`
-	// ListInputPrice / ListOutputPrice 官方参考价，同口径同币种。0 = 运营没填，
-	// 卡片上不划线、也不标折扣 —— 比标一个「省 0%」诚实。
+	// ListInputPrice / ListOutputPrice / ListCachePrice 官方参考价，同口径同币种。0 = 运营没填，
+	// 那一档不划线 —— 比标一个「省 0%」诚实。折扣只按输出价算，缓存这一档不参与。
 	ListInputPrice  int64 `json:"listInputPrice,omitempty"`
 	ListOutputPrice int64 `json:"listOutputPrice,omitempty"`
+	ListCachePrice  int64 `json:"listCachePrice,omitempty"`
 	// DiscountBps 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端算好下发：
 	// 门户站、使用端、运营台三处各算一遍，迟早对不上 —— 和 Priced、scopeCategory 一个道理。
 	DiscountBps int      `json:"discountBps,omitempty"`
@@ -1312,10 +1313,8 @@ type PortalModelView struct {
 	// 所有模型显示同一个价，看起来像是页面坏了。
 	Priced    bool `json:"priced"`
 	SortOrder int  `json:"sortOrder"`
-	// ReferralBps / Listed 只有运营的目录接口会填：返现比例跟陌生人无关，
-	// 门户那条公开接口本来就只列上架的。ReferralBps 为空表示走全局默认。
-	ReferralBps *int64 `json:"referralBps,omitempty"`
-	Listed      *bool  `json:"listed,omitempty"`
+	// Listed 只有运营的目录接口会填：门户那条公开接口本来就只列上架的。
+	Listed *bool `json:"listed,omitempty"`
 }
 
 // PortalPriceLine kind × 单位的当前单价，定价页那张表直接渲染它。
@@ -1362,23 +1361,22 @@ type SaveModelRequest struct {
 	Kind            string `json:"kind"`
 	ContextTokens   int64  `json:"contextTokens"`
 	MaxOutputTokens int64  `json:"maxOutputTokens"`
-	InputPrice      int64  `json:"inputPrice"`
-	OutputPrice     int64  `json:"outputPrice"`
-	CachePrice      int64  `json:"cachePrice"`
-	CacheWritePrice int64  `json:"cacheWritePrice"`
-	// 官方参考价。留 0 就是不声明，模型广场那张卡上划线价与「省 X%」一起消失。
+	// 我们自己的单价**不在这里**：它按「能力 × 模型 × 计量单位」维护在 zt_galaxy_price 上。
+	// 模型行上再存一份展示价，就是同一个数在库里有两份、谁也不校验谁。
+	//
+	// 官方参考价。留 0 就是不声明，模型广场那张卡上这一档的划线价消失
+	// （输入与输出两档一起留 0 的话，「省 X%」也跟着消失）。
 	ListInputPrice  int64    `json:"listInputPrice"`
 	ListOutputPrice int64    `json:"listOutputPrice"`
+	ListCachePrice  int64    `json:"listCachePrice"`
 	Currency        string   `json:"currency"`
 	Tags            []string `json:"tags"`
 	Summary         string   `json:"summary"`
 	BadgeText       string   `json:"badgeText"`
 	BadgeTone       string   `json:"badgeTone"`
-	// ReferralBps 分享返现比例（万分之一），不传就是走全局默认。整行覆盖，所以编辑时要把原值带回来。
-	ReferralBps *int64 `json:"referralBps"`
-	Listed      *bool  `json:"listed"`
-	Featured    bool   `json:"featured"`
-	SortOrder   int    `json:"sortOrder"`
+	Listed          *bool    `json:"listed"`
+	Featured        bool     `json:"featured"`
+	SortOrder       int      `json:"sortOrder"`
 }
 
 // LeadRecord 运营看到的线索。比 LeadView 多的是联系方式与正文 ——

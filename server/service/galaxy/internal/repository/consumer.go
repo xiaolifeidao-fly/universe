@@ -3,8 +3,6 @@ package repository
 import (
 	"context"
 	"time"
-
-	"gorm.io/gorm/clause"
 )
 
 func (r *GalaxyRepository) CreateConsumerKey(ctx context.Context, row *GalaxyConsumerKey) error {
@@ -60,36 +58,7 @@ func (r *GalaxyRepository) ExpireConsumerKeys(ctx context.Context, bizLine strin
 }
 
 // ---------- 余额 ----------
-
-func (r *GalaxyRepository) UpsertBalance(ctx context.Context, rows []*GalaxyConsumerBalance) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "biz_line"}, {Name: "key_id"}, {Name: "unit"}},
-		DoUpdates: clause.Assignments(map[string]any{"balance": clause.Expr{SQL: "zt_galaxy_consumer_balance.balance + VALUES(balance)"}}),
-	}).Create(rows).Error
-}
-
-func (r *GalaxyRepository) ListBalances(ctx context.Context, bizLine, keyID string) ([]*GalaxyConsumerBalance, error) {
-	var rows []*GalaxyConsumerBalance
-	err := r.Db.WithContext(ctx).
-		Where("biz_line = ?", bizLine).Where("key_id = ?", keyID).
-		Order("unit").Find(&rows).Error
-	return rows, err
-}
-
-// ConsumeBalance 扣减余额。条件更新保证不会扣成负数：影响行数为 0 即余额不足。
-func (r *GalaxyRepository) ConsumeBalance(ctx context.Context, bizLine, keyID, unit string, amount int64) (bool, error) {
-	if amount <= 0 {
-		return true, nil
-	}
-	result := r.Db.WithContext(ctx).Model(&GalaxyConsumerBalance{}).
-		Where("biz_line = ?", bizLine).Where("key_id = ?", keyID).Where("unit = ?", unit).
-		Where("balance >= ?", amount).
-		Update("balance", clause.Expr{SQL: "balance - ?", Vars: []any{amount}})
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
-}
+//
+// zt_galaxy_consumer_balance 是额度包那一版的东西：额度按 (密钥, 模型, 计量单位) 挂在
+// 密钥上。改成按账户积分余额逐笔扣费之后，这张表上没有任何读写了 —— 表和数据留着可查，
+// 但不再有仓储方法：留着一组没人调的写方法，下次有人顺手用上就又分叉出第二套额度。

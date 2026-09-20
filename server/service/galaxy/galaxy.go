@@ -367,12 +367,16 @@ type Service interface {
 	CreatePayout(ctx context.Context, req dto.CreatePayoutRequest) (dto.PayoutView, error)
 
 	// ---------- 消费者 ----------
+	// CreateConsumerKey 使用者自助新建一把密钥，最多 5 把有效的。
+	// 密钥不带额度：额度是账户里的积分余额，名下几把密钥花的是同一份钱。
+	CreateConsumerKey(ctx context.Context, req dto.CreateConsumerKeyRequest) (dto.IssuedKeyView, error)
+	// IssueKey 运营代签。和上面走同一条签发路径，区别只在能指定范围与有效期。
 	IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.IssuedKeyView, error)
 	AuthenticateKey(ctx context.Context, secret string) (dto.Caller, error)
 	DescribeKey(ctx context.Context, keyID string) (dto.ConsumerKeyView, error)
 	ListKeys(ctx context.Context, ownerUserID string) ([]dto.ConsumerKeyView, error)
 	RevokeKey(ctx context.Context, ownerUserID, keyID string) error
-	// RenewKey 续期换发：新密钥继承余额与允许范围，旧密钥立刻作废。
+	// RenewKey 换发：新密钥继承允许范围，旧密钥立刻作废。余额在账户上，不跟着走。
 	RenewKey(ctx context.Context, req dto.RenewKeyRequest) (dto.IssuedKeyView, error)
 	// RevealKey 取回密钥明文和接入地址。ownerUserID 非空只认本人名下、没吊销的；空串是运营，哪把都能取。
 	RevealKey(ctx context.Context, ownerUserID, keyID string) (dto.KeySecretView, error)
@@ -381,41 +385,19 @@ type Service interface {
 	Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageReport, error)
 
 	// ---------- 使用者积分与分享 ----------
-	// 1 积分 = ¥1。运营充进来，买套餐花掉，邀请来的人买套餐时按模型的比例返给邀请人。
+	// 1 积分 = ¥1。运营充进来，调模型时按单价逐笔扣掉，邀请来的人充值时按比例返给邀请人。
 	PointsSummary(ctx context.Context, ownerUserID string) (dto.PointsSummary, error)
 	// PointsLedger 积分流水。Operator 为真是运营（可翻全站、按 OwnerKeyword 找人）；否则只看 OwnerUserID 本人的。
 	PointsLedger(ctx context.Context, query dto.PointsLedgerQuery) (dto.PointsLedgerPage, error)
 	// RechargePoints 运营给使用者充积分。同一个 RequestID 只充一次。
 	RechargePoints(ctx context.Context, req dto.RechargePointsRequest) (dto.PointsLedgerEntry, error)
-	// PurchaseWithPoints 用积分买套餐：扣积分 → 签发或充值 → 给邀请人返现。发不出去就把积分原路退回。
-	PurchaseWithPoints(ctx context.Context, req dto.PurchaseRequest) (dto.OrderView, error)
-	// ReferralOverview 分享页：邀请码（老账号第一次打开时补一个）、邀请人数、累计返现、各模型比例。
+	// ReferralOverview 分享页：邀请码（老账号第一次打开时补一个）、邀请人数、累计返现、返现比例。
 	ReferralOverview(ctx context.Context, ownerUserID string) (dto.ReferralOverview, error)
 	ListInvitees(ctx context.Context, ownerUserID string, offset, limit int) (dto.InviteePage, error)
 	ReferralSettings(ctx context.Context) (dto.ReferralSettings, error)
 	SaveReferralSettings(ctx context.Context, req dto.SaveReferralSettingsRequest) error
-	// ConsumerCatalog 使用端的模型广场：模型、挂在模型下的套餐、通用套餐，以及每个模型的返现比例。
+	// ConsumerCatalog 使用端的模型广场：在卖哪些模型、各自什么价。
 	ConsumerCatalog(ctx context.Context, fallbackModels []string) (dto.ConsumerCatalog, error)
-
-	// ---------- 额度商品与订单（P1） ----------
-	ListPackages(ctx context.Context, listedOnly bool) ([]dto.PackageView, error)
-	SavePackage(ctx context.Context, req dto.SavePackageRequest) error
-	CreateOrder(ctx context.Context, req dto.CreateOrderRequest) (dto.OrderView, error)
-	// PayOrder 支付回调。重放安全：同一订单只履约一次。
-	PayOrder(ctx context.Context, req dto.PayOrderRequest) (dto.OrderView, error)
-	// PayOrderByCallback 支付渠道回调这条路：先验签，再核对金额，最后才履约。
-	// 没配 PaymentVerifier 时直接拒绝 —— 不验签的回调等于把发额度的权限挂在公网上。
-	PayOrderByCallback(ctx context.Context, callback PaymentCallback) (dto.OrderView, error)
-	// PaymentEnabled 说明这套部署有没有可接收外部回调的已验签渠道，
-	// 供路由决定要不要挂回调。沙箱渠道不算数。
-	PaymentEnabled() bool
-	// PaymentChannels 这套部署接了哪些渠道，供控制台渲染收银台。
-	PaymentChannels() []PaymentChannel
-	// PaySandbox 沙箱支付：没有收银台可验签，靠「渠道被显式标成沙箱 + 订单是本人的」
-	// 两道闸兜住。真渠道一律走 PayOrderByCallback。
-	PaySandbox(ctx context.Context, req dto.PaySandboxRequest) (dto.OrderView, error)
-	ListOrders(ctx context.Context, userID string, limit int) ([]dto.OrderView, error)
-	CancelOrder(ctx context.Context, userID, orderID string) error
 
 	// ---------- 门户（未登录可见的那一面） ----------
 	// PortalCatalog 门户整站要展示的东西：模型目录、额度包、单价表与统计。
@@ -569,6 +551,9 @@ type Service interface {
 	// ---------- 平台运营：总览与排障 ----------
 	// AdminOverview 「今天要做什么」：各页的待办计数一次取回。
 	AdminOverview(ctx context.Context) (dto.AdminOverview, error)
+	// AdminDashboard 「今天做成了什么」：登录、在线机器、用量与金额、进账、算力剩余。
+	// 和上面那个是两页：一个数待办，一个数经营。
+	AdminDashboard(ctx context.Context) (dto.AdminDashboard, error)
 	// AdminMismatches 用量偏差。这张表此前只写不读 —— 落了行，没人看得见。
 	AdminMismatches(ctx context.Context, query dto.MismatchQuery) (dto.MismatchPage, error)
 	// AdminUnits 跨租户的运行工单，排障用。按人查的那条在 OwnedJobs。
@@ -638,9 +623,6 @@ type Ports struct {
 	Audit    AuditConfig
 	// Metrics 没接监控时留空，走无操作实现。
 	Metrics Metrics
-	// Payment 没配时支付回调接口整体关闭（内测期只有管理员手工确认到账这条路）。
-	// 不验签的回调等于把发额度的权限挂在公网上。
-	Payment PaymentVerifier
 	// Uploader 只有管理端装配它：上传 ai-bridge 安装包是运营动作，
 	// galaxy-api 上没有任何路径需要往对象存储里写整个文件。
 	Uploader ObjectUploader
@@ -659,7 +641,6 @@ type service struct {
 	desktop  DesktopStore
 	notifier ProviderNotifier
 	replayer ShadowReplayer
-	payment  PaymentVerifier
 	audit    AuditConfig
 	metrics  Metrics
 	kinds    *KindRegistry
@@ -710,7 +691,6 @@ func New(database *gorm.DB, ports Ports, kinds *KindRegistry, config Config) Ser
 		desktop:    ports.Desktop,
 		notifier:   ports.Notifier,
 		replayer:   ports.Replayer,
-		payment:    ports.Payment,
 		audit:      audit,
 		kinds:      kinds,
 		config:     config.withDefaults(),

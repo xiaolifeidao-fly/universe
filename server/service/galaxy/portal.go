@@ -68,17 +68,8 @@ func (s *service) PortalCatalog(ctx context.Context, fallbackModels []string) (d
 		models = fallbackModelViews(fallbackModels)
 	}
 
-	// 价目行取一次，几十个模型在内存里各挑各的 —— 单价已经能按模型定了，
-	// 再按 kind 取一张表给所有模型用，门户上标的就不是这个模型真会收的价。
-	// 门户要跨 kind 列全部模型，这里不收窄。
-	priceRows, err := s.repository.ListEffectivePrices(ctx, bizLine, "", now)
-	if err != nil {
+	if err := s.applyCatalogPrices(ctx, models, now); err != nil {
 		return dto.PortalOverview{}, err
-	}
-	for index := range models {
-		kind := defaultString(models[index].Kind, portalKind)
-		table, own := resolvePrices(priceRows, kind, models[index].ModelID)
-		applyKindPrice(&models[index], table, own)
 	}
 
 	sort.SliceStable(models, func(i, j int) bool {
@@ -88,45 +79,31 @@ func (s *service) PortalCatalog(ctx context.Context, fallbackModels []string) (d
 		return models[i].ModelID < models[j].ModelID
 	})
 
-	packages, err := s.ListPackages(ctx, true)
-	if err != nil {
-		return dto.PortalOverview{}, err
-	}
-
-	prices, err := s.portalPrices(ctx, now, portalKinds(models, packages))
+	prices, err := s.portalPrices(ctx, now, portalKinds(models))
 	if err != nil {
 		return dto.PortalOverview{}, err
 	}
 
 	return dto.PortalOverview{
 		Endpoint:  s.cfg().ConsumerBaseURL,
-		Stats:     s.portalStats(models, packages),
+		Stats:     s.portalStats(models),
 		Families:  portalFamilies(models),
 		Models:    models,
-		Packages:  packages,
 		Prices:    prices,
 		UpdatedAt: now,
 	}, nil
 }
 
-// portalKinds 门户上**真能买到**的那些能力。
+// portalKinds 门户上**真能用到**的那些能力。
 //
-// 单价表只列这些：价格表里还有 delivery.task 这种没有对外文案、门户上也买不到的
+// 单价表只列这些：价格表里还有 delivery.task 这种没有对外文案、门户上也用不上的
 // 能力，摆上去只会让人问「这个怎么用」而我们答不上来。
 //
-// 判据是「模型目录里出现过」或「某个上架商品显式允许」。允许范围为空的商品是
-// 「不限」，不贡献 kind —— 它能用的正是模型目录里那些，已经算进去了。
-func portalKinds(models []dto.PortalModelView, packages []dto.PackageView) map[string]bool {
+// 判据是「模型目录里出现过」。
+func portalKinds(models []dto.PortalModelView) map[string]bool {
 	kinds := map[string]bool{}
 	for _, model := range models {
 		kinds[defaultString(model.Kind, portalKind)] = true
-	}
-	for _, item := range packages {
-		for _, kind := range item.AllowedKinds {
-			if trimmed := strings.TrimSpace(kind); trimmed != "" {
-				kinds[trimmed] = true
-			}
-		}
 	}
 	return kinds
 }
@@ -172,10 +149,9 @@ func (s *service) portalPrices(ctx context.Context, at time.Time, kinds map[stri
 	return lines, nil
 }
 
-func (s *service) portalStats(models []dto.PortalModelView, packages []dto.PackageView) dto.PortalStats {
+func (s *service) portalStats(models []dto.PortalModelView) dto.PortalStats {
 	stats := dto.PortalStats{
 		Models:       len(models),
-		Packages:     len(packages),
 		Currency:     "CNY",
 		KeyTTLDays:   wholeDays(s.cfg().KeyTTL),
 		FreezeDays:   wholeDays(s.cfg().KeyFreeze),
@@ -194,22 +170,6 @@ func (s *service) portalStats(models []dto.PortalModelView, packages []dto.Packa
 		}
 	}
 	stats.Vendors, stats.Families = len(vendors), len(families)
-	for _, item := range packages {
-		if item.Amount <= 0 {
-			continue
-		}
-		if stats.MinTopup == 0 || item.Amount < stats.MinTopup {
-			stats.MinTopup = item.Amount
-			stats.Currency = defaultString(item.Currency, stats.Currency)
-		}
-		// 并发与速率取上架商品里最高的那档：首页说的是「最高能到多少」。
-		if item.Concurrency > stats.Concurrency {
-			stats.Concurrency = item.Concurrency
-		}
-		if item.RPM > stats.RPM {
-			stats.RPM = item.RPM
-		}
-	}
 	return stats
 }
 
@@ -261,20 +221,14 @@ func portalModelView(row *repository.GalaxyModel) dto.PortalModelView {
 		ModelID: row.ModelID, DisplayName: defaultString(row.DisplayName, row.ModelID),
 		Vendor: vendor, Family: family, Kind: defaultString(row.Kind, portalKind),
 		ContextTokens: row.ContextTokens, MaxOutputTokens: row.MaxOutputTokens,
-		InputPrice: row.InputPrice, OutputPrice: row.OutputPrice,
-		CachePrice: row.CachePrice, CacheWritePrice: row.CacheWritePrice,
-		ListInputPrice: row.ListInputPrice, ListOutputPrice: row.ListOutputPrice,
-		DiscountBps: discountBps(row.OutputPrice, row.ListOutputPrice),
-		Currency:    defaultString(row.Currency, "CNY"),
-		Tags:        decodeStrings(row.TagsJSON), Summary: row.Summary,
+		// 四档单价这里一律留空，由 applyKindPrice 从计价表填。模型行上原先也存过
+		// 一份「展示价」，于是同一个模型的价在库里有两份、谁也不校验谁 ——
+		// 门户标一个价、账上扣另一个价，两边都不会报错。现在只剩计价表一份。
+		ListInputPrice: row.ListInputPrice, ListOutputPrice: row.ListOutputPrice, ListCachePrice: row.ListCachePrice,
+		Currency: defaultString(row.Currency, "CNY"),
+		Tags:     decodeStrings(row.TagsJSON), Summary: row.Summary,
 		BadgeText: row.BadgeText, BadgeTone: badgeTone(row.BadgeText, row.BadgeTone),
 		Featured: row.Featured, SortOrder: row.SortOrder,
-		// 要「输入和输出都填了」才算这个模型自己的价。
-		//
-		// 用 || 的话，只填了 input 的那一行会被当成已定价：门户不再标「统一价」，
-		// 而 output 那格显示的其实是 kind 的统一价 —— 访问者会把它读成
-		// 这个模型的真实输出价。半份价格比没有价格更危险。
-		Priced: row.InputPrice > 0 && row.OutputPrice > 0,
 	}
 }
 
@@ -298,42 +252,56 @@ func fallbackModelViews(declared []string) []dto.PortalModelView {
 	return views
 }
 
-// applyKindPrice 模型目录没填展示价时，回落到计价表里它真会被收的那个价。
+// applyCatalogPrices 给一整份目录套上当前生效的对外单价。
 //
-// 回落有两层：先看这个模型自己的计价行，没有才用 kind 的兜底价。own 分得清
-// 落到了哪一层 —— 落到兜底价才叫「统一价」，Priced 置 false，门户据此说明
-// 「这几个数字不是这个模型专属的」；落到模型自己的计价行时，卡片上标的就是
-// 它真会被收的价，再说成统一价就是在骗人。
+// 价目行取一次，几十个模型在内存里各挑各的 —— 单价已经能按模型定了，
+// 再按 kind 取一张表给所有模型用，标出来的就不是这个模型真会收的价。
+// 跨 kind 列全部模型，这里不收窄。
 //
-// Priced 最后统一算一遍，而不是边填边置 false：目录只填了 input、output 靠
-// 模型自己的计价行补上，这种半填的行两个数都是它自己的，Priced 该是 true。
+// 门户目录（PortalCatalog）和运营目录（ListPortalModels）共用这一份：
+// 两处各写一遍取价，同一个模型迟早在门户上标一个数、在运营台上显示另一个数，
+// 而运营台恰恰是用来核对门户标了什么的那一页。
+func (s *service) applyCatalogPrices(ctx context.Context, models []dto.PortalModelView, at time.Time) error {
+	priceRows, err := s.repository.ListEffectivePrices(ctx, bizLine, "", at)
+	if err != nil {
+		return err
+	}
+	for index := range models {
+		kind := defaultString(models[index].Kind, portalKind)
+		table, own := resolvePrices(priceRows, kind, models[index].ModelID)
+		applyKindPrice(&models[index], table, own)
+	}
+	return nil
+}
+
+// applyKindPrice 把计价表里这个模型真会被收的价填进卡片。
+//
+// **价只有计价表一个出处。** 模型目录上原先也有四档「展示价」，那是第二份数据：
+// 门户照目录标、账上照计价表扣，两个数对不上时两边都不报错，而访问者看到的是
+// 一个他付不到的价。现在目录只管「这个模型是什么」。
+//
+// 取价分两层：先看这个模型自己的计价行，按单位找不到才用该 kind 的兜底价。
+// own 分得清落到了哪一层 —— 落到兜底价才叫「统一价」，Priced 置 false，
+// 门户据此说明「这几个数字不是这个模型专属的」，否则回落期间一屏模型
+// 显示同一个数，看起来像页面坏了。
 func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]priceRow, own map[contract.MeterUnit]bool) {
-	// fill 返回「这一档最终是不是这个模型自己的价」。目录里填过的当然算。
-	fill := func(unit contract.MeterUnit, price *int64) bool {
-		if *price > 0 {
-			return true
-		}
-		row, ok := table[unit]
-		if !ok {
-			return false
-		}
-		*price = row.Price
-		return own[unit]
-	}
-	if model.InputPrice == 0 {
-		if price, ok := table[contract.UnitInputTokens]; ok {
-			model.Currency = defaultString(price.Currency, model.Currency)
+	fill := func(unit contract.MeterUnit, price *int64) {
+		if row, ok := table[unit]; ok {
+			*price = row.Price
 		}
 	}
-	inputOwn := fill(contract.UnitInputTokens, &model.InputPrice)
-	outputOwn := fill(contract.UnitOutputTokens, &model.OutputPrice)
+	if price, ok := table[contract.UnitInputTokens]; ok {
+		model.Currency = defaultString(price.Currency, model.Currency)
+	}
+	fill(contract.UnitInputTokens, &model.InputPrice)
+	fill(contract.UnitOutputTokens, &model.OutputPrice)
 	fill(contract.UnitCacheReadTokens, &model.CachePrice)
-	// 缓存写入单独回落。它和缓存读取不是一档：写入比普通输入还贵，读取便宜一个数量级，
-	// 让写入跟着读取的价走等于按十分之一收。
-	fill(contract.UnitCacheWriteTokens, &model.CacheWritePrice)
-	// 要「输入和输出都是这个模型自己的」才算它有专属价。用 || 的话，
+	// 缓存写入在卡片上只有一格，取 5 分钟那一档 —— 它是绝大多数请求真正命中的 TTL。
+	// 拿合计（llm.cache_write_tokens）来填是错的：那个单位不进账本，通常也没有价。
+	fill(contract.UnitCacheWrite5mTokens, &model.CacheWritePrice)
+	// 要「输入和输出都是这个模型自己的行」才算它有专属价。用 || 的话，
 	// 只有一档是专属的那些模型会被当成整份都专属，另一档其实是统一价。
-	model.Priced = inputOwn && outputOwn
+	model.Priced = own[contract.UnitInputTokens] && own[contract.UnitOutputTokens]
 	model.Currency = defaultString(model.Currency, "CNY")
 	// 折扣按**卡片上最终显示的那个价**重算：回落到统一价之后再拿建表时的
 	// 0 去比，「省 X%」要么消失要么是个 100%。访问者读到的是「我要付这个数、
@@ -476,11 +444,17 @@ func (s *service) ListPortalModels(ctx context.Context, listedOnly bool) ([]dto.
 	views := make([]dto.PortalModelView, 0, len(rows))
 	for _, row := range rows {
 		view := portalModelView(row)
-		// 运营目录要看见「这一行自己填了没填价」，所以不回落到 kind 统一价。
-		// 返现比例和上下架只给运营看：门户那条公开接口不走这里。
+		// 上下架只给运营看：门户那条公开接口不走这里。
 		listed := row.Listed
-		view.ReferralBps, view.Listed = row.ReferralBps, &listed
+		view.Listed = &listed
 		views = append(views, view)
+	}
+	// 和门户走同一套取价（含回落到 kind 兜底价）—— 运营目录那一列回答的正是
+	// 「门户上会标成多少」，不回落的话，一个靠兜底价卖的模型在这里显示成「没有价」，
+	// 而它在门户上明明标着数。落到兜底价时 Priced 为 false，界面据此标「统一价」，
+	// 「这一行自己填了没填价」仍然看得见。
+	if err := s.applyCatalogPrices(ctx, views, time.Now()); err != nil {
+		return nil, err
 	}
 	return views, nil
 }
@@ -500,10 +474,7 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 	if req.Listed != nil {
 		listed = *req.Listed
 	}
-	if req.ReferralBps != nil && (*req.ReferralBps < 0 || *req.ReferralBps > maxReferralBps) {
-		return fmt.Errorf("返现比例要在 0%% 到 100%% 之间")
-	}
-	if req.ListInputPrice < 0 || req.ListOutputPrice < 0 {
+	if req.ListInputPrice < 0 || req.ListOutputPrice < 0 || req.ListCachePrice < 0 {
 		return fmt.Errorf("官方参考价不能是负数")
 	}
 	// 官方价填得比自家价还低不拦：拦了就意味着运营为了改一个无关字段
@@ -526,52 +497,36 @@ func (s *service) SavePortalModel(ctx context.Context, req dto.SaveModelRequest)
 		Family:        clip(defaultString(req.Family, family), 32),
 		Kind:          clip(defaultString(req.Kind, portalKind), 64),
 		ContextTokens: req.ContextTokens, MaxOutputTokens: req.MaxOutputTokens,
-		InputPrice: req.InputPrice, OutputPrice: req.OutputPrice,
-		CachePrice: req.CachePrice, CacheWritePrice: req.CacheWritePrice,
-		ListInputPrice: req.ListInputPrice, ListOutputPrice: req.ListOutputPrice,
+		ListInputPrice: req.ListInputPrice, ListOutputPrice: req.ListOutputPrice, ListCachePrice: req.ListCachePrice,
 		Currency: clip(defaultString(req.Currency, "CNY"), 8),
 		TagsJSON: tags, Summary: clip(req.Summary, 256),
-		BadgeText:   badge,
-		BadgeTone:   badgeTone(badge, req.BadgeTone),
-		ReferralBps: req.ReferralBps,
-		Listed:      listed, Featured: req.Featured, SortOrder: req.SortOrder,
+		BadgeText: badge,
+		BadgeTone: badgeTone(badge, req.BadgeTone),
+		Listed:    listed, Featured: req.Featured, SortOrder: req.SortOrder,
 	})
 }
 
 // ConsumerCatalog 使用端的模型广场。
 //
-// 模型与单价和门户同源（PortalCatalog 那一套回落规则原样生效），差别只在组织方式：
-// 套餐挂到它绑定的模型下面，每个模型带着此刻生效的返现比例。
-// 绑定的模型不在上架目录里（下架了、删了）的套餐不跟着消失，落进「通用套餐」——
-// 商品还在卖，只是暂时没有模型卡片可挂。
+// 模型与单价和门户同源（PortalCatalog 那一套回落规则原样生效），差别只在多一个
+// 类别（这个模型该接 Claude Code 还是 Codex）和此刻的返现比例。
 func (s *service) ConsumerCatalog(ctx context.Context, fallbackModels []string) (dto.ConsumerCatalog, error) {
 	overview, err := s.PortalCatalog(ctx, fallbackModels)
 	if err != nil {
 		return dto.ConsumerCatalog{}, err
 	}
-	rates, err := s.referralRates(ctx)
+	settings, err := s.ReferralSettings(ctx)
 	if err != nil {
 		return dto.ConsumerCatalog{}, err
 	}
 	catalog := dto.ConsumerCatalog{
-		Endpoint: overview.Endpoint, DefaultBps: rates.defaultBps, UpdatedAt: overview.UpdatedAt,
-		Models:   make([]dto.ConsumerModelView, 0, len(overview.Models)),
-		Packages: []dto.PackageView{},
+		Endpoint: overview.Endpoint, DefaultBps: settings.DefaultBps, UpdatedAt: overview.UpdatedAt,
+		Models: make([]dto.ConsumerModelView, 0, len(overview.Models)),
 	}
-	index := make(map[string]int, len(overview.Models))
 	for _, model := range overview.Models {
-		index[model.ModelID] = len(catalog.Models)
 		catalog.Models = append(catalog.Models, dto.ConsumerModelView{
 			PortalModelView: model, Category: familyCategory(model.Family),
-			ReferralBps: rates.of(model.ModelID), Packages: []dto.PackageView{},
 		})
-	}
-	for _, item := range overview.Packages {
-		if position, ok := index[item.ModelID]; ok && item.ModelID != "" {
-			catalog.Models[position].Packages = append(catalog.Models[position].Packages, item)
-			continue
-		}
-		catalog.Packages = append(catalog.Packages, item)
 	}
 	return catalog, nil
 }

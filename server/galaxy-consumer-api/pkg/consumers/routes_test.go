@@ -1,8 +1,6 @@
 package consumers
 
 import (
-	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -36,25 +34,35 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 		"GET /api/galaxy/consumer/disputes",
 		"POST /api/galaxy/consumer/disputes",
 		"POST /api/galaxy/consumer/disputes/:disputeId/withdraw",
-		"GET /api/galaxy/consumer/payments/channels",
-		"POST /api/galaxy/consumer/orders/pay/sandbox",
 		"GET /api/galaxy/consumer/catalog",
 		"GET /api/galaxy/consumer/points",
 		"GET /api/galaxy/consumer/points/ledger",
-		"POST /api/galaxy/consumer/points/purchase",
 		"GET /api/galaxy/consumer/referral",
 		"GET /api/galaxy/consumer/referral/invitees",
+		"POST /api/galaxy/consumer/keys",
 		"POST /api/galaxy/consumer/keys/secret",
+		"POST /api/galaxy/consumer/keys/renew",
+		"POST /api/galaxy/consumer/keys/revoke",
 	}
-	// 运营动作一律不挂在使用端路由组上：商品目录、给人发密钥、人工确认到账都在
-	// manager-api 的 /api/galaxy/admin/* 下，认的是管理端账号。留在这儿的话，
-	// 它们只能靠一个中间件把门，而 Galaxy 的账号体系里根本没有运营这种人。
+	// 两类路由都不该在这儿。
+	//
+	// 一类是运营动作：给人发密钥、充积分，都在 manager-api 的 /api/galaxy/admin/* 下，
+	// 认的是管理端账号。留在这儿的话它们只能靠一个中间件把门，而 Galaxy 的账号体系里
+	// 根本没有运营这种人。
+	//
+	// 一类是买卖：额度包已经下架，额度就是账户里的积分余额，只能由运营充进来。
+	// 这一端还留着任何一条能下单、能付款的路由，就等于还能自助买到额度。
 	gone := []string{
-		"POST /api/galaxy/consumer/packages/save",
 		"POST /api/galaxy/consumer/keys/issue",
-		"POST /api/galaxy/consumer/orders/pay",
-		// 充积分是运营动作，使用端只能花。
 		"POST /api/galaxy/consumer/points/recharge",
+		"GET /api/galaxy/consumer/packages",
+		"POST /api/galaxy/consumer/orders",
+		"POST /api/galaxy/consumer/orders/cancel",
+		"POST /api/galaxy/consumer/orders/pay/sandbox",
+		"GET /api/galaxy/consumer/payments/channels",
+		"POST /api/galaxy/consumer/points/purchase",
+		"POST /api/galaxy/consumer/points/buy-model",
+		"GET /api/galaxy/consumer/points/quote",
 	}
 	registered := map[string]bool{}
 	for _, route := range engine.Routes() {
@@ -69,35 +77,5 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 		if registered[route] {
 			t.Errorf("%s 是运营动作，应当在 manager-api 的 /api/galaxy/admin 下", route)
 		}
-	}
-}
-
-// TestPaymentCallbackNotRegisteredWithoutVerifier 没接支付渠道时那条路由必须
-// 压根不存在。注册了但不验签的回调，等于把「发额度」挂在公网上让人随便调。
-func TestPaymentCallbackNotRegisteredWithoutVerifier(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	engine := gin.New()
-	NewHandler(paymentDisabled{}, auth.NewGate(nil), Options{}).RegisterCallbacks(engine.Group("/galaxy"))
-
-	for _, route := range engine.Routes() {
-		if strings.Contains(route.Path, "/payments/") {
-			t.Fatalf("未接支付渠道时不该注册 %s %s", route.Method, route.Path)
-		}
-	}
-}
-
-func TestPaymentCallbackRegisteredWhenEnabled(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	engine := gin.New()
-	NewHandler(paymentEnabled{}, auth.NewGate(nil), Options{}).RegisterCallbacks(engine.Group("/galaxy"))
-
-	found := false
-	for _, route := range engine.Routes() {
-		if route.Method == http.MethodPost && route.Path == "/galaxy/payments/:channel/callback" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("接了支付渠道就该有回调路由")
 	}
 }

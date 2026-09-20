@@ -301,9 +301,20 @@ type GalaxyContribution struct {
 	// 通配），这个只是给控制台当候选项，免得主人得自己记住上游有什么。
 	ModelsAvailableJSON string `gorm:"column:models_available_json;type:varchar(4096)" description:"节点上报的上游可用模型名"`
 	ModelsDenyJSON      string `gorm:"column:models_deny_json;type:varchar(1024)" description:"模型黑名单模式数组"`
-	Seats               int    `gorm:"column:seats;default:3" description:"同时服务的消费者数量上限"`
-	SeatConcurrency     int    `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
-	ScheduleJSON        string `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
+	// UpstreamUsageJSON 节点自报的**上游订阅余量**（Claude / Codex 自己的 5 小时、
+	// 周限额），从中转响应的限流头里捎回来的。和 zt_galaxy_quota_grant 是两回事：
+	// 那张表是主人打算放多少出去，这一列是上游实际还让跑多少。
+	//
+	// 和 ModelsAvailableJSON 同一个性质：**节点自报的事实，只给人看**，不参与派单、
+	// 不参与计费。上游回哪些头由上游说了算、随时会变，而自报的数没法验证 ——
+	// 拿它做判定，等于把调度权交给一个不可信而且形状不稳定的输入。
+	UpstreamUsageJSON string `gorm:"column:upstream_usage_json;type:varchar(4096)" description:"节点自报的上游订阅余量，只给人看"`
+	// UpstreamUsageAt 上面那份数是什么时候收到的。界面必须显示它：
+	// 数据来自本来就要发的那些请求，机器闲着的时候它不会更新。
+	UpstreamUsageAt *time.Time `gorm:"column:upstream_usage_at;type:timestamp null default null" description:"上游余量的观测时刻"`
+	Seats           int        `gorm:"column:seats;default:3" description:"同时服务的消费者数量上限"`
+	SeatConcurrency int        `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
+	ScheduleJSON    string     `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
 
 	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_contribution_node,priority:3" description:"active/draining/paused/disabled"`
 	// PendingStatus 主人点了关闭、但那会儿还有请求在跑，等在途归零之后要落到的状态。
@@ -361,11 +372,14 @@ func (r *GalaxyQuotaGrant) Init()             {}
 // GalaxyQuotaWindow 每分钟从 Redis 计数器快照一次，供对账与控制台展示。
 // 对账以 meter_record 求和为准，这张表只是加速读。
 type GalaxyQuotaWindow struct {
-	ID        int64  `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine   string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_quota_window,priority:1"`
-	CID       string `gorm:"column:cid;type:varchar(96);uniqueIndex:uk_gx_quota_window,priority:2"`
-	Unit      string `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_quota_window,priority:3"`
-	WindowKey string `gorm:"column:window_key;type:varchar(24);uniqueIndex:uk_gx_quota_window,priority:4"`
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_quota_window,priority:1;index:idx_gx_quota_window_key,priority:1"`
+	CID     string `gorm:"column:cid;type:varchar(96);uniqueIndex:uk_gx_quota_window,priority:2"`
+	Unit    string `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_quota_window,priority:3"`
+	// WindowKey 单独再进一条索引：唯一键是按 cid 打头的，而「全池此刻还剩多少额度」
+	// 那个查询手上只有窗口键、没有 cid —— 跳过第二列就用不上唯一键，只能全表扫。
+	// 这张表按 (cid, unit, 窗口键) 一行一行地堆，旧窗口不清，所以它不是一张小表。
+	WindowKey string `gorm:"column:window_key;type:varchar(24);uniqueIndex:uk_gx_quota_window,priority:4;index:idx_gx_quota_window_key,priority:2"`
 
 	Used       int64     `gorm:"column:used"`
 	Reserved   int64     `gorm:"column:reserved"`
@@ -529,11 +543,21 @@ func (r *GalaxyConsumerKey) TableName() string { return "zt_galaxy_consumer_key"
 func (r *GalaxyConsumerKey) Init()             {}
 
 // GalaxyConsumerBalance 密钥的单位余额。P0 只记账不扣款，扣减在 P1 接支付后生效。
+//
+// ModelID 空串是**通用额度**：任何模型都能用它，不是「某个叫空串的模型」。
+// 按模型打包卖的包（opus 打八折、sonnet 打六折）必须按模型分开记 ——
+// 合并成一份通用 token 额度的话，买的人会把它全拿去跑最贵的那个模型，
+// 付的是混合折扣价、用的是单价最高的模型，而账面上一点异常都看不出来。
+//
+// 扣的时候先扣这个模型自己的那份，扣不动再扣通用那份（见 service 的 consumeBalance）。
 type GalaxyConsumerBalance struct {
-	ID          int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine     string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_consumer_balance,priority:1"`
-	KeyID       string    `gorm:"column:key_id;type:varchar(64);uniqueIndex:uk_gx_consumer_balance,priority:2"`
-	Unit        string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_consumer_balance,priority:3"`
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_consumer_balance,priority:1"`
+	KeyID   string `gorm:"column:key_id;type:varchar(64);uniqueIndex:uk_gx_consumer_balance,priority:2"`
+	// NOT NULL DEFAULT '' 不是装饰：唯一索引不拦 NULL，可空的话同一把密钥、
+	// 同一个单位能插进两行 model_id 为 NULL 的余额，扣的时候先扣到哪行全看运气。
+	ModelID     string    `gorm:"column:model_id;type:varchar(96);not null;default:'';uniqueIndex:uk_gx_consumer_balance,priority:3" description:"模型名，空=通用额度"`
+	Unit        string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_consumer_balance,priority:4"`
 	Balance     int64     `gorm:"column:balance"`
 	Frozen      int64     `gorm:"column:frozen"`
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
@@ -763,9 +787,22 @@ type GalaxyPackage struct {
 	PackageCode string `gorm:"column:package_code;type:varchar(64);uniqueIndex:uk_gx_package,priority:2"`
 
 	Title string `gorm:"column:title;type:varchar(128)"`
-	// UnitsJSON 是这份商品给的额度：单位 → 数量。
+	// ItemsJSON 按模型拆开的构成：[{modelId, kind, units, discountBps}]。
+	//
+	// 它是模型包的**唯一事实**：UnitsJSON 与 Amount 都由它算出来（数量 × 对外单价
+	// × 折扣），运营填的是数量和折扣，售价不经手。空串表示这是个遗留包 ——
+	// 建它的时候还没有按模型定价，只有一份合计额度和一个手填的售价。
+	//
+	// 用 text 而不是 varchar：一个包能装下十几个模型 × 四档计量单位，
+	// varchar(1024) 在第五六个模型上就会被 MySQL 截断，而截断不报错，
+	// 只会让这个包少发几档额度。
+	ItemsJSON string `gorm:"column:items_json;type:text" description:"按模型拆开的构成，空为遗留包"`
+	// UnitsJSON 是这份商品给的额度：单位 → 数量。模型包由 ItemsJSON 摊平而来，
+	// 只供展示与老路径使用 —— 发额度按 ItemsJSON 分模型发，不按它。
 	UnitsJSON string `gorm:"column:units_json;type:varchar(1024)"`
 	// Amount 售价，单位微分；与 price 表同一量纲，便于对账。
+	// 模型包的这个数由服务端算出来写进去，是**成交价**：之后单价再调，
+	// 已经在卖的包还按它卖，直到运营重新保存一次。
 	Amount   int64  `gorm:"column:amount"`
 	Currency string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
 	// TTLDays 这份商品签发出的密钥有效期。
@@ -803,6 +840,9 @@ type GalaxyOrder struct {
 	Currency    string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
 	// UnitsJSON 下单那一刻的额度快照。商品改了不影响已下的单。
 	UnitsJSON string `gorm:"column:units_json;type:varchar(1024)"`
+	// ItemsJSON 下单那一刻**按模型拆开**的额度快照，履约就照它发。
+	// 空的是老订单（或遗留包下的单）：那时没有按模型分账，整份落进通用额度。
+	ItemsJSON string `gorm:"column:items_json;type:text" description:"按模型拆开的额度快照，空则整份落通用额度"`
 	// TargetKeyID 非空表示给这把已有密钥充值，空表示签发新密钥。
 	TargetKeyID string `gorm:"column:target_key_id;type:varchar(64)" description:"非空表示给这把已有密钥充值，空表示签发新密钥"`
 	KeyID       string `gorm:"column:key_id;type:varchar(64)" description:"履约后落到哪把密钥"`
@@ -985,16 +1025,17 @@ type GalaxyModel struct {
 	// netInput 里已经把 OpenAI 那边含在 input 里的 cached 减掉了），缓存读与缓存写
 	// 各自一档。合成一档的话必有一边算错：缓存写入通常比普通输入还贵，
 	// 缓存读取却便宜一个数量级。
-	InputPrice      int64 `gorm:"column:input_price;default:0" description:"每百万新增 input token 微分，0=按 kind 统一价"`
-	OutputPrice     int64 `gorm:"column:output_price;default:0" description:"每百万 output token 微分，0=按 kind 统一价"`
-	CachePrice      int64 `gorm:"column:cache_price;default:0" description:"每百万 cache_read token 微分，0=按 kind 统一价"`
-	CacheWritePrice int64 `gorm:"column:cache_write_price;default:0" description:"每百万 cache_write token 微分，0=按 kind 统一价"`
 
-	// ListInputPrice / ListOutputPrice 官方参考价，口径与上面几档完全一致（每百万 token 微分、同一币种）。
-	// 模型广场拿它划那道线、算「省 X%」。必须是运营填进来的事实：上游改价我们不会立刻知道，
-	// 由代码推一个折扣写上去，性质上就是价格欺诈。0 = 没填，划线价与折扣一起不显示。
+	// ListInputPrice / ListOutputPrice / ListCachePrice 官方参考价，口径与上面几档完全一致
+	// （每百万 token 微分、同一币种）。模型广场拿它划那道线、算「省 X%」。必须是运营填进来的事实：
+	// 上游改价我们不会立刻知道，由代码推一个折扣写上去，性质上就是价格欺诈。
+	// 0 = 没填，那一档的划线价不显示（折扣只按输出价算，和缓存这一档无关）。
+	//
+	// 缓存这一档是后加的（20260920_galaxy_model_list_cache_price.sql）：卡片上是
+	// 新增输入 / 输出 / 缓存读取三格，划线价只有两档的话，差价最悬殊的那一格旁边反而没有可比的数。
 	ListInputPrice  int64  `gorm:"column:list_input_price;default:0" description:"官方参考价：每百万 input token 微分，0=不显示划线价"`
 	ListOutputPrice int64  `gorm:"column:list_output_price;default:0" description:"官方参考价：每百万 output token 微分，0=不显示划线价"`
+	ListCachePrice  int64  `gorm:"column:list_cache_price;default:0" description:"官方参考价：每百万 cache read token 微分，0=这一档不显示"`
 	Currency        string `gorm:"column:currency;type:varchar(8);default:'CNY'"`
 
 	TagsJSON string `gorm:"column:tags_json;type:varchar(512)" description:"能力标签，JSON 数组"`
@@ -1006,10 +1047,6 @@ type GalaxyModel struct {
 	// 让运营直接填颜色的话，迟早出现一张六种颜色的卡片墙。
 	BadgeText string `gorm:"column:badge_text;type:varchar(16)" description:"卡片角标文案，空=不显示"`
 	BadgeTone string `gorm:"column:badge_tone;type:varchar(16)" description:"角标配色：hot/new/value/neutral"`
-
-	// ReferralBps 被邀请人买这个模型的套餐时，按实付积分返给邀请人的比例，单位万分之一。
-	// NULL 表示没单独设、走全局默认；0 是「这个模型不返」，两者不是一回事，所以用指针。
-	ReferralBps *int64 `gorm:"column:referral_bps" description:"分享返现比例（万分之一），NULL 走全局默认"`
 
 	Listed      bool      `gorm:"column:listed;default:true;index:idx_gx_model_listed,priority:2"`
 	Featured    bool      `gorm:"column:featured;default:false" description:"首页精选位"`
@@ -1079,10 +1116,10 @@ func (r *GalaxyPointsAccount) Init()             {}
 // 对不上的时候谁也说不清哪边是对的。
 type GalaxyPointsLedger struct {
 	ID          int64  `gorm:"column:id;primaryKey;autoIncrement"`
-	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_points_ledger,priority:1;index:idx_gx_points_ledger_owner,priority:1;index:idx_gx_points_ledger_type,priority:1"`
-	TxnID       string `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_points_ledger,priority:2" description:"幂等键：recharge:<请求号> / order:<订单号>:pay|refund|referral"`
+	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_points_ledger,priority:1;index:idx_gx_points_ledger_owner,priority:1;index:idx_gx_points_ledger_type,priority:1;index:idx_gx_points_ledger_unit,priority:1"`
+	TxnID       string `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_points_ledger,priority:2" description:"幂等键：recharge:<请求号> / usage:<单元>:<尝试> / dispute:<工单>:refund / <充值流水>:referral"`
 	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_points_ledger_owner,priority:2"`
-	Type        string `gorm:"column:type;type:varchar(16);index:idx_gx_points_ledger_type,priority:2" description:"recharge/purchase/referral"`
+	Type        string `gorm:"column:type;type:varchar(16);index:idx_gx_points_ledger_type,priority:2" description:"recharge/usage/refund/referral；purchase 只剩历史"`
 
 	Amount       int64 `gorm:"column:amount" description:"微积分，入账为正、出账为负"`
 	BalanceAfter int64 `gorm:"column:balance_after"`
@@ -1091,8 +1128,12 @@ type GalaxyPointsLedger struct {
 	// RateBps 返现当时用的比例。比例改了不影响已经返过的，账上要能看出当时是按多少算的。
 	RateBps int64 `gorm:"column:rate_bps" description:"返现比例快照（万分之一）"`
 
-	OrderID       string    `gorm:"column:order_id;type:varchar(64)"`
-	RelatedUserID string    `gorm:"column:related_user_id;type:varchar(64)" description:"返现：下单的被邀请人"`
+	OrderID string `gorm:"column:order_id;type:varchar(64)" description:"历史：买额度包那一单"`
+	// UnitID 按量扣费与退款指向的那一次请求。账单上的 unitId 就是它，申诉也钉这个 ——
+	// 没有它，一行「扣了 2288 微积分」就回答不了「哪一次对话花的」。
+	UnitID        string    `gorm:"column:unit_id;type:varchar(64);index:idx_gx_points_ledger_unit,priority:2" description:"按量扣费对应的工作单元"`
+	Kind          string    `gorm:"column:kind;type:varchar(32)" description:"按量扣费：调的哪类能力"`
+	RelatedUserID string    `gorm:"column:related_user_id;type:varchar(64)" description:"返现：充值的被邀请人"`
 	ModelID       string    `gorm:"column:model_id;type:varchar(96)"`
 	Remark        string    `gorm:"column:remark;type:varchar(256)"`
 	Operator      string    `gorm:"column:operator;type:varchar(64)" description:"运营充值：经手的管理端账号"`
@@ -1228,3 +1269,50 @@ type GalaxyDesktopRelease struct {
 
 func (r *GalaxyDesktopRelease) TableName() string { return "zt_galaxy_desktop_release" }
 func (r *GalaxyDesktopRelease) Init()             {}
+
+// GalaxyUsageRollup 用量与金额的**按小时汇总**，只为管理端仪表盘而存在。
+//
+// 为什么非要一张汇总表：仪表盘要的是「今天消耗了多少 token、收了多少、结出去多少，
+// 按 Claude / Codex 分开」。这三个数的原始出处分别是 zt_galaxy_meter_record 与
+// 消费 / 供给两本账，而类别（claude / codex）只有 zt_galaxy_unit 上的模型才说得清 ——
+// 也就是说每问一次，都要把当天的计量流水和两本账各扫一遍、每一行再回 unit 表查一次模型。
+// 这三张是池子里最大的表（一次请求写若干行），而仪表盘是个会挂在大屏上自动刷新的页面：
+// 直接查等于让最贵的一条查询按秒重复。
+//
+// 为什么按小时而不是按天：小时桶**封口之后就不会再变**（行的 created_at 就是它自己的
+// 写入时刻，不存在迟到的行），所以算过一次就能一直用。按天的话，当天那一桶到半夜之前
+// 一直是活的，每次都得重算一整天 —— 汇总表就白建了。
+//
+// 谁来写：读的时候顺手写（service/galaxy/admindashboard.go 的 rollHour），
+// Hub 的巡检也会把刚封口的小时补上。两条路写的是同一个数，按唯一键整行覆盖，
+// 重复跑没有副作用 —— 所以不需要「谁是唯一的写入者」这条约束，也不怕多实例同时跑。
+//
+// 每个已经算过的小时都会有一行 **Category 与 Unit 都是空串**的标记行，哪怕那个小时
+// 一条流水都没有。没有它就分不出「这个小时没有量」和「这个小时还没算过」，
+// 于是空闲时段会被反复重算。读的时候要把它滤掉。
+type GalaxyUsageRollup struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_usage_rollup,priority:1"`
+	// StatHour 小时桶的起点，整点。行归到哪一桶按它自己的 created_at 算。
+	StatHour time.Time `gorm:"column:stat_hour;type:datetime(3);uniqueIndex:uk_gx_usage_rollup,priority:2" description:"小时桶起点，整点"`
+	// Category claude / codex / video / other，由模型（其次是路由键与能力）推出来。
+	// 空串是这个小时的标记行，不是某一类。
+	Category string `gorm:"column:category;type:varchar(16);uniqueIndex:uk_gx_usage_rollup,priority:3" description:"claude/codex/video/other；空串是小时标记行"`
+	// Unit 计量单位，与 zt_galaxy_meter_record.unit 同一套。空串同上。
+	Unit string `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_usage_rollup,priority:4"`
+
+	// Amount 这个单位的计量合计。单位不同量纲就不同：*_tokens 是 token 数，
+	// llm.calls 是成功调用次数，time.seconds 是秒。跨单位相加没有意义。
+	Amount int64 `gorm:"column:amount" description:"该计量单位的合计，量纲随 unit 而定"`
+	// ConsumerAmount 使用端这一格结算掉的钱（微元），取自消费侧账本 type=settle。
+	// **不是**由 Amount 乘单价算出来的：计费是逐笔向下取整的，事后乘一遍对不上账。
+	ConsumerAmount int64 `gorm:"column:consumer_amount" description:"使用端结算金额，微元"`
+	// ProviderAmount 共享端这一格挣到的钱（微元），取自供给侧账本 type=settle。
+	// 和上面那个是两个数：差额是平台毛利，把它们当成一个数是这套账最容易犯的错。
+	ProviderAmount int64 `gorm:"column:provider_amount" description:"共享端结算金额，微元"`
+
+	RolledAt time.Time `gorm:"column:rolled_at;type:timestamp null default null" description:"这一桶最近一次算出来的时刻"`
+}
+
+func (r *GalaxyUsageRollup) TableName() string { return "zt_galaxy_usage_rollup" }
+func (r *GalaxyUsageRollup) Init()             {}

@@ -160,10 +160,17 @@ export function ModelCard({ model }: { model: PortalModel }) {
   const context = formatContext(model.contextTokens ?? 0);
   const listInput = model.listInputPrice ?? 0;
   const listOutput = model.listOutputPrice ?? 0;
+  const listCache = model.listCachePrice ?? 0;
   const discountBps = model.discountBps ?? 0;
   // 划线价只在真有自家价可比时出现：没有自家价还划掉官方价，等于说
   // 「这个价不算数」却不给替代的数。回落到统一价时价格照样是真要付的数，那种情况要显示。
-  const listed = (listInput > 0 || listOutput > 0) && (model.inputPrice > 0 || model.outputPrice > 0);
+  const listed = (listInput > 0 || listOutput > 0 || listCache > 0) && (model.inputPrice > 0 || model.outputPrice > 0);
+  // 缓存读取跟输入、输出一样是**真会被扣的一桶**，不是折扣说明，所以进价格块而不是脚注。
+  // 只在真有价时占一格：没配价的时候摆一个「-」，等于让人猜这是免费还是没上架。
+  const cacheRead = model.cachePrice > 0;
+  // 缓存写入退成小字。它按 TTL 还分 5 分钟 / 1 小时两档，卡片上只显示 5 分钟那一档
+  // （见服务端 applyKindPrice），摆成第四个大数会把真正要比较的那三个数一起稀释掉。
+  const cacheWrite = model.cacheWritePrice > 0;
 
   return (
     <Card lift className="gp-model">
@@ -195,7 +202,7 @@ export function ModelCard({ model }: { model: PortalModel }) {
         </p>
       ) : null}
 
-      <div className="gp-model__price">
+      <div className={`gp-model__price${cacheRead ? " gp-model__price--trio" : ""}`}>
         <div className="gp-model__cell">
           <span>{t("models.input")}</span>
           <b>{formatUnitPrice(model.inputPrice, model.currency)}</b>
@@ -206,15 +213,31 @@ export function ModelCard({ model }: { model: PortalModel }) {
           <b>{formatUnitPrice(model.outputPrice, model.currency)}</b>
           <em>/ 1M</em>
         </div>
+        {cacheRead ? (
+          <div className="gp-model__cell">
+            <span>{t("models.cache")}</span>
+            <b>{formatUnitPrice(model.cachePrice, model.currency)}</b>
+            <em>/ 1M</em>
+          </div>
+        ) : null}
       </div>
 
-      {listed ? (
+      {listed || cacheWrite ? (
         <div className="gp-model__list">
           <span>
-            {t("models.listPrice")}{" "}
-            <s>
-              {formatUnitPrice(listInput, model.currency)} / {formatUnitPrice(listOutput, model.currency)}
-            </s>
+            {listed ? (
+              <>
+                {t("models.listPrice")}{" "}
+                {/* 划线价按上面那几格的顺序排。缓存那一段只在真声明了官方缓存价时才出现：
+                    绝大多数模型没有这个数，平白多一个「-」等于让人以为我们漏填了。 */}
+                <s>
+                  {formatUnitPrice(listInput, model.currency)} / {formatUnitPrice(listOutput, model.currency)}
+                  {listCache > 0 ? ` / ${formatUnitPrice(listCache, model.currency)}` : ""}
+                </s>
+              </>
+            ) : null}
+            {listed && cacheWrite ? " · " : ""}
+            {cacheWrite ? t("models.cacheWrite", { price: formatUnitPrice(model.cacheWritePrice, model.currency) }) : ""}
           </span>
           {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
           {discountBps > 0 ? <Tag tone="ok">{t("models.discount").replace("{rate}", formatBps(discountBps))}</Tag> : null}

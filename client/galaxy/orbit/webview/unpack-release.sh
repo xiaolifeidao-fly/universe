@@ -99,9 +99,18 @@ DEPLOY_PARENT_DIR="$(cd "$DEPLOY_PARENT_DIR" && pwd)"
 # 白解一遍，/tmp 小的机器还会在这儿 ENOSPC。tar -tzf 一样把整条流解压校验过，
 # 传坏的包照样在这一步就露馅。
 LIST_FILE="$TMP_DIR/entries.txt"
-tar -tzf "$ARCHIVE" | sed -e 's|^\./||' -e '/^$/d' >"$LIST_FILE"
+# tar 的退出码要单独接住，不能写成 `tar | sed` —— 那样拿到的是 sed 的退出码。
+# 半截的包 tar 会把读得到的那部分照常列出来再报错，退出码被管道吞掉的话，
+# 脚本就会带着一份「看着很正常」的清单往下走，把还好好的目录先删了。
+# POSIX sh 没有 pipefail，只能分两步。
+if ! tar -tzf "$ARCHIVE" >"$TMP_DIR/raw-entries.txt" 2>"$TMP_DIR/tar-error.txt"; then
+  echo "归档读不完整（传坏了？）: $ARCHIVE" >&2
+  sed -n '1,3p' "$TMP_DIR/tar-error.txt" >&2
+  exit 1
+fi
+sed -e 's|^\./||' -e '/^$/d' "$TMP_DIR/raw-entries.txt" >"$LIST_FILE"
 if [ ! -s "$LIST_FILE" ]; then
-  echo "读不出归档内容（传坏了？）: $ARCHIVE" >&2
+  echo "归档是空的: $ARCHIVE" >&2
   exit 1
 fi
 
@@ -272,35 +281,45 @@ fi
 # server.js 报 Cannot find module 'next'，看上去像包坏了。
 #
 # 只有两样是这台机器自己的，接过来：runtime.json（本机配置）和 logs/。
-KEEP_DIR=""
+HAS_PREV=0
 if [ -d "$RELEASE_DIR" ]; then
   # 还在跑就别拆。run/*.pid 一起被删掉的话，老进程就成了没人管的孤儿，
   # 还占着端口，新的怎么都起不来。
   pid="$(running_pid "$RELEASE_DIR")"
   if [ -n "$pid" ]; then
     echo "$RELEASE_DIR 里的服务还在跑（pid $pid）。" >&2
-    echo "要么先 $RELEASE_DIR/stop.sh 再解包；" >&2
+    echo "要么先 $RELEASE_DIR/stop.sh 再解包（deploy.sh 就是替你按顺序跑这三步）；" >&2
     echo "要么用 $0 --swap —— 先把新版本解到旁边，停下来之后才换目录，不用手工 stop。" >&2
     exit 1
   fi
-  KEEP_DIR="$TMP_DIR/keep"
-  mkdir -p "$KEEP_DIR"
-  if [ -f "$RELEASE_DIR/runtime.json" ]; then
-    cp "$RELEASE_DIR/runtime.json" "$KEEP_DIR/runtime.json"
-  fi
-  if [ -d "$RELEASE_DIR/logs" ]; then
-    cp -R "$RELEASE_DIR/logs" "$KEEP_DIR/logs"
-  fi
-  rm -rf "$RELEASE_DIR"
+  # 老目录是改名不是删。解包解到一半失败（盘满、包是半截的）时，删了就真没了，
+  # 连 runtime.json 都跟着临时目录一起被清理掉 —— 那会儿服务还停着，最不该
+  # 再丢配置。改名之后失败能原样放回去，成功了它就是可回滚的上一版。
+  rm -rf "$PREV_DIR"
+  mv "$RELEASE_DIR" "$PREV_DIR"
+  HAS_PREV=1
 fi
 
-tar -xzf "$ARCHIVE" -C "$DEPLOY_PARENT_DIR"
-
-if [ -n "$KEEP_DIR" ] && [ -f "$KEEP_DIR/runtime.json" ]; then
-  cp "$KEEP_DIR/runtime.json" "$RELEASE_DIR/runtime.json"
+if ! tar -xzf "$ARCHIVE" -C "$DEPLOY_PARENT_DIR"; then
+  echo "解包失败：$ARCHIVE" >&2
+  if [ "$HAS_PREV" = "1" ]; then
+    rm -rf "$RELEASE_DIR"
+    mv "$PREV_DIR" "$RELEASE_DIR"
+    echo "上一版已经原样放回 $RELEASE_DIR，配置和日志都没动，可以直接 start.sh" >&2
+  fi
+  exit 1
 fi
-if [ -n "$KEEP_DIR" ] && [ -d "$KEEP_DIR/logs" ]; then
-  cp -R "$KEEP_DIR/logs" "$RELEASE_DIR/logs"
+
+if [ "$HAS_PREV" = "1" ]; then
+  # runtime.json 是抄不是搬：搬走的话 .prev 里就没配置了，回滚起来的那份
+  # 读不到 SERVER_TARGET —— 页面照开，业务接口全 502，还不报错。
+  if [ -f "$PREV_DIR/runtime.json" ]; then
+    cp "$PREV_DIR/runtime.json" "$RELEASE_DIR/runtime.json"
+  fi
+  if [ -d "$PREV_DIR/logs" ]; then
+    rm -rf "$RELEASE_DIR/logs"
+    mv "$PREV_DIR/logs" "$RELEASE_DIR/logs"
+  fi
 fi
 
 mark_executable "$RELEASE_DIR"
@@ -309,5 +328,8 @@ echo "release unpacked: $ARCHIVE -> $RELEASE_DIR"
 # 踩过一次：包根原先带着工作区的 package.json，看见它就会想 npm install，
 # 结果 postinstall 找不到 scripts/ 直接崩，还把随包发的依赖裁了。
 echo "$NO_NPM_INSTALL_HINT"
+if [ "$HAS_PREV" = "1" ]; then
+  echo "上一版留在 $PREV_DIR（下次解包会覆盖它）"
+fi
 
 note_runtime "$RELEASE_DIR" || true

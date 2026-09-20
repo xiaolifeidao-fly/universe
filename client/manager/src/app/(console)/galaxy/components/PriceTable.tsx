@@ -11,6 +11,7 @@ import {
   InputNumber,
   Modal,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -25,9 +26,21 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { deletePrice, fetchPrices, savePrice, type PriceTableView, type PriceView } from "../api/galaxy.api";
+import { CodeSelect, CodeText, kindLabel, labeledOptions, optionMatches, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万单位的微分」：3,000,000 就是 ¥3 / 百万 token。 */
 const MICRO = 1_000_000;
+
+/**
+ * 进来先看「对话与代码」。
+ *
+ * 价目表是 `能力 × 模型 × 计量单位 × 生效时间` 四维展开的，一眼几十上百行，
+ * 而运营九成的调价发生在这一种能力下面。默认摊开全部，等于每次都要先用眼睛筛一遍。
+ */
+const DEFAULT_KIND = "llm.chat";
+
+/** 「全部能力」在 Select 里用空串表达：undefined 会被 antd 当成没选，显示成占位符。 */
+const ALL_KINDS = "";
 
 type PriceForm = {
   kind: string;
@@ -73,6 +86,8 @@ export function PriceTable() {
   const [table, setTable] = useState<PriceTableView | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Partial<PriceView> | null>(null);
+  /** null = 运营还没自己选过，这时按默认能力落位。选过之后一切以他选的为准。 */
+  const [kindFilter, setKindFilter] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,12 +104,37 @@ export function PriceTable() {
     void load();
   }, [load]);
 
-  const prices = table?.prices ?? [];
+  const prices = useMemo(() => table?.prices ?? [], [table]);
   const unpriced = table?.unpriced ?? [];
+
+  /**
+   * 筛选里只给**表里真有行**的能力。
+   *
+   * 候选表（table.kinds）还含着「跑过用量但一行价都没有」的能力 —— 拿它当筛选项，
+   * 选中就是一张空表，而空表和「这个能力没定价」长得一模一样。那件事由上面的
+   * 有量无价告警来说，不该让筛选器再演一遍。
+   */
+  const kinds = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of prices) seen.add(row.kind);
+    const list: string[] = [];
+    seen.forEach((value) => list.push(value));
+    return list.sort();
+  }, [prices]);
+
+  // 没选过就落在默认能力上；这批价目里压根没有它（比如只接了视频业务），退回「全部」——
+  // 不退的话首屏是一张空表，运营看到的是「价目表没了」。
+  const kind = kindFilter ?? (kinds.includes(DEFAULT_KIND) ? DEFAULT_KIND : ALL_KINDS);
+  const rows = useMemo(() => (kind ? prices.filter((row) => row.kind === kind) : prices), [kind, prices]);
 
   const columns: ColumnsType<PriceView> = useMemo(
     () => [
-      { title: t("galaxy.price.kind"), dataIndex: "kind", width: 150 },
+      {
+        title: t("galaxy.price.kind"),
+        dataIndex: "kind",
+        width: 170,
+        render: (value: string) => <CodeText value={value} label={kindLabel(value, t)} />,
+      },
       {
         title: t("galaxy.price.model"),
         dataIndex: "modelId",
@@ -114,7 +154,7 @@ export function PriceTable() {
         title: t("galaxy.price.unit"),
         dataIndex: "unit",
         width: 210,
-        render: (unit: string) => <span className="manager-mono">{unit}</span>,
+        render: (value: string) => <CodeText value={value} label={unitLabel(value, t)} />,
       },
       {
         title: t("galaxy.price.price"),
@@ -253,8 +293,11 @@ export function PriceTable() {
                     color="warning"
                     style={{ cursor: canWrite ? "pointer" : "default" }}
                     onClick={canWrite ? () => setEditing({ kind: row.kind, unit: row.unit }) : undefined}
+                    // 标签里放中文名，原始 id 交给悬停 —— 两个 id 并排（llm.chat · llm.calls）
+                    // 挤在一行里，读起来像一串路径，而这句话是说给运营听的。
+                    title={`${row.kind} · ${row.unit}`}
                   >
-                    {row.kind} · {row.unit}
+                    {kindLabel(row.kind, t)} · {unitLabel(row.unit, t)}
                     {canWrite ? ` · ${t("galaxy.price.fix")}` : ""}
                   </Tag>
                 ))}
@@ -264,15 +307,35 @@ export function PriceTable() {
         />
       ) : null}
 
-      <Space>
+      <Space wrap>
         {canWrite ? (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({})}>
+          // 带着当前筛选的能力进弹窗：在「对话与代码」下面点新增，八成就是给它加一行。
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ kind })}>
             {t("galaxy.price.add")}
           </Button>
         ) : null}
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
+        <Select
+          showSearch
+          style={{ width: 260 }}
+          value={kind}
+          onChange={setKindFilter}
+          filterOption={optionMatches}
+          options={[
+            { value: ALL_KINDS, label: t("galaxy.price.kindAll") },
+            ...labeledOptions(kinds, (value) => kindLabel(value, t)),
+          ]}
+        />
+        {/* 藏了多少行要说出来：不说的话，少掉的那几十行看着就像没存进去。 */}
+        {kind ? (
+          <Typography.Text type="secondary">
+            {t("galaxy.price.filtered")
+              .replace("{shown}", String(rows.length))
+              .replace("{total}", String(prices.length))}
+          </Typography.Text>
+        ) : null}
       </Space>
 
       <Table<PriceView>
@@ -282,10 +345,22 @@ export function PriceTable() {
         size="small"
         loading={loading}
         columns={columns}
-        dataSource={prices}
+        dataSource={rows}
         pagination={false}
-        scroll={{ x: 1385 }}
-        locale={{ emptyText: <Empty description={t("galaxy.price.empty")} /> }}
+        scroll={{ x: 1405 }}
+        locale={{
+          // 「这个能力下没有价」和「一行价都没有」是两件事：前者点一下就看得到，
+          // 后者是全站扣费归零。空表上写错一句，运营会朝着错的方向排查。
+          emptyText: prices.length ? (
+            <Empty description={t("galaxy.price.emptyKind")}>
+              <Button size="small" onClick={() => setKindFilter(ALL_KINDS)}>
+                {t("galaxy.price.kindAll")}
+              </Button>
+            </Empty>
+          ) : (
+            <Empty description={t("galaxy.price.empty")} />
+          ),
+        }}
       />
 
       <PriceModal
@@ -294,7 +369,12 @@ export function PriceTable() {
         models={table?.models ?? []}
         units={table?.units ?? []}
         onClose={() => setEditing(null)}
-        onSaved={load}
+        onSaved={(saved) => {
+          // 在「对话与代码」下面给别的能力加了一行，存完表里什么都没多 ——
+          // 看起来和「没存上」一模一样。所以跟着刚存的那个能力走。
+          if (kind && saved && saved !== kind) setKindFilter(saved);
+          void load();
+        }}
       />
     </div>
   );
@@ -330,7 +410,8 @@ function PriceModal({
   models: string[];
   units: string[];
   onClose: () => void;
-  onSaved: () => void;
+  /** 带上刚存下的能力：外面要靠它把筛选跟过去。 */
+  onSaved: (kind: string) => void;
 }) {
   const { t } = useLocale();
   const [form] = Form.useForm<PriceForm>();
@@ -356,11 +437,13 @@ function PriceModal({
   const submit = async () => {
     const values = await form.validateFields();
     setSubmitting(true);
+    // 存进库的始终是 id —— 下拉里显示的中文名只活在界面上。
+    const kind = (values.kind ?? "").trim();
     try {
       await savePrice({
-        kind: values.kind.trim(),
+        kind,
         modelId: (values.modelId ?? "").trim(),
-        unit: values.unit.trim(),
+        unit: (values.unit ?? "").trim(),
         // 界面按元填，库里存微分。中间这一步乘法漏掉的话价格会差一百万倍。
         price: Math.round(values.price * MICRO),
         providerPrice: Math.round((values.providerPrice ?? 0) * MICRO),
@@ -368,7 +451,7 @@ function PriceModal({
       });
       message.success(t("galaxy.price.saved"));
       onClose();
-      onSaved();
+      onSaved(kind);
     } catch (error) {
       message.error((error as Error).message || t("galaxy.actionFailed"));
     } finally {
@@ -388,14 +471,11 @@ function PriceModal({
       destroyOnClose
     >
       <Form form={form} layout="vertical">
-        {/* 候选值来自已有的价与真实跑过的用量。可以手填 —— 单位是注册制的，
-            新业务自带自己的单位，写死一张白名单反而会把它们挡在外面。 */}
+        {/* 候选值来自已有的价与真实跑过的用量，也可以手填 —— 能力和单位都是注册制的，
+            写死一张白名单反而会把新接的业务挡在外面。选中之后框里只剩中文名，
+            下拉和表格里 id 一直露着，而**存出去的始终是 id**。 */}
         <Form.Item name="kind" label={t("galaxy.price.kind")} rules={[{ required: true }]}>
-          <AutoComplete
-            options={kinds.map((value) => ({ value }))}
-            filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
-            placeholder="llm.chat"
-          />
+          <CodeSelect candidates={kinds} label={(value) => kindLabel(value, t)} placeholder="llm.chat" />
         </Form.Item>
         {/* 可清空、可手填：模型目录是门户的展示清单，计价表是账。一个模型可以
             先接进来跑、后补目录，也可以从目录里下架而老账还要按它算。 */}
@@ -408,11 +488,7 @@ function PriceModal({
           />
         </Form.Item>
         <Form.Item name="unit" label={t("galaxy.price.unit")} rules={[{ required: true }]}>
-          <AutoComplete
-            options={units.map((value) => ({ value }))}
-            filterOption={(input, option) => (option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
-            placeholder="llm.input_tokens"
-          />
+          <CodeSelect candidates={units} label={(value) => unitLabel(value, t)} placeholder="llm.input_tokens" />
         </Form.Item>
         <Form.Item
           name="price"

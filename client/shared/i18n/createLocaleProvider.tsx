@@ -61,7 +61,14 @@ export function createLocaleProvider<L extends AppLocale, Messages extends Recor
   interface LocaleContextValue {
     locale: L;
     setLocale: (locale: L) => void;
-    t: (key: TranslationKey | string) => string;
+    /**
+     * 取一条文案。第二个参数把 `{name}` 这样的占位替换掉。
+     *
+     * 插值不是锦上添花：中英文的语序不一样，「省 30%」和「30% off」里那个数字
+     * 落在句子的两端。在调用处拼字符串的话，这两句就只能各写死一种语序，
+     * 而切到另一种语言时没人会发现 —— 句子照样出得来，只是读着别扭。
+     */
+    t: (key: TranslationKey | string, vars?: Record<string, string | number>) => string;
   }
 
   const LocaleContext = createContext<LocaleContextValue | null>(null);
@@ -86,7 +93,15 @@ export function createLocaleProvider<L extends AppLocale, Messages extends Recor
       () => ({
         locale,
         setLocale,
-        t: (key) => (options.messages[locale] as Record<string, string>)[key as string] ?? String(key),
+        t: (key, vars) => {
+          const text = (options.messages[locale] as Record<string, string>)[key as string] ?? String(key);
+          if (!vars) return text;
+          // 没传到的占位原样留着：显示成 {name} 一眼就知道是哪个字段漏了，
+          // 换成空串的话，句子会变成「省 %」而看起来只是排版不好看。
+          return text.replace(/\{(\w+)\}/g, (whole, name: string) =>
+            name in vars ? String(vars[name]) : whole,
+          );
+        },
       }),
       [locale],
     );

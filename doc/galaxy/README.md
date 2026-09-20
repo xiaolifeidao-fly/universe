@@ -36,9 +36,9 @@ P0 / P1 / P2 的骨架都已落地并自测通过。
 
 | 内容 | 落点 | 状态 |
 |---|---|---|
-| 额度商品、订单、支付回调 | `service/galaxy/order.go`，`zt_galaxy_{package,order}`；回调验签 `pkg/payments` | 完成（只有 HMAC 一种签名法） |
+| 按量计费 | `billing.go` 的 `chargeUsage`：一次请求按单价扣一笔账户积分余额 | 完成（额度包与支付 2026-09-20 下架，两张表只剩历史） |
 | 争议工单 | `service/galaxy/dispute.go`，`zt_galaxy_dispute`；裁决成立走三本账反向流水 | 完成 |
-| 密钥续期换发 | `RenewKey`：新密钥继承余额与允许范围，旧密钥立刻作废 | 完成 |
+| 密钥自助管理 | `CreateConsumerKey`（最多 5 把）、`RenewKey` 换发、`RevokeKey` 失效；余额在账户上，换一把不损失额度 | 完成 |
 | session 原语 | `service/galaxy/session.go`：硬亲和、跨节点迁移、回合幂等 | 完成 |
 | 上下文账本 | `zt_galaxy_ledger_{session,turn,checkpoint}` + `contextDelta` 回合级同步 | 完成 |
 | delivery 适配器 | `adapters/delivery` + 节点 `planner-bridge.ts` | 完成 |
@@ -57,7 +57,7 @@ P0 / P1 / P2 的骨架都已落地并自测通过。
 
 ```bash
 cd server/galaxy-api && cp configs/application.example.properties configs/application.properties
-# 改 sqlconn / redis.addr 后建表并写入默认定价与额度包
+# 改 sqlconn / redis.addr 后建表并写入默认定价
 go run ./cmd/galaxyinit && go run .
 ```
 
@@ -201,7 +201,7 @@ Nova / Orbit 的壳装在用户机器上，界面却部署在远端 —— 页�
 | 领域逻辑 | `service/galaxy/desktoprelease.go`（校验清单、签直传地址、确认包到了、决定对外那份清单指向谁） |
 | 运营 | `GET/POST /api/galaxy/admin/desktop/releases*`（manager-api），管理端「算力平台 → 桌面客户端版本」 |
 | 客户端 | `client/galaxy/common/electron/update/` 与两端的 `UpdateGate.tsx`，见 `client/galaxy/README.md` 的「自动更新」 |
-| 对外落点 | OSS `<oss.dirPrefix>/desktop/<端>/`，**公开读**；地址配在两个端界面部署机的 `runtime.json` |
+| 对外落点 | OSS `<oss.dirPrefix>/<端>/`（和 `ai-bridge/` 平级），**公开读**；地址配在两个端界面部署机的 `runtime.json` |
 
 几条要记住的规则：
 
@@ -265,37 +265,56 @@ job       POST /v1/videofarm/jobs               提交任务 → 202
 名下通常有好几把密钥，范围由令牌解析出的密钥集合决定，请求里的 `keyId` 只能在
 这个集合内收窄。
 
-支付渠道回调在 `POST /galaxy/payments/{channel}/callback`，**不带用户鉴权** ——
-打过来的是渠道的服务器，身份由报文签名证明。路径里的 `{channel}` 是渠道码，
-`galaxy-api/pkg/payments` 的 `Registry` 按它分发到**这个渠道自己的**验签器：
-不做任何回退，找不到就拒。回退到「默认渠道」意味着拿 A 的密钥去验 B 的通知，
-A 哪天泄露 B 跟着失守。一个已验签渠道都没配时这条路由整个不注册。
+### 钱：账户余额，不是密钥额度
 
-到账另有两条不经收银台的路，都不走验签：
+使用者的钱只有一种形态：账户里的**积分余额**（1 积分 = ¥1，库里存微积分）。
+它由运营在管理端充进来（`POST /api/galaxy/admin/points/recharge`），
+每次请求按单价算出多少钱就扣多少（`billing.go` 的 `chargeUsage`）。
 
-| 路径 | 认谁 | 用途 |
+没有商品、没有订单、没有支付：使用端一条能下单的路由都没有，
+`zt_galaxy_{package,order}` 两张表只剩历史数据，管理端的订单页只读它们。
+
+**密钥不带额度。** 名下几把密钥花的是同一份余额，所以：
+
+- 新建一把不会多出任何额度，让一把失效也不会损失额度；
+- 换发（`RenewKey`）只是换一串凭证，没有余额要搬；
+- 余额扣光了，名下所有密钥一起停 —— 补救办法是充值，不是换密钥。
+
+使用者自己签发密钥（`POST /api/galaxy/consumer/keys`），**最多 5 把有效的**。
+上限不是怕表大，是怕丢：明文只在本机保险箱里留一份，手上的密钥越多，
+越说不清哪把接在哪台机器上、哪把早就该废了。运营也能代签
+（`POST /api/galaxy/admin/keys/issue`），那条路留给「帮人排查」和内部用途，
+同样不发额度 —— 要给人额度就去充值。
+
+### 余额闸与透支
+
+`AuthenticateKey` 在校完状态与有效期之后再看一眼余额：**> 0 才放行**，
+否则回 `insufficient_balance`。判的不是「够不够这一次」—— 一次请求要花多少，
+要等它跑完、数清 token 才知道，认证那一刻没人算得出来。
+
+所以最后一次调用允许把余额扣成负数（`applyPoints` 的 `overdraw`），下一次在闸门
+那里被挡住。差额最多是一次请求的钱，换来的是「余额=0 仍然能把手上这一句跑完」。
+
+反过来不行：服务已经交付了却拒绝扣款，等于让这笔钱凭空消失在账上，而余额停在一个
+假的正数上，下一次照样放行 —— 窟窿会越滚越大。
+
+### 一次请求在账上留下什么
+
+| 表 | 粒度 | 记什么 |
 |---|---|---|
-| `POST /api/galaxy/admin/orders/pay`（manager-api） | 管理端运营账号 | 线下转账、渠道回调丢了要补单 |
-| `POST /api/galaxy/consumer/orders/pay/sandbox` | 订单本人 | 内测期把购买链路跑通 |
+| `zt_galaxy_meter_record` | 一次请求 × 一个计量单位 | 用了多少，来源是 Hub 还是节点。对账以它为准 |
+| `zt_galaxy_consumer_ledger` | 一次请求 × 一个计量单位 | 用量与当时的单价。账单、用量页、争议追回读它 |
+| `zt_galaxy_points_ledger` | **一次请求一行** | 从余额里扣了多少积分。它才是钱 |
+| `zt_galaxy_provider_ledger` | 一次请求 × 一个计量单位 | 结给共享者的积分 |
+| `zt_galaxy_platform_ledger` | 一次请求一行 | 平台毛利（对外价 − 结算价）与坏账 |
 
-沙箱那条的安全边界靠三件事撑着，缺一件它就是个免费发额度的接口：渠道必须在
-`galaxy.payment.sandbox_channels` 里被显式标成沙箱；订单必须是调用者自己的
-（不是就回 `ErrNotFound`，连「这单存在」都不告诉他）；履约仍走同一套幂等状态机。
-沙箱渠道**不接受任何外部回调** —— 从公网 POST 到它的回调路径上会被 `Registry` 挡掉。
-控制台按 `GET /api/galaxy/consumer/payments/channels` 渲染收银台，沙箱渠道在那里
-带着 `sandbox: true`，界面必须把它标出来：不标的话，运营看着订单变成已到账，
-会以为钱真的进来了。
+扣钱只有一笔，幂等键是 `usage:<单元>:<第几次尝试>`。不跟着计量单位一行一行扣：
+那样一次请求会在余额上留下四五笔，人翻流水看到的是「输入扣了 3 微、输出扣了 88 微」，
+而他想知道的是「刚才那次对话花了多少」。拆开的口径在 `consumer_ledger` 里。
 
-额度商品的维护在运营后台共享算力池下的「额度包」页面，接口是 `GET /api/galaxy/admin/packages`
-（列**全部**，含已下架）与 `POST /api/galaxy/admin/packages/save`（只认平台管理员）。
-它原来挂在 `/api/galaxy/consumer/packages/save`，靠一个中间件在消费者路由组里把门 ——
-运营动作和封禁、裁决放在一起才对得上。消费者侧仍只有只读的
-`GET /api/galaxy/consumer/packages`，固定 `listedOnly=true`。
-
-保存是**整行覆盖**不是打补丁，所以前端的编辑框一律用当前值预填；商品码建了不能改
-（历史订单按它记录买的是什么）；没有删除，只有下架 —— 删了的话，引用这个码的
-历史订单就查不到自己买的是什么了。改价改量不影响已经下过的单：额度与价格在
-下单那一刻就快照进订单了。
+申诉裁决成立时按同一个算式（`splitCost`）退回积分，流水类型 `refund`，
+幂等键是 `dispute:<工单>:refund` —— 退给**密钥的主人**而不是密钥：
+余额本来就挂在账户上，而那把密钥可能早就吊销了。
 
 指标在 `/metrics`（Prometheus 文本格式，无鉴权，按部署侧决定谁能访问）。
 
@@ -357,6 +376,146 @@ cd client/manager && npm run dev                 # :7895，侧栏「共享算力
 两族 usage golden、消费者与节点之间的字节对拷与失败语义、事件日志的不重不漏、
 session 的异步提交与断开幸存、抽检签名的抗噪声、指标注册表的并发与格式。
 
+## 管理端仪表盘与按小时用量汇总（2026-09-20）
+
+`/dashboard` 此前是个空壳。它现在回答六件事，全部来自共享池：今天两端各有多少人登录、
+此刻多少机器在线（散户 / 工作室分开）、今天跑了多少 token 收了多少钱（Claude / Codex 分开，
+两端的钱分开）、今天有多少钱进来、池子里还剩多少额度。
+
+和共享算力池下面那一页「运营总览」（`/galaxy/overview`）是两回事，别合并：
+那一页数的是**待办**（有几件事在等人处理，点进去就去办），这一页数的是**经营**。
+一页只该回答一个问题；摆在一起，两边都会被对方的数字盖住。
+
+接口一条：`GET /api/galaxy/admin/dashboard`（manager-api）。权限资源见
+`server/migrations/20260920_manager_dashboard_resource.sql` —— 页面资源一直都在，
+这次多的是那条接口，少授权就是「页面点得进去、数字一片 403」。
+
+### 为什么要一张汇总表
+
+「今天消耗了多少 token、收了多少、结出去多少，按 Claude / Codex 分开」这一个问题，
+原始出处是三张表：量在 `zt_galaxy_meter_record`、钱在消费与供给两本账上，
+而「是 Claude 还是 Codex」只有 `zt_galaxy_unit` 上的模型说得清。也就是说每问一次，
+都要把当天最大的三张表各扫一遍、每行再回 unit 表查一次模型 —— 而仪表盘是会挂在
+大屏上自动刷新的页面。
+
+所以中间垫了 `zt_galaxy_usage_rollup`：`(小时桶, 类别, 计量单位)` 一行，
+记这一格的计量合计、使用端金额、共享端金额。
+
+**按小时不按天**：小时桶封口之后就不会再变 —— 行的 `created_at` 就是它自己的写入时刻，
+不存在迟到的行 —— 所以算一次能一直用。按天的话，当天那一桶到半夜之前一直是活的，
+每次都得重算一整天，汇总表就白建了。
+
+**谁来写**：两条路，写的是同一份**绝对值**、按唯一键整行覆盖，所以重复跑、几个进程
+同时跑都没有副作用。
+
+- Hub 巡检（`Sweep`，每分钟）把刚封口的小时补上，往回最多 48 小时；
+- 仪表盘读到没算过的小时，当场现算一次并写回去。
+
+第二条不是兜底而是**正确性的来源**：巡检停过、或者这个环境根本没跑 Hub，数字照样对，
+只是那一次读得慢一点。第一条只是让「每天第一次打开要现算一整天」这件事发生在后台。
+
+当前这个还没走完的小时**每次都现算、不落库** —— 一个还在长的桶写进去，
+下次读到的就是一个定格在半途的数。界面上把「汇总封口到几点」显示出来，
+数字对不上时先看它。
+
+每个算过的小时还有一行**类别与单位都是空串的标记行**，哪怕那个小时一条流水都没有。
+没有它就分不出「这个小时没有量」和「这个小时还没算过」，空闲时段会被反复重算。
+
+整张表是**派生数据**：删了不丢账，下次读到哪个小时就重算哪个小时。
+
+### 几个口径
+
+| 数 | 口径 | 不是什么 |
+|---|---|---|
+| 今日登录 | `last_login_at` 落在今天的账号数。两端各算各的 | 不是登录**次数** —— 那要另立一张登录流水表 |
+| 在线机器 | `status = active` 且心跳在超时之内。解绑掉的不算 | 不只看 `status`：巡检停了它会停在 active |
+| 散户 / 工作室 | 按 `zt_galaxy_provider`，没有行就是散户 | 没有第三类；两个数相加等于在线数 |
+| token 数 | Hub 解析时算好的合计 `llm.total_tokens`（输入 + 输出 + 缓存读 + 缓存写），也就是共享者额度计数器盯着的那个数。没有合计行的退回四个桶自己加 | 不把合计和四个桶一起加 —— 那是数两遍 |
+| 使用端金额 | 消费侧账本 `type=settle` 的 **逐笔** `量 × 单价 / 100 万` 再求和 | 不是先加总再乘单价：计费本身就是逐笔向下取整的，先加再乘会多出一点点，而且随笔数增长 |
+| 共享端金额 | 供给侧账本 `type=settle` 的 `amount`（那一侧记的已经是钱） | 和上面**不是同一个数**，也不该相加：差额才是平台毛利 |
+| 今日充值 | 积分充值的实付金额 | 使用者花掉余额**不算**收入 —— 那笔钱在充值那天已经进来过 |
+| 算力剩余 | 只算在线机器，按额度窗口分档 | 离线机器的额度此刻一个 token 都放不出来 |
+
+退款、追回这些反向流水不进「今日消耗」（只取 `type=settle`）—— 它们在「账本流水」那一页上。
+
+### 额度窗口多了 5h 这一档
+
+`zt_galaxy_quota_grant.window` 原来只有 `day` / `week` / `month` / `total`。
+共享者手上那些订阅（Claude Code、Codex）本来就是**每 5 小时一轮**刷新的，
+没有这一档时只能自己把「每 5 小时多少」换算成「一天多少」填进来 —— 而换算出来的数
+在任何一个 5 小时里都不成立：摊平成日额度，早上就能把一天的量跑完，
+然后在上游那儿撞限流，平台这边看到的却是「额度还剩大半」。
+
+实现上是**一天切五段**：`[0,5) [5,10) [10,15) [15,20) [20,24)`，最后一段只有四小时 ——
+24 不是 5 的整数倍，总得有个地方对不齐。对齐到日界而不是从 Unix 纪元起每 5 小时切一刀，
+是因为纪元对齐的话每天的归零时刻都比前一天早四小时，一路绕着表盘走，而主人要能说得出
+下一次归零是几点。段的起点仍然跟着 `reset_at` 里的时区与归零时刻走。
+
+认不出来的窗口值照旧退回 `day`，所以老节点、拼错的值都不会炸。
+Nova 的「共享设置」里下拉多了一项 `5h`，排在最前。
+
+## 上游订阅余量（2026-09-20）
+
+共享者机器上的 Claude / Codex 账号**自己**还剩多少（5 小时窗口、周限额），
+随心跳报上来存在 `zt_galaxy_contribution.upstream_usage_json`，管理端「节点与贡献」
+展开一行、共享端 Nova 的「共享设置」页各能看到。
+
+### 它和额度是两个数，必须分开显示
+
+| | 出处 | 答的问题 |
+|---|---|---|
+| 额度 | `zt_galaxy_quota_grant`，主人在控制台设 | 他**打算**放多少出去 |
+| 上游余量 | 这两列，节点自报 | 上游**实际**还让跑多少 |
+
+前者填得比后者宽的时候，机器会在 Claude / Codex 那儿撞限流，而平台这边看到的是
+「额度还剩大半」。在有这两列之前，这种情况只能从「这台机器怎么老是失败」反推。
+加 5h 额度窗口（见上一节）缓解的是同一个问题，但缓解不彻底 —— 主人填的数仍然
+可能比上游实际宽。
+
+### 数据怎么来：只吃本来就要发的那些请求的响应头
+
+节点在中转每一条请求时，顺手把响应里带 `ratelimit` 的头收下来
+（`anthropic-ratelimit-*` / `x-ratelimit-*`），按**路由键**（claude_oauth /
+codex_chatgpt）存在内存里，心跳带给 Hub。
+
+**不额外打上游**：健康探测那条路刻意不碰上游（「探测不该消耗主人的额度，
+也不该在上游留痕迹」），这里沿用同一条规矩。代价是机器闲着的时候这个数不更新 ——
+所以观测时刻单独一列、一路带到界面上，三小时前的余量不能被读成此刻的。
+
+### 先原样采，认得出来的才归一
+
+上游回哪几个头、叫什么名字，是它说了算而且会变。所以：
+
+- `raw` 一律**原样带上**，它是事后补解析器时唯一能对照的真实报文；
+- `buckets` 是尽力而为的解析，认的是**形状不是清单** —— 去掉厂商前缀之后，
+  在各段里找 `limit` / `remaining` / `reset` / `used` / `status` 这些角色词，
+  剩下的就是桶名。两家的顺序是反的（Anthropic 的角色词在后、OpenAI 在前），
+  这个做法两种都认，而且没见过的桶名也能归拢；
+- 解不出来的项**留空，不落 0**。「上游没报」和「还剩 0」在界面上会导出完全
+  相反的动作，而 0 会被读成后者。
+
+### 它不进任何判定
+
+不派单、不计费、不影响排空 —— 和 `models_available_json` 同一个性质：节点自报的
+事实，给人看的。理由有两条：上游的头形状不稳定，而节点自报的数没法验证。
+拿它做调度，等于把派单权交给一个不可信而且随时会变的输入。
+
+### 写入频率
+
+心跳 15 秒一次，服务端**只在这份数真的变了的时候才 UPDATE**
+（`pendingUsageWrites`）。不比就写的话是每台机器每天四千多次空 UPDATE，
+而且全落在派单路径要读的那张表上。
+
+### 还没有的
+
+- **闲置机器不刷新。** 一整天没接到单的机器，界面上是它上一次接单时的余量。
+  要它闲着也准，得定时去打上游的 usage 端点 —— 那会在共享者账号上留下规律的
+  调用记录，是另一个需要单独决定的取舍。
+- **cli 分发的机器本地看不到。** pool 模式下 CLI 不起 HTTP 服务，`/admin/status`
+  根本不存在；`ai-bridge status` 只读配置、不问正在跑的进程。那种机器的主人
+  从 Nova 里看（控制台列的是他名下**所有**机器，不只本机）。Nova 内置的 bridge
+  会把它放进 `status` 的 `upstreamUsage` 里。
+
 ## 账号体系（2026-09-11）
 
 Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录走的是任务宇宙的
@@ -404,41 +563,39 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 
 没做的：登录失败次数限制（和改之前一样没有）、注册的人机校验、自助找回密码。
 
-## 使用者积分、分享返现与密钥明文（2026-09-12）
+## 使用者积分、分享返现与密钥明文（2026-09-12；计费口径 2026-09-20 改过）
 
-使用端不再自助充值。钱的流向改成：
+使用端不自助充值，也**不买任何东西**。钱的流向：
 
 ```
 使用者线下付款 ──▶ 运营在管理端充积分（1 积分 = ¥1，记实付金额）
-                     ──▶ 使用者在 Orbit「模型广场」挑套餐，在「购买」页用积分买
-                           ──▶ 签发新密钥 / 充进已有密钥
-                                 ──▶ 若他是别人邀请来的：实付积分 × 套餐所绑模型的比例 → 返给邀请人
+                     ──▶ 若他是别人邀请来的：充值积分 × 比例 → 返给邀请人
+                     ──▶ 使用者自己签发密钥（最多 5 把），填进客户端
+                           ──▶ 每次请求按单价从账户余额里扣一笔
 ```
 
 | 部件 | 落点 |
 |---|---|
-| 表 | `zt_galaxy_points_account` / `zt_galaxy_points_ledger` / `zt_galaxy_referral` / `zt_galaxy_setting`；`zt_galaxy_consumer_key` + `secret_cipher`、`model_id`，`zt_galaxy_package` + `model_id`，`zt_galaxy_order` + `model_id`、`pay_method`，`zt_galaxy_model` + `referral_bps`。迁移 `server/migrations/20260912_galaxy_points_referral.sql` |
-| 领域 | `service/galaxy/points.go`（积分、购买、返现、邀请码）、`keycipher.go`（明文加密存储）、`consumerkey.go` 的 `RevealKey` / `AdminKeys` |
-| 使用端接口 | `GET /api/galaxy/consumer/{catalog,points,points/ledger,referral,referral/invitees}`、`POST …/points/purchase`、`POST …/keys/secret`；注册 `POST …/auth/register` 多一个 `inviteCode` |
-| 运营接口 | `GET /api/galaxy/admin/{keys,points/ledger,points/summary,referral/settings}`、`POST …/keys/secret`、`POST …/points/recharge`、`POST …/referral/settings/save`；模型的返现比例随 `portal/models/save` 的 `referralBps` 保存，套餐绑模型随 `packages/save` 的 `modelId` |
-| 界面 | Orbit：密钥（有效 / 无效、「使用」、手动接入命令）、模型广场、购买、积分；Nova 也有一页模型，但标的是**结算价**（跑它记多少积分）而不是对外价；管理端「共享算力池」多了模型目录、积分充值、算力密钥三个页面 |
+| 表 | `zt_galaxy_points_account` / `zt_galaxy_points_ledger`（+ `unit_id`、`kind`）/ `zt_galaxy_referral` / `zt_galaxy_setting`；`zt_galaxy_consumer_key` + `secret_cipher`。迁移 `server/migrations/20260912_galaxy_points_referral.sql`、`20260920_galaxy_balance_billing.sql` |
+| 领域 | `service/galaxy/points.go`（积分、返现、邀请码）、`billing.go` 的 `chargeUsage`（按量扣费）、`keycipher.go`（明文加密存储）、`consumerkey.go` 的 `CreateConsumerKey` / `RevealKey` / `AdminKeys` |
+| 使用端接口 | `GET /api/galaxy/consumer/{catalog,points,points/ledger,referral,referral/invitees}`、`POST …/keys`、`POST …/keys/{secret,renew,revoke}`；注册 `POST …/auth/register` 多一个 `inviteCode` |
+| 运营接口 | `GET /api/galaxy/admin/{keys,points/ledger,points/summary,referral/settings}`、`POST …/keys/secret`、`POST …/keys/issue`、`POST …/points/recharge`、`POST …/referral/settings/save` |
+| 界面 | Orbit：密钥（余额条、新建 / 换发 / 失效、「使用」、手动接入命令）、模型广场（只标价，不卖）、积分；Nova 也有一页模型，但标的是**结算价**（跑它记多少积分）而不是对外价；管理端「共享算力池 → 使用与计费」下是积分充值、算力密钥、订单（只读历史），外加一页「商品与定价」（模型与单价） |
 
 几条要记住的规则：
 
 - **余额的每次变动都和一行流水在同一个事务里**，流水 `txn_id` 是幂等键：充值按前端打开充值框时生成的请求号
-  （`recharge:<请求号>`），购买按前端每准备一单生成的请求号（`purchase:<请求号>`，老客户端不带就退回
-  `order:<订单号>:pay`），返现按订单号（`order:<订单号>:referral`）。重试、连点只算一次，第二次原样拿回第一次的结果
-  （购买的那次不带明文，去密钥页取）。管理端的「充值明细」就是 `type=recharge` 的流水，不另建表。
-- **套餐和模型的「下架」以前存不进库**：`listed` 的 GORM 标签默认值是 true，建记录时 false 会被换成默认值，
+  （`recharge:<请求号>`），消费按 `usage:<单元>:<第几次尝试>`，申诉退款按 `dispute:<工单>:refund`，
+  返现按那笔充值的流水号加 `:referral`。重试、连点只算一次，第二次原样拿回第一次的结果。
+  管理端的「充值明细」就是 `type=recharge` 的流水，不另建表。
+- **按量消费允许透支，其余出账一律不许。** 服务已经交付了，那笔钱必须记下来（见上面「余额闸与透支」）；
+  充值、返现这些是先有钱才有动作，不存在同样的两难。
+- **模型的「下架」以前存不进库**：`listed` 的 GORM 标签默认值是 true，建记录时 false 会被换成默认值，
   upsert 跟着写回 true。现在保存之后在同一事务里单独写一次 `listed`（`repository.writeListed`）。
-- **扣积分、订单推到已付、签发或充值在一个事务里。** 签发写到一半失败，积分和订单状态一起回滚，
-  不存在「积分扣了、密钥没到」，也就没有「退款」这条补偿路径。下单前的校验（商品上架、目标密钥是本人的且没吊销、
-  签发新密钥前确认过数据告知）和渠道下单是同一套。
-- **返现跟着「交付」走，不跟着「付款」走**，发生在交付之后、事务之外；失败只记日志，流水按订单号幂等，照日志补。
-  比例在返现那一刻取并记进流水（`rate_bps`），之后改比例不影响已经返过的。实付就是订单金额 —— 积分付的是积分，
-  渠道付的是钱，量纲相同。渠道支付（`PayOrder`）交付的订单同样返。
-- **比例：模型单独设的用模型的，没设的走默认，通用套餐（没绑模型）也走默认。** `referral_bps` 为 NULL 是「走默认」，
-  0 是「这个模型不返」。默认比例没设过就是 0 —— 钱相关的默认值只能是「不给」。
+- **返现跟着「充值到账」走。** 发生在到账之后、事务之外；失败只记日志，流水按那笔充值的流水号幂等，照日志补。
+  比例在返现那一刻取并记进流水（`rate_bps`），之后改比例不影响已经返过的。
+  只有一个比例（`referral.default_bps`）—— 充值不挑模型，按模型配比例无从谈起；没设过就是 0，
+  钱相关的默认值只能是「不给」。
 - **邀请关系只在注册时建。** 注册和邀请关系在同一个事务里；邀请码填了就必须有效（不悄悄忽略一个打错的码）。
   老账号第一次打开分享页时补一个邀请码，邀请人留空 —— 事后补填等于让人随便认一个上家。邀请人看被邀请人只看得到打码的用户名。
 - **密钥明文从这天起取得回。** 使用端「使用」要把密钥写进本机配置，运营要随时看到密钥去转交，两件事都需要明文。
@@ -494,15 +651,12 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 
 ## 尚未实现
 
-- **接一个真实的支付渠道**：多渠道的骨架已经落地（`galaxy.PaymentVerifier` /
-  `PaymentDirectory` 两个端口 + `pkg/payments` 的 `Registry` 按渠道码分发 +
-  未鉴权的 `POST /galaxy/payments/{channel}/callback`），领域侧会核对金额与币种
-  再履约，控制台能列出渠道让人选。但**目前只有 HMAC-SHA256 这一种签名法**，
-  真实渠道要接微信 V3（SHA256-RSA + APIv3 密钥解 `resource`）或支付宝 RSA2
-  （表单参数排序后验签），得在 `pkg/payments` 里各加一个 `PaymentVerifier`
-  实现，装配时多注册一个 `payments.Channel`，领域层一行不用改。
-  在那之前内测走沙箱渠道（`galaxy.payment.sandbox_channels`），
-  它只在控制台里由本人点击到账，绝不能带进生产。
+- **自助充值**：使用者往账户里充钱只有「线下付款 + 运营在管理端充积分」这一条路。
+  真要接在线支付的话，接的是**充值**（钱 → 积分余额），不是「买一个包」——
+  额度包那套连同渠道验签骨架已经在 2026-09-20 一起删了（`pkg/payments`、
+  `PaymentVerifier` / `PaymentDirectory` 两个端口、未鉴权的回调路由都不在了）。
+  重新接的时候只要一条「支付到账 → `applyPoints` 记一笔 recharge」的路径，
+  比当初那套简单得多：不用核对某一单的金额，也不用履约状态机。
 - **节点 provider 的真实对接**：`delivery-task` 的节点侧是一套进程协议
   （stdin 收 JSON、stdout 吐 NDJSON），delivery-task-planner 那边还没有对应的
   `--stdio` 入口；`ffmpeg-local` 只做了 concat + 缩放/帧率，特效与字幕没接。

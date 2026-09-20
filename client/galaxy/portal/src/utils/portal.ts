@@ -18,9 +18,6 @@ export interface PortalStats {
   models: number;
   vendors: number;
   families: number;
-  packages: number;
-  /** 上架额度包里最便宜的那个，微分。0 表示一个包都没上架。 */
-  minTopup: number;
   currency: string;
   maxContext: number;
   keyTtlDays: number;
@@ -51,9 +48,10 @@ export interface PortalModel {
   outputPrice: number;
   cachePrice: number;
   cacheWritePrice: number;
-  /** 官方参考价，同口径同币种。0 = 运营没声明，卡片上不划线也不标折扣。 */
+  /** 官方参考价，同口径同币种。0 = 运营没声明，那一档不划线。 */
   listInputPrice?: number;
   listOutputPrice?: number;
+  listCachePrice?: number;
   /** 比官方参考价便宜多少，万分之一（8500 = 省 85%）。服务端按输出价算好，门户不再自己减一遍。 */
   discountBps?: number;
   currency: string;
@@ -65,22 +63,6 @@ export interface PortalModel {
   featured: boolean;
   /** false 表示这几个价来自 kind 的统一价，不是这个模型自己的。 */
   priced: boolean;
-  sortOrder: number;
-}
-
-export interface PortalPackage {
-  packageCode: string;
-  title: string;
-  units: Record<string, number>;
-  amount: number;
-  currency: string;
-  ttlDays: number;
-  allowedKinds?: string[];
-  modelTier?: string[];
-  concurrency: number;
-  rpm: number;
-  category: string;
-  listed: boolean;
   sortOrder: number;
 }
 
@@ -96,7 +78,6 @@ export interface PortalOverview {
   stats: PortalStats;
   families: PortalFamily[];
   models: PortalModel[];
-  packages: PortalPackage[];
   prices: PortalPrice[];
   updatedAt: string;
 }
@@ -111,13 +92,12 @@ export interface PortalOverview {
 export const EMPTY_OVERVIEW: PortalOverview = {
   endpoint: "",
   stats: {
-    models: 0, vendors: 0, families: 0, packages: 0,
-    minTopup: 0, currency: "CNY", maxContext: 0,
+    models: 0, vendors: 0, families: 0,
+    currency: "CNY", maxContext: 0,
     keyTtlDays: 30, freezeDays: 30, concurrency: 4, rpm: 120,
   },
   families: [],
   models: [],
-  packages: [],
   prices: [],
   updatedAt: "",
 };

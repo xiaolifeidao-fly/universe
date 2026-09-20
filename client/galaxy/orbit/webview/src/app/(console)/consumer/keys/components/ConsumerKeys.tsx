@@ -1,9 +1,12 @@
 "use client";
 
 /**
- * 密钥。额度跟着密钥走，所以这一页是「卡片」而不是「表格」——
- * 一把密钥是一个有余额、有有效期、有范围的实体，表格那种一行一条的排版
- * 会把这三件事压成三个并列的列，读起来像日志而不像资产。
+ * 密钥。
+ *
+ * 额度**不在密钥上**：账户里有多少积分，名下几把密钥花的就是同一份钱。所以这一页
+ * 顶上先摆余额（那是唯一会用完的东西），下面的卡片只回答「这一把是哪一把、
+ * 接在哪台机器上、什么时候到期」。也正因为如此，密钥可以随手新建、随手作废 ——
+ * 换一把不会损失任何东西，最多 5 把是怕人自己数不清哪把在哪儿。
  *
  * 默认只摆有效的密钥：过期、冻结、吊销的那些大多只剩「换发」或「看一眼」这两件事，
  * 和能用的混在一起，找能用的那把要先跳过一堆灰卡片。
@@ -13,22 +16,26 @@
  * 各自在点下去的那一刻取一次：先问本机，本机没有才回服务端要，要到了顺手补存一份。
  */
 
-import { Dropdown, Modal, message } from "antd";
+import { Dropdown, Input, Modal, message } from "antd";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconAlert, IconCopy, IconDownload, IconEye, IconEyeOff, IconKey, IconMonitor, IconPlus, IconRefresh } from "@/components/ui/icons";
 import { Btn, Card, CardHead, CopyBtn, EmptyState, IconBtn, Loading, Note, Pill, Seg, Tabs } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { copyText, formatCompact, formatDay, formatInt, unitLabel } from "@/utils/format";
+import { copyText, formatDay, formatPoints } from "@/utils/format";
 import {
   acceptNotice,
+  createKey,
   fetchConsumerEndpoint,
+  fetchDashboard,
   fetchKeys,
   fetchNotice,
+  MAX_KEYS,
   renewKey,
   revealKey,
   revokeKey,
+  type ConsumerDashboard,
   type ConsumerKeyView,
   type IssuedKeyView,
   type NoticeStatus,
@@ -43,7 +50,7 @@ import {
 } from "../../api/clientconfig.api";
 import { forgetKeySecret, listLocalKeyIds, readKeySecret, rememberKeySecret } from "../../api/keyvault.api";
 import { IssuedKeyModal } from "./IssuedKeyModal";
-import { apiBase, buildSnippet, defaultSnippetTab, hostRoot, SECRET_PLACEHOLDER, type SnippetTab } from "./snippets";
+import { apiBase, buildSnippet, defaultSnippetTab, hostRoot, pinnedModel, SECRET_PLACEHOLDER, type SnippetTab } from "./snippets";
 
 const KEY_FREEZE_DAYS = 30;
 
@@ -78,6 +85,11 @@ export function ConsumerKeys() {
   const [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  // 账户余额。密钥页要摆它：这一页上唯一会用完的东西就是它，而不是哪一把密钥。
+  const [dashboard, setDashboard] = useState<ConsumerDashboard | null>(null);
+  // 新建密钥的弹框与里面那个名字。名字是给人看的，用来区分「这把接在哪台机器上」。
+  const [creating, setCreating] = useState(false);
+  const [newAlias, setNewAlias] = useState("");
   // SDK 要填的 base_url **由服务端给** —— 消费者路由挂在 galaxy-api 的 /v1 上，
   // 那个地址前端猜不出来（控制台和 API 可能不同域、不同端口）。
   const [baseUrl, setBaseUrl] = useState("");
@@ -111,6 +123,9 @@ export function ConsumerKeys() {
     } finally {
       setLoading(false);
     }
+    // 余额单独取、失败不打断整页：密钥列表出来了却因为余额没取到而整页报错，
+    // 是把「次要信息」的故障升级成了「主要功能」的故障。
+    void fetchDashboard().then(setDashboard).catch(() => undefined);
     void refreshClientStatus();
     void refreshLocalKeys();
   }, [refreshClientStatus, refreshLocalKeys, t]);
@@ -185,7 +200,12 @@ export function ConsumerKeys() {
       const { secret, baseUrl: target } = await secretFor(key);
       if (!target) throw new Error(t("keys.use.noBaseUrl"));
       // 写哪个文件、写什么由主进程在系统确认框里摆给用户看，页面只递过去这三样。
-      const result = await clientConfigApi.applyKey({ tool, baseUrl: target, secret, keyId: key.keyId });
+      // 密钥锁了模型就一起写进去：不写的话客户端按它自己的默认模型发请求，
+      // 接上去之后每一句都被拒（pinnedModel 只在恰好锁了一个具体模型时给出名字）。
+      const result = await clientConfigApi.applyKey({
+        tool, baseUrl: target, secret, keyId: key.keyId,
+        model: pinnedModel(key.modelTier, key.modelId),
+      });
       if (result.applied) message.success(t("keys.use.applied", { tool: TOOL_LABELS[tool] }));
       await refreshClientStatus();
     } catch (error) {
@@ -216,6 +236,31 @@ export function ConsumerKeys() {
       setRevealed({ keyId: key.keyId, secret });
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
+    }
+  };
+
+  /**
+   * 新建一把密钥。
+   *
+   * 明文只在这一次响应里出现，所以顺序是死的：先存进本机保险箱，再摆给人看。
+   * 存不下（浏览器禁了存储、桌面端保险箱打不开）也要摆出来，但弹框会提示
+   * 「这一次不存了，自己抄一份」—— 没有第二次机会。
+   */
+  const create = async () => {
+    setBusy(true);
+    try {
+      const fresh = await createKey(newAlias.trim(), notice?.version ?? "");
+      setIssuedSaved(await rememberKeySecret(fresh.keyId, fresh.alias, fresh.secret));
+      setIssued(fresh);
+      setCreating(false);
+      setNewAlias("");
+      setTab("valid");
+      message.success(t("keys.createdOk"));
+      await load();
+    } catch (error) {
+      message.error((error as Error).message || t("common.actionFailed"));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -285,7 +330,13 @@ export function ConsumerKeys() {
           <IconBtn label={t("common.refresh")} onClick={() => void load()}>
             <IconRefresh size={17} />
           </IconBtn>
-          <Btn tone="accent" icon={<IconPlus size={16} />} onClick={() => router.push("/consumer/models")}>
+          <Btn
+            tone="accent"
+            icon={<IconPlus size={16} />}
+            disabled={busy || valid.length >= MAX_KEYS}
+            title={valid.length >= MAX_KEYS ? t("keys.full", { max: MAX_KEYS }) : undefined}
+            onClick={() => setCreating(true)}
+          >
             {t("keys.new")}
           </Btn>
         </>
@@ -343,6 +394,9 @@ export function ConsumerKeys() {
           </Card>
         ) : null}
 
+        {/* 余额摆在最前面。额度不在密钥上，所以这一页上唯一会「用完」的东西就是它。 */}
+        <BalanceBar balance={dashboard?.balance ?? 0} onOpenLedger={() => router.push("/consumer/points")} />
+
         {/* 同一个位置上的两种回答：桌面端说「这台电脑现在接的是哪把」，浏览器里说「客户端从这儿拿」。 */}
         {desktop ? (
           clientStatus ? (
@@ -359,7 +413,7 @@ export function ConsumerKeys() {
                 title={t("keys.emptyTitle")}
                 hint={t("keys.emptyHint")}
                 action={
-                  <Btn tone="accent" onClick={() => router.push("/consumer/models")}>
+                  <Btn tone="accent" disabled={busy} onClick={() => setCreating(true)}>
                     {t("keys.new")}
                   </Btn>
                 }
@@ -411,11 +465,6 @@ export function ConsumerKeys() {
                         {t("keys.reissue")}
                       </Btn>
                     ) : null}
-                    {tab === "valid" ? (
-                      <Btn tone="accent" small onClick={() => router.push(`/consumer/store?key=${encodeURIComponent(current.keyId)}`)}>
-                        {t("keys.topup")}
-                      </Btn>
-                    ) : null}
                   </span>
                 }
               />
@@ -423,25 +472,6 @@ export function ConsumerKeys() {
                 {!hasSecret(current) && current.status !== "revoked" ? <Note>{t("keys.noSecret")}</Note> : null}
 
                 {revealed?.keyId === current.keyId ? <SecretRow key={current.keyId} secret={revealed.secret} /> : null}
-
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{t("keys.quota")}</span>
-                    <span className="gx-card__hint">{t("keys.quotaHint")}</span>
-                  </div>
-                  {Object.entries(current.balance ?? {}).filter(([, value]) => value !== 0).length === 0 ? (
-                    <span className="gx-card__hint">{t("common.empty")}</span>
-                  ) : (
-                    Object.entries(current.balance ?? {})
-                      .filter(([, value]) => value !== 0)
-                      .map(([unit, value]) => (
-                        <div key={unit} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", fontSize: 12.5 }}>
-                          <span className="gx-soft">{unitLabel(unit, t)}</span>
-                          <span className="gx-mono" style={{ fontWeight: 500 }}>{formatInt(value)}</span>
-                        </div>
-                      ))
-                  )}
-                </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 600 }}>{t("keys.scope")}</span>
@@ -487,8 +517,62 @@ export function ConsumerKeys() {
         {valid.length > 0 && tab === "valid" ? <Note>{t("keys.newHint")}</Note> : null}
       </div>
 
+      <Modal
+        open={creating}
+        title={t("keys.new")}
+        okText={t("keys.createOk")}
+        cancelText={t("common.cancel")}
+        confirmLoading={busy}
+        onOk={() => void create()}
+        onCancel={() => setCreating(false)}
+        destroyOnClose
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBlock: 8 }}>
+          <span className="gx-card__hint">{t("keys.createHint", { max: MAX_KEYS })}</span>
+          <Input
+            value={newAlias}
+            maxLength={64}
+            placeholder={t("keys.aliasPlaceholder")}
+            onChange={(event) => setNewAlias(event.target.value)}
+            onPressEnter={() => void create()}
+          />
+          <span className="gx-card__hint">{t("keys.createSecretHint")}</span>
+        </div>
+      </Modal>
+
       <IssuedKeyModal issued={issued} savedLocally={issuedSaved} onClose={() => setIssued(null)} />
     </>
+  );
+}
+
+/**
+ * 余额条。
+ *
+ * 只有一个数字：账户里还剩多少积分。它不按密钥分、也不按模型分 ——
+ * 谁调都扣这一份，扣光了所有密钥一起停。所以它值得占满一行，
+ * 而不是塞进某张密钥卡片的角落里。
+ */
+function BalanceBar({ balance, onOpenLedger }: { balance: number; onOpenLedger: () => void }) {
+  const { t } = useLocale();
+  const empty = balance <= 0;
+  return (
+    <Card className="gx-rise" style={{ padding: "16px 20px", display: "flex", alignItems: "center", gap: 16 }}>
+      <span style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+        <span className="gx-label">{t("keys.accountBalance")}</span>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <span className="gx-serif" style={{ fontSize: 30, lineHeight: 1, color: empty ? "var(--gx-warn)" : undefined }}>
+            {formatPoints(balance)}
+          </span>
+          <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("points.unit")}</span>
+        </span>
+      </span>
+      <span style={{ flex: 2, fontSize: 12.5, lineHeight: 1.65, color: "var(--gx-soft)" }}>
+        {empty ? t("keys.balanceEmpty") : t("keys.balanceHint")}
+      </span>
+      <Btn tone="ghost" small onClick={onOpenLedger}>
+        {t("keys.balanceLedger")}
+      </Btn>
+    </Card>
   );
 }
 
@@ -506,10 +590,6 @@ function KeyCard({
   action: React.ReactNode;
 }) {
   const { t } = useLocale();
-  // 头条数字只取输出 token：计费按它走，把输入也加进来会得到一个谁都用不上的
-  // 大数（输入通常是输出的三五倍），让人以为额度比实际能买到的对话多得多。
-  const balance = item.balance ?? {};
-  const headline = balance["llm.output_tokens"] ?? Object.values(balance)[0] ?? 0;
   return (
     // 选中和「使用」是两件事：外层用 div，选中的热区是里面那个按钮 —— 按钮里再套按钮是非法的 HTML。
     <div
@@ -554,19 +634,11 @@ function KeyCard({
           </span>
           <span className="gx-chip">{t(`keys.category.${item.category}`)}</span>
         </span>
-        <span>
-          <span className="gx-label" style={{ display: "block" }}>
-            {t("keys.balance")}
-          </span>
-          <span style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
-            <span className="gx-serif" style={{ fontSize: 30, lineHeight: 1 }}>
-              {formatCompact(headline)}
-            </span>
-            <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{unitLabel("llm.output_tokens", t)}</span>
-            <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--gx-faint)" }}>
-              {t("keys.expiresAt", { value: formatDay(item.expiresAt) })}
-            </span>
-          </span>
+        {/* 卡片上没有数字可摆了 —— 额度在账户上，一把密钥本身只有「是哪把、什么时候到期」。
+            硬凑一个数（比如这把花了多少）只会让人以为那是它自己的额度。 */}
+        <span style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 11.5, color: "var(--gx-faint)" }}>
+          <span>{t("keys.created", { value: formatDay(item.issuedAt) })}</span>
+          <span style={{ marginLeft: "auto" }}>{t("keys.expiresAt", { value: formatDay(item.expiresAt) })}</span>
         </span>
       </button>
       {action || inUse.length > 0 ? (
@@ -757,7 +829,7 @@ function ConnectCard({
   const copyWithSecret = async () => {
     try {
       const secret = await loadSecret(keyView);
-      const ok = await copyText(buildSnippet(tab, secret.baseUrl || baseUrl, secret.secret, keyView.category, keyView.modelId));
+      const ok = await copyText(buildSnippet(tab, secret.baseUrl || baseUrl, secret.secret, keyView.category, keyView.modelId, keyView.modelTier));
       if (ok) message.success(t("keys.snippetCopied"));
       else message.error(t("keys.copyFailed"));
     } catch (error) {
@@ -794,11 +866,11 @@ function ConnectCard({
           </div>
         ) : null}
         <pre className="gx-code" style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-          {buildSnippet(tab, baseUrl, SECRET_PLACEHOLDER, keyView.category, keyView.modelId)}
+          {buildSnippet(tab, baseUrl, SECRET_PLACEHOLDER, keyView.category, keyView.modelId, keyView.modelTier)}
         </pre>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <CopyBtn
-            value={buildSnippet(tab, baseUrl, SECRET_PLACEHOLDER, keyView.category, keyView.modelId)}
+            value={buildSnippet(tab, baseUrl, SECRET_PLACEHOLDER, keyView.category, keyView.modelId, keyView.modelTier)}
             label={t("keys.copySnippet")}
             copied={copied === tab}
             onCopied={() => setCopied(tab)}
