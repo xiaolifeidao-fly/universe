@@ -245,7 +245,17 @@ export function ExecutionRecords() {
                   key: "model",
                   title: t("records.col.model"),
                   width: "1fr",
-                  render: (row: ExecutionRecord) => <span className="gx-mono">{row.model || row.kind}</span>,
+                  // 强度跟着模型走，不单开一列：它只在和模型放在一起时才有意义
+                  // （「opus 的 max 档」），单独一列 max 说不出是哪个模型的 max。
+                  // 而且这张表已经很窄了，多一列只会把模型名挤没。
+                  render: (row: ExecutionRecord) => (
+                    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+                      <span className="gx-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {row.model || row.kind}
+                      </span>
+                      {row.effort ? <span className="gx-chip">{effortLabel(row.effort, t)}</span> : null}
+                    </span>
+                  ),
                 },
                 {
                   key: "in",
@@ -354,4 +364,14 @@ function shorten(unitId: string): string {
 function durationOf(record: ExecutionRecord): string {
   if (!record.startedAt || !record.finishedAt) return "-";
   return formatMillis(new Date(record.finishedAt).getTime() - new Date(record.startedAt).getTime());
+}
+
+/**
+ * 档位的中文名。认不出来的原样显示 —— 上游加了新档而我们还没跟上时，
+ * 显示成空白会让这一行看起来是坏的，而它照常在结算。
+ */
+function effortLabel(effort: string, t: (key: string) => string): string {
+  const key = `models.effort.${effort}`;
+  const label = t(key);
+  return label === key ? effort : label;
 }

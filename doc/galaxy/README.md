@@ -638,7 +638,7 @@ Galaxy 的用户和任务宇宙的用户分开了。之前 Nova / Orbit 登录�
 | 需求 S-09「节点信誉与封禁」/ 设计 6.2「追回 + 封禁」 | 封禁挂在节点记录上（`zt_galaxy_node.banned`） | **封禁跟着设备走，和散户 / 工作室无关**。每配一次对就是一个新 nodeId，配对闸也不看封禁的节点，只封节点记录的话，被封的机器解绑重配、换个账号再配就回来了。报过设备指纹的节点，封禁记在指纹上（`zt_galaxy_machine_ban`），同一台设备上的每条记录一起封、一起解；解封不删行，也不替主人把贡献打开。请求路径仍然只看 `zt_galaxy_node.banned`，鉴权不为它多查一张表：封禁 / 解封时带这个指纹的节点一起改，新配出来的记录在 hello 报上指纹时补标并被拒（401 `node_unauthorized`，和鉴权拦下时同一个回应），在那之前它一行贡献都没有。hello 报上来的指纹和记录上的不一样（令牌被拷到了被封的机器上）也拒，但不标那条记录。没报过指纹的老节点只能封节点那一行。指纹是节点自报的，挡的是正常客户端重配、换账号，挡不住改过的客户端。代码 `service/galaxy/ban.go`，迁移 `server/migrations/20260911_galaxy_machine_ban.sql` |
 | 设计 10.1 `ExtractUsage` | Adapter 上的独立方法 | **并入 `EventWriter.Usage()`**。流式响应的用量是边对拷边解析出来的，没有一个「事件都收齐了」的时刻可以事后调用 |
 | 设计 10.1 `Writer(ctx, unit)` | 只给工作单元 | **同时给已解析的 Input**。Parse 阶段的决定（例如 Hub 是否注入过 `stream_options.include_usage`）要一直影响到写回 |
-| 设计 1.1 WorkUnit.inputs | relay 只有 `body` | **加一个 `headers` 载荷**，装白名单内的客户端协议头（`anthropic-version`、`x-stainless-*` 等）。丢掉它们上游行为就与直连不一致，验收里的逐字节比对过不了 |
+| 设计 1.1 WorkUnit.inputs | relay 只有 `body` | **加一个 `headers` 载荷**，装白名单内的客户端协议头（`anthropic-version`、`x-stainless-*` 等）。丢掉它们上游行为就与直连不一致，验收里的逐字节比对过不了。**会话那一组尤其要紧**（`x-claude-code-session-id`、`session-id`/`thread-id`/`x-codex-window-id`）：上游的前缀缓存按会话把同一条对话的连续请求路由到同一台机器上，少了它，能命中的就只剩 instructions + tools 那段所有请求共用的开头，而三层都不报错 —— 只是账单上多出几倍的输入 token |
 | 设计 2.7 贡献 id | 主人起的短名 | **Hub 侧扩成 `nodeId:短名`**。两台机器都叫 `claude-main` 是常态，而队列、额度、绑定都以 cid 为主键，必须先消歧；节点看到的仍是自己的短名 |
 | 设计 8 节 Redis | 未说明部署形态 | **多键 Lua ⇒ 单机 / 主从**。上 Cluster 需要先给 cid 与 rid 加同一个 hash tag，或把脚本拆成贡献侧与请求侧两段并接受中间的窗口 |
 | 非功能需求·吞吐 | ≥ 500 节点长轮询 | **Redis 连接池必须大于同时长轮询的节点数**（默认 600）。领活用 BLPOP，每个在轮询的节点独占一条连接，池子小了表现为「节点连得上但永远领不到活」 |

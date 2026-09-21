@@ -106,11 +106,14 @@ export function UsageBoard() {
   const exportCsv = () => {
     // input 是**未命中缓存的新增输入**，缓存命中单独一列 —— 两个数互不重叠，
     // 加起来才是这次请求读进模型的全部输入。导出的表拿去对账时这点必须写清楚。
-    const header = ["time", "key", "model", "input", "output", "cacheRead", "durationMs", "cost", "state", "unitId"];
+    // 强度也要导出：单价按 (模型, 强度) 定，只有模型名的话，同一个模型两笔金额差一倍
+    // 在表里就成了一件没法解释的事 —— 而对账要的恰恰是那个解释。
+    const header = ["time", "key", "model", "effort", "input", "output", "cacheRead", "durationMs", "cost", "state", "unitId"];
     const lines = rows.map((row) => [
       row.startedAt ?? "",
       alias.get(row.keyId) ?? row.keyId,
       row.model,
+      row.effort,
       String(row.usage["llm.input_tokens"] ?? 0),
       String(row.usage["llm.output_tokens"] ?? 0),
       String(row.usage["llm.cache_read_tokens"] ?? 0),
@@ -249,7 +252,16 @@ export function UsageBoard() {
                     key: "model",
                     title: t("usage.col.model"),
                     width: "1fr",
-                    render: (row: UsageRecord) => <span className="gx-mono">{row.model || row.kind}</span>,
+                    // 强度跟着模型走：单价按 (模型, 强度) 定，两个分开摆就得让人自己
+                    // 把两列对起来，才知道这一笔的金额是怎么来的。
+                    render: (row: UsageRecord) => (
+                      <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+                        <span className="gx-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {row.model || row.kind}
+                        </span>
+                        {row.effort ? <span className="gx-chip">{effortLabel(row.effort, t)}</span> : null}
+                      </span>
+                    ),
                   },
                   {
                     key: "in",
@@ -348,4 +360,14 @@ function usedTokens(dashboard: ConsumerDashboard | null): number {
   return Object.entries(dashboard.today.usage ?? {})
     .filter(([unit]) => unit.endsWith("_tokens") && !DERIVED_TOKEN_UNITS.has(unit))
     .reduce((sum, [, value]) => sum + value, 0);
+}
+
+/**
+ * 档位的中文名。认不出来的原样显示 —— 上游加了新档而我们还没跟上时，
+ * 显示成空白会让这一行看起来是坏的，而它照常在计价。
+ */
+function effortLabel(effort: string, t: (key: string) => string): string {
+  const key = `models.effort.${effort}`;
+  const label = t(key);
+  return label === key ? effort : label;
 }

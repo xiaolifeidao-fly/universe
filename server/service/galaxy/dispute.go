@@ -95,17 +95,18 @@ func (s *service) findDisputeByUnit(ctx context.Context, unitID string, attempt 
 	return nil, gorm.ErrRecordNotFound
 }
 
-// unitModel 这次执行调的是哪个模型。追回要按同一个模型的价算 ——
-// 拿兜底价去退一笔按模型价收过的钱，退多退少都会挂在平台账上。
+// unitPricing 这次执行的两个计价键：调的是哪个模型、跑的是哪一档推理强度。
+// 追回要按当初那一组键的价算 —— 拿兜底价去退一笔按模型 × 强度价收过的钱，
+// 退多退少都会挂在平台账上。
 //
-// 查不到（单元行被清掉了）就回落到空串，也就是该 kind 的兜底价：
+// 查不到（单元行被清掉了）就双双回落到空串，也就是该 kind 的兜底价：
 // 和当初结算时单元行已经没了的情形一致。
-func (s *service) unitModel(ctx context.Context, unitID string) string {
+func (s *service) unitPricing(ctx context.Context, unitID string) (model, effort string) {
 	row, err := s.repository.FindUnit(ctx, bizLine, unitID)
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	return row.Model
+	return row.Model, row.Effort
 }
 
 func (s *service) contributionOwner(ctx context.Context, cid string) string {
@@ -239,7 +240,8 @@ func (s *service) planClawback(ctx context.Context, row *repository.GalaxyDisput
 	if len(meters) == 0 {
 		return nil, 0, nil
 	}
-	prices, err := s.priceTable(ctx, row.Kind, s.unitModel(ctx, row.UnitID), time.Now())
+	model, effort := s.unitPricing(ctx, row.UnitID)
+	prices, err := s.priceTable(ctx, row.Kind, model, effort, time.Now())
 	if err != nil {
 		return nil, 0, err
 	}
@@ -285,7 +287,8 @@ func (s *service) applyClawback(ctx context.Context, row *repository.GalaxyDispu
 	if len(refund) == 0 {
 		return nil
 	}
-	prices, err := s.priceTable(ctx, row.Kind, s.unitModel(ctx, row.UnitID), time.Now())
+	model, effort := s.unitPricing(ctx, row.UnitID)
+	prices, err := s.priceTable(ctx, row.Kind, model, effort, time.Now())
 	if err != nil {
 		return err
 	}

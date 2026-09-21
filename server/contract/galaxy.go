@@ -169,6 +169,96 @@ type Payload struct {
 	ContentType string       `json:"contentType,omitempty"`
 }
 
+// ---------- 推理强度 ----------
+
+// Effort 一次请求让模型想多深。
+//
+// 它是**计价的一个维度**，不是展示字段：同一个模型，max 档一次请求烧掉的推理 token
+// 能比 low 档多一个量级，而这些 token 全部落在 output 桶里按同一个单价收 ——
+// 于是高强度的请求每跑一次平台都在亏，低强度的又收贵了。价目表因此按
+// (kind, model, effort, unit) 定价，见 zt_galaxy_price。
+//
+// 两族的档位**各自原生**，不做统一映射：
+//
+//	anthropic  output_config.effort：low / medium / high / xhigh / max，官方默认 high；
+//	           thinking.type = disabled 时没有推理 token，记 none。
+//	openai     reasoning.effort：minimal / low / medium / high（新模型还有 none），
+//	           官方默认 medium。
+//
+// 硬造一个跨族的公共刻度只会让两边都对不上：openai 的 minimal 在 anthropic 没有对应档，
+// anthropic 的 xhigh / max 在 openai 也没有。运营定价时面对的是上游真实收费的那个档位名。
+type Effort = string
+
+const (
+	// EffortNone 明确关掉了思考。它不是「没填」—— 没填走各族默认档（DefaultEffort）。
+	EffortNone    Effort = "none"
+	EffortMinimal Effort = "minimal"
+	EffortLow     Effort = "low"
+	EffortMedium  Effort = "medium"
+	EffortHigh    Effort = "high"
+	EffortXHigh   Effort = "xhigh"
+	EffortMax     Effort = "max"
+)
+
+// 两族各自的档位，**按由浅到深排列**：界面上的下拉、价目表的排序都按这个顺序，
+// 让运营一眼看出「这一档比那一档贵是对的」。
+var (
+	anthropicEfforts = []Effort{EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}
+	openaiEfforts    = []Effort{EffortNone, EffortMinimal, EffortLow, EffortMedium, EffortHigh}
+)
+
+const (
+	// FamilyAnthropic / FamilyOpenAI 协议族名。relay 适配器里也有一份同值常量 ——
+	// 这里再定义一次是因为强度词表要按族分叉，而 contract 不能 import 适配器包。
+	FamilyAnthropic = "anthropic"
+	FamilyOpenAI    = "openai"
+)
+
+// FamilyEfforts 某一族认识的全部档位。族名认不出来时返回 nil ——
+// 返回一份「通用档位」等于替一个我们并不了解的上游宣布了它的计价刻度。
+func FamilyEfforts(family string) []Effort {
+	switch strings.ToLower(strings.TrimSpace(family)) {
+	case FamilyAnthropic:
+		return anthropicEfforts
+	case FamilyOpenAI:
+		return openaiEfforts
+	}
+	return nil
+}
+
+// DefaultEffort 请求里没写强度时，上游实际会用的那一档。
+//
+// 计价必须把它补齐：不补的话，「没写」是一个查不到价的空档，会静默回落到模型的
+// 不分强度价 —— 而 Codex 不写 reasoning 时上游跑的就是 medium，那笔钱本该按 medium 收。
+// 认不出来的族返回空串，也就是不分强度，和加这一列之前的行为一致。
+func DefaultEffort(family string) Effort {
+	switch strings.ToLower(strings.TrimSpace(family)) {
+	case FamilyAnthropic:
+		return EffortHigh
+	case FamilyOpenAI:
+		return EffortMedium
+	}
+	return ""
+}
+
+// NormalizeEffort 把一个外部来的值收敛到该族认识的档位。
+//
+// 认不出来一律回空串，**不猜也不报错**：请求体里写了什么是消费者的自由，上游怎么处理
+// 一个它不认识的档位是上游的事；我们只需要知道「这次算不算某个定了价的档」。
+// 猜一个最近的档去计价，等于按一个从没发生过的档位收钱。
+func NormalizeEffort(family, value string) Effort {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return ""
+	}
+	for _, effort := range FamilyEfforts(family) {
+		if effort == normalized {
+			return effort
+		}
+	}
+	return ""
+}
+
 // ---------- 路由 ----------
 
 // RouteKey 适配器 Route() 的产物，是放置算法唯一的输入形状。
@@ -179,6 +269,9 @@ type RouteKey struct {
 	Family   string `json:"family,omitempty"`
 	Provider string `json:"provider"`
 	Model    string `json:"model,omitempty"`
+	// Effort 这次请求的推理强度，已按 Family 收敛过（见 NormalizeEffort / DefaultEffort）。
+	// 它进计价键，所以一路要带到单元行上 —— 账单与结算事后都按它重新取价。
+	Effort Effort `json:"effort,omitempty"`
 	// AffinityKey 决定回不回同一个贡献；relay 默认 consumerKey + x-galaxy-session。
 	AffinityKey string `json:"affinityKey,omitempty"`
 	// HardPin 非空时跳过打分直接钉住该贡献：Responses 链式请求与 session 硬亲和。
@@ -418,6 +511,12 @@ type WorkUnit struct {
 	Family      string    `json:"family,omitempty"`
 	Provider    string    `json:"provider"`
 	Model       string    `json:"model,omitempty"`
+	// Effort 推理强度，计价键的一部分（见 Effort 的说明）。
+	//
+	// 它必须留在信封里：结算发生在请求跑完之后，那时 Hub 手上只有 Redis 里这份 JSON，
+	// 而取价要 (kind, model, effort) 三样齐全。少了它，同一次请求下单时按 max 档预估、
+	// 结算时按不分强度价扣，两个数对不上且没有任何地方会报错。
+	Effort Effort `json:"effort,omitempty"`
 
 	// ConsumerKey 是密钥的匿名标识（ck_…），不是 sk- 明文；节点只看得到它。
 	ConsumerKey string `json:"consumerKey"`

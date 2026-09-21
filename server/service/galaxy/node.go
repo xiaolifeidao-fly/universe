@@ -895,7 +895,7 @@ func (s *service) ListExecutionRecords(ctx context.Context, ownerUserID, cid str
 	nodeOf := nodeOfContribution(rows)
 	for _, unit := range kept {
 		records = append(records, dto.ExecutionRecord{
-			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, State: unit.State,
+			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, Effort: unit.Effort, State: unit.State,
 			ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Credits:   credits[unit.UnitID],
 			NodeID:    nodeOf[unit.CID],

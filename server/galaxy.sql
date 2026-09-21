@@ -307,6 +307,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_unit` (
   `family`        varchar(32),
   `provider`      varchar(64),
   `model`         varchar(96),
+  `effort`        varchar(16),                                                    -- 推理强度，计价键的一部分；结算与账单事后按它重新取价
   `consumer_key`  varchar(64),
   `space`         varchar(64),
   `sid`           varchar(40),                                                    -- session 原语的会话 id
@@ -454,6 +455,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_price` (
   `biz_line`       varchar(32),
   `kind`           varchar(64),
   `model_id`       varchar(96) NOT NULL DEFAULT '',                       -- 模型名，空=该 kind 的兜底价（不是「叫空串的模型」）；唯一索引不拦 NULL，所以这列不能可空
+  `effort`         varchar(16) NOT NULL DEFAULT '',                       -- 推理强度，空=不分强度；档位名是上游原生的（Claude low…max / Codex minimal…high），两族不通用
   `unit`           varchar(48),
   `effective_from` timestamp NULL DEFAULT NULL,
   `price`          bigint,                                                -- 对外单价：每百万单位微分
@@ -461,7 +463,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_price` (
   `provider_price` bigint DEFAULT 0,                                      -- 结算单价：每百万单位微分，0=回落到 provider_share
   `provider_share` double DEFAULT 0.700000,                               -- 旧口径分成比例，仅当 provider_price=0 时回落使用
   PRIMARY KEY (`id`),
-  UNIQUE INDEX `uk_gx_price` (`biz_line`,`kind`,`model_id`,`unit`,`effective_from`)
+  UNIQUE INDEX `uk_gx_price` (`biz_line`,`kind`,`model_id`,`effort`,`unit`,`effective_from`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_artifact` (

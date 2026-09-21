@@ -79,37 +79,45 @@ func (s *service) AdminPrices(ctx context.Context) (dto.PriceTableView, error) {
 		}
 	}
 	view.Models = sortedKeys(models)
+	// 强度候选按族给。这份**完全来自 contract 的词表**，不掺库里出现过的值：
+	// 词表就是「上游真的有这一档」的唯一出处，而库里可能躺着历史上填错的档位名，
+	// 把它回填进候选等于把一个错误变成往后所有人的选项。
+	view.Efforts = map[string][]string{
+		contract.FamilyAnthropic: contract.FamilyEfforts(contract.FamilyAnthropic),
+		contract.FamilyOpenAI:    contract.FamilyEfforts(contract.FamilyOpenAI),
+	}
 	return view, nil
 }
 
-// markLivePrices 标出每个 (kind, model, unit) 此刻生效的那一行，并回一张「已定价」的集合。
+// markLivePrices 标出每个 (kind, model, effort, unit) 此刻生效的那一行，并回一张「已定价」的集合。
 //
 // 生效的定义只有一条：effective_from 已经到点、且是同组里最新的那个到点时刻。
 // 行按 kind, model_id, unit, effective_from desc 取回来，所以每组第一条到点的就是它 ——
 // 排在它前面的是还没到点的未来价，后面的是被它取代的历史价，两者都不是当前价。
 //
-// 「已定价」那张集合只收**兜底行**（model_id 为空）：模型单独定的价只覆盖它自己，
-// 有它不等于别的模型有价可查。拿模型行去消掉「有量无价」的告警，等于替其余模型
-// 宣布了一件没发生的事。
+// 「已定价」那张集合只收**兜底行**（model_id 与 effort 都为空）：模型或强度单独定的价
+// 只覆盖自己那一格，有它不等于别的模型、别的档有价可查。拿它去消掉「有量无价」的告警，
+// 等于替其余组合宣布了一件没发生的事。
 func markLivePrices(rows []*repository.GalaxyPrice, now time.Time) ([]dto.PriceView, map[string]bool) {
 	priced := map[string]bool{}
 	seen := map[string]bool{}
 	views := make([]dto.PriceView, 0, len(rows))
 	for _, row := range rows {
-		key := priceKey(row.Kind, row.ModelID, row.Unit)
+		key := priceKey(row.Kind, row.ModelID, row.Effort, row.Unit)
 		live := false
 		if !row.EffectiveFrom.After(now) && !seen[key] {
 			seen[key] = true
 			live = true
-			if row.ModelID == "" {
-				priced[priceKey(row.Kind, "", row.Unit)] = true
+			if row.ModelID == "" && row.Effort == "" {
+				priced[priceKey(row.Kind, "", "", row.Unit)] = true
 			}
 		}
 		settle := settleUnitPrice(priceRow{
 			Price: row.Price, ProviderPrice: row.ProviderPrice, ProviderShare: row.ProviderShare,
 		})
 		views = append(views, dto.PriceView{
-			Kind: row.Kind, ModelID: row.ModelID, Unit: row.Unit, Price: row.Price, Currency: row.Currency,
+			Kind: row.Kind, ModelID: row.ModelID, Effort: row.Effort, Unit: row.Unit,
+			Price: row.Price, Currency: row.Currency,
 			ProviderPrice: row.ProviderPrice, SettlePrice: settle,
 			MarginBps:     marginBps(row.Price, settle),
 			ProviderShare: row.ProviderShare, EffectiveFrom: row.EffectiveFrom, Effective: live,
@@ -141,7 +149,7 @@ func unpricedFrom(usage []repository.UsageRow, priced map[string]bool) []dto.Pri
 		// 只按 kind 查兜底价：这张告警回答的是「有没有一行价兜得住这个单位」，
 		// 而兜得住它的只可能是兜底行。用量行本身也不带模型（SumUsage 会按模型分组，
 		// 但这里只关心单位有没有价，同一单位的多个模型行去重成一条）。
-		key := priceKey(row.Kind, "", row.Unit)
+		key := priceKey(row.Kind, "", "", row.Unit)
 		if priced[key] || seen[key] {
 			continue
 		}
@@ -157,9 +165,11 @@ func unpricedFrom(usage []repository.UsageRow, priced map[string]bool) []dto.Pri
 	return out
 }
 
-// priceKey (kind, model, unit) 拼成一个键。用 \x00 分隔而不是冒号：单位名里带冒号的那天，
+// priceKey (kind, model, effort, unit) 拼成一个键。用 \x00 分隔而不是冒号：单位名里带冒号的那天，
 // 冒号分隔会让两个不同的组撞成一个。
-func priceKey(kind, model, unit string) string { return kind + "\x00" + model + "\x00" + unit }
+func priceKey(kind, model, effort, unit string) string {
+	return kind + "\x00" + model + "\x00" + effort + "\x00" + unit
+}
 
 // knownMeterUnits contract 里登记过的计量单位。单位是注册制的，这份只是候选提示，
 // 不是白名单 —— 新业务自带的单位照样能在界面上手填。
@@ -203,6 +213,19 @@ func (s *service) SaveAdminPrice(ctx context.Context, req dto.SavePriceRequest) 
 	// 模型不校验「目录里有没有」：目录是门户的展示清单，计价表是账。
 	// 一个模型可以先接进来跑、后补目录，也可以从目录里下架而老账还要按它算。
 	modelID := strings.TrimSpace(req.ModelID)
+	// 强度反过来**要校验**，而且是这一页上唯一一个硬校验。
+	//
+	// 理由和模型那一条正相反：模型名是运营和上游共同认识的字符串，填错了很快会有人
+	// 反馈「这个模型没按我定的价收」；而强度档位是一个封闭小词表，填成 "High"、"max "、
+	// "medium-high" 这类值不会报错、不会匹配上任何一次请求，这行价就永远躺在表里 ——
+	// 运营以为自己给 max 档加过价，账上却一直按不分强度价在收。
+	effort := strings.ToLower(strings.TrimSpace(req.Effort))
+	if effort != "" && !knownEffort(effort) {
+		return fmt.Errorf("推理强度 %q 不是上游认识的档位；Claude 是 %s，Codex 是 %s",
+			req.Effort,
+			strings.Join(contract.FamilyEfforts(contract.FamilyAnthropic), " / "),
+			strings.Join(contract.FamilyEfforts(contract.FamilyOpenAI), " / "))
+	}
 	if req.Price < 0 {
 		return errors.New("对外单价不能是负数")
 	}
@@ -219,7 +242,7 @@ func (s *service) SaveAdminPrice(ctx context.Context, req dto.SavePriceRequest) 
 		effective = req.EffectiveFrom.Truncate(time.Second)
 	}
 	return s.repository.SavePrice(ctx, &repository.GalaxyPrice{
-		BizLine: bizLine, Kind: kind, ModelID: modelID, Unit: unit, EffectiveFrom: effective,
+		BizLine: bizLine, Kind: kind, ModelID: modelID, Effort: effort, Unit: unit, EffectiveFrom: effective,
 		Price: req.Price, Currency: defaultString(strings.TrimSpace(req.Currency), "CNY"),
 		ProviderPrice: req.ProviderPrice, ProviderShare: req.ProviderShare,
 	})
@@ -233,5 +256,22 @@ func (s *service) DeleteAdminPrice(ctx context.Context, req dto.DeletePriceReque
 	if kind == "" || unit == "" {
 		return errors.New("能力与计量单位都要填")
 	}
-	return s.repository.DeletePrice(ctx, bizLine, kind, strings.TrimSpace(req.ModelID), unit, req.EffectiveFrom.Truncate(time.Second))
+	return s.repository.DeletePrice(ctx, bizLine, kind,
+		strings.TrimSpace(req.ModelID), strings.ToLower(strings.TrimSpace(req.Effort)),
+		unit, req.EffectiveFrom.Truncate(time.Second))
+}
+
+// knownEffort 这个档位名在任意一族里存在。
+//
+// 不按族查是有意的：价目行上没有族这一列，也不该有 —— 族是模型的属性，
+// 而一行价可以是跨模型的兜底行。只要它是某个上游真的会发过来的档位名就收，
+// 至于「Claude 模型配了个 minimal 档」这种搭配错误，表现是那行价匹配不上任何用量，
+// 和填了一个从没上架过的模型名一样，属于运营自己看得见的错。
+func knownEffort(effort string) bool {
+	for _, family := range []string{contract.FamilyAnthropic, contract.FamilyOpenAI} {
+		if contract.NormalizeEffort(family, effort) != "" {
+			return true
+		}
+	}
+	return false
 }

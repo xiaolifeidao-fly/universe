@@ -30,6 +30,18 @@ export function kindLabel(kind: string, t: Translate): string {
 }
 
 /**
+ * 推理强度的中文名。
+ *
+ * 认不出来的原样显示 —— 库里可能躺着历史上填错的档，或者上游加了新档而我们还没跟上。
+ * 显示成空白或「未知」都会让运营以为这行坏了，而它其实照常在计价。
+ */
+export function effortLabel(effort: string, t: Translate): string {
+  const key = `galaxy.price.effort.${effort}`;
+  const label = t(key);
+  return label === key ? effort : label;
+}
+
+/**
  * 下拉候选：中文名在前，原始 id 灰着跟在后面。
  *
  * id 必须一直露着 —— 选中之后回填到输入框、以及最终存进库里的都是它。只剩中文名

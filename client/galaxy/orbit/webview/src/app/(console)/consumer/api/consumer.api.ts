@@ -77,6 +77,13 @@ export class UsageLine {
    */
   model = "";
 
+  /**
+   * 这笔用量跑的是哪一档推理强度。单价也按它定，所以账单必须分行 ——
+   * 同一个模型的 max 档和 low 档收的是两个价，合成一行就只能显示其中一个。
+   * 老记录、以及不按强度分档的能力是空串。
+   */
+  effort = "";
+
   unit = "";
 
   amount = 0;
@@ -461,6 +468,9 @@ export class UsageRecord {
 
   model = "";
 
+  /** 这一次的推理强度。单价按 (模型, 强度) 定，「为什么扣这么多」要靠它才答得完整。 */
+  effort = "";
+
   state = "";
 
   attempt = 1;
@@ -502,6 +512,25 @@ export async function fetchUsageRecords(params: {
 }
 
 /* ---------- 模型广场、积分与分享 ---------- */
+
+/**
+ * 一个模型在某一档推理强度上的单价。
+ *
+ * 卡片上那几个数是**不分强度**那一档 —— 它是「没单独定价的强度都按它收」，
+ * 也是绝大多数请求真正走的价。这个列表只列真的单独定过价的档，一档都没有时是空的。
+ */
+export class ModelEffortPrice {
+  /** 档位名，上游原生：Claude 是 low…max，Codex 是 minimal…high。 */
+  effort = "";
+
+  inputPrice = 0;
+
+  outputPrice = 0;
+
+  cachePrice = 0;
+
+  cacheWritePrice = 0;
+}
 
 /**
  * 1 积分 = ¥1。积分字段和金额一样是「微」（÷1_000_000 得到积分），套餐标价直接就是积分价。
@@ -558,6 +587,14 @@ export class PortalModelView {
 
   /** 为假表示这几个单价是按能力统一定的价，不是这个模型单独的价。 */
   priced = false;
+
+  /**
+   * 这个模型按推理强度单独定过价的那几档，由浅到深。空 = 不分强度，上面那几个数就是全部。
+   *
+   * 和 NodeUpgrade 一样是嵌套对象：项目里没用 @Type，所以拿到的是服务端原样的普通对象，
+   * ModelEffortPrice 上的默认值在这里不生效。读的时候按可能缺字段处理。
+   */
+  efforts: ModelEffortPrice[] = [];
 
   sortOrder = 0;
 }

@@ -88,7 +88,7 @@ func providerModelView(
 		vendor = defaultString(vendor, inferredVendor)
 	}
 	kind := defaultString(row.Kind, portalKind)
-	table, own := resolvePrices(priceRows, kind, row.ModelID)
+	table, own := resolvePrices(priceRows, kind, row.ModelID, "")
 
 	view := dto.ProviderModelView{
 		ModelID: row.ModelID, DisplayName: defaultString(row.DisplayName, row.ModelID),
@@ -114,6 +114,10 @@ func providerModelView(
 		Priced:    own[contract.UnitInputTokens] && own[contract.UnitOutputTokens],
 		Earned7d:  earned[row.ModelID],
 		SortOrder: row.SortOrder,
+		// 按强度分档的结算价。共享者要回答的是「跑哪个模型的哪一档更赚」——
+		// 深思考那一档烧掉的推理 token 多一个量级，往往也单独加过价，
+		// 只给一个不分强度的数字，这一页就答不了那个问题。
+		Efforts: effortSettlePrices(priceRows, kind, row.ModelID, protocolFamily(family)),
 	}
 	for _, contribution := range contributions {
 		if contract.ModelMatch(row.ModelID, decodeStrings(contribution.ModelsAllowJSON), decodeStrings(contribution.ModelsDenyJSON)) {
@@ -124,6 +128,30 @@ func providerModelView(
 		}
 	}
 	return view
+}
+
+// effortSettlePrices 这个模型按强度单独定过价的那几档，换算成**结算价**。
+//
+// 和门户那份（applyEffortPrices）是同一批行、同一道回落，只差最后一步取的是哪个数：
+// 那边给对外价，这边给 settleUnitPrice —— 两个数一相除就是平台抽成，
+// 而抽成不是共享者要做的决定（见本文件开头）。
+func effortSettlePrices(priceRows []*repository.GalaxyPrice, kind, modelID, family string) []dto.ModelEffortPrice {
+	efforts := pricedEfforts(priceRows, kind, modelID, family)
+	if len(efforts) == 0 {
+		return nil
+	}
+	out := make([]dto.ModelEffortPrice, 0, len(efforts))
+	for _, effort := range efforts {
+		table, _ := resolvePrices(priceRows, kind, modelID, effort)
+		out = append(out, dto.ModelEffortPrice{
+			Effort:          effort,
+			InputPrice:      settleUnitPrice(table[contract.UnitInputTokens]),
+			OutputPrice:     settleUnitPrice(table[contract.UnitOutputTokens]),
+			CachePrice:      settleUnitPrice(table[contract.UnitCacheReadTokens]),
+			CacheWritePrice: settleUnitPrice(table[contract.UnitCacheWrite5mTokens]),
+		})
+	}
+	return out
 }
 
 // earningsByModel 最近几天每个模型给这个人记了多少积分。

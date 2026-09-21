@@ -120,7 +120,7 @@ func (s *service) OwnedUsageRecords(ctx context.Context, query dto.UsageRecordQu
 	for _, unit := range units {
 		record := dto.UsageRecord{
 			UnitID: unit.UnitID, KeyID: unit.ConsumerKey, KeyAlias: alias[unit.ConsumerKey],
-			Kind: unit.Kind, Provider: unit.Provider, Model: unit.Model, State: unit.State,
+			Kind: unit.Kind, Provider: unit.Provider, Model: unit.Model, Effort: unit.Effort, State: unit.State,
 			Attempt: unit.Attempt, ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Cost: costs[unit.UnitID], Currency: "CNY",
 			StartedAt: unit.StartedAt, FinishedAt: unit.FinishedAt,

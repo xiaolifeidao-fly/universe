@@ -20,6 +20,11 @@ import { ConfigProvider, type ThemeConfig } from "antd";
 import enUS from "antd/locale/en_US";
 import idID from "antd/locale/id_ID";
 import zhCN from "antd/locale/zh_CN";
+import dayjs from "dayjs";
+// dayjs 的语言包必须显式 import 才进包 —— 见下面 dayjsLocaleFor() 的注释。
+// "en" 是 dayjs 内置的默认语言，不用也不能从 dayjs/locale/en 再引一次。
+import "dayjs/locale/id";
+import "dayjs/locale/zh-cn";
 import { createContext, type PropsWithChildren, useContext, useEffect, useMemo, useState } from "react";
 
 export const ALL_LOCALES = ["zh-CN", "en-US", "id-ID"] as const;
@@ -29,6 +34,26 @@ function antdLocaleFor(locale: AppLocale) {
   if (locale === "en-US") return enUS;
   if (locale === "id-ID") return idID;
   return zhCN;
+}
+
+/**
+ * 同一门语言在 dayjs 里的名字。
+ *
+ * 为什么要有这一份：**antd 的 ConfigProvider.locale 管不到日期面板里的星期与月份**。
+ * 那两行文案不在 antd 的语言包里，而是 rc-picker 现场从 dayjs 取的
+ * （localeData().weekdaysMin() / monthsShort()，见 rc-picker/generate/dayjs.js）。
+ * 而 dayjs 的语言包是按需 import 的，没加载过的语言 `dayjs().locale("zh-cn")`
+ * **不报错也不生效**，静默留在 en 上 —— 症状就是 locale 传了 zh_CN、按钮和占位符
+ * 都是中文，面板表头却还是 Su Mo Tu We 和 Sep 2026，而且不会有任何一条警告。
+ *
+ * 顺带还决定「本周」从哪天算起：dayjs 的 startOf("week") 用的是语言包里的
+ * weekStart（zh-cn 是周一，en 是周日），所以日期控件的快捷操作跟着界面语言走，
+ * 不用也不该自己写死。
+ */
+function dayjsLocaleFor(locale: AppLocale) {
+  if (locale === "en-US") return "en";
+  if (locale === "id-ID") return "id";
+  return "zh-cn";
 }
 
 function getInitialLocale<L extends AppLocale>(supported: readonly L[], storageKey: string): L {
@@ -88,6 +113,18 @@ export function createLocaleProvider<L extends AppLocale, Messages extends Recor
       window.localStorage.setItem(options.storageKey, locale);
       document.documentElement.lang = locale;
     }, [locale, ready]);
+
+    /**
+     * dayjs 的「当前语言」是模块级的全局单例，跟着界面语言切一次。
+     *
+     * 只在浏览器里切（所以放在 effect 里，不放渲染期）：SSR 是同一个 Node 进程给
+     * 所有请求渲染，在渲染期改全局会串到别人的请求上。日期面板本身不依赖这一行 ——
+     * rc-picker 每次取文案都自己带上语言名 —— 这里管的是业务代码里那些
+     * dayjs(x).format("MMM D") 之类的调用，让它们和界面同语言。
+     */
+    useEffect(() => {
+      dayjs.locale(dayjsLocaleFor(locale));
+    }, [locale]);
 
     const value = useMemo<LocaleContextValue>(
       () => ({

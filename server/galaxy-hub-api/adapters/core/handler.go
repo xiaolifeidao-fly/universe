@@ -137,6 +137,10 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 		unit.Provider = route.Provider
 		unit.Model = route.Model
 		unit.Family = route.Family
+		// 推理强度跟着路由键走，和 model 一样是计价键的一部分 —— 适配器在 ToUnit 里
+		// 也填了一份，这里再盖一次是为了「路由键说了算」：Route() 有机会改写它
+		// （例如硬钉到某条贡献时按那台机器实际能跑的档降级），而 ToUnit 看不到那一步。
+		unit.Effort = route.Effort
 		unit.AffinityKey = route.AffinityKey
 		unit.HardPin = route.HardPin
 		unit.ConsumerKey = caller.KeyID

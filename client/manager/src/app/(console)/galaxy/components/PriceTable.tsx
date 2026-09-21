@@ -5,7 +5,6 @@ import {
   Alert,
   AutoComplete,
   Button,
-  DatePicker,
   Empty,
   Form,
   InputNumber,
@@ -24,9 +23,10 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { ManagerDatePicker } from "@/components/date/DatePickers";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { deletePrice, fetchPrices, savePrice, type PriceTableView, type PriceView } from "../api/galaxy.api";
-import { CodeSelect, CodeText, kindLabel, labeledOptions, optionMatches, unitLabel } from "./labels";
+import { CodeSelect, CodeText, effortLabel, kindLabel, labeledOptions, optionMatches, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万单位的微分」：3,000,000 就是 ¥3 / 百万 token。 */
 const MICRO = 1_000_000;
@@ -42,10 +42,29 @@ const DEFAULT_KIND = "llm.chat";
 /** 「全部能力」在 Select 里用空串表达：undefined 会被 antd 当成没选，显示成占位符。 */
 const ALL_KINDS = "";
 
+/**
+ * 强度胶囊的配色，由浅到深逐级加重。
+ *
+ * 颜色在这里是**排序信息**而不是装饰：一张按 (模型 × 强度 × 单位) 展开的表，
+ * 同一个模型的几档会被单位插花排开，光看 low / xhigh 两个词，「哪档更深」
+ * 要一个一个读。词表以外的档没有配色，落到默认灰 —— 不猜。
+ */
+const EFFORT_TONE: Record<string, string> = {
+  none: "default",
+  minimal: "cyan",
+  low: "blue",
+  medium: "geekblue",
+  high: "purple",
+  xhigh: "magenta",
+  max: "red",
+};
+
 type PriceForm = {
   kind: string;
   /** 留空 = 该 kind 的兜底价。AutoComplete 的空值是 undefined，提交时归一成空串。 */
   modelId?: string;
+  /** 留空 = 这个模型不分强度的价。Select 的空值同样是 undefined。 */
+  effort?: string;
   unit: string;
   /** 界面上按元填，提交时乘回微分。 */
   price: number;
@@ -151,6 +170,20 @@ export function PriceTable() {
           ),
       },
       {
+        title: t("galaxy.price.effort"),
+        dataIndex: "effort",
+        width: 130,
+        render: (effort: string) =>
+          effort ? (
+            <Tag color={EFFORT_TONE[effort] ?? "default"}>{effortLabel(effort, t)}</Tag>
+          ) : (
+            // 和模型那一列同理：空串不是「没填」，是「这个模型的所有强度都按这行算」。
+            <Tooltip title={t("galaxy.price.anyEffortHint")}>
+              <Tag>{t("galaxy.price.anyEffort")}</Tag>
+            </Tooltip>
+          ),
+      },
+      {
         title: t("galaxy.price.unit"),
         dataIndex: "unit",
         width: 210,
@@ -245,9 +278,11 @@ export function PriceTable() {
                   try {
                     await deletePrice({
                       kind: row.kind,
-                      // modelId 在唯一键里。漏掉它删的是兜底价那一行 ——
-                      // 而兜底价一没，这个 kind 下所有没单独定价的模型立刻按 0 计费。
+                      // modelId 与 effort 都在唯一键里。漏掉任意一个删的都是另一行 ——
+                      // 漏掉 modelId 删的是兜底价，那个 kind 下所有没单独定价的模型
+                      // 立刻按 0 计费；漏掉 effort 删的是「不分强度」那条，同样是一大片。
                       modelId: row.modelId,
+                      effort: row.effort,
                       unit: row.unit,
                       effectiveFrom: row.effectiveFrom,
                     });
@@ -339,9 +374,9 @@ export function PriceTable() {
       </Space>
 
       <Table<PriceView>
-        // 主键跟唯一键走。漏掉 modelId 的话，同一个 kind、同一个单位、
-        // 同一个生效时刻的兜底价和模型价会撞成一个 key，React 只画得出一行。
-        rowKey={(row) => `${row.kind}:${row.modelId}:${row.unit}:${row.effectiveFrom}`}
+        // 主键跟唯一键走。少一列就会让两行撞成一个 key，React 只画得出其中一行 ——
+        // 表面上是「我明明存进去了，列表里没有」。
+        rowKey={(row) => `${row.kind}:${row.modelId}:${row.effort}:${row.unit}:${row.effectiveFrom}`}
         size="small"
         loading={loading}
         columns={columns}
@@ -368,6 +403,7 @@ export function PriceTable() {
         kinds={table?.kinds ?? []}
         models={table?.models ?? []}
         units={table?.units ?? []}
+        efforts={table?.efforts ?? {}}
         onClose={() => setEditing(null)}
         onSaved={(saved) => {
           // 在「对话与代码」下面给别的能力加了一行，存完表里什么都没多 ——
@@ -402,6 +438,7 @@ function PriceModal({
   kinds,
   models,
   units,
+  efforts,
   onClose,
   onSaved,
 }: {
@@ -409,6 +446,8 @@ function PriceModal({
   kinds: string[];
   models: string[];
   units: string[];
+  /** 协议族 → 它认识的档位，由浅到深。服务端给的，前端不自己维护一份。 */
+  efforts: Record<string, string[]>;
   onClose: () => void;
   /** 带上刚存下的能力：外面要靠它把筛选跟过去。 */
   onSaved: (kind: string) => void;
@@ -417,11 +456,31 @@ function PriceModal({
   const [form] = Form.useForm<PriceForm>();
   const [submitting, setSubmitting] = useState(false);
 
+  /**
+   * 强度候选：两族的档并成一张下拉，按族分组。
+   *
+   * 分组不是排版 —— 一行价上没有「族」这一列，也不该有（族是模型的属性，而一行价
+   * 可以是跨模型的兜底行）。所以必须由这张下拉告诉运营「minimal 只有 Codex 有、
+   * xhigh 只有 Claude 有」，否则给一个 Claude 模型配上 minimal 档这种搭配错误，
+   * 服务端拦不住（它只校验档位名真实存在），表现是那行价匹配不上任何用量。
+   */
+  const effortOptions = useMemo(
+    () =>
+      Object.entries(efforts)
+        .filter(([, levels]) => levels.length > 0)
+        .map(([family, levels]) => ({
+          label: t(`galaxy.price.family.${family}`),
+          options: levels.map((effort) => ({ value: effort, label: effortLabel(effort, t) })),
+        })),
+    [efforts, t],
+  );
+
   useEffect(() => {
     if (!draft) return;
     form.setFieldsValue({
       kind: draft.kind ?? "",
       modelId: draft.modelId ?? "",
+      effort: draft.effort ?? "",
       unit: draft.unit ?? "",
       price: (draft.price ?? 0) / MICRO,
       // 拿 settlePrice 而不是 providerPrice 预填：还没迁移的行 providerPrice 是 0，
@@ -443,6 +502,7 @@ function PriceModal({
       await savePrice({
         kind,
         modelId: (values.modelId ?? "").trim(),
+        effort: (values.effort ?? "").trim(),
         unit: (values.unit ?? "").trim(),
         // 界面按元填，库里存微分。中间这一步乘法漏掉的话价格会差一百万倍。
         price: Math.round(values.price * MICRO),
@@ -487,6 +547,13 @@ function PriceModal({
             placeholder={t("galaxy.price.fallbackPlaceholder")}
           />
         </Form.Item>
+        {/* 强度是一个**封闭词表**，所以这里是 Select 而不是 AutoComplete —— 和上面的模型正相反。
+            理由在于错了会怎样：模型名填错很快会有人反馈「这个模型没按我定的价收」，
+            而强度填错（"High"、"medium-high"）匹配不上任何一次请求，这行价会永远躺在表里，
+            运营以为自己给 max 档加过价。服务端也会拒，但那时人已经填完一整张表了。 */}
+        <Form.Item name="effort" label={t("galaxy.price.effort")} extra={t("galaxy.price.effortHint")}>
+          <Select allowClear options={effortOptions} placeholder={t("galaxy.price.anyEffortPlaceholder")} />
+        </Form.Item>
         <Form.Item name="unit" label={t("galaxy.price.unit")} rules={[{ required: true }]}>
           <CodeSelect candidates={units} label={(value) => unitLabel(value, t)} placeholder="llm.input_tokens" />
         </Form.Item>
@@ -508,7 +575,7 @@ function PriceModal({
         </Form.Item>
         <MarginPreview form={form} />
         <Form.Item name="effectiveFrom" label={t("galaxy.price.effectiveFrom")} extra={t("galaxy.price.effectiveFromHint")}>
-          <DatePicker showTime style={{ width: "100%" }} />
+          <ManagerDatePicker showTime style={{ width: "100%" }} />
         </Form.Item>
       </Form>
     </Modal>

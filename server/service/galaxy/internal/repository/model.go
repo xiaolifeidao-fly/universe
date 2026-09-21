@@ -418,6 +418,10 @@ type GalaxyUnit struct {
 	Family      string `gorm:"column:family;type:varchar(32)"`
 	Provider    string `gorm:"column:provider;type:varchar(64)"`
 	Model       string `gorm:"column:model;type:varchar(96)"`
+	// Effort 这一次请求的推理强度。它和 Model 一样是**计价键**，所以必须落在单元行上：
+	// 账单（Usage）、争议追回（dispute）都在事后重新取价，那时唯一能回答「当初是哪一档」
+	// 的就是这一列。Redis 里那份信封活不过保留期，老单元只剩这张表。
+	Effort string `gorm:"column:effort;type:varchar(16)" description:"推理强度，计价键的一部分"`
 
 	ConsumerKey string `gorm:"column:consumer_key;type:varchar(64);index:idx_gx_unit_consumer,priority:2"`
 	// Space 是业务自己的空间。池内 biz_line 固定 galaxy，业务空间单独一列：
@@ -601,9 +605,19 @@ type GalaxyPrice struct {
 	// NOT NULL DEFAULT '' 不是装饰：MySQL 的唯一索引**不拦 NULL**，
 	// 这一列要是可空，两行「同 kind 同单位同生效时刻、model_id 都是 NULL」能一起插进去，
 	// 取价时先拿到哪行全看运气。加列的迁移也靠这个默认值把存量行落成兜底价。
-	ModelID       string    `gorm:"column:model_id;type:varchar(96);not null;default:'';uniqueIndex:uk_gx_price,priority:3" description:"模型名，空=该 kind 的兜底价"`
-	Unit          string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_price,priority:4"`
-	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null default null;uniqueIndex:uk_gx_price,priority:5"`
+	ModelID string `gorm:"column:model_id;type:varchar(96);not null;default:'';uniqueIndex:uk_gx_price,priority:3" description:"模型名，空=该 kind 的兜底价"`
+	// Effort 这一行管哪一档推理强度。空串 = 不分强度，该模型（或该 kind）的所有强度都按它算。
+	//
+	// 和 ModelID 完全同构，连「为什么必须 NOT NULL DEFAULT ''」的理由都一样：
+	// MySQL 的唯一索引不拦 NULL，可空会让两行「同 kind 同模型同单位同生效时刻、
+	// effort 都是 NULL」一起插进去，取价时先拿到哪行全看运气。
+	//
+	// 档位名是**上游原生**的那一套，两族各不相同（见 contract.FamilyEfforts）。
+	// 这一列不校验「这个档属不属于这个模型的族」：价目表是账，模型换族、上游加档
+	// 都不该让老账行读不出来。
+	Effort        string    `gorm:"column:effort;type:varchar(16);not null;default:'';uniqueIndex:uk_gx_price,priority:4" description:"推理强度，空=不分强度"`
+	Unit          string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_price,priority:5"`
+	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null default null;uniqueIndex:uk_gx_price,priority:6"`
 	// Price 是每百万单位的价格（微分），避免浮点累积误差。
 	Price    int64  `gorm:"column:price" description:"对外单价：每百万单位微分"`
 	Currency string `gorm:"column:currency;type:varchar(8);default:'CNY'"`

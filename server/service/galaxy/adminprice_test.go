@@ -36,7 +36,7 @@ func TestMarkLivePricesPicksTheLatestRowThatHasArrived(t *testing.T) {
 	if views[2].Effective {
 		t.Error("被取代的历史价不该再标成生效中")
 	}
-	if !priced[priceKey("llm.chat", "", "llm.input_tokens")] {
+	if !priced[priceKey("llm.chat", "", "", "llm.input_tokens")] {
 		t.Error("有生效价的组合应当算「已定价」")
 	}
 }
@@ -57,7 +57,7 @@ func TestMarkLivePricesTreatsAFutureOnlyRowAsUnpriced(t *testing.T) {
 	if views[0].Effective {
 		t.Error("还没到生效时间的行不该标成生效中")
 	}
-	if priced[priceKey("video.edit.render", "", "video.output_seconds")] {
+	if priced[priceKey("video.edit.render", "", "", "video.output_seconds")] {
 		t.Fatal("只排了未来价 = 此刻没有价，不能当成已定价")
 	}
 	unpriced := unpricedFrom([]repository.UsageRow{
@@ -74,7 +74,7 @@ func TestMarkLivePricesTreatsAFutureOnlyRowAsUnpriced(t *testing.T) {
 // 而库里没有任何地方记着这个决定。列出来、让运营填一行 0，
 // 「0 是有意的」和「忘了填」才区分得开。
 func TestUnpricedFromListsEveryMeteredUnitWithoutAPrice(t *testing.T) {
-	priced := map[string]bool{priceKey("llm.chat", "", "llm.input_tokens"): true}
+	priced := map[string]bool{priceKey("llm.chat", "", "", "llm.input_tokens"): true}
 	usage := []repository.UsageRow{
 		{Kind: "llm.chat", Unit: "llm.output_tokens"},
 		{Kind: "llm.chat", Unit: "llm.input_tokens"},  // 已定价，不该出现

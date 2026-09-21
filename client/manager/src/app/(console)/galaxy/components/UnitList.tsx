@@ -14,6 +14,7 @@ import {
   type AdminUnitView,
   type UnitState,
 } from "../api/galaxy.api";
+import { effortLabel } from "./labels";
 
 const PAGE_SIZE = 20;
 
@@ -106,7 +107,12 @@ export function UnitList() {
       width: 215,
       render: (_, row) => (
         <Space direction="vertical" size={0}>
-          <span>{row.model || row.provider || "-"}</span>
+          <span>
+            {row.model || row.provider || "-"}
+            {/* 强度跟着模型走，不单开一列：它只在和模型放在一起时才有意义
+                （「opus 的 max 档」），单独一列 max 说不出是哪个模型的 max。 */}
+            {row.effort ? <Tag style={{ marginInlineStart: 6 }}>{effortLabel(row.effort, t)}</Tag> : null}
+          </span>
           <Typography.Text type="secondary" className="manager-mono" style={{ fontSize: 12 }}>
             {row.cid || t("galaxy.unit.unplaced")}
           </Typography.Text>

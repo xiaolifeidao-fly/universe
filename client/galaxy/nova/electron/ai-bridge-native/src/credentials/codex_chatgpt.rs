@@ -158,6 +158,64 @@ pub async fn get_codex_creds(client: &reqwest::Client, auth_file: Option<&str>) 
 
 const OPENAI_PATHS: [&str; 2] = ["/v1/responses", "/v1/chat/completions"];
 
+/// 客户端自己发的 Codex 协议头：原样带给上游。
+///
+/// 这些头决定上游怎么解读这一次请求 —— 走不走 responses-lite 那条编码路径、
+/// 远端压缩开不开、这一轮属于哪条会话。丢掉它们，响应就不再与直连一致。
+///
+/// 会话那几个尤其要紧：上游的前缀缓存**按会话路由**（prompt_cache_key 在请求体里，
+/// 会话 id 在头里），同一条对话的连续请求要落到同一台机器上才命中得了。
+/// 少了会话身份，每个请求都可能散到不同机器，命中的就只剩 instructions + tools
+/// 那段所有 Codex 请求共用的开头 —— 对话本身有多长都白搭。
+///
+/// 与 claude_oauth.rs 的 PASSTHROUGH_HEADERS 是同一件事，Codex 这一路以前整个漏掉了。
+/// 放在自己造的那几个头之后应用：客户端给了就以客户端为准，没给才用我们的默认值。
+const PASSTHROUGH_HEADERS: [&str; 8] = [
+    "session-id", "thread-id", "x-client-request-id",
+    "x-codex-window-id", "x-codex-turn-metadata", "x-codex-beta-features",
+    "x-openai-internal-codex-responses-lite",
+    "openai-beta",
+];
+
+fn apply_passthrough(ctx: &UpstreamAuthContext<'_>, headers: &mut BTreeMap<String, String>) {
+    for name in PASSTHROUGH_HEADERS {
+        if let Some(value) = ctx.header(name) {
+            headers.insert(name.to_string(), value.to_string());
+        }
+    }
+    // originator 与 user-agent 成对透传，缺一不可。
+    //
+    // 上游靠这一对认客户端。只放 user-agent 过去，就会出现「OpenAI 官方 SDK 的 UA +
+    // 我们造的 codex_cli_rs」这种对不上的组合，上游完全可能直接拒掉。
+    // originator 是 Codex 客户端的标记：它在，说明对面真的是 Codex，那它的 UA 也可信；
+    // 它不在（别的 SDK 直接打 /v1/responses），两个都用我们的默认值，维持原来的行为。
+    if let Some(originator) = ctx.header("originator") {
+        headers.insert("originator".into(), originator.to_string());
+        if let Some(agent) = ctx.header("user-agent") {
+            headers.insert("user-agent".into(), agent.to_string());
+        }
+    }
+}
+
+/// 老版 Codex 用的 session_id 头（下划线那个，与上面透传的 session-id 不是同一个）。
+///
+/// 跟着客户端的会话走，不要每个请求换一个新值：换值等于换机器，前缀缓存直接作废。
+/// 客户端没给会话身份（不是 Codex 的调用方）才退回请求 id —— 那时本来也没有会话可言。
+///
+/// 仍然带上调用方身份：单账号多人共享时，两个客户端发了相同的会话 id 会落进上游
+/// 同一个 session，被后端并成一段对话（串话）。加了前缀就各归各的。
+fn legacy_session_id(ctx: &UpstreamAuthContext<'_>) -> String {
+    let scope = ctx
+        .header("session-id")
+        .or_else(|| ctx.header("thread-id"))
+        .unwrap_or(ctx.request_id);
+    format!("{}-{}", ctx.principal.alias, scope)
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-') { c } else { '_' })
+        .take(128)
+        .collect()
+}
+
 pub struct CodexChatGptProvider {
     pub client: reqwest::Client,
 }
@@ -177,22 +235,17 @@ impl CredentialProvider for CodexChatGptProvider {
                 UpstreamAuthKind::Bearer | UpstreamAuthKind::XApiKey => format!("Bearer {}", auth.value),
             };
             headers.insert("authorization".into(), value);
+            apply_passthrough(ctx, &mut headers);
             return Ok(headers);
         }
         let creds = get_codex_creds(&self.client, ctx.provider.auth_file.as_deref()).await?;
-        // 单账号多人共享：session_id 必须带上调用方身份，否则两个客户端发了相同的
-        // x-request-id 时会落进上游同一个 session，被后端并成一段对话（串话）。
-        let session_id: String = format!("{}-{}", ctx.principal.alias, ctx.request_id)
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '-') { c } else { '_' })
-            .take(128)
-            .collect();
         headers.insert("authorization".into(), format!("Bearer {}", creds.access_token));
         headers.insert("chatgpt-account-id".into(), creds.account_id);
         headers.insert("openai-beta".into(), "responses=experimental".into());
         headers.insert("originator".into(), "codex_cli_rs".into());
         headers.insert("user-agent".into(), "codex_cli_rs".into());
-        headers.insert("session_id".into(), session_id);
+        headers.insert("session_id".into(), legacy_session_id(ctx));
+        apply_passthrough(ctx, &mut headers);
         Ok(headers)
     }
 }

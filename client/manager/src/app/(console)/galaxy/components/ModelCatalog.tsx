@@ -5,7 +5,6 @@ import {
   Alert,
   Button,
   Card,
-  DatePicker,
   Form,
   Input,
   InputNumber,
@@ -24,6 +23,7 @@ import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { ManagerDatePicker } from "@/components/date/DatePickers";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import {
   deleteGalaxyModel,
@@ -38,7 +38,7 @@ import {
   type PriceView,
   type ReferralSettingsView,
 } from "../api/galaxy.api";
-import { kindLabel, unitLabel } from "./labels";
+import { effortLabel, kindLabel, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万 token 的微元」；表单里填元。 */
 const MICRO = 1_000_000;
@@ -534,6 +534,7 @@ export function ModelCatalog() {
         prices={prices}
         kinds={kinds}
         unitCandidates={table?.units ?? []}
+        efforts={table?.efforts ?? {}}
         onClose={() => setPricing(null)}
         onSaved={() => void load()}
       />
@@ -674,6 +675,7 @@ function ModelPricing({
   prices,
   kinds,
   unitCandidates,
+  efforts,
   onClose,
   onSaved,
 }: {
@@ -682,6 +684,8 @@ function ModelPricing({
   kinds: string[];
   /** 服务端给的计量单位候选：已有的价加上真实跑过的用量。是提示，不是白名单。 */
   unitCandidates: string[];
+  /** 协议族 → 它认识的推理强度档位，由浅到深。服务端给的，前端不自己维护一份。 */
+  efforts: Record<string, string[]>;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -691,6 +695,14 @@ function ModelPricing({
   // 兜底价可以换能力（一个能力一份兜底）；模型的能力由它自己的 kind 决定，不给改。
   const fallback = target?.modelId === "";
   const [kind, setKind] = useState(DEFAULT_KIND);
+  /**
+   * 这一屏此刻在改哪一档推理强度。空串 = 不分强度，也就是「没单独定价的强度都按它收」。
+   *
+   * 做成这一屏里的一个切换，而不是另开一页：一档的内容和不分强度那一档是同一张表
+   * （同样四个桶、同样两个价），只是键多了一维。分两处填，运营就得自己记住
+   * 「我刚才在哪一档填的」，而填错档不报错 —— 那行价只是永远匹配不上任何一次请求。
+   */
+  const [effort, setEffort] = useState("");
   /**
    * 运营手工加进来的计量单位。
    *
@@ -704,6 +716,9 @@ function ModelPricing({
   useEffect(() => {
     if (target) setKind(target.kind || DEFAULT_KIND);
     setExtraUnits([]);
+    // 每次打开回到「不分强度」：那是绝大多数改价要动的那一档。
+    // 留着上一次选的档，运营会在没注意的情况下改到 max 上去。
+    setEffort("");
   }, [target]);
 
   /** 这个能力下要摆出来的计量单位。对话类固定四个桶，别的能力照价目表里已有的来。 */
@@ -715,26 +730,78 @@ function ModelPricing({
     return Array.from(seen);
   }, [kind, prices, extraUnits]);
 
-  /** 这个模型自己此刻生效的那条价，按单位索引。没有就是它没单独定过价。 */
+  /**
+   * 这个模型自己此刻生效的那条价，按单位索引。没有就是它没单独定过价。
+   *
+   * **只认不分强度那一行（effort 为空）。** 这一屏改的就是它 —— 按推理强度分档的价
+   * 在「单价」那一页上改，那里一行一档看得见。不筛的话，同一个模型同一个单位的
+   * max 档行会按遍历顺序盖掉这一行，于是运营打开看到的是 max 档的数字，
+   * 保存出去却写进了「不分强度」那一行：两档的价一次操作全错，而且不报错。
+   */
   const own = useMemo(() => {
     const index: Record<string, PriceView> = {};
     if (!target) return index;
     for (const row of prices) {
-      if (row.kind !== kind || row.modelId !== target.modelId || !row.effective) continue;
+      if (row.kind !== kind || row.modelId !== target.modelId || row.effort !== effort || !row.effective) continue;
       index[row.unit] = row;
     }
     return index;
-  }, [prices, kind, target]);
+  }, [prices, kind, target, effort]);
 
-  /** 兜底价，只为在没填的那行给一句「此刻按什么算」。模型的兜底就是 modelId 为空的行。 */
+  /**
+   * 没填的那行此刻按什么算。
+   *
+   * 改的是某一档强度时，它「继承」的是**这个模型不分强度的价**而不是 kind 的兜底价 ——
+   * 取价的回落是四级的（kind 兜底 → 强度通价 → 模型不分强度 → 模型这一档），
+   * 越具体越晚盖。这里显示得和取价不一致的话，运营会按一个不会发生的数做决定。
+   */
   const inherited = useMemo(() => {
     const index: Record<string, PriceView> = {};
-    for (const row of prices) {
-      if (row.kind !== kind || row.modelId !== "" || !row.effective) continue;
-      index[row.unit] = row;
+    const layers = effort === "" ? [""] : ["", effort];
+    for (const layer of layers) {
+      for (const row of prices) {
+        if (row.kind !== kind || !row.effective) continue;
+        // 第一遍铺 kind 兜底（modelId 与 effort 都空），第二遍盖这个模型不分强度那一层。
+        const isFallback = row.modelId === "" && row.effort === layer;
+        const isModelWide = effort !== "" && row.modelId === (target?.modelId ?? "") && row.effort === "";
+        if (!isFallback && !isModelWide) continue;
+        index[row.unit] = row;
+      }
     }
     return index;
-  }, [prices, kind]);
+  }, [prices, kind, effort, target]);
+
+  /**
+   * 这个模型已经单独定过价的强度档。摆在切换器旁边 ——
+   * 不摆的话，「这个模型到底分没分档」得一档一档点过去才知道。
+   */
+  const pricedEfforts = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of prices) {
+      if (row.kind !== kind || row.effort === "" || !row.effective) continue;
+      if (row.modelId !== "" && row.modelId !== (target?.modelId ?? "")) continue;
+      seen.add(row.effort);
+    }
+    return seen;
+  }, [prices, kind, target]);
+
+  /** 强度候选，按族分组。分组的理由见 PriceTable 里那段同样的注释。 */
+  const effortOptions = useMemo(
+    () => [
+      { value: "", label: t("galaxy.price.anyEffort") },
+      ...Object.entries(efforts)
+        .filter(([, levels]) => levels.length > 0)
+        .map(([family, levels]) => ({
+          label: t(`galaxy.price.family.${family}`),
+          options: levels.map((level) => ({
+            value: level,
+            // 已经定过价的档标一下：一眼看出这个模型分了哪几档。
+            label: pricedEfforts.has(level) ? `${effortLabel(level, t)} ·` : effortLabel(level, t),
+          })),
+        })),
+    ],
+    [efforts, pricedEfforts, t],
+  );
 
   useEffect(() => {
     if (!target) return;
@@ -774,6 +841,7 @@ function ModelPricing({
         await savePrice({
           kind,
           modelId: target.modelId,
+          effort,
           unit,
           // 界面按元填，库里存微元。中间这一步乘法漏掉的话价格会差一百万倍。
           price: Math.round((row.price ?? 0) * MICRO),
@@ -799,11 +867,14 @@ function ModelPricing({
       // 兜底那一版的标题自己就说全了（「统一价（兜底）· 对话与代码」），再套一层
       // 「定价 · 」读起来是两个标题叠在一起。它跟着**当前选中的能力**现拼，
       // 不用打开时那份 —— 换过能力之后标题还写着上一个，是在说错自己在改什么。
+      // 标题要带上当前这一档：一屏四个桶长得一模一样，只有标题说得出
+      // 「我现在填的是 max 那一档」。不带的话，改完 max 保存，运营以为自己改的是常规价。
       title={
         target
-          ? fallback
-            ? t("galaxy.model.fallbackTitle").replace("{kind}", kindLabel(kind, t))
-            : t("galaxy.model.pricingTitle").replace("{model}", target.title)
+          ? (fallback
+              ? t("galaxy.model.fallbackTitle").replace("{kind}", kindLabel(kind, t))
+              : t("galaxy.model.pricingTitle").replace("{model}", target.title)) +
+            (effort ? ` · ${effortLabel(effort, t)}` : "")
           : ""
       }
       okText={t("galaxy.package.save")}
@@ -832,13 +903,16 @@ function ModelPricing({
               <Input value={kind} disabled className="manager-mono" />
             )}
           </Form.Item>
+          <Form.Item label={t("galaxy.price.effort")} extra={t("galaxy.price.effortHint")} style={{ minWidth: 220 }}>
+            <Select value={effort} onChange={setEffort} options={effortOptions} style={{ width: "100%" }} />
+          </Form.Item>
           <Form.Item
             name="effectiveFrom"
             label={t("galaxy.price.effectiveFrom")}
             extra={t("galaxy.price.effectiveFromHint")}
             style={{ minWidth: 300 }}
           >
-            <DatePicker showTime style={{ width: "100%" }} />
+            <ManagerDatePicker showTime style={{ width: "100%" }} />
           </Form.Item>
         </Space>
 
@@ -853,7 +927,18 @@ function ModelPricing({
           <Typography.Paragraph type="secondary">{t("galaxy.model.pricingNoUnit")}</Typography.Paragraph>
         ) : (
           units.map((unit) => (
-            <PricingRow key={unit} unit={unit} form={form} own={own[unit]} inherited={inherited[unit]} fallback={fallback} />
+            <PricingRow
+              key={unit}
+              unit={unit}
+              form={form}
+              own={own[unit]}
+              inherited={inherited[unit]}
+              // fallback 的意思是「这一行底下没有别的了」，所以选了某一档强度时它就不成立：
+              // 那一档没填的单位会回落到这个 kind 不分强度的价，而不是按 0 计费。
+              // 不收窄的话，改 max 档时每一行都红字写着「没单独定价的模型都按 0 计费」——
+              // 那句话是错的，而它恰恰会吓得运营去把四个桶都填一遍。
+              fallback={fallback && effort === ""}
+            />
           ))
         )}
 

@@ -416,6 +416,12 @@ export class ExecutionRecord {
 
   model = "";
 
+  /**
+   * 这一次跑的推理强度。结算单价按它分档，所以它解释得了「同一个模型，
+   * 这一行为什么记了比隔壁行多得多的积分」。老记录是空串。
+   */
+  effort = "";
+
   state = "";
 
   errorCode = "";
@@ -490,6 +496,25 @@ export async function issuePairingCode() {
 }
 
 /**
+ * 一个模型在某一档推理强度上的单价。
+ *
+ * 卡片上那几个数是**不分强度**那一档 —— 它是「没单独定价的强度都按它收」，
+ * 也是绝大多数请求真正走的价。这个列表只列真的单独定过价的档，一档都没有时是空的。
+ */
+export class ModelEffortPrice {
+  /** 档位名，上游原生：Claude 是 low…max，Codex 是 minimal…high。 */
+  effort = "";
+
+  inputPrice = 0;
+
+  outputPrice = 0;
+
+  cachePrice = 0;
+
+  cacheWritePrice = 0;
+}
+
+/**
  * 模型页的一行：这个模型是什么，跑它能记多少积分。
  *
  * 四档单价是**结算价**，也就是记进你积分账户的那个数 —— 不是平台对外收的价。
@@ -529,6 +554,16 @@ export class ProviderModelView {
 
   /** 这四个数是这个模型自己的价，还是回落到了该能力的统一价。 */
   priced = false;
+
+  /**
+   * 按推理强度单独定过**结算价**的那几档，由浅到深。空 = 不分强度。
+   *
+   * 深思考那一档烧掉的推理 token 多一个量级，往往也单独加过价 ——
+   * 「跑哪个模型的哪一档更赚」这个问题要靠它才答得了。
+   *
+   * 嵌套对象不经过 class-transformer（项目里没用 @Type），拿到的是普通对象。
+   */
+  efforts: ModelEffortPrice[] = [];
 
   /** 你的允许/拒绝名单放不放它过。和「机器上有没有」是两回事。 */
   allowed = false;

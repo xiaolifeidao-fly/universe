@@ -634,6 +634,7 @@ func (c *ControlPlane) LoadUnit(ctx context.Context, rid string) (galaxy.UnitRun
 			runtime.KindVersion = unit.KindVersion
 			runtime.Provider = unit.Provider
 			runtime.Model = unit.Model
+			runtime.Effort = unit.Effort
 			runtime.SID = unit.SID
 			runtime.Attempt = unit.Attempt
 		}

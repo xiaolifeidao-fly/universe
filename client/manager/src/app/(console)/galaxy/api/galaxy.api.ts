@@ -1054,6 +1054,12 @@ export class PriceView {
    */
   modelId = "";
 
+  /**
+   * 这一行管哪一档推理强度。空串 = **不分强度**，这个模型的所有强度都按它算。
+   * 档位名是上游原生的，两族不通用（Claude 的 low…max、Codex 的 minimal…high）。
+   */
+  effort = "";
+
   unit = "";
 
   /** 对外单价：向使用者收多少。 */
@@ -1095,6 +1101,15 @@ export class PriceTableView {
   models: string[] = [];
 
   /**
+   * 协议族 → 它认识的推理强度档位，由浅到深。
+   *
+   * 按族分开给而不是并成一张扁平清单：Claude 的 xhigh / max 在 Codex 不存在，
+   * Codex 的 minimal 在 Claude 不存在 —— 并起来运营迟早给某个模型填上一个
+   * 它永远不会出现的档，而那行价只会安静地躺在表里，匹配不上任何用量。
+   */
+  efforts: Record<string, string[]> = {};
+
+  /**
    * 近 30 天产生过用量、却查不到价的 (kind, unit)。
    * 这些用量的扣费与分成会**静默算 0**，不报错 —— 这一列就是那个告警。
    */
@@ -1109,6 +1124,8 @@ export async function savePrice(payload: {
   kind: string;
   /** 留空 = 改该 kind 的兜底价。 */
   modelId: string;
+  /** 留空 = 这个模型不分强度的价。服务端只认上游真实存在的档，编出来的会被拒。 */
+  effort: string;
   unit: string;
   price: number;
   /** 结算单价。一律显式带上 —— 不带就是把这一行的结算价清成 0。 */
@@ -1120,8 +1137,14 @@ export async function savePrice(payload: {
   return unwrapApiResponse(response.data);
 }
 
-/** modelId 在唯一键里，删除**一定要带**：不带就会去删兜底价那一行。 */
-export async function deletePrice(payload: { kind: string; modelId: string; unit: string; effectiveFrom: string }) {
+/** modelId 与 effort 都在唯一键里，删除**一定要带**：少带一个就会去删另一行。 */
+export async function deletePrice(payload: {
+  kind: string;
+  modelId: string;
+  effort: string;
+  unit: string;
+  effectiveFrom: string;
+}) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/admin/prices/delete", payload);
   return unwrapApiResponse(response.data);
 }
@@ -1476,6 +1499,12 @@ export class AdminUnitView {
   provider = "";
 
   model = "";
+
+  /**
+   * 这一次的推理强度，计价键的一部分。排查「这笔怎么收这么多」时，
+   * 模型对得上而金额对不上，差的通常就是这一档。老记录是空串。
+   */
+  effort = "";
 
   consumerKey = "";
 

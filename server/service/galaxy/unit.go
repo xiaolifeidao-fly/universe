@@ -367,6 +367,7 @@ func (s *service) persistUnit(ctx context.Context, unit contract.WorkUnit, now t
 	return s.repository.CreateUnit(ctx, &repository.GalaxyUnit{
 		BizLine: bizLine, UnitID: unit.ID, Kind: unit.Kind, KindVersion: unit.KindVersion,
 		Primitive: string(unit.Primitive), Family: unit.Family, Provider: unit.Provider, Model: unit.Model,
+		Effort:      unit.Effort,
 		ConsumerKey: unit.ConsumerKey, Space: unit.Space, SID: unit.SID, Op: unit.Op,
 		Seq: unit.Seq, Attempt: unit.Attempt,
 		State: string(contract.UnitQueued), EstimateJSON: encodeJSON(unit.Metering.Estimate),

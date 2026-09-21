@@ -268,10 +268,36 @@ func (s *service) applyCatalogPrices(ctx context.Context, models []dto.PortalMod
 	}
 	for index := range models {
 		kind := defaultString(models[index].Kind, portalKind)
-		table, own := resolvePrices(priceRows, kind, models[index].ModelID)
+		table, own := resolvePrices(priceRows, kind, models[index].ModelID, "")
 		applyKindPrice(&models[index], table, own)
+		applyEffortPrices(&models[index], priceRows, kind)
 	}
 	return nil
+}
+
+// applyEffortPrices 给卡片补上「按强度分档」的那几行。
+//
+// 卡片上原有的四个数来自 effort 为空的那次取价 —— 它是「没单独定价的强度按它收」，
+// 也就是绝大多数请求真正付的价。这里补的是例外：真的单独定过价的那几档。
+// 一档都没有就什么也不补，界面上不会多出一块空的「按强度计价」。
+func applyEffortPrices(model *dto.PortalModelView, priceRows []*repository.GalaxyPrice, kind string) {
+	efforts := pricedEfforts(priceRows, kind, model.ModelID, protocolFamily(model.Family))
+	if len(efforts) == 0 {
+		return
+	}
+	model.Efforts = make([]dto.ModelEffortPrice, 0, len(efforts))
+	for _, effort := range efforts {
+		table, _ := resolvePrices(priceRows, kind, model.ModelID, effort)
+		model.Efforts = append(model.Efforts, dto.ModelEffortPrice{
+			Effort:          effort,
+			InputPrice:      table[contract.UnitInputTokens].Price,
+			OutputPrice:     table[contract.UnitOutputTokens].Price,
+			CachePrice:      table[contract.UnitCacheReadTokens].Price,
+			// 和卡片上那一格同一档：绝大多数请求命中的是 5 分钟缓存，
+			// 合计（llm.cache_write_tokens）不进账本、通常也没有价。
+			CacheWritePrice: table[contract.UnitCacheWrite5mTokens].Price,
+		})
+	}
 }
 
 // applyKindPrice 把计价表里这个模型真会被收的价填进卡片。
@@ -355,6 +381,25 @@ func inferFamily(modelID string) (family, vendor string) {
 	default:
 		return "other", ""
 	}
+}
+
+// protocolFamily 目录里的族名（claude / gpt / gemini / other）→ 协议族
+// （anthropic / openai），也就是 contract 里那张强度词表的键。
+//
+// 两套族名不合并：目录那一套是**给人看的分栏**，门户上「Claude」「GPT」这两栏就是它；
+// 协议族是**上游的接口形状**，决定请求体里那个强度字段叫什么。同一个协议族将来可能
+// 装下不止一个展示族（任何 OpenAI 兼容的上游都走 openai 这一套），合成一列就再也拆不开。
+//
+// 认不出来的回空串 —— 那时 FamilyEfforts 给 nil，模型页就不显示强度分档。
+// 猜一族会让一个我们并不了解的上游平白多出几档它没有的价。
+func protocolFamily(family string) string {
+	switch family {
+	case "claude":
+		return contract.FamilyAnthropic
+	case "gpt":
+		return contract.FamilyOpenAI
+	}
+	return ""
 }
 
 // ---------- 联系我们 ----------

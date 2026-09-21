@@ -1,7 +1,8 @@
 [package]
 name = "ai-bridge-native"
 # 0.2.0 起节点认远程升级协议（hello 报 platform / distribution / upgradeBlocker，心跳收 upgrade 指令）。
-version = "0.2.0"
+# 0.3.0 起心跳带上游订阅余量（每条通道一份 usage，从中转响应的限流头里捎回来）。
+version = "0.3.0"
 edition = "2021"
 
 [lib]

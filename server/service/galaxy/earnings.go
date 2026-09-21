@@ -286,7 +286,7 @@ func (s *service) ProviderRecords(ctx context.Context, query dto.ProviderRecordQ
 	page := dto.ProviderRecordPage{Total: total, Records: make([]dto.ExecutionRecord, 0, len(units))}
 	for _, unit := range units {
 		page.Records = append(page.Records, dto.ExecutionRecord{
-			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, State: unit.State,
+			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, Effort: unit.Effort, State: unit.State,
 			ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Credits:   perUnit[unit.UnitID],
 			NodeID:    nodeOf[unit.CID],

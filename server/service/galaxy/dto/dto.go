@@ -478,7 +478,10 @@ type UsageLine struct {
 	// 合并成一行的话，那一行的 UnitPrice 只能是几个模型里随便一个的价。
 	// 单元行被清掉的老记录是空串。
 	Model string `json:"model"`
-	Unit  string `json:"unit"`
+	// Effort 这笔用量跑的是哪一档推理强度。单价也按它定，所以和 Model 一样必须分行：
+	// 同一个模型的 max 档和 low 档收的是两个价，合成一行就只能显示其中一个。
+	Effort string `json:"effort,omitempty"`
+	Unit   string `json:"unit"`
 	// Amount 该单位的累计量；Calls 是产生它的请求数。
 	Amount int64 `json:"amount"`
 	Calls  int64 `json:"calls"`
@@ -493,6 +496,25 @@ type UsageReport struct {
 	Lines    []UsageLine `json:"lines"`
 	TotalFee int64       `json:"totalFee"`
 	Currency string      `json:"currency"`
+}
+
+// ModelEffortPrice 一个模型在某一档推理强度上的四档单价。
+//
+// 卡片上那四个数是**不分强度**那一档（价目表里 effort 为空的行）算出来的 ——
+// 它是「没单独定价的强度都按它收」的那个价，也是绝大多数模型的全部内容。
+// 这个列表只列**真的单独定过价**的档：一个都没有时它是空的，界面上什么也不多画。
+//
+// 不把六档一律列出来：回落之后每一档都等于卡片上那四个数，一屏重复的数字
+// 既说不清「这个模型按强度分档收费」，也说不清「它不分档」。
+type ModelEffortPrice struct {
+	// Effort 档位名，上游原生（Claude 的 low…max、Codex 的 minimal…high）。
+	Effort string `json:"effort"`
+	// 四档单价，口径与所在视图的其余单价完全一致：
+	// 门户 / 使用端是对外价，共享端是结算价。
+	InputPrice      int64 `json:"inputPrice"`
+	OutputPrice     int64 `json:"outputPrice"`
+	CachePrice      int64 `json:"cachePrice"`
+	CacheWritePrice int64 `json:"cacheWritePrice"`
 }
 
 // ---------- 提供者视图 ----------
@@ -525,6 +547,9 @@ type ProviderModelView struct {
 	// Priced 这四个数是这个模型自己的价，还是回落到了该 kind 的兜底价。
 	// 界面要能说出区别：回落期间所有模型显示同一个数字，不说清就像页面坏了。
 	Priced bool `json:"priced"`
+	// Efforts 这个模型按推理强度单独定过**结算价**的那几档，由浅到深。
+	// 共享者要回答的是「跑哪个模型的哪一档更赚」，而深思考那一档往往单独加过价。
+	Efforts []ModelEffortPrice `json:"efforts,omitempty"`
 	// Allowed 这个人名下至少有一条贡献接这个模型（按各自的允许/拒绝名单算）。
 	Allowed bool `json:"allowed"`
 	// Available 至少有一台机器的上游**真的**有这个模型。这是节点报上来的事实，
@@ -626,9 +651,13 @@ type NodeView struct {
 // ExecutionRecord 是「我的机器上跑过什么」的匿名化日志（P-14）：
 // 只有 kind、时间、用量、结果，没有消费者内容也没有消费者身份。
 type ExecutionRecord struct {
-	UnitID    string            `json:"unitId"`
-	Kind      string            `json:"kind"`
-	Model     string            `json:"model"`
+	UnitID string `json:"unitId"`
+	Kind   string `json:"kind"`
+	Model  string `json:"model"`
+	// Effort 这一次跑的推理强度。它解释得了这一行为什么烧掉十倍的 token、
+	// 又记了比隔壁行多得多的积分 —— 结算单价本来就按它分档（见 zt_galaxy_price）。
+	// 老记录、以及不按强度分档的能力是空串。
+	Effort    string            `json:"effort,omitempty"`
 	State     string            `json:"state"`
 	ErrorCode string            `json:"errorCode,omitempty"`
 	Usage     contract.Metering `json:"usage"`
@@ -1210,8 +1239,11 @@ type UsageRecord struct {
 	Kind     string `json:"kind"`
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
-	State    string `json:"state"`
-	Attempt  int    `json:"attempt"`
+	// Effort 这一次的推理强度。单价按 (模型, 强度) 定，所以「这一笔为什么扣这么多」
+	// 要靠它才答得完整 —— 同一个模型的 max 档和 low 档是两个价。
+	Effort  string `json:"effort,omitempty"`
+	State   string `json:"state"`
+	Attempt int    `json:"attempt"`
 
 	ErrorCode string            `json:"errorCode,omitempty"`
 	Usage     contract.Metering `json:"usage"`
@@ -1311,8 +1343,11 @@ type PortalModelView struct {
 	// Priced 说明这几个单价是这个模型自己的，还是回落到了 kind 的统一价。
 	// 门户据此决定要不要在卡片上标「统一价」—— 不标的话，回落期间
 	// 所有模型显示同一个价，看起来像是页面坏了。
-	Priced    bool `json:"priced"`
-	SortOrder int  `json:"sortOrder"`
+	Priced bool `json:"priced"`
+	// Efforts 这个模型按推理强度单独定过价的那几档，由浅到深。空 = 不分强度，
+	// 上面那四个数就是全部。见 ModelEffortPrice。
+	Efforts   []ModelEffortPrice `json:"efforts,omitempty"`
+	SortOrder int                `json:"sortOrder"`
 	// Listed 只有运营的目录接口会填：门户那条公开接口本来就只列上架的。
 	Listed *bool `json:"listed,omitempty"`
 }

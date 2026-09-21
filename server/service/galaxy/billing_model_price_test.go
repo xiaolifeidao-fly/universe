@@ -18,14 +18,19 @@ import (
 
 // priceRows 造一批已经按仓储顺序排好的行。
 //
-// 顺序是 (kind, model_id, unit, effective_from) **升序** —— 和 ListEffectivePrices
+// 顺序是 (kind, model_id, effort, unit, effective_from) **升序** —— 和 ListEffectivePrices
 // 一致（升序才走得上唯一键，见那边的注释）。也就是说同一组里**最后**一条才是
 // 最新生效的。写反了用例照样过，但验的是另一回事。
 func priceRows(rows ...*repository.GalaxyPrice) []*repository.GalaxyPrice { return rows }
 
+// priceAt 一行不分强度的价（effort 留空）。绝大多数用例只关心模型这一维。
 func priceAt(kind, model, unit string, price int64, ago time.Duration) *repository.GalaxyPrice {
+	return priceAtEffort(kind, model, "", unit, price, ago)
+}
+
+func priceAtEffort(kind, model, effort, unit string, price int64, ago time.Duration) *repository.GalaxyPrice {
 	return &repository.GalaxyPrice{
-		Kind: kind, ModelID: model, Unit: unit, Price: price, Currency: "CNY",
+		Kind: kind, ModelID: model, Effort: effort, Unit: unit, Price: price, Currency: "CNY",
 		ProviderPrice: price / 2, EffectiveFrom: time.Now().Add(-ago),
 	}
 }
@@ -35,7 +40,7 @@ func TestResolvePricesPrefersTheModelRow(t *testing.T) {
 		priceAt("llm.chat", "", "llm.output_tokens", 15_000_000, time.Hour),
 		priceAt("llm.chat", "claude-opus-5", "llm.output_tokens", 90_000_000, time.Hour),
 	)
-	table, own := resolvePrices(rows, "llm.chat", "claude-opus-5")
+	table, own := resolvePrices(rows, "llm.chat", "claude-opus-5", "")
 	if got := table[contract.UnitOutputTokens].Price; got != 90_000_000 {
 		t.Fatalf("应当用这个模型自己的价 90,000,000，实际 %d", got)
 	}
@@ -52,7 +57,7 @@ func TestResolvePricesFallsBackPerUnit(t *testing.T) {
 		priceAt("llm.chat", "", "llm.output_tokens", 15_000_000, time.Hour),
 		priceAt("llm.chat", "claude-opus-5", "llm.output_tokens", 90_000_000, time.Hour),
 	)
-	table, own := resolvePrices(rows, "llm.chat", "claude-opus-5")
+	table, own := resolvePrices(rows, "llm.chat", "claude-opus-5", "")
 	if got := table[contract.UnitInputTokens].Price; got != 3_000_000 {
 		t.Fatalf("模型没给 input 定价，应当回落到兜底的 3,000,000，实际 %d", got)
 	}
@@ -70,7 +75,7 @@ func TestResolvePricesIgnoresOtherModels(t *testing.T) {
 		priceAt("llm.chat", "", "llm.output_tokens", 15_000_000, time.Hour),
 		priceAt("llm.chat", "claude-opus-5", "llm.output_tokens", 90_000_000, time.Hour),
 	)
-	table, own := resolvePrices(rows, "llm.chat", "claude-haiku-4-5")
+	table, own := resolvePrices(rows, "llm.chat", "claude-haiku-4-5", "")
 	if got := table[contract.UnitOutputTokens].Price; got != 15_000_000 {
 		t.Fatalf("haiku 没单独定价，应当走兜底的 15,000,000，实际 %d", got)
 	}
@@ -85,7 +90,7 @@ func TestResolvePricesWithoutModelUsesFallbackOnly(t *testing.T) {
 		priceAt("llm.chat", "", "llm.output_tokens", 15_000_000, time.Hour),
 		priceAt("llm.chat", "claude-opus-5", "llm.output_tokens", 90_000_000, time.Hour),
 	)
-	table, own := resolvePrices(rows, "llm.chat", "")
+	table, own := resolvePrices(rows, "llm.chat", "", "")
 	if got := table[contract.UnitOutputTokens].Price; got != 15_000_000 {
 		t.Fatalf("没有模型就只能走兜底价，实际 %d", got)
 	}
@@ -113,7 +118,7 @@ func TestResolvePricesTakesLatestEffectiveRowPerGroup(t *testing.T) {
 // 别的 kind 的行不能串过来。
 func TestResolvePricesIgnoresOtherKinds(t *testing.T) {
 	rows := priceRows(priceAt("video.edit.render", "", "llm.output_tokens", 99_000_000, time.Hour))
-	table, _ := resolvePrices(rows, "llm.chat", "")
+	table, _ := resolvePrices(rows, "llm.chat", "", "")
 	if len(table) != 0 {
 		t.Fatalf("别的 kind 的价不该出现在这张表里，实际 %v", table)
 	}
@@ -121,7 +126,7 @@ func TestResolvePricesIgnoresOtherKinds(t *testing.T) {
 
 func mustPrice(t *testing.T, rows []*repository.GalaxyPrice, kind, model string, unit contract.MeterUnit) int64 {
 	t.Helper()
-	table, _ := resolvePrices(rows, kind, model)
+	table, _ := resolvePrices(rows, kind, model, "")
 	row, ok := table[unit]
 	if !ok {
 		t.Fatalf("%s/%s 查不到 %s 的价", kind, model, unit)
@@ -146,7 +151,7 @@ func TestMarkLivePricesOnlyCountsFallbackAsPriced(t *testing.T) {
 	if views[0].ModelID != "claude-opus-5" {
 		t.Fatalf("视图要带上模型名，实际 %q", views[0].ModelID)
 	}
-	if priced[priceKey("llm.chat", "", "llm.output_tokens")] {
+	if priced[priceKey("llm.chat", "", "", "llm.output_tokens")] {
 		t.Fatal("只有一个模型有价 ≠ 这个单位有价可查，兜底行还缺着")
 	}
 	unpriced := unpricedFrom([]repository.UsageRow{

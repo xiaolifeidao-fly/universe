@@ -183,7 +183,10 @@ type UnitRuntime struct {
 	KindVersion int
 	Provider    string
 	Model       string
-	SID         string
+	// Effort 推理强度，和 Model 一样是计价键。它从信封里解出来（LoadUnit），
+	// 结算时按 (kind, model, effort) 取价。
+	Effort string
+	SID    string
 	CID         string
 	Instance    string
 	State       contract.UnitState

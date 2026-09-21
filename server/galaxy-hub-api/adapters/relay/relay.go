@@ -25,8 +25,8 @@ const (
 	// Version 契约版本。上游协议不兼容变更时升版，节点与 Hub 在 hello 阶段对齐。
 	Version = 1
 
-	FamilyAnthropic = "anthropic"
-	FamilyOpenAI    = "openai"
+	FamilyAnthropic = contract.FamilyAnthropic
+	FamilyOpenAI    = contract.FamilyOpenAI
 
 	// DefaultBodyLimit relay 原语的内联上限。请求体走内联而不是 OSS 引用（1.2 例外）。
 	DefaultBodyLimit = 4 << 20
@@ -114,6 +114,8 @@ type input struct {
 	body   []byte
 	model  string
 	stream bool
+	// effort 这次请求的推理强度，已按协议族收敛（见 parseEffort）。它进计价键。
+	effort contract.Effort
 	// maxTokens 预估输出用；countTokens 路径没有它。
 	maxTokens int64
 	// previousResponseID 触发硬钉。
@@ -128,12 +130,20 @@ type input struct {
 
 // forwardedHeaders 转发给上游的客户端头白名单。
 //
-// 协议头（anthropic-version / anthropic-beta）与 SDK 指纹（x-stainless-*）会影响
-// 上游的行为与解析，丢掉它们响应就不再与直连一致；authorization、x-api-key、cookie
+// 协议头（anthropic-version / anthropic-beta / x-codex-*）与 SDK 指纹（x-stainless-*）
+// 会影响上游的行为与解析，丢掉它们响应就不再与直连一致；authorization、x-api-key、cookie
 // 这类凭据一律不转发 —— 上游鉴权用的是提供者本机的订阅登录态。
+//
+// 会话那一组（x-claude-code-session-id / session-id / thread-id / x-codex-window-id）
+// 还决定缓存命中：上游按会话把同一条对话的连续请求路由到同一台机器上，少了它，
+// 能命中的就只剩所有请求共用的那段开头。Codex 这一组以前整个没在名单里 ——
+// 于是 Anthropic 那边命中九成、OpenAI 这边一成多，两条路差在这儿。
 var forwardedHeaders = []string{
 	"anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
 	"openai-beta", "user-agent", "x-app", "x-claude-code-session-id",
+	"originator", "session-id", "thread-id", "x-client-request-id",
+	"x-codex-window-id", "x-codex-turn-metadata", "x-codex-beta-features",
+	"x-openai-internal-codex-responses-lite",
 	"x-stainless-arch", "x-stainless-lang", "x-stainless-os",
 	"x-stainless-package-version", "x-stainless-retry-count",
 	"x-stainless-runtime", "x-stainless-runtime-version", "x-stainless-timeout",
@@ -172,6 +182,18 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 		StreamOptions      *struct {
 			IncludeUsage *bool `json:"include_usage"`
 		} `json:"stream_options"`
+		// 推理强度的三个出处，两族各认各的。都是指针 —— 要分得清「填了 none」
+		// 和「压根没填」：前者是消费者明确关了思考，后者要按上游默认档补齐。
+		Thinking *struct {
+			Type         string `json:"type"`
+			BudgetTokens *int64 `json:"budget_tokens"`
+		} `json:"thinking"`
+		OutputConfig *struct {
+			Effort string `json:"effort"`
+		} `json:"output_config"`
+		Reasoning *struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return &input{path: path, spec: spec}, contract.NewUnitError(contract.ErrorClassInput, contract.CodeInvalidBody, false, "请求体不是合法 JSON")
@@ -185,6 +207,27 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 		stream:             envelope.Stream != nil && *envelope.Stream,
 		previousResponseID: envelope.PreviousResponseID,
 		sessionHint:        strings.TrimSpace(ginContext.GetHeader("x-galaxy-session")),
+	}
+	switch spec.family {
+	case FamilyAnthropic:
+		var thinkingType, effort string
+		var budget int64
+		if envelope.Thinking != nil {
+			thinkingType = envelope.Thinking.Type
+			if envelope.Thinking.BudgetTokens != nil {
+				budget = *envelope.Thinking.BudgetTokens
+			}
+		}
+		if envelope.OutputConfig != nil {
+			effort = envelope.OutputConfig.Effort
+		}
+		parsed.effort = anthropicEffort(thinkingType, effort, budget)
+	case FamilyOpenAI:
+		effort := ""
+		if envelope.Reasoning != nil {
+			effort = envelope.Reasoning.Effort
+		}
+		parsed.effort = openaiEffort(effort)
 	}
 	switch {
 	case envelope.MaxTokens != nil:
@@ -205,6 +248,57 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 		}
 	}
 	return parsed, nil
+}
+
+// anthropicEffort 从 Messages 请求体里读出这次的推理强度。
+//
+// 判定顺序是有先后的，不是三选一：
+//
+//  1. thinking.type = disabled —— 这一次**没有推理 token**，记 none。它压过 effort：
+//     effort 在思考关掉之后只影响措辞长短，而计价关心的是那一大桶推理 token 在不在。
+//  2. output_config.effort —— 当前模型上的正主（low / medium / high / xhigh / max）。
+//  3. thinking.budget_tokens —— 老模型（Haiku 4.5 及更早）唯一的深浅刻度，按预算折成档。
+//  4. 都没有 —— 补上官方默认档 high。不补的话「没填」会变成一个查不到价的空档，
+//     静默回落到不分强度价，而上游那一次是实打实按 high 跑的。
+func anthropicEffort(thinkingType, effort string, budget int64) contract.Effort {
+	if strings.EqualFold(strings.TrimSpace(thinkingType), "disabled") {
+		return contract.EffortNone
+	}
+	if normalized := contract.NormalizeEffort(FamilyAnthropic, effort); normalized != "" {
+		return normalized
+	}
+	if budget > 0 {
+		return budgetEffort(budget)
+	}
+	return contract.DefaultEffort(FamilyAnthropic)
+}
+
+// budgetEffort 把老式的 thinking 预算折成档位。
+//
+// 分界取的是 Claude Code 那三档预设（think = 4000、think hard = 10000、
+// ultrathink = 31999）之间的空档，而不是均分：真实流量几乎全部落在这三个值上，
+// 界划在它们中间，任何一档写多写少几百 token 都不会掉到隔壁去。
+// 超过 ultrathink 的一律 high —— 老口径里 high 就是最深的一档，没有 xhigh / max。
+func budgetEffort(budget int64) contract.Effort {
+	switch {
+	case budget < 8000:
+		return contract.EffortLow
+	case budget < 24000:
+		return contract.EffortMedium
+	default:
+		return contract.EffortHigh
+	}
+}
+
+// openaiEffort 从 Responses / ChatCompletions 请求体里读出推理强度。
+//
+// 只有 reasoning.effort 一个出处。没写就补官方默认档 medium —— Codex 默认就是按它跑的，
+// 而不写这个字段的客户端（老 SDK、非推理模型）在上游那边同样吃这个默认。
+func openaiEffort(effort string) contract.Effort {
+	if normalized := contract.NormalizeEffort(FamilyOpenAI, effort); normalized != "" {
+		return normalized
+	}
+	return contract.DefaultEffort(FamilyOpenAI)
 }
 
 // injectIncludeUsage 只改 stream_options 这一个字段，其余字节原样保留。
@@ -240,7 +334,7 @@ func (a *Adapter) Route(ctx context.Context, raw corepkg.Input) (contract.RouteK
 	}
 	route := contract.RouteKey{
 		Kind: Kind, KindVersion: Version, Family: in.spec.family,
-		Provider: a.options.Providers[in.spec.family], Model: in.model,
+		Provider: a.options.Providers[in.spec.family], Model: in.model, Effort: in.effort,
 	}
 	if in.previousResponseID != "" {
 		cid, found := a.deps.Galaxy.LookupResponseContribution(ctx, in.previousResponseID)
@@ -291,6 +385,7 @@ func (a *Adapter) ToUnit(raw corepkg.Input, caller corepkg.Caller) contract.Work
 	unit := contract.WorkUnit{
 		Kind: Kind, KindVersion: Version, Primitive: contract.PrimitiveRelay,
 		Family: in.spec.family, Provider: a.options.Providers[in.spec.family], Model: in.model,
+		Effort:      in.effort,
 		ConsumerKey: caller.KeyID,
 		Inputs: []contract.Payload{{
 			Name: "body", Inline: in.body, ContentType: "application/json",
