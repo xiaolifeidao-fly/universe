@@ -7,7 +7,6 @@ use crate::config::schema::ProviderConfig;
 use crate::core::paths::Env;
 use crate::credentials::types::UpstreamAuthContext;
 use crate::credentials::{prepare_claude_request, resolve_upstream, CredentialRegistry, WireApi};
-use crate::pool::usage::UpstreamUsage;
 use crate::log_debug;
 use async_stream::stream;
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
@@ -32,8 +31,6 @@ pub struct RelayProvider {
     credentials: Arc<CredentialRegistry>,
     client: reqwest::Client,
     env: Env,
-    /// 上游订阅余量的落脚处。每条请求的响应头顺手往里写一份，心跳读它上报。
-    usage: Arc<UpstreamUsage>,
 }
 
 impl RelayProvider {
@@ -43,9 +40,8 @@ impl RelayProvider {
         credentials: Arc<CredentialRegistry>,
         client: reqwest::Client,
         env: Env,
-        usage: Arc<UpstreamUsage>,
     ) -> Self {
-        Self { name: name.into(), provider, credentials, client, env, usage }
+        Self { name: name.into(), provider, credentials, client, env }
     }
 }
 
@@ -70,7 +66,6 @@ impl Provider for RelayProvider {
         let credentials = Arc::clone(&self.credentials);
         let client = self.client.clone();
         let env = self.env.clone();
-        let usage = Arc::clone(&self.usage);
 
         Box::pin(stream! {
             let path = inline_text(&unit, "path").unwrap_or_else(|| "/v1/messages".into());
@@ -168,10 +163,6 @@ impl Provider for RelayProvider {
 
             let status = response.status().as_u16();
             let head_headers = passthrough_headers(response.headers());
-            // 顺手把上游自报的限流状态收下来。这是**唯一**不额外打上游就能知道
-            // 「这个账号还剩多少」的地方 —— 探测刻意不打上游，而主人多半也不希望
-            // 我们为了一个数字去消耗他的额度。
-            usage.observe(&name, &head_headers);
             yield UnitEvent::Head { status, headers: head_headers.clone() };
             let failure = upstream_failure(status, &head_headers);
 

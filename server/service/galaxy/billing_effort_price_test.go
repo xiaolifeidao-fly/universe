@@ -163,7 +163,7 @@ func TestPricedEffortsKeepsUnknownLevels(t *testing.T) {
 // 那行价会永远躺在表里，而运营以为自己给 max 档加过价。所以保存时要拦。
 func TestSaveAdminPriceRejectsUnknownEffort(t *testing.T) {
 	svc, _, _ := banHarness(t, nil)
-	for _, effort := range []string{"medium-high", "ultra", "思考"} {
+	for _, effort := range []string{"medium-high", "persistent", "ultracode", "思考"} {
 		err := svc.SaveAdminPrice(context.Background(), dto.SavePriceRequest{
 			Kind: "llm.chat", Unit: "llm.input_tokens", Effort: effort, Price: 3_000_000,
 		})
@@ -171,8 +171,8 @@ func TestSaveAdminPriceRejectsUnknownEffort(t *testing.T) {
 			t.Fatalf("编出来的档 %q 应当被拒 —— 它匹配不上任何一次请求", effort)
 		}
 	}
-	// 两族真实存在的档都要放过，包括只有一族有的那两个。
-	for _, effort := range []string{"", contract.EffortMinimal, contract.EffortXHigh, contract.EffortNone} {
+	// 两族真实存在的档都要放过，包括只有一族有的那几个。
+	for _, effort := range []string{"", contract.EffortMinimal, contract.EffortXHigh, contract.EffortNone, contract.EffortUltra} {
 		if err := svc.SaveAdminPrice(context.Background(), dto.SavePriceRequest{
 			Kind: "llm.chat", Unit: "llm.input_tokens", Effort: effort, Price: 3_000_000,
 		}); err != nil {

@@ -59,6 +59,12 @@ type AccountView struct {
 type AccountLoginResult struct {
 	Token string      `json:"token"`
 	User  AccountView `json:"user"`
+	// Key 使用端注册时默认送的那把密钥，只有注册那一次有（登录、改密码都是空的）。
+	//
+	// 明文**只在这一次响应里出现**：客户端拿到要立刻存进本机保险箱，
+	// 之后再要走 /consumer/keys/secret。没签出来时是空的 —— 注册照常算成，
+	// 人在密钥页点一下「新建」就有。
+	Key *IssuedKeyView `json:"key,omitempty"`
 }
 
 // ---------- 运营 ----------

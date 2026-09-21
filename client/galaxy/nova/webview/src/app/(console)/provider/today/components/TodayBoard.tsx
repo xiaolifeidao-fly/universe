@@ -660,9 +660,14 @@ function CapabilityRow({
             ? contribution.unavailableReason || t("share.unavailable")
             : closing
               ? t("close.closingRow", { value: contribution.inflight })
-              : on
-                ? `${contribution.provider} · ${contribution.seats} × ${contribution.seatConcurrency}`
-                : `${contribution.provider} · ${t("today.notShared")}`}
+              : // 开着、但上游余量到了主人划的线：这时候一单也派不进来，副行必须说出来。
+                // 照常显示「3 × 2」的话，这一页就成了「界面共享中、实际一直 no_capacity」
+                // 那类最难查的状态，而它其实是主人自己设的，一句话就能说清。
+                on && contribution.upstreamBlock
+                ? t("today.upstreamHold", { left: contribution.upstreamBlock.left.toFixed(0) })
+                : on
+                  ? `${contribution.provider} · ${contribution.seats} × ${contribution.seatConcurrency}`
+                  : `${contribution.provider} · ${t("today.notShared")}`}
         </span>
       </span>
       {closing ? <LinkBtn onClick={onForce}>{t("close.forceNow")}</LinkBtn> : null}

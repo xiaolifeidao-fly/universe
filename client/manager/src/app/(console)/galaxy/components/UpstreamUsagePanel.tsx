@@ -72,18 +72,31 @@ function BucketTable({ buckets, raw }: { buckets: UsageBucket[]; raw: Record<str
       ),
     },
     {
-      title: t("galaxy.upstream.remaining"),
-      dataIndex: "remaining",
+      // 剩余摆在最前、字最大：这一页上只有这一格直接回答「还能不能接单」。
+      //
+      // 存的是**已用**（两家的说法不一样，存一种，换算只在这里做一次），
+      // 显示的是剩余 —— 运营要的是「还剩多少」，让他自己去做 100 减法是没道理的。
+      title: t("galaxy.upstream.left"),
+      dataIndex: "usedPercent",
       align: "right",
-      width: 140,
-      render: (value?: number) => <Value value={value} />,
-    },
-    {
-      title: t("galaxy.upstream.limit"),
-      dataIndex: "limit",
-      align: "right",
-      width: 140,
-      render: (value?: number) => <Value value={value} />,
+      width: 120,
+      render: (value?: number) => {
+        if (value === undefined) {
+          return <Unknown />;
+        }
+        const left = Math.max(0, 100 - value);
+        return (
+          <span
+            className="manager-mono"
+            style={{
+              fontWeight: 700,
+              color: left <= 10 ? "var(--manager-danger)" : left <= 25 ? "var(--manager-warning)" : "var(--manager-text)",
+            }}
+          >
+            {left.toFixed(0)}%
+          </span>
+        );
+      },
     },
     {
       title: t("galaxy.upstream.usedPercent"),
@@ -91,14 +104,16 @@ function BucketTable({ buckets, raw }: { buckets: UsageBucket[]; raw: Record<str
       align: "right",
       width: 100,
       render: (value?: number) =>
-        value === undefined ? (
-          <Unknown />
-        ) : (
-          // 快满了要显眼：这一格是「还能不能接单」的直接依据。
-          <span className="manager-mono" style={{ color: value >= 90 ? "var(--manager-danger)" : "var(--manager-text)" }}>
-            {value.toFixed(1)}%
-          </span>
-        ),
+        value === undefined ? <Unknown /> : <span className="manager-mono">{value.toFixed(0)}%</span>,
+    },
+    {
+      // 绝对值这两列多数时候是空的：探针拿回来的是百分比，上游只给百分比。
+      // 留着是因为有的上游会给出确切的 token 数，那时它比百分比有用。
+      title: t("galaxy.upstream.remaining"),
+      dataIndex: "remaining",
+      align: "right",
+      width: 130,
+      render: (value?: number) => <Value value={value} />,
     },
     {
       title: t("galaxy.upstream.reset"),

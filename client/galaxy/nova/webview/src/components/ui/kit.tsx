@@ -12,6 +12,7 @@
  * 每端的页面与样式归自己维护（见 client/galaxy/README.md）。
  */
 
+import { Select } from "antd";
 import type { CSSProperties, PropsWithChildren, ReactNode } from "react";
 import { IconAlert, IconCheck, IconChevronRight, IconCopy } from "./icons";
 
@@ -265,65 +266,102 @@ export function Tabs<T extends string>({
 }
 
 /**
+ * 候选项：平台在卖的一个模型。
+ *
+ * available 是「这台机器的上游此刻真的有它」，**只是标注**：没有也照选不误 ——
+ * 主人完全可能在给一台登录态刚过期、或者还没装好 CLI 的机器先把规则填上。
+ * 拿它去禁用选项就等于让一台临时抽风的机器改写了主人的长期设置。
+ */
+export interface ChipOption {
+  value: string;
+  label?: string;
+  available?: boolean;
+}
+
+/**
  * 模式标签。收的是**通配模式**（claude-sonnet-*、*），所以必须保留自由输入 ——
- * 做成纯下拉会把这个能力废掉，候选项只是提示。
+ * 做成纯下拉会把这个能力废掉：候选项是平台在卖的那些模型（服务端按厂商给的，
+ * 见 fetchModelOptions），而「把 opus 全系列划掉」这条规则一个候选项都对不上。
+ *
+ * 用 antd 的 tags 模式，不自己糊一个浮层：定位、外部点击、键盘上下键这几样
+ * 自己实现不划算，而且要处理焦点陷阱（见本文件顶注 —— 浮层一律留给 antd）。
  */
 export function ChipInput({
   values,
   onChange,
   placeholder,
   struck,
-  suggestions = [],
+  options = [],
+  availableLabel,
+  emptyText,
 }: {
   values: string[];
   onChange: (next: string[]) => void;
   placeholder: string;
   struck?: boolean;
-  suggestions?: string[];
+  options?: ChipOption[];
+  /** 「这台机器上真有」那个角标的文案。kit 里不引 i18n，文案一律由页面给。 */
+  availableLabel?: string;
+  /** 一个候选项都没有时下拉里的那句话。**照样能自己输入**，所以别写成「无数据」。 */
+  emptyText?: string;
 }) {
-  const add = (raw: string) => {
-    const value = raw.trim();
-    if (!value || values.includes(value)) return;
-    onChange([...values, value]);
-  };
-  const rest = suggestions.filter((item) => !values.includes(item));
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-      {values.map((value) => (
-        <span key={value} className={`gx-chip${struck ? " gx-chip--off" : " gx-chip--on"}`}>
-          {value}
-          <button
-            type="button"
-            className="gx-chip__x"
-            aria-label={`remove ${value}`}
-            onClick={() => onChange(values.filter((item) => item !== value))}
-          >
-            ×
-          </button>
-        </span>
-      ))}
-      <input
-        className="gx-input gx-input--mono"
-        style={{ width: 168, height: 28, borderRadius: 8, fontSize: 12.5, padding: "0 10px" }}
-        placeholder={placeholder}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== ",") return;
-          event.preventDefault();
-          add(event.currentTarget.value);
-          event.currentTarget.value = "";
-        }}
-        onBlur={(event) => {
-          add(event.currentTarget.value);
-          event.currentTarget.value = "";
-        }}
-      />
-      {rest.slice(0, 3).map((item) => (
-        <button key={item} type="button" className="gx-chip" onClick={() => add(item)}>
-          + {item}
-        </button>
-      ))}
-    </div>
+    <Select
+      mode="tags"
+      className={`gx-tags${struck ? " gx-tags--off" : ""}`}
+      style={{ width: "100%" }}
+      value={values}
+      placeholder={placeholder}
+      // 逗号也断词：从别处贴一串模型名过来是常事。
+      tokenSeparators={[","]}
+      // 标签上一律显示**填进去的那个值**，不显示模型的展示名：这两个框里的一行
+      // 是一条规则，「claude-sonnet-*」和「Sonnet 5」不是一回事，显示后者就没法
+      // 一眼看出自己填的是精确名还是通配。
+      labelRender={(item) => String(item.value ?? "")}
+      options={options.map((option) => ({
+        value: option.value,
+        label: option.label || option.value,
+        available: option.available,
+      }))}
+      optionRender={(option) => {
+        const data = option.data as ChipOption;
+        const name = data.label || data.value;
+        return (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              <span style={{ fontFamily: "var(--gx-mono)", fontSize: 12.5 }}>{data.value}</span>
+              {name === data.value ? null : (
+                <span style={{ marginLeft: 8, fontSize: 12, color: "var(--gx-faint)" }}>{name}</span>
+              )}
+            </span>
+            {data.available && availableLabel ? (
+              <span className="gx-pill gx-pill--sm gx-pill--ok">{availableLabel}</span>
+            ) : null}
+          </div>
+        );
+      }}
+      // 按模型名和展示名一起过滤。默认只认 label，而这里的 label 是展示名 ——
+      // 敲 claude-son 搜不到 Sonnet 5 的话，候选项等于白给。
+      filterOption={(input, option) => {
+        const keyword = input.trim().toLowerCase();
+        if (!keyword) return true;
+        const data = (option ?? {}) as ChipOption;
+        return `${data.value ?? ""} ${data.label ?? ""}`.toLowerCase().includes(keyword);
+      }}
+      notFoundContent={emptyText ?? null}
+      onChange={(next: string[]) => onChange(cleanPatterns(next))}
+    />
   );
+}
+
+/** 去空白、丢空串、去重。顺序保持主人填进去的样子。 */
+function cleanPatterns(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    const pattern = value.trim();
+    if (pattern && !out.includes(pattern)) out.push(pattern);
+  }
+  return out;
 }
 
 /* ---------- 表格 ---------- */

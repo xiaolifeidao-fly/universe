@@ -279,11 +279,11 @@ type AdminUnitQuery struct {
 //
 // **不含任何请求内容** —— 工单表上本来就不存它（C-12），这里也不去别处凑。
 type AdminUnitView struct {
-	UnitID      string `json:"unitId"`
-	Kind        string `json:"kind"`
-	Primitive   string `json:"primitive"`
-	Provider string `json:"provider"`
-	Model    string `json:"model,omitempty"`
+	UnitID    string `json:"unitId"`
+	Kind      string `json:"kind"`
+	Primitive string `json:"primitive"`
+	Provider  string `json:"provider"`
+	Model     string `json:"model,omitempty"`
 	// Effort 这一次的推理强度，计价键的一部分。运营排查「这笔怎么收这么多」时，
 	// 模型对得上而金额对不上，差的通常就是这一档。
 	Effort      string `json:"effort,omitempty"`

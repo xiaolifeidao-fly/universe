@@ -289,10 +289,10 @@ func applyEffortPrices(model *dto.PortalModelView, priceRows []*repository.Galax
 	for _, effort := range efforts {
 		table, _ := resolvePrices(priceRows, kind, model.ModelID, effort)
 		model.Efforts = append(model.Efforts, dto.ModelEffortPrice{
-			Effort:          effort,
-			InputPrice:      table[contract.UnitInputTokens].Price,
-			OutputPrice:     table[contract.UnitOutputTokens].Price,
-			CachePrice:      table[contract.UnitCacheReadTokens].Price,
+			Effort:      effort,
+			InputPrice:  table[contract.UnitInputTokens].Price,
+			OutputPrice: table[contract.UnitOutputTokens].Price,
+			CachePrice:  table[contract.UnitCacheReadTokens].Price,
 			// 和卡片上那一格同一档：绝大多数请求命中的是 5 分钟缓存，
 			// 合计（llm.cache_write_tokens）不进账本、通常也没有价。
 			CacheWritePrice: table[contract.UnitCacheWrite5mTokens].Price,

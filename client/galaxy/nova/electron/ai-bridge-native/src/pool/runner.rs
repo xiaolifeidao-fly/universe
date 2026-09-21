@@ -21,6 +21,7 @@ use crate::core::paths::Env;
 use crate::core::request::Cancel;
 use crate::credentials::CredentialRegistry;
 use crate::pool::usage::{UpstreamUsage, UsageSnapshot};
+use crate::pool::usage_probe;
 use crate::{log_debug, log_error, log_info, log_warn};
 use async_stream::stream;
 use bytes::Bytes;
@@ -54,6 +55,11 @@ const SHUTDOWN_REPORT_TIMEOUT: Duration = Duration::from_secs(3);
 /// 探到变化就主动重发一次 hello。60 秒是折中 —— 探测要读 Keychain，不是白拿的，
 /// 但恢复延迟也不该长到让人以为没生效。
 const HEALTH_PROBE_MS: u64 = 60_000;
+
+/// 问上游订阅余量的间隔。
+///
+/// 比心跳（15 秒）慢得多是故意的：这件事要起子进程，而那个数在五分钟里变不出花来。
+const USAGE_PROBE_INTERVAL_MS: u64 = 5 * 60_000;
 
 /// 没有 updater 时（随 Nova 分发）对升级指令的回答。契约 3.4 第 2 条的原话，控制台原样显示。
 const NO_UPDATER_MESSAGE: &str = "这台机器的 ai-bridge 随 Nova 应用分发，不能远程升级，请更新 Nova";
@@ -358,6 +364,7 @@ impl PoolRunner {
             tasks.push(tokio::spawn(Arc::clone(&inner).next_loop()));
         }
         tasks.push(tokio::spawn(Arc::clone(&inner).health_loop()));
+        tasks.push(tokio::spawn(Arc::clone(&inner).usage_probe_loop()));
         let lanes: Vec<String> = inner.lanes.read().unwrap().keys().cloned().collect();
         log_info!("pool_started", "nodeId": inner.identity.node_id, "lanes": lanes,
             "accessMode": inner.access.mode);
@@ -617,7 +624,6 @@ impl RunnerInner {
                     Arc::clone(&self.credentials),
                     self.http.clone(),
                     self.env.clone(),
-                    Arc::clone(&self.upstream_usage),
                 )))
             }
             CapabilityBuild::Ffmpeg => Some(Arc::new(FfmpegLocalProvider::new(
@@ -748,6 +754,41 @@ impl RunnerInner {
             if let Err(failure) = self.say_hello(Some(reports)).await {
                 log_warn!("pool_health_probe_failed", "message": failure.message());
             }
+        }
+    }
+
+    /// 定时问本机的 claude / codex：那个账号此刻还剩多少。
+    ///
+    /// 五分钟一次，而不是跟着心跳（15 秒）：这两条都要起子进程，claude 那条还要
+    /// 起一个完整的 Claude Code 进程。十几秒一次地起进程，对一台正在给别人干活的
+    /// 机器是实打实的打扰，而这个数本来也不会在五分钟里变出花来。
+    ///
+    /// 只探**这台机器真的在共享的那些上游**：只共享 codex 的机器不该被起一个
+    /// claude 进程。装不着、超时、输出对不上，一律保留上一次的观测 ——
+    /// 一份空快照会让界面从「剩 63%」跳成「未报」，而那两件事的处置完全不同。
+    async fn usage_probe_loop(self: Arc<Self>) {
+        // 启动先等一会儿：hello 还没跑完时通道是空的，这一轮什么都探不到，
+        // 白起两个进程。
+        self.wait(20_000).await;
+        while !self.stopping.load(Ordering::Relaxed) {
+            self.probe_upstream_usage().await;
+            self.wait(USAGE_PROBE_INTERVAL_MS).await;
+        }
+    }
+
+    async fn probe_upstream_usage(&self) {
+        let route_keys: HashSet<String> =
+            self.lanes.read().unwrap().values().map(|lane| lane.route_key()).collect();
+        for route_key in route_keys {
+            let snapshot = match route_key.as_str() {
+                "claude_oauth" => usage_probe::probe_claude(&bin("AI_BRIDGE_CLAUDE_BIN", "claude")).await,
+                "codex_chatgpt" => usage_probe::probe_codex(&bin("AI_BRIDGE_CODEX_BIN", "codex")).await,
+                // 别的上游（api_key 之类）没有「订阅余量」这回事，不探。
+                _ => continue,
+            };
+            let Some(snapshot) = snapshot else { continue };
+            log_debug!("usage_probe_ok", "provider": route_key, "buckets": snapshot.buckets.len());
+            self.upstream_usage.put(&route_key, snapshot);
         }
     }
 
@@ -1390,6 +1431,15 @@ pub fn health_signature(reports: &[CapabilityReport]) -> String {
 
 pub fn now_ms() -> i64 {
     (time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000) as i64
+}
+
+/// 探针要跑哪个可执行文件。
+///
+/// 默认就是 PATH 里的 claude / codex。留一个环境变量出口，是因为 bridge 常常被
+/// 当成守护进程跑（LaunchAgent、systemd），那种环境里的 PATH 和主人登录时的
+/// 不是一回事 —— 表现是「我明明装了 claude」而探针一直说找不到。
+fn bin(env_key: &str, fallback: &str) -> String {
+    std::env::var(env_key).ok().filter(|value| !value.trim().is_empty()).unwrap_or_else(|| fallback.to_string())
 }
 
 fn iso_from_ms(ms: i64) -> Option<String> {

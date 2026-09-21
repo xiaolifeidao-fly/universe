@@ -302,19 +302,34 @@ type GalaxyContribution struct {
 	ModelsAvailableJSON string `gorm:"column:models_available_json;type:varchar(4096)" description:"节点上报的上游可用模型名"`
 	ModelsDenyJSON      string `gorm:"column:models_deny_json;type:varchar(1024)" description:"模型黑名单模式数组"`
 	// UpstreamUsageJSON 节点自报的**上游订阅余量**（Claude / Codex 自己的 5 小时、
-	// 周限额），从中转响应的限流头里捎回来的。和 zt_galaxy_quota_grant 是两回事：
-	// 那张表是主人打算放多少出去，这一列是上游实际还让跑多少。
+	// 周限额）。和 zt_galaxy_quota_grant 是两回事：那张表是主人打算放多少出去，
+	// 这一列是上游实际还让跑多少。
 	//
-	// 和 ModelsAvailableJSON 同一个性质：**节点自报的事实，只给人看**，不参与派单、
-	// 不参与计费。上游回哪些头由上游说了算、随时会变，而自报的数没法验证 ——
-	// 拿它做判定，等于把调度权交给一个不可信而且形状不稳定的输入。
-	UpstreamUsageJSON string `gorm:"column:upstream_usage_json;type:varchar(4096)" description:"节点自报的上游订阅余量，只给人看"`
+	// 数从哪来：节点定时问本机的 claude / codex 自己（`claude /usage`、codex `/status`，
+	// 见 pool/usage_probe.rs），五分钟一轮，随心跳上报。**不再是从中转响应头里捎** ——
+	// 那条路给不出「5 小时窗口还剩多少、这一周还剩多少」，而且机器闲着时不更新。
+	//
+	// 它现在**进决策路径**：UpstreamFloorJSON 那条线以它为准（见 upstreamfloor.go）。
+	// 原先这里写着「只给人看、不参与派单」，理由是自报的数没法验证、上游的形状会变 ——
+	// 那两条现在仍然成立，所以判定只在**认得出来的窗口上**做，认不出来、没采到、
+	// 解不动一律当成「不知道」，放行而不是拦下：一台探不到余量的机器该照常接单。
+	UpstreamUsageJSON string `gorm:"column:upstream_usage_json;type:varchar(4096)" description:"节点自报的上游订阅余量"`
 	// UpstreamUsageAt 上面那份数是什么时候收到的。界面必须显示它：
-	// 数据来自本来就要发的那些请求，机器闲着的时候它不会更新。
+	// 探针五分钟才跑一次，而且可能连着几轮没采到（CLI 没装、超时）。
 	UpstreamUsageAt *time.Time `gorm:"column:upstream_usage_at;type:timestamp null default null" description:"上游余量的观测时刻"`
-	Seats           int        `gorm:"column:seats;default:3" description:"同时服务的消费者数量上限"`
-	SeatConcurrency int        `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
-	ScheduleJSON    string     `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
+	// UpstreamFloorJSON 主人设的**余量下限**：上游某个窗口只剩这么多的时候就不再接单。
+	//
+	// 形状是 [{"window":"5h","percent":10}]，window 为空表示任一窗口。
+	// 它和上面那一列是「规则」与「事实」的关系，也是 UpstreamUsageJSON 从
+	// 「只给人看」变成进决策路径的那一步：主人按这条线保住自己要用的那部分订阅，
+	// 而不是等额度被别人跑光之后才发现。
+	//
+	// 必填，默认 [{"window":"","percent":0}] —— 剩 0 才停，也就是不额外保护。
+	// 空字符串按这个默认解，老行不必回填。
+	UpstreamFloorJSON string `gorm:"column:upstream_floor_json;type:varchar(512)" description:"上游余量下限：剩余百分比低到这儿就不接单"`
+	Seats             int    `gorm:"column:seats;default:3" description:"同时服务的消费者数量上限"`
+	SeatConcurrency   int    `gorm:"column:seat_concurrency;default:2" description:"单座位并发上限"`
+	ScheduleJSON      string `gorm:"column:schedule_json;type:varchar(512)" description:"挂机时段"`
 
 	Status string `gorm:"column:status;type:varchar(16);index:idx_gx_contribution_node,priority:3" description:"active/draining/paused/disabled"`
 	// PendingStatus 主人点了关闭、但那会儿还有请求在跑，等在途归零之后要落到的状态。
@@ -536,8 +551,12 @@ type GalaxyConsumerKey struct {
 	RenewedFrom string     `gorm:"column:renewed_from_key_id;type:varchar(64)"`
 
 	// 数据告知：密钥签发时必须记录消费者确认（C-13）。
-	NoticeVersion string    `gorm:"column:notice_version;type:varchar(32)"`
-	NoticeAckAt   time.Time `gorm:"column:notice_ack_at;type:timestamp null default null"`
+	//
+	// 注册时默认送的那一把是唯一的例外：那一刻人还没看过告知，所以两列都是空的
+	// （notice_version = '' 且 notice_ack_at IS NULL）。留空而不是记个签发时间，
+	// 是为了让「这把密钥背后有没有一次确认」在库里一眼分得出来。
+	NoticeVersion string     `gorm:"column:notice_version;type:varchar(32)"`
+	NoticeAckAt   *time.Time `gorm:"column:notice_ack_at;type:timestamp null default null"`
 
 	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
 	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`

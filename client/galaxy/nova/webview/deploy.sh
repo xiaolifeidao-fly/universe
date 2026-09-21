@@ -52,9 +52,26 @@ if ! tar -tzf "$ARCHIVE" >"$TMP_DIR/entries.txt" 2>"$TMP_DIR/tar-error.txt"; the
   echo "服务没动过，还在跑。" >&2
   exit 1
 fi
-RELEASE_NAME="$(sed -e 's|^\./||' -e '/^$/d' -e 's|/.*$||' "$TMP_DIR/entries.txt" | sort -u | sed -n '1p')"
+# 顶层目录只认「底下还挂着东西的那一个」：先留下带 / 的条目，再取第一段。
+#
+# 不能把所有顶层条目排个序取第一个。macOS 打的包里会混进 AppleDouble 伴随文件
+# `._<包名>` —— 它是**文件**不是目录，而 C 序下 `.`(0x2E) 排在字母前面，取第一个
+# 就取到它。线上就是这么炸的：RELEASE_DIR 成了 .../._nova-webview-linux-x64，
+# 那儿没有 stop.sh，于是 deploy 当成首次部署把「停服务」整步跳过，接着解包一头
+# 撞上还在跑的老进程（unpack-release.sh 自己用 -type d 找目录，名字是对的，
+# 所以它看得见那个进程、拒绝动手）。两个脚本对同一个包算出两个名字，最难查。
+RELEASE_NAME="$(sed -e 's|^\./||' -e '/^$/d' "$TMP_DIR/entries.txt" \
+  | grep '/' \
+  | sed -e 's|/.*$||' \
+  | grep -v '^\._' \
+  | sort -u)"
 if [ -z "$RELEASE_NAME" ]; then
-  echo "归档是空的：$ARCHIVE" >&2
+  echo "归档是空的，或者里面根本没有顶层目录：$ARCHIVE" >&2
+  exit 1
+fi
+if [ "$(printf '%s\n' "$RELEASE_NAME" | wc -l | tr -d ' ')" != "1" ]; then
+  echo "归档里不止一个顶层目录，不知道该停哪个：$ARCHIVE" >&2
+  printf '%s\n' "$RELEASE_NAME" >&2
   exit 1
 fi
 RELEASE_DIR="$SCRIPT_DIR/$RELEASE_NAME"
@@ -67,11 +84,13 @@ if [ -f "$RELEASE_DIR/runtime.json" ]; then
 fi
 
 echo "==> 1/3 停服务"
+STOPPED=0
 if [ -f "$RELEASE_DIR/stop.sh" ]; then
   if ! sh "$RELEASE_DIR/stop.sh"; then
     echo "没停下来，什么都没动 —— 解包不能压着活着的进程做。" >&2
     exit 1
   fi
+  STOPPED=1
 else
   echo "$RELEASE_DIR 还不存在，首次部署，跳过"
 fi
@@ -79,7 +98,13 @@ fi
 echo "==> 2/3 解包"
 if ! sh "$SCRIPT_DIR/unpack-release.sh" "$ARCHIVE"; then
   echo "" >&2
-  echo "解包失败，服务现在是停着的。" >&2
+  if [ "$STOPPED" = "1" ]; then
+    echo "解包失败，服务现在是停着的。" >&2
+  else
+    # 这一支意味着上面那步认定 $RELEASE_DIR 不存在。真是首次部署就没进程可停；
+    # 要是明明部署过却走到这儿，说明包名取错了 —— 先核对 $RELEASE_DIR 这个名字。
+    echo "解包失败。停服务那步跳过了（当时判定 $RELEASE_DIR 不存在），老进程还在跑。" >&2
+  fi
   echo "unpack-release.sh 会把上一版原样放回去（它是改名不是删），所以要么换个好包" >&2
   echo "重跑 $0，要么确认目录没问题之后直接 $RELEASE_DIR/start.sh 把老版本起回来。" >&2
   exit 1

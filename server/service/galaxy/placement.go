@@ -64,7 +64,8 @@ type FilterInput struct {
 }
 
 // Filter 硬过滤：kind/版本支持 ∧ provider 匹配 ∧ model ∈ allow∖deny ∧ 在线 ∧ 未限流
-// ∧ 未排空 ∧ 在挂机时段内 ∧ seatsUsed < seatsEff ∧ 各单位余量 > 预留 + 预估 ∧ inflight < conc。
+// ∧ 上游余量高于主人划的线 ∧ 未排空 ∧ 在挂机时段内 ∧ seatsUsed < seatsEff
+// ∧ 各单位余量 > 预留 + 预估 ∧ inflight < conc。
 func Filter(snapshots []ContributionSnapshot, in FilterInput) []Candidate {
 	candidates := make([]Candidate, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -96,6 +97,15 @@ func admit(snapshot ContributionSnapshot, plan QuotaPlan, in FilterInput) (int, 
 	}
 	// 上游自身限流优先于额度：被 429 的贡献临时退出候选（三维额度规则第 7 条）。
 	if !snapshot.ThrottledUntil.IsZero() && in.Now.Before(snapshot.ThrottledUntil) {
+		return 0, false
+	}
+	// 上游订阅自己快用完了：主人划的那条线（UpstreamFloors）按节点五分钟一轮的
+	// 探测结果判。和 429 是同一类事 —— 上游那边不让跑了，只是这一条是主人提前划的，
+	// 为的是给自己留下要用的那部分。
+	//
+	// 观测缺失一律放行（见 upstreamfloor.go）：探不到余量的机器该照常接单，
+	// 把「不知道」当成「没余量」的话，上游改一次输出格式就能让全网静默退出。
+	if UpstreamHolding(snapshot) {
 		return 0, false
 	}
 	if !InSchedule(snapshot.Schedule, in.Now) {
@@ -131,6 +141,16 @@ func Waitable(snapshots []ContributionSnapshot, in FilterInput) bool {
 		}
 	}
 	return false
+}
+
+// UpstreamHolding 这条贡献此刻是不是被主人划的余量下限挡着。
+//
+// 硬过滤、已绑定的快路径、硬钉那条都要问同一句话 —— 只在硬过滤里判的话，
+// 回头客（走绑定那条，占九成请求）和链式请求会从这条线底下绕过去，
+// 主人留给自己的那部分照样被跑光，而界面上一切正常。
+func UpstreamHolding(snapshot ContributionSnapshot) bool {
+	_, blocked := UpstreamBlockedBy(snapshot.UpstreamFloors, snapshot.UpstreamLeft)
+	return blocked
 }
 
 // boundAccepts 已绑定路径的放行条件：座位已经占着，只看并发与额度两项。

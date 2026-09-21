@@ -131,3 +131,79 @@ func TestProviderModelViewCarriesEarnings(t *testing.T) {
 		t.Fatalf("近 7 天收益没带上：%d", view.Earned7d)
 	}
 }
+
+// ---------- 模型候选 ----------
+
+// 候选项按厂商分组，而且组内顺序跟着目录。
+//
+// 顺序是有意的：仓储按 sort_order 排过，运营把主推的模型排在前面。
+// 在这里重排一次，主人打开下拉看到的第一个就不是平台想推的那个。
+func TestModelOptionGroupsKeepCatalogOrder(t *testing.T) {
+	groups := modelOptionGroups([]*repository.GalaxyModel{
+		{ModelID: "claude-sonnet-5", DisplayName: "Sonnet 5", Family: "claude", Vendor: "anthropic"},
+		{ModelID: "gpt-5.6-terra", DisplayName: "GPT-5.6", Family: "gpt", Vendor: "openai"},
+		{ModelID: "claude-opus-5", DisplayName: "Opus 5", Family: "claude", Vendor: "anthropic"},
+	})
+	if len(groups) != 2 {
+		t.Fatalf("两家厂商应当分成两组，实际 %d 组", len(groups))
+	}
+	if groups[0].Family != "claude" || groups[1].Family != "gpt" {
+		t.Fatalf("组的顺序应当按首次出现：%s / %s", groups[0].Family, groups[1].Family)
+	}
+	if len(groups[0].Models) != 2 || groups[0].Models[0].ModelID != "claude-sonnet-5" {
+		t.Fatalf("组内顺序应当跟着目录，实际 %+v", groups[0].Models)
+	}
+	if groups[0].Models[1].DisplayName != "Opus 5" {
+		t.Fatalf("显示名应当原样给出，实际 %q", groups[0].Models[1].DisplayName)
+	}
+}
+
+// 组名要和贡献视图上的 Category 对得上 —— 前端就是拿那个字段查这张表的。
+//
+// 两边各写一套的话，relay_claude 那条车道会查不到任何一组，候选项静静地空掉：
+// 界面不报错，主人只会以为平台没有模型可选。
+func TestModelOptionGroupsCategoryMatchesLane(t *testing.T) {
+	groups := modelOptionGroups([]*repository.GalaxyModel{
+		{ModelID: "claude-sonnet-5", Family: "claude", Vendor: "anthropic"},
+		{ModelID: "gpt-5.6-terra", Family: "gpt", Vendor: "openai"},
+	})
+	byCategory := map[string]string{}
+	for _, group := range groups {
+		byCategory[group.Category] = group.Family
+	}
+	// 节点报上来的路由键就是这两个，贡献视图按它们算 Category。
+	if got := byCategory[usageCategory("", "claude_oauth", "llm.chat")]; got != "claude" {
+		t.Fatalf("relay_claude 那条车道应当查到 claude 组，实际 %q", got)
+	}
+	if got := byCategory[usageCategory("", "codex_chatgpt", "llm.chat")]; got != "gpt" {
+		t.Fatalf("relay_codex 那条车道应当查到 gpt 组，实际 %q", got)
+	}
+}
+
+// 目录里没填厂商的行按模型名推，别把它们堆进「其它」。
+//
+// 堆进去的后果是这个模型在共享设置里选不到：它不属于任何一条车道认得的那一组，
+// 而主人并不知道原因出在运营没填 vendor 那一列。
+func TestModelOptionGroupsInferMissingVendor(t *testing.T) {
+	groups := modelOptionGroups([]*repository.GalaxyModel{{ModelID: "claude-haiku-4-5"}})
+	if len(groups) != 1 {
+		t.Fatalf("应当只有一组，实际 %d", len(groups))
+	}
+	if groups[0].Family != "claude" || groups[0].Vendor != "anthropic" || groups[0].Category != "claude" {
+		t.Fatalf("应当从模型名推出 claude/anthropic，实际 %+v", groups[0])
+	}
+	if groups[0].Models[0].DisplayName != "claude-haiku-4-5" {
+		t.Fatal("目录没填显示名时回落到模型 id —— 界面上不该出现一行空名字")
+	}
+}
+
+// 空目录回空切片，不是 nil：nil 序列化出去是 null，前端那一侧要多一处判空。
+func TestModelOptionGroupsEmptyCatalog(t *testing.T) {
+	groups := modelOptionGroups(nil)
+	if groups == nil {
+		t.Fatal("空目录也要回空切片")
+	}
+	if len(groups) != 0 {
+		t.Fatalf("空目录不该分出组，实际 %d", len(groups))
+	}
+}

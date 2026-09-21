@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
@@ -132,7 +133,34 @@ func (s *service) Register(ctx context.Context, req dto.RegisterAccountRequest) 
 		}
 		return dto.AccountLoginResult{}, err
 	}
-	return s.loginResult(ctx, row)
+	result, err := s.loginResult(ctx, row)
+	if err != nil {
+		return dto.AccountLoginResult{}, err
+	}
+	result.Key = s.issueRegistrationKey(ctx, row)
+	return result, nil
+}
+
+// issueRegistrationKey 使用端新账号默认送一把密钥，明文跟着注册响应回去一次。
+//
+// 在账号那个事务之外：签密钥是另一个领域的事，把它塞进建账号的事务里，等于让
+// 「密钥表写不进去」能回滚掉一个已经注册成功的人。
+//
+// 也正因为在事务外，签不出来不算注册失败 —— 账号已经建出来了，这时候报错，
+// 用户重来一遍只会撞上「用户名已被注册」，反倒进不去了。没签出来在密钥页上
+// 看得见（一把都没有），点一下「新建」就补上，所以这里只记一行日志。
+//
+// 共享端不送：那边出算力，用的是接入密钥，不是这种花钱的算力密钥。
+func (s *service) issueRegistrationKey(ctx context.Context, row *repository.GalaxyUser) *dto.IssuedKeyView {
+	if s.keys == nil || row.Side != dto.SideConsumer {
+		return nil
+	}
+	view, err := s.keys.IssueRegistrationKey(ctx, row.UserID)
+	if err != nil {
+		log.Printf("galaxy: 新账号 %s 的默认密钥没签出来，注册照常算成: %v", row.UserID, err)
+		return nil
+	}
+	return &view
 }
 
 // resolveInviter 按端查邀请码的主人，返回他的账号 id。

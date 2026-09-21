@@ -183,9 +183,11 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 			IncludeUsage *bool `json:"include_usage"`
 		} `json:"stream_options"`
 		// 推理强度的三个出处，两族各认各的。都是指针 —— 要分得清「填了 none」
-		// 和「压根没填」：前者是消费者明确关了思考，后者要按上游默认档补齐。
+		// 和「压根没填」：前者是消费者明确要的那一档，后者要按上游默认档补齐。
+		//
+		// thinking 这里只读 budget_tokens（老模型的深浅刻度）。type 不读：
+		// 关不关思考和 effort 是两个正交的字段，见 anthropicEffort 的说明。
 		Thinking *struct {
-			Type         string `json:"type"`
 			BudgetTokens *int64 `json:"budget_tokens"`
 		} `json:"thinking"`
 		OutputConfig *struct {
@@ -210,18 +212,15 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 	}
 	switch spec.family {
 	case FamilyAnthropic:
-		var thinkingType, effort string
+		var effort string
 		var budget int64
-		if envelope.Thinking != nil {
-			thinkingType = envelope.Thinking.Type
-			if envelope.Thinking.BudgetTokens != nil {
-				budget = *envelope.Thinking.BudgetTokens
-			}
+		if envelope.Thinking != nil && envelope.Thinking.BudgetTokens != nil {
+			budget = *envelope.Thinking.BudgetTokens
 		}
 		if envelope.OutputConfig != nil {
 			effort = envelope.OutputConfig.Effort
 		}
-		parsed.effort = anthropicEffort(thinkingType, effort, budget)
+		parsed.effort = anthropicEffort(effort, budget)
 	case FamilyOpenAI:
 		effort := ""
 		if envelope.Reasoning != nil {
@@ -252,18 +251,19 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 
 // anthropicEffort 从 Messages 请求体里读出这次的推理强度。
 //
-// 判定顺序是有先后的，不是三选一：
+// 按出处的优先级取，取到就停：
 //
-//  1. thinking.type = disabled —— 这一次**没有推理 token**，记 none。它压过 effort：
-//     effort 在思考关掉之后只影响措辞长短，而计价关心的是那一大桶推理 token 在不在。
-//  2. output_config.effort —— 当前模型上的正主（low / medium / high / xhigh / max）。
-//  3. thinking.budget_tokens —— 老模型（Haiku 4.5 及更早）唯一的深浅刻度，按预算折成档。
-//  4. 都没有 —— 补上官方默认档 high。不补的话「没填」会变成一个查不到价的空档，
+//  1. output_config.effort —— 当前模型上的正主（low / medium / high / xhigh / max）。
+//  2. thinking.budget_tokens —— 老模型（Haiku 4.5 及更早）唯一的深浅刻度，按预算折成档。
+//  3. 都没有 —— 补上官方默认档 high。不补的话「没填」会变成一个查不到价的空档，
 //     静默回落到不分强度价，而上游那一次是实打实按 high 跑的。
-func anthropicEffort(thinkingType, effort string, budget int64) contract.Effort {
-	if strings.EqualFold(strings.TrimSpace(thinkingType), "disabled") {
-		return contract.EffortNone
-	}
+//
+// **thinking.type=disabled 不参与判定。** 它和 effort 是两个正交的字段：关掉思考之后
+// output_config.effort 照样生效（照样按它的单价收），只是那一次不会产生推理 token ——
+// 而「少了一大桶 token」这件事已经由实际计量如实反映了，不该再在单价上折一次。
+// 早先的实现把它记成一个 none 档，那是个 Claude 根本没有的档位名：价目表上给它定的价
+// 永远匹配不上任何一次真实请求（真实请求的 effort 字段里不会出现 none）。
+func anthropicEffort(effort string, budget int64) contract.Effort {
 	if normalized := contract.NormalizeEffort(FamilyAnthropic, effort); normalized != "" {
 		return normalized
 	}

@@ -31,7 +31,8 @@ import (
 
 // Service Galaxy 账号。自助的那半给 galaxy-api，运营的那半给 manager-api。
 type Service interface {
-	// Register 自助注册，注册完直接登录。共享端注册出来一律是散户。
+	// Register 自助注册，注册完直接登录。共享端注册出来一律是散户；
+	// 使用端还会默认送一把算力密钥，明文跟着结果回来一次（AccountLoginResult.Key）。
 	Register(ctx context.Context, req dto.RegisterAccountRequest) (dto.AccountLoginResult, error)
 	Login(ctx context.Context, req dto.LoginAccountRequest) (dto.AccountLoginResult, error)
 	// Authenticate 校验一张令牌是不是这一端的、账号是否还有效。
@@ -57,16 +58,28 @@ type Principal struct {
 	MustChangePassword bool
 }
 
+// KeyIssuer 使用端新账号默认送的那把密钥由谁来签。实现是 galaxy.Service，
+// 由装配层注入 —— 账号这一层只管「注册成功之后要有一把」，不认识密钥怎么签、
+// 多久到期、范围怎么算。
+//
+// 只做运营那一半的装配方（manager-api）注册不了账号，可以不给。
+type KeyIssuer interface {
+	IssueRegistrationKey(ctx context.Context, ownerUserID string) (dto.IssuedKeyView, error)
+}
+
 // Options 令牌参数。只做运营的装配方（manager-api）不签发也不校验令牌，可以留空。
 type Options struct {
 	TokenSecret string
 	TokenTTL    time.Duration
+	// Keys 注册即送那把密钥的签发方。留空就只建账号，不送密钥。
+	Keys KeyIssuer
 }
 
 type service struct {
 	repository  *repository.GalaxyRepository
 	tokenSecret string
 	tokenTTL    time.Duration
+	keys        KeyIssuer
 }
 
 func New(database *gorm.DB, options Options) Service {
@@ -76,7 +89,10 @@ func New(database *gorm.DB, options Options) Service {
 	if ttl <= 0 {
 		ttl = 7 * 24 * time.Hour
 	}
-	return &service{repository: repo, tokenSecret: strings.TrimSpace(options.TokenSecret), tokenTTL: ttl}
+	return &service{
+		repository: repo, tokenSecret: strings.TrimSpace(options.TokenSecret),
+		tokenTTL: ttl, keys: options.Keys,
+	}
 }
 
 const bizLine = string(contract.GalaxyBizLine)

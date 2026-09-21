@@ -130,6 +130,16 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 			return nil, false, contract.NewUnitError(contract.ErrorClassNode, contract.CodeNodeUnavailable, false,
 				"原节点已离线，带 previous_response_id 的请求无法改派")
 		}
+		// 余量到线的机器连链式请求也不再接。
+		//
+		// 放它过去是说得通的（会话的后续回合，不算「新单」），但那个口子没有边界：
+		// 一个聊得正欢的会话可以顺着它把主人留给自己的那部分一路跑光，
+		// 而主人划这条线要的恰恰是那部分。所以这里和离线同一个处置 ——
+		// 带 previous_response_id 的请求本来就不能改派，说清楚为什么失败就够了。
+		if UpstreamHolding(snapshot) {
+			return nil, false, contract.NewUnitError(contract.ErrorClassNode, contract.CodeNodeUnavailable, false,
+				"原节点的上游余量已到共享者设的下限，带 previous_response_id 的请求无法改派")
+		}
 		grants, err := s.loadGrants(ctx, []string{snapshot.CID})
 		if err != nil {
 			return nil, false, err
@@ -169,7 +179,10 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 			if err != nil {
 				return nil, false, err
 			}
-			if exists && Online(snapshot, now, s.cfg().HeartbeatTimeout) && !snapshot.Draining && !snapshot.Paused {
+			// 余量到线的那台要和「排空中 / 已暂停」一样退出这条快路径 ——
+			// 这是九成请求走的路，不在这儿判，主人划的线就只拦得住生客。
+			if exists && Online(snapshot, now, s.cfg().HeartbeatTimeout) && !snapshot.Draining &&
+				!snapshot.Paused && !UpstreamHolding(snapshot) {
 				grants, err := s.loadGrants(ctx, []string{cid})
 				if err != nil {
 					return nil, false, err
@@ -193,7 +206,11 @@ func (s *service) tryPlace(ctx context.Context, unit contract.WorkUnit, spec con
 				}
 				s.metrics.Count(MetricSpillTotal, map[string]string{"kind": unit.Kind}, 1)
 			} else {
-				// 贡献没了：解绑，下次重新放置。
+				// 贡献没了、或者它此刻不该再接单（余量到线）：解绑，这一单去挑别的机器。
+				//
+				// 余量那种情况解绑是有意的：那台机器要等上游窗口重置才回来，
+				// 少则几十分钟。把绑定留着只会让这个消费者每次都先敲一次空门，
+				// 而绑定本来就只是「上游 prompt cache 还热着」的偏好，不是承诺。
 				_ = s.control.ReleaseBinding(ctx, affinity, lane, cid)
 			}
 		}

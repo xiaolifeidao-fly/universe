@@ -262,12 +262,20 @@ func (c *ControlPlane) ReplaceContributions(ctx context.Context, nodeID string, 
 			"lane": lane, "modelsAllow": encode(snapshot.ModelsAllow), "modelsDeny": encode(snapshot.ModelsDeny),
 			"seats": snapshot.Seats, "seatConc": snapshot.SeatConcurrency,
 			"schedule": encode(snapshot.Schedule), "reputation": snapshot.Reputation,
-			"resources":  encode(snapshot.Resources),
-			"upstreamOK": boolToInt(snapshot.UpstreamOK), "draining": boolToInt(snapshot.Draining),
+			// 余量下限是**配置**，跟着这条全量替换写。此刻剩多少是运行态，
+			// 由心跳的 UpdateLaneRuntime 维护 —— 不过重建时也顺手带一份进来
+			// （库里存着最后一次观测），否则重建之后到下一拍心跳之间，
+			// 这条贡献的闸门是瞎的：不知道 = 放行，快用完的机器会被重新派单。
+			"upstreamFloor": encode(snapshot.UpstreamFloors),
+			"resources":     encode(snapshot.Resources),
+			"upstreamOK":    boolToInt(snapshot.UpstreamOK), "draining": boolToInt(snapshot.Draining),
 			"paused": boolToInt(snapshot.Paused), "lastBeat": snapshot.LastBeatAt.UnixMilli(),
 		}
 		for unit, limit := range snapshot.QuotaLimit {
 			values["limit:"+unit] = limit
+		}
+		if len(snapshot.UpstreamLeft) > 0 {
+			values["upstreamLeft"] = encode(snapshot.UpstreamLeft)
 		}
 		pipe.HSet(ctx, c.contribKey(snapshot.CID), values)
 		// inflight 只在贡献刚建立时初始化：hello 是全量替换配置，不是清空在途计数。
@@ -340,6 +348,11 @@ return 1`, []string{c.contribKey(runtime.CID)}, runtime.ThrottledUntil.UnixMilli
 		}
 		if len(runtime.CachedArtifacts) > 0 {
 			values["cachedArtifacts"] = encode(runtime.CachedArtifacts)
+		}
+		// 没带就不写：一份空的盖上去，等于让余量闸门在探针抽风的那几分钟里
+		// 凭空打开（不知道 = 放行）。留着上一次的观测更接近事实。
+		if len(runtime.UpstreamLeft) > 0 {
+			values["upstreamLeft"] = encode(runtime.UpstreamLeft)
 		}
 		// 节点每 15s 报一次通道状态。贡献不在控制面里（还没 hello、或哈希已过期）时
 		// 这一步必须什么都不做，否则每个心跳都在造一个新的空壳。

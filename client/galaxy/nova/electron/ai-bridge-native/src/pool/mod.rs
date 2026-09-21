@@ -11,3 +11,4 @@ pub mod token;
 pub mod tools;
 pub mod upgrade;
 pub mod usage;
+pub mod usage_probe;

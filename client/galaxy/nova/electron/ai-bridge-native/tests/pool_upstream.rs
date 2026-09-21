@@ -5,7 +5,6 @@ use ai_bridge_native::business::llm_chat::RelayProvider;
 use ai_bridge_native::core::paths::Env;
 use ai_bridge_native::core::request::Cancel;
 use ai_bridge_native::credentials::CredentialRegistry;
-use ai_bridge_native::pool::usage::UpstreamUsage;
 use axum::response::IntoResponse;
 use base64::Engine;
 use common::*;
@@ -37,14 +36,12 @@ async fn run_case(status: u16) {
     .await;
 
     let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let usage = Arc::new(UpstreamUsage::new());
     let provider = RelayProvider::new(
         "test",
         relay_provider_config("api_key", Some("test"), Some(&format!("{origin}/v1"))),
         Arc::new(CredentialRegistry::new(client.clone())),
         client,
         Env::default(),
-        Arc::clone(&usage),
     );
     let unit: WorkUnit = serde_json::from_value(json!({
         "id": "u_test", "kind": "llm.chat", "kindVersion": 1, "primitive": "relay",
@@ -117,7 +114,6 @@ async fn a_missing_body_fails_before_touching_the_upstream() {
         Arc::new(CredentialRegistry::new(client.clone())),
         client,
         Env::default(),
-        Arc::new(UpstreamUsage::new()),
     );
     let unit: WorkUnit = serde_json::from_value(json!({
         "id": "u_test", "kind": "llm.chat", "kindVersion": 1, "primitive": "relay",
@@ -138,74 +134,4 @@ async fn a_missing_body_fails_before_touching_the_upstream() {
         }
         other => panic!("应当直接报输入错误，收到 {other:?}"),
     }
-}
-
-/// 上游余量是**顺手**收下来的：跑一条真的中转请求，响应头里的限流项就该落进
-/// UpstreamUsage，不需要任何额外的上游调用。
-///
-/// 这条用例走的是完整的 provider.run 路径 —— 单测只验了解析器，这里验的是
-/// 「解析器真的被接在那个位置上」。这两件事分开断过一次之后，把 observe 挪错地方
-/// （比如挪到只有非流式响应才走到的分支里）才会被拦住。
-#[tokio::test]
-async fn relaying_a_request_captures_upstream_ratelimit_headers() {
-    let origin = start_plain_upstream(move |_req| async move {
-        (
-            axum::http::StatusCode::OK,
-            [
-                ("content-type", "text/event-stream"),
-                ("anthropic-ratelimit-unified-5h-limit", "1000000"),
-                ("anthropic-ratelimit-unified-5h-remaining", "250000"),
-                ("anthropic-ratelimit-unified-status", "allowed_warning"),
-                // 非限流头不该跟着进去：这份东西要随心跳上报。
-                ("request-id", "req_test"),
-            ],
-            "data: {}\n\n".to_string(),
-        )
-            .into_response()
-    })
-    .await;
-
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let usage = Arc::new(UpstreamUsage::new());
-    let provider = RelayProvider::new(
-        "claude_oauth",
-        relay_provider_config("api_key", Some("test"), Some(&format!("{origin}/v1"))),
-        Arc::new(CredentialRegistry::new(client.clone())),
-        client,
-        Env::default(),
-        Arc::clone(&usage),
-    );
-    let unit: WorkUnit = serde_json::from_value(json!({
-        "id": "u_test", "kind": "llm.chat", "kindVersion": 1, "primitive": "relay",
-        "provider": "claude_oauth", "consumerKey": "ck_test", "state": "running",
-        "inputs": [{ "name": "body",
-            "inline": base64::engine::general_purpose::STANDARD.encode("{\"model\":\"test\"}") }],
-    }))
-    .unwrap();
-
-    use ai_bridge_native::business::Provider;
-    let mut events = provider.run(unit, UnitIo {
-        cancel: Cancel::new(), work_dir: None,
-        unit_id: "u_test".into(), cid: "relay_claude".into(), callbacks: None,
-    });
-    while events.next().await.is_some() {}
-
-    // 按**路由键**存，不是按 cid：余量是那个上游账号的属性。
-    let snapshot = usage.get("claude_oauth").expect("跑完一条请求就该有快照");
-    assert_eq!(snapshot.source, "headers");
-    assert!(!snapshot.observed_at.is_empty(), "观测时刻不能是空的 —— 界面靠它说明数有多旧");
-    assert!(
-        !snapshot.raw.contains_key("request-id"),
-        "只收限流头，别把别的响应头一起报上去：{:?}",
-        snapshot.raw
-    );
-
-    let five = snapshot
-        .buckets
-        .iter()
-        .find(|bucket| bucket.window.as_deref() == Some("5h"))
-        .expect("5 小时那一桶");
-    assert_eq!(five.limit, Some(1_000_000));
-    assert_eq!(five.remaining, Some(250_000));
-    assert_eq!(five.used_percent, Some(75.0));
 }

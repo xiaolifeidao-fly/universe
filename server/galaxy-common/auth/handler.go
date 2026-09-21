@@ -59,6 +59,9 @@ func (h *Handler) register(side string) gin.HandlerFunc {
 		}
 		req.Side = side
 		result, err := h.accounts.Register(context.Request.Context(), req)
+		// 使用端的注册响应里带着默认密钥的明文（AccountLoginResult.Key），
+		// 任何一层代理、浏览器缓存都不该留一份。
+		context.Header("Cache-Control", "no-store")
 		httpx.JSON(context, result, err)
 	}
 }

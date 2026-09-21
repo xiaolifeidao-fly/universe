@@ -54,8 +54,13 @@ func Build(database *gorm.DB, registry *galaxy.KindRegistry, replayer galaxy.Sha
 		Audit: LoadAuditConfig(), Metrics: metrics}, registry, LoadConfig())
 	return &Assembly{Galaxy: service, Metrics: metrics, Control: control}, nil
 }
-func Accounts(database *gorm.DB) (account.Service, *auth.Gate) {
-	accounts := account.New(database, account.Options{TokenSecret: TokenSecret(), TokenTTL: TokenTTL()})
+
+// Accounts 装配账号服务。keys 是使用端「注册即送一把密钥」的签发方，传 Assembly.Galaxy；
+// 传 nil 就只建账号不送密钥。
+func Accounts(database *gorm.DB, keys account.KeyIssuer) (account.Service, *auth.Gate) {
+	accounts := account.New(database, account.Options{
+		TokenSecret: TokenSecret(), TokenTTL: TokenTTL(), Keys: keys,
+	})
 	return accounts, auth.NewGate(accounts)
 }
 

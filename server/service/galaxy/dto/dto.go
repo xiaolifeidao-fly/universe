@@ -313,6 +313,35 @@ type UsageBucket struct {
 	Status string `json:"status,omitempty"`
 }
 
+// UpstreamFloorInput 一条「上游余量低到这儿就不接单」的规则。
+//
+// Window 空串表示**任一窗口**：上游报几个窗口、各叫什么由上游说了算，
+// 主人多半只想说一句「快用完了就别接了」，不想先去认识 5h 和 7d 这两个词。
+// 填了具体窗口（5h / 7d）就只看那一个。
+//
+// Percent 是**剩余**百分比的下限，0–100 的整数：剩余 ≤ Percent 就不接单。
+// 存剩余不存已用 —— 主人心里的那句话是「给我留 20%」，不是「用到 80% 就停」，
+// 两种说法在边界上还差一个方向，转一次就有一处会转反。
+type UpstreamFloorInput struct {
+	Window  string `json:"window"`
+	Percent int    `json:"percent"`
+}
+
+// UpstreamBlockView 此刻是哪条线把这条贡献挡住了。不被挡时整个字段不出现。
+//
+// 三个数一起给：只说「暂不接单」的话，主人分不清是自己那条线设高了，
+// 还是上游真的快用完了 —— 前者去改设置，后者只能等窗口重置。
+type UpstreamBlockView struct {
+	// Window 触发的那条规则盯的窗口。空串是「任一窗口」那条。
+	Window string `json:"window"`
+	// Percent 那条规则的下限；Left 此刻实际剩多少（0–100）。
+	Percent int     `json:"percent"`
+	Left    float64 `json:"left"`
+	// Bucket 真正触线的那个桶在上游那边叫什么（Current week (all models) 之类）。
+	// 一个窗口可能有好几个桶（周额度还分总量和 Opus），不说是哪个，主人会去看错的那一行。
+	Bucket string `json:"bucket,omitempty"`
+}
+
 type HeartbeatResult struct {
 	// HubURL 是平台公布的节点接入地址，供 bridge 自行校验本地配置。
 	HubURL      string                       `json:"hubUrl,omitempty"`
@@ -560,12 +589,48 @@ type ProviderModelView struct {
 	SortOrder int   `json:"sortOrder"`
 }
 
+// ---------- 模型候选 ----------
+
+// ModelOption 共享设置页那两个框（允许 / 拒绝）里的一个候选项。
+//
+// 只有名字：那两个框填的是**规则**，价钱、上下文长度是「模型」那一页的事，
+// 摆进来只会让一个正在填规则的人分神去比价。
+type ModelOption struct {
+	ModelID     string `json:"modelId"`
+	DisplayName string `json:"displayName"`
+}
+
+// ModelOptionGroup 平台在卖的模型，按**厂商**分一组。
+//
+// 分组是因为一条车道只吃得下自己那一族：relay_claude 背后是 Claude 订阅，
+// 在它的允许名单里填 gpt-5 是白填 —— 派过去也只换来一次失败。
+// 组名用的是用量分类那一套词（claude / codex / other），贡献视图上的 Category
+// 由同一个函数算出来，两边对得上，前端就只是一次 map 查找，不必自己认厂商。
+//
+// 清单是**平台声明**的（已上架的模型目录），不从节点汇总 —— 和 /v1/models 那份
+// 同一个理由：节点报的是「这台机器的上游此刻有什么」，会随谁在线而抖动。
+// 「这台机器上真有没有」另有出处，是贡献自己的 AvailableModels。
+type ModelOptionGroup struct {
+	Category string `json:"category"`
+	// Vendor / Family 目录里的厂商与族名（anthropic/claude、openai/gpt）。
+	// 界面拿 Vendor 画厂商标，和「模型」那一页的分栏是同一套值。
+	Vendor string        `json:"vendor"`
+	Family string        `json:"family"`
+	Models []ModelOption `json:"models"`
+}
+
 type ContributionView struct {
-	CID         string   `json:"cid"`
-	NodeID      string   `json:"nodeId"`
-	Kind        string   `json:"kind"`
-	KindVersion int      `json:"kindVersion"`
-	Provider    string   `json:"provider"`
+	CID         string `json:"cid"`
+	NodeID      string `json:"nodeId"`
+	Kind        string `json:"kind"`
+	KindVersion int    `json:"kindVersion"`
+	Provider    string `json:"provider"`
+	// Category 这条车道属于哪一类算力：claude / codex / video / other。
+	//
+	// Kind（llm.chat）分不开 Claude 和 Codex，Provider（claude_oauth / codex_chatgpt）
+	// 分得开但那是路由键，认它等于让每个前端各写一份「哪个键算哪一家」。
+	// 这里按和用量分类同一个函数算好给出去，控制台拿它去取这一族的模型候选。
+	Category    string   `json:"category"`
 	ModelsAllow []string `json:"modelsAllow"`
 	ModelsDeny  []string `json:"modelsDeny"`
 	// 节点报的上游可用模型。给控制台当候选项，不参与任何调度判定。
@@ -595,8 +660,16 @@ type ContributionView struct {
 	// nil 表示这台机器还没观测到过 —— 一次中转都没跑过的机器就是 nil。
 	UpstreamUsage *UpstreamUsage `json:"upstreamUsage,omitempty"`
 	// UpstreamUsageAt 上面那份数是什么时候观测到的（Hub 收到的时刻）。
-	// 界面必须显示它：闲置的机器这个数会一直是旧的。
+	// 界面必须显示它：探针五分钟一轮，连着几轮没采到时这个数就是旧的。
 	UpstreamUsageAt *time.Time `json:"upstreamUsageAt,omitempty"`
+	// UpstreamFloors 主人设的余量下限。至少一条 —— 服务端保证，界面不必判空。
+	UpstreamFloors []UpstreamFloorInput `json:"upstreamFloors"`
+	// UpstreamBlock 此刻被余量下限挡住了没有。nil = 没被挡。
+	//
+	// 和 Status / Available 都不一样，界面上要第三种说法：主人没关（Status 还是
+	// active）、机器也好着（Available 为真），只是上游快用完了，等窗口重置就自己回来。
+	// 混进前两者里，主人会去开一个本来就开着的开关。
+	UpstreamBlock *UpstreamBlockView `json:"upstreamBlock,omitempty"`
 }
 
 type QuotaStatusView struct {
@@ -930,6 +1003,10 @@ type SaveContributionLimitsRequest struct {
 	SeatConcurrency int               `json:"seatConcurrency"`
 	Quota           []QuotaGrantInput `json:"quota"`
 	Schedule        []ScheduleInput   `json:"schedule"`
+	// UpstreamFloors 上游余量下限。必填 —— 不给就按默认「任一窗口剩 0% 停」落一条，
+	// 而不是留空：留空的那一列会被后来的人读成「这条贡献不受保护」，
+	// 而它其实只是没填过。
+	UpstreamFloors []UpstreamFloorInput `json:"upstreamFloors"`
 }
 
 // SetContributionStatusRequest 主人开关一条贡献。

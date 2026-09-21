@@ -14,7 +14,12 @@ const SANS = `"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",
 
 const BRAND = "#4f46e5";
 const BRAND_HOVER = "#4338ca";
-const BRAND_TINT = "rgba(79, 70, 229, 0.04)";
+/** 表格行的悬停底色。**必须是不透明色**：这个颜色会盖到右侧 `fixed` 列的单元格上，
+ *  而那一格是 `position: sticky` 浮在横向滚走的列上面的 —— 底色一旦带 alpha，
+ *  被它压住的「状态 / 排序」等列就会直接透出来，和操作按钮叠成一团（模型价目表最明显）。
+ *  antd 自己的默认值同理：它把半透明的 colorFillAlter 先压到 colorBgContainer 上
+ *  算成实色再用。这里的值＝ rgba(79, 70, 229, 0.04) 压在白底（#ffffff）上的等价色。 */
+const BRAND_TINT = "#f8f8fe";
 const SUCCESS = "#12a150";
 const INK = "#101828";
 

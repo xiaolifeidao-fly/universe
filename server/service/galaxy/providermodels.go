@@ -176,3 +176,62 @@ func (s *service) earningsByModel(ctx context.Context, ownerUserID string, now t
 	}
 	return out, nil
 }
+
+// ---------- 模型候选 ----------
+
+// ProviderModelOptions 共享设置页那两个框（允许 / 拒绝）的候选项。
+//
+// 为什么不复用「模型」那一页（ProviderModels）：那一页要算四档结算价、要比对
+// 每个人的允许名单、还要数最近七天赚了多少 —— 填规则的人一个都用不上，
+// 而共享设置这一页会跟着切机器、切车道反复取。这里只要名字。
+//
+// 也不从节点的 availableModels 汇总：那是「这台机器的上游此刻有什么」，
+// 上游抽一次风候选项就空半天（见 pool/models.rs 的降级），而主人这会儿
+// 要填的是一条长期生效的规则。两者都要 —— 界面上把「平台在卖」当清单，
+// 把「这台机器有」当标注，见 ShareSettings 的 modelOptions。
+func (s *service) ProviderModelOptions(ctx context.Context) ([]dto.ModelOptionGroup, error) {
+	rows, err := s.repository.ListModels(ctx, bizLine, true)
+	if err != nil {
+		return nil, err
+	}
+	return modelOptionGroups(rows), nil
+}
+
+// modelOptionGroups 已上架的模型目录 → 按厂商分组的候选项。
+//
+// 分组键是**族**（claude / gpt / gemini / other），组上再带一个 Category
+// （claude / codex / other）给前端认车道 —— 两套名字不合并的理由见
+// portal.go 的 protocolFamily：族是给人看的分栏，另一套是别的用途的键。
+//
+// 顺序一律跟着目录本身（仓储已按 sort_order, model_id 排过）：运营把主推的
+// 模型排在前面是有意的，替他排一次等于把这个决定抹掉。组的顺序按首次出现。
+func modelOptionGroups(rows []*repository.GalaxyModel) []dto.ModelOptionGroup {
+	order := make([]string, 0, 2)
+	groups := make(map[string]*dto.ModelOptionGroup, 2)
+	for _, row := range rows {
+		family, vendor := row.Family, row.Vendor
+		if family == "" || vendor == "" {
+			inferredFamily, inferredVendor := inferFamily(row.ModelID)
+			family = defaultString(family, inferredFamily)
+			vendor = defaultString(vendor, inferredVendor)
+		}
+		group, ok := groups[family]
+		if !ok {
+			group = &dto.ModelOptionGroup{
+				Category: familyCategory(family), Vendor: vendor, Family: family,
+				Models: []dto.ModelOption{},
+			}
+			groups[family] = group
+			order = append(order, family)
+		}
+		group.Models = append(group.Models, dto.ModelOption{
+			ModelID: row.ModelID, DisplayName: defaultString(row.DisplayName, row.ModelID),
+		})
+	}
+	// 空目录回空切片而不是 nil：nil 序列化出去是 null，前端的 .find() 会崩。
+	out := make([]dto.ModelOptionGroup, 0, len(order))
+	for _, family := range order {
+		out = append(out, *groups[family])
+	}
+	return out
+}

@@ -9,7 +9,9 @@ import (
 	"service/galaxy/internal/repository"
 )
 
-// 上游余量是**节点自报的事实，只给人看**。这一组盯住的是「不会被误读」：
+// 上游余量是**节点自报的事实**。这一组盯住的是「不会被误读」——
+// 它现在还多了一层利害：余量下限（upstreamfloor.go）拿它挡派单，
+// 一次写坏的落库就是一台机器白白停止接单。
 // 解不动时给 nil 而不是一份全 0 的快照，以及没报时不要把上一次的观测抹掉。
 
 // TestDecodeUpstreamUsageReturnsNilOnGarbage 解不动就当没有。

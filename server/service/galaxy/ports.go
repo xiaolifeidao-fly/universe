@@ -48,6 +48,15 @@ type ContributionSnapshot struct {
 
 	Schedule []ScheduleWindow
 
+	// UpstreamFloors 主人设的上游余量下限（规则），UpstreamLeft 是此刻观测到的
+	// 各窗口余量（事实）。两个都在快照里，放置那一步才不用回头查库 ——
+	// 硬过滤是每条请求都要走的路径，多一次 MySQL 往返是按 QPS 计的成本。
+	//
+	// 规则跟着 hello / 改设置写（ReplaceContributions），事实跟着心跳写
+	// （UpdateLaneRuntime，15 秒一次）。
+	UpstreamFloors []UpstreamFloor
+	UpstreamLeft   map[string]UpstreamLeft
+
 	ThrottledUntil time.Time
 	Draining       bool
 	Paused         bool
@@ -105,6 +114,11 @@ type LaneRuntime struct {
 	UpstreamOK      bool
 	Paused          bool
 	CachedArtifacts []string
+	// UpstreamLeft 这个上游账号此刻各窗口还剩多少（节点自报，五分钟一轮的探测）。
+	//
+	// nil = 这一拍没带（老版本节点、探针还没跑过、连着几轮没采到）。**nil 不写**：
+	// 用一份空的盖掉上一次的观测，等于让闸门在探针抽风的那几分钟里凭空打开。
+	UpstreamLeft map[string]UpstreamLeft
 }
 
 // PlaceCommand 是「原子绑定座位 + 预留额度 + 入队」这一步的全部输入。
@@ -185,13 +199,13 @@ type UnitRuntime struct {
 	Model       string
 	// Effort 推理强度，和 Model 一样是计价键。它从信封里解出来（LoadUnit），
 	// 结算时按 (kind, model, effort) 取价。
-	Effort string
-	SID    string
-	CID         string
-	Instance    string
-	State       contract.UnitState
-	Lease       string
-	Estimate    contract.Metering
+	Effort   string
+	SID      string
+	CID      string
+	Instance string
+	State    contract.UnitState
+	Lease    string
+	Estimate contract.Metering
 	// Envelope 是当初入队的那份工作单元 JSON。租约过期要重派时按它原样重放，
 	// 不需要消费者再提交一次 —— job 的输入本来就自包含。
 	Envelope []byte

@@ -372,6 +372,9 @@ type Service interface {
 	CreateConsumerKey(ctx context.Context, req dto.CreateConsumerKeyRequest) (dto.IssuedKeyView, error)
 	// IssueKey 运营代签。和上面走同一条签发路径，区别只在能指定范围与有效期。
 	IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.IssuedKeyView, error)
+	// IssueRegistrationKey 使用端注册即送的那一把，由账号服务在注册成功后调一次。
+	// 唯一不过数据告知那道闸的签发路径，见 consumerkey.go 里的说明。
+	IssueRegistrationKey(ctx context.Context, ownerUserID string) (dto.IssuedKeyView, error)
 	AuthenticateKey(ctx context.Context, secret string) (dto.Caller, error)
 	DescribeKey(ctx context.Context, keyID string) (dto.ConsumerKeyView, error)
 	ListKeys(ctx context.Context, ownerUserID string) ([]dto.ConsumerKeyView, error)
@@ -412,6 +415,10 @@ type Service interface {
 	// ProviderModels 共享端的模型页：平台在卖哪些模型、跑它们各自记多少积分。
 	// 只给**结算价** —— 对外价和毛利不在这条接口里，共享者拿不到也就反推不出抽成。
 	ProviderModels(ctx context.Context, ownerUserID string) ([]dto.ProviderModelView, error)
+	// ProviderModelOptions 共享设置页那两个模型框的候选项：平台已上架的模型，
+	// 按厂商分组，让一条车道只看见自己那一族。不带用户维度 —— 它是平台的声明，
+	// 「这台机器上有没有」由贡献自己的 availableModels 回答。
+	ProviderModelOptions(ctx context.Context) ([]dto.ModelOptionGroup, error)
 	SavePortalModel(ctx context.Context, req dto.SaveModelRequest) error
 	DeletePortalModel(ctx context.Context, modelID string) error
 

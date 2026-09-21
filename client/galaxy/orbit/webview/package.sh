@@ -53,6 +53,21 @@ Galaxy Orbit 界面（使用端）
 NOTE
 chmod +x "$DIST_DIR/start.sh" "$DIST_DIR/stop.sh"
 
-tar -czf "$ARCHIVE" -C "$PACKAGE_ROOT" "$PACKAGE_NAME"
+# 打包前把两样 Apple 私货挡在包外：
+#   AppleDouble 伴随文件 ._<包名>  归档里会多出一个顶层条目，按清单取包名的脚本
+#                                  会取到它（C 序下 `.` 排在字母前面），deploy.sh
+#                                  因此算错目录、把停服务那步跳过去。
+#   com.apple.* 扩展属性           服务器上 GNU tar 解包时刷一屏
+#                                  "Ignoring unknown extended header keyword"。
+# 两个开关在没有它们的环境里也不碍事：COPYFILE_DISABLE 只是个环境变量，
+# --no-xattrs GNU tar 和 bsdtar 都认 —— 认不认先探一下，package.sh 是 set -e。
+if command -v xattr >/dev/null 2>&1; then
+  xattr -cr "$DIST_DIR" 2>/dev/null || true
+fi
+NO_XATTRS=""
+if tar --no-xattrs -cf /dev/null -T /dev/null 2>/dev/null; then
+  NO_XATTRS="--no-xattrs"
+fi
+COPYFILE_DISABLE=1 tar $NO_XATTRS -czf "$ARCHIVE" -C "$PACKAGE_ROOT" "$PACKAGE_NAME"
 
 echo "package created: $ARCHIVE"

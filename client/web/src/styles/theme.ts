@@ -5,7 +5,16 @@ const SANS = `"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",
 /** Keep in sync with the :root token block in app/globals.css. */
 const BRAND = "#4f46e5";
 const BRAND_HOVER = "#4338ca";
-const BRAND_TINT = "rgba(79, 70, 229, 0.04)";
+/**
+ * Table row hover background. MUST be opaque: it also paints the `fixed` column
+ * cells, which are `position: sticky` and float above the columns scrolling under
+ * them — with any alpha, those columns bleed through and pile up on the action
+ * buttons. antd's own default does the same thing, flattening the translucent
+ * colorFillAlter onto colorBgContainer before using it. This value is
+ * rgba(79, 70, 229, 0.04) composited on white (#ffffff).
+ * Mirrored in client/shared/theme/managerTheme.ts.
+ */
+const BRAND_TINT = "#f8f8fe";
 const SUCCESS = "#12a150";
 const INK = "#101828";
 

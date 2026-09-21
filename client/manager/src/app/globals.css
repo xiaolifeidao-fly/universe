@@ -814,8 +814,12 @@
   padding: 13px 12px;
 }
 
+/* 悬停底色要**不透明**：它会盖到右侧 fixed 列的单元格上，而那一格是 sticky 浮在
+   横向滚走的列上面的 —— 带 alpha 的话被压住的列会直接透出来叠在操作按钮上。
+   --manager-primary-light 本身是 rgba（渐变光晕要用它的透明度），这里用 color-mix
+   取它压在行底色上的等价实色，改主色时两处仍然跟着走。 */
 .manager-table .ant-table-tbody > tr:hover > td {
-  background: var(--manager-primary-light) !important;
+  background: color-mix(in srgb, var(--manager-primary) 10%, var(--manager-surface)) !important;
 }
 
 .manager-table .ant-table-tbody > tr:hover > td:first-child {

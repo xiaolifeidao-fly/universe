@@ -43,6 +43,9 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/contribution/limits", h.saveContributionLimits)
 	// 模型页：跑哪个模型能记多少积分。只给结算价 —— 对外价不经这条接口。
 	api.GET("/models", h.models)
+	// 共享设置里那两个模型框的候选项：平台在卖的模型，按厂商分组。
+	// 和上面那条分开，是因为填规则的人一个价都用不上，见 ProviderModelOptions。
+	api.GET("/model-options", h.modelOptions)
 	api.GET("/records", h.listRecords)
 	api.GET("/credits", h.credits)
 	api.GET("/endpoint", h.providerEndpoint)
@@ -66,6 +69,15 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 func (h *Handler) models(context *gin.Context) {
 	views, err := h.service.ProviderModels(context.Request.Context(), auth.UserID(context))
 	httpx.JSON(context, views, err)
+}
+
+// modelOptions 共享设置页的模型候选，按厂商分组。
+//
+// 不带用户维度：它是平台声明的清单（已上架的模型目录）。
+// 「这台机器上有没有」由 /nodes 那条里每条贡献的 availableModels 回答。
+func (h *Handler) modelOptions(context *gin.Context) {
+	groups, err := h.service.ProviderModelOptions(context.Request.Context())
+	httpx.JSON(context, groups, err)
 }
 
 // bridgeReleases 下载清单：每个平台最新的那一版，加上安装脚本地址。

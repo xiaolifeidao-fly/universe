@@ -86,6 +86,68 @@ func TestSubmitWaitsForBusyBoundContribution(t *testing.T) {
 	}
 }
 
+// 余量下限必须在**每一条**放置路径上成立，不只在硬过滤里。
+//
+// 绑定那条是九成请求走的路（「上次落在哪台就先敲那台的门」），只在硬过滤里判的话，
+// 主人划的线就只拦得住生客：老客户照样一单一单地把他留给自己的那部分跑光，
+// 而共享设置页上一切正常。
+func TestSubmitBoundPathHonoursUpstreamFloor(t *testing.T) {
+	now := time.Now()
+	held := healthy("c1", now)
+	held.UpstreamFloors = []UpstreamFloor{{Percent: 20}}
+	held.UpstreamLeft = map[string]UpstreamLeft{"7d": {Percent: 5, Bucket: "Current week (all models)"}}
+	plane := &fakePlane{lane: []ContributionSnapshot{held, healthy("c2", now)}, bound: "c1"}
+
+	placement, err := submitService(t, plane).Submit(context.Background(), relayUnit())
+	if err != nil {
+		t.Fatalf("还有一台没到线的机器，这一单该落到它身上：%v", err)
+	}
+	if placement.CID != "c2" {
+		t.Fatalf("绑定的 c1 已经到线，应改落 c2，实际 %q", placement.CID)
+	}
+	if !plane.released {
+		t.Fatal("到线的机器要解绑 —— 它得等上游窗口重置才回来，留着绑定只会每次先敲一次空门")
+	}
+}
+
+// 带 previous_response_id 的链式请求同样不放行。
+//
+// 放它过去说得通（是会话的后续回合，不算新单），但那个口子没有边界：
+// 一个聊得正欢的会话可以顺着它把主人留给自己的那部分一路跑光。
+func TestSubmitHardPinHonoursUpstreamFloor(t *testing.T) {
+	now := time.Now()
+	held := healthy("c1", now)
+	held.UpstreamFloors = []UpstreamFloor{{Percent: 20}}
+	held.UpstreamLeft = map[string]UpstreamLeft{"5h": {Percent: 3}}
+
+	unit := relayUnit()
+	unit.HardPin = "c1"
+	_, err := submitService(t, &fakePlane{lane: []ContributionSnapshot{held}}).Submit(context.Background(), unit)
+	var cause *contract.UnitError
+	if !errors.As(err, &cause) || cause.Code != contract.CodeNodeUnavailable {
+		t.Fatalf("期望 node_unavailable（不能改派），实际 %v", err)
+	}
+}
+
+// 全池都到线时立刻 503，不要干等到 maxWait：那台机器要等上游窗口重置才回来，
+// 而窗口以小时计，等几秒只是把一个注定的失败往后推。
+func TestSubmitFailsFastWhenEveryoneIsHolding(t *testing.T) {
+	now := time.Now()
+	held := healthy("c1", now)
+	held.UpstreamFloors = []UpstreamFloor{{Percent: 50}}
+	held.UpstreamLeft = map[string]UpstreamLeft{"5h": {Percent: 12}}
+
+	started := time.Now()
+	_, err := submitService(t, &fakePlane{lane: []ContributionSnapshot{held}}).Submit(context.Background(), relayUnit())
+	var cause *contract.UnitError
+	if !errors.As(err, &cause) || cause.Code != contract.CodeNoCapacity {
+		t.Fatalf("期望 no_capacity，实际 %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("等不来的请求挂了 %s 才返回", elapsed)
+	}
+}
+
 func relayUnit() contract.WorkUnit {
 	unit := contract.WorkUnit{
 		Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth", Model: "claude-sonnet-4-5", ConsumerKey: "ck_1",
@@ -111,6 +173,9 @@ type fakePlane struct {
 	ControlPlane
 	lane  []ContributionSnapshot
 	bound string
+	// released 绑定被解掉过没有。余量到线那条路要解绑，而解不解绑在返回值上
+	// 看不出来 —— 两种情况这一单都会落到别的机器上。
+	released bool
 	// busyUntil 之前读到的快照并发都是满的。
 	busyUntil time.Time
 }
@@ -124,6 +189,11 @@ func (f *fakePlane) read(snapshot ContributionSnapshot) ContributionSnapshot {
 
 func (f *fakePlane) LookupBinding(context.Context, string, string) (string, bool, error) {
 	return f.bound, f.bound != "", nil
+}
+
+func (f *fakePlane) ReleaseBinding(context.Context, string, string, string) error {
+	f.released = true
+	return nil
 }
 
 func (f *fakePlane) GetContribution(_ context.Context, cid string) (ContributionSnapshot, bool, error) {

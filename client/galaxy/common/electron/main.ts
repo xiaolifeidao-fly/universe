@@ -77,6 +77,15 @@ export function start(product: Product, { preload, implementations, onReady, onS
     callback(false);
   });
   app.whenReady().then(async () => {
+    // macOS 的 Dock 图标来自应用包，而开发态（npm run dev / start）跑的是
+    // node_modules 里那个 Electron.app —— 不补这一下，Dock 和 Cmd-Tab 里就是
+    // Electron 自己的图标，界面却已经是我们的，同时开着两个端还分不出哪个是哪个。
+    // 装好之后包里的 .icns 尺寸更全（16 到 1024），不必也不该拿这张 512 去盖。
+    // 图标本身由 npm run icons 从 assets/icons/<端>.svg 那份母版生成，和浏览器
+    // 页签上那枚是同一份母版的产物。
+    if (process.platform === 'darwin' && !app.isPackaged) {
+      app.dock?.setIcon(path.join(__dirname, '..', 'assets', 'icon-mac.png'));
+    }
     await onReady?.();
     // 地址的来源与校验规则在 origin.ts，那里有 node --test 守着（npm run test:desktop）。
     const origin = resolveOrigin({

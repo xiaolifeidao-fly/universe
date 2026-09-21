@@ -229,8 +229,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `models_allow_json` varchar(1024),                                -- 模型白名单模式数组
   `models_available_json` varchar(4096) DEFAULT NULL,               -- 节点上报的上游可用模型名，仅作控制台候选项
   `models_deny_json`  varchar(1024),                                -- 模型黑名单模式数组
-  `upstream_usage_json` varchar(4096),                              -- 节点自报的上游订阅余量（Claude / Codex 自己的 5 小时、周限额），只给人看，不参与派单与计费
-  `upstream_usage_at` timestamp NULL DEFAULT NULL,                  -- 上面那份数的观测时刻。机器闲着时不更新，界面必须显示它
+  `upstream_usage_json` varchar(4096),                              -- 节点自报的上游订阅余量（Claude / Codex 自己的 5 小时、周限额），节点每 5 分钟问本机 CLI 探来
+  `upstream_usage_at` timestamp NULL DEFAULT NULL,                  -- 上面那份数的观测时刻。探针可能连着几轮没采到，界面必须显示它
+  `upstream_floor_json` varchar(512),                               -- 余量下限：某个窗口剩到这个百分比就不再接单。空按 [{"window":"","percent":0}] 解
   `seats`             bigint DEFAULT 3,                             -- 同时服务的消费者数量上限
   `seat_concurrency`  bigint DEFAULT 2,                             -- 单座位并发上限
   `schedule_json`     varchar(512),                                 -- 挂机时段

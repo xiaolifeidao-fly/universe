@@ -19,6 +19,6 @@ func Build(database *gorm.DB) (*Assembly, error) {
 	if err != nil {
 		return nil, err
 	}
-	accounts, gate := bootstrap.Accounts(database)
+	accounts, gate := bootstrap.Accounts(database, base.Galaxy)
 	return &Assembly{Assembly: base, Auth: auth.NewHandler(accounts, gate), Providers: providers.NewHandler(base.Galaxy, gate)}, nil
 }

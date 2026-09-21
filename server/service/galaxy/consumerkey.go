@@ -80,7 +80,37 @@ func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Is
 	if !agreed {
 		return dto.IssuedKeyView{}, contract.ErrConsentRequired
 	}
+	return s.signKey(ctx, req)
+}
 
+// registrationKeyAlias 注册送的那把密钥叫什么。名字是给人看的，
+// 它要自己说清楚「这把不是你建的，是注册时就在那儿的」。
+const registrationKeyAlias = "默认密钥"
+
+// IssueRegistrationKey 新注册的使用端账号默认带的那一把。
+//
+// 这是**唯一**不过数据告知那道闸的签发路径，绕过是有意的：注册那一刻人还没看过
+// 告知，而口径是新账号一进控制台就该有一把能用的密钥，不必先读一段话、再点一次
+// 「新建」。告知本身没有被取消 —— 密钥页上那条横幅照常挂着直到本人确认，
+// 自助新建（CreateConsumerKey）和运营代签（IssueKey）也照常要先确认。
+//
+// 代价记在库里：这把密钥的 notice_version 是空的、notice_ack_at 是 NULL，
+// 所以「哪些密钥是没经确认就发出去的」随时查得出来，不用靠猜。
+func (s *service) IssueRegistrationKey(ctx context.Context, ownerUserID string) (dto.IssuedKeyView, error) {
+	owner := strings.TrimSpace(ownerUserID)
+	if owner == "" {
+		return dto.IssuedKeyView{}, contract.ErrNotFound
+	}
+	// 范围留空 = 不限：注册送的这把要能直接接 Claude Code 或 Codex，
+	// 挑一边写死，另一边的人第一次用就撞墙。
+	return s.signKey(ctx, dto.IssueKeyRequest{OwnerUserID: owner, Alias: registrationKeyAlias})
+}
+
+// signKey 真正写出一行密钥。三条签发路径（自助、运营代签、注册即送）都收口在这里：
+// 有效期、并发、RPM 这些默认值各写一遍的话，迟早只剩一边是对的。
+//
+// 告知那两列一起写：有版本才有确认时间，没版本就是那把注册送的，两列都空着。
+func (s *service) signKey(ctx context.Context, req dto.IssueKeyRequest) (dto.IssuedKeyView, error) {
 	now := time.Now()
 	ttl := s.cfg().KeyTTL
 	if req.TTLDays > 0 {
@@ -102,7 +132,9 @@ func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Is
 		IssuedAt:             now,
 		ExpiresAt:            now.Add(ttl),
 		NoticeVersion:        req.NoticeVersion,
-		NoticeAckAt:          now,
+	}
+	if req.NoticeVersion != "" {
+		row.NoticeAckAt = &now
 	}
 	if err := s.repository.CreateConsumerKey(ctx, row); err != nil {
 		return dto.IssuedKeyView{}, err

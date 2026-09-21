@@ -24,6 +24,6 @@ func Build(database *gorm.DB) (*Assembly, error) {
 	if err != nil {
 		return nil, err
 	}
-	accounts, gate := bootstrap.Accounts(database)
+	accounts, gate := bootstrap.Accounts(database, base.Galaxy)
 	return &Assembly{Assembly: base, Auth: auth.NewHandler(accounts, gate), Consumers: consumers.NewHandler(base.Galaxy, gate, consumers.Options{Models: strings.Split(httpx.Property("galaxy.models"), ",")}), Portal: portal.NewHandler(base.Galaxy, portal.Options{Models: strings.Split(httpx.Property("galaxy.models"), ","), CacheTTL: bootstrap.DurationProperty("galaxy.portal.cache_ttl_ms", 30000), LeadsPerHour: bootstrap.IntProperty("galaxy.portal.leads_per_hour", 60)})}, nil
 }

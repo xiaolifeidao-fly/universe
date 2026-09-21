@@ -178,19 +178,35 @@ type Payload struct {
 // 于是高强度的请求每跑一次平台都在亏，低强度的又收贵了。价目表因此按
 // (kind, model, effort, unit) 定价，见 zt_galaxy_price。
 //
-// 两族的档位**各自原生**，不做统一映射：
+// 两族的档位**各自原生**，不做统一映射，而且**两张表不一样长**：
 //
-//	anthropic  output_config.effort：low / medium / high / xhigh / max，官方默认 high；
-//	           thinking.type = disabled 时没有推理 token，记 none。
-//	openai     reasoning.effort：minimal / low / medium / high（新模型还有 none），
-//	           官方默认 medium。
+//	anthropic  output_config.effort：low / medium / high / xhigh / max，官方默认 high。
+//	openai     reasoning.effort：none / minimal / low / medium / high / xhigh / max /
+//	           ultra，官方默认 medium。
 //
-// 硬造一个跨族的公共刻度只会让两边都对不上：openai 的 minimal 在 anthropic 没有对应档，
-// anthropic 的 xhigh / max 在 openai 也没有。运营定价时面对的是上游真实收费的那个档位名。
+// 这两张表是**从本机的客户端问出来的**，每一档都有出处：
+//
+//	claude --effort bogus            → 「Valid values: low, medium, high, xhigh, max.」
+//	~/.codex/models_cache.json       → 每个模型的 supported_reasoning_levels；
+//	                                   gpt-5.6-sol / terra 是 low…max + ultra。
+//
+// 两个坑，都踩过：
+//
+//   - **别拿 strings(1) 去二进制里捞。** 捞出来的 `…maxultrapersistent` 是相邻字面量
+//     粘在一起的，persistent 属于另一个枚举。照它定价，那行价一次也匹配不上。
+//   - **Claude 的 ultracode 不是一档 effort。** 它在 CLI 里是「xhigh + 动态工作流编排，
+//     只对本会话生效」（claude 二进制原话），上线时 effort 字段里写的就是 xhigh。
+//     给它单独开一档，同样是一行永远匹配不上的价 —— 而且真实的 ultracode 请求
+//     会照常按 xhigh 收，看不出任何异常。
+//
+// 硬造一个跨族的公共刻度同样不行：openai 的 minimal / ultra 在 anthropic 没有对应档，
+// none 也只有 openai 有（Claude 关思考走的是 thinking.type=disabled，那是另一个字段，
+// 不是一档 effort）。运营定价时面对的就是上游真实收费的那个档位名。
 type Effort = string
 
 const (
-	// EffortNone 明确关掉了思考。它不是「没填」—— 没填走各族默认档（DefaultEffort）。
+	// EffortNone 只有 openai 有。它是「这一次不推理」，不是「没填」——
+	// 没填走各族默认档（DefaultEffort）。
 	EffortNone    Effort = "none"
 	EffortMinimal Effort = "minimal"
 	EffortLow     Effort = "low"
@@ -198,13 +214,27 @@ const (
 	EffortHigh    Effort = "high"
 	EffortXHigh   Effort = "xhigh"
 	EffortMax     Effort = "max"
+	// EffortUltra 只有 openai 有，排在 max 之上。
+	EffortUltra Effort = "ultra"
 )
 
 // 两族各自的档位，**按由浅到深排列**：界面上的下拉、价目表的排序都按这个顺序，
 // 让运营一眼看出「这一档比那一档贵是对的」。
+//
+// 具体模型只支持其中一个子集（Codex 按模型下发 supported_reasoning_levels，
+// Claude 会对选中的模型做静默降级）。这里给的是**全集** —— 价目表要回答的是
+// 「这个值传上来时按多少收」，而传上来的可以是任何一档；按子集收窄，
+// 换一个模型就会有一档查不到价，而查不到价是静默算 0。
+//
+// minimal 留着，虽然本机的模型缓存里一个模型都没声明它：上游的 400 明确说它合法
+// （老一些的 gpt-5 走这一档）。漏掉它的代价不是少一行下拉，是 minimal 的请求会被
+// NormalizeEffort 判成「认不出来」、补成默认档 medium —— 最浅的一档按中档收钱。
 var (
-	anthropicEfforts = []Effort{EffortNone, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}
-	openaiEfforts    = []Effort{EffortNone, EffortMinimal, EffortLow, EffortMedium, EffortHigh}
+	anthropicEfforts = []Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}
+	openaiEfforts    = []Effort{
+		EffortNone, EffortMinimal, EffortLow, EffortMedium, EffortHigh,
+		EffortXHigh, EffortMax, EffortUltra,
+	}
 )
 
 const (

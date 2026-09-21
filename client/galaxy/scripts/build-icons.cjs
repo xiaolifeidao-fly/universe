@@ -147,11 +147,18 @@ function buildIcons() {
     fs.mkdirSync(assets, { recursive: true });
     fs.writeFileSync(path.join(assets, 'icon.png'), flat(512));
 
+    // 开发态（`npm run dev` / `npm run start`）的 Dock 图标。macOS 的 Dock 认的是
+    // 应用包，而这时跑的是 node_modules 里那个 Electron.app —— 不补这一张，Dock 上
+    // 就是 Electron 自己的图标，界面却已经是我们的。运行时怎么用见
+    // common/electron/main.ts；nativeImage 在 macOS 上读不了 .icns，所以只能另存 PNG。
+    // 取的是 mac 变体而不是上面那份满幅的：Dock 上两者差着一圈内缩和一层落影。
+    fs.writeFileSync(path.join(assets, 'icon-mac.png'), fs.readFileSync(path.join(work, `${product}-mac-512.png`)));
+
     // 浏览器里的页签图标：App Router 认 src/app 下的 icon / apple-icon。
     const web = path.join(root, product, 'webview', 'src', 'app');
     fs.copyFileSync(path.join(root, 'assets', 'icons', `${product}.svg`), path.join(web, 'icon.svg'));
     fs.copyFileSync(path.join(work, `${product}-square-180.png`), path.join(web, 'apple-icon.png'));
-    console.log(`${product}: icon.icns / icon.ico / icons/*.png / assets/icon.png / webview icon`);
+    console.log(`${product}: icon.icns / icon.ico / icons/*.png / assets/icon.png / assets/icon-mac.png / webview icon`);
   }
   fs.rmSync(work, { recursive: true, force: true });
 }

@@ -73,6 +73,38 @@ export class UpstreamUsage {
   source = "";
 }
 
+/**
+ * 一条**上游余量下限**：上游某个窗口只剩这么多的时候，这条贡献就不再接新单。
+ *
+ * 和「每日上限」那几条不是一回事，两个都要有：
+ *   每日上限   主人打算放多少出去   —— 平台按它计量，到顶就排空
+ *   余量下限   给自己留多少         —— 上游账号本身快见底时先停下
+ * 前者填得再小，也拦不住「这个月的 Claude 额度被别人跑光了」。
+ */
+export class UpstreamFloor {
+  /** 空串 = 任一窗口。填了就只看那一个（5h / 7d）。 */
+  window = "";
+
+  /** **剩余**百分比的下限，0–100。剩余 ≤ 它就停。 */
+  percent = 0;
+}
+
+/**
+ * 此刻是哪条线把这条贡献挡住了。服务端算好给的 —— 和派单那一侧是同一个函数，
+ * 界面再算一遍的话，迟早出现「页面说正常接单，实际一单也派不进来」。
+ */
+export class UpstreamBlock {
+  window = "";
+
+  percent = 0;
+
+  /** 此刻实际还剩多少。 */
+  left = 0;
+
+  /** 真正触线的那个桶在上游那边叫什么。一个窗口可能有好几个桶。 */
+  bucket = "";
+}
+
 export class ScheduleWindow {
   from = "";
 
@@ -91,6 +123,15 @@ export class ContributionView {
   kindVersion = 1;
 
   provider = "";
+
+  /**
+   * 这条车道是哪一家的算力：claude / codex / video / other。服务端算好给的。
+   *
+   * 别在前端按 cid 或 provider 自己认：cid 是主人在那台机器上起的配置键，
+   * 叫什么都行；provider 是路由键，认它等于把「claude_oauth 算 Claude」
+   * 这条规则在每个端各抄一遍。模型候选（fetchModelOptions）就按它取。
+   */
+  category = "";
 
   modelsAllow: string[] = [];
 
@@ -153,6 +194,22 @@ export class ContributionView {
   upstreamUsage?: UpstreamUsage;
 
   upstreamUsageAt?: string;
+
+  /**
+   * 主人设的余量下限。服务端保证至少一条 —— 界面不必判空。
+   *
+   * 嵌套对象不经过 class-transformer（项目里没用 @Type），拿到的是普通对象。
+   */
+  upstreamFloors: UpstreamFloor[] = [];
+
+  /**
+   * 此刻被余量下限挡住了没有。undefined = 没被挡。
+   *
+   * 它是**第三种状态**，界面上要和另外两个分开说：主人没关（status 还是 active）、
+   * 机器也好着（available 为真），只是上游快用完了，窗口重置之后自己会回来。
+   * 混进前两者里，主人会去开一个本来就开着的开关。
+   */
+  upstreamBlock?: UpstreamBlock;
 
   schedule: ScheduleWindow[] = [];
 
@@ -465,6 +522,8 @@ export interface SaveLimitsPayload {
   seatConcurrency: number;
   quota: QuotaGrantInput[];
   schedule: ScheduleWindow[];
+  /** 必填：不给的话服务端会落一条「任一窗口剩 0% 停」，也就是不额外保护。 */
+  upstreamFloors: UpstreamFloor[];
 }
 
 /**
@@ -579,6 +638,36 @@ export class ProviderModelView {
 
 export async function fetchProviderModels() {
   return getDataList(ProviderModelView, "/galaxy/provider/models");
+}
+
+/** 候选项里的一个模型。只有名字 —— 填规则的时候用不上价。 */
+export class ModelOption {
+  modelId = "";
+
+  displayName = "";
+}
+
+/**
+ * 平台在卖的模型，按厂商分一组。共享设置里「允许 / 拒绝」两个框的候选项。
+ *
+ * 用 category 去取自己那一组（和 ContributionView.category 同一套词）：
+ * relay_claude 那条车道只该看见 Claude 的模型 —— 给它列一排 gpt，
+ * 选中了也是白选，派过去只换来一次失败。
+ *
+ * 嵌套对象不经过 class-transformer（项目里没用 @Type），models 拿到的是普通对象。
+ */
+export class ModelOptionGroup {
+  category = "";
+
+  vendor = "";
+
+  family = "";
+
+  models: ModelOption[] = [];
+}
+
+export async function fetchModelOptions() {
+  return getDataList(ModelOptionGroup, "/galaxy/provider/model-options");
 }
 
 export async function fetchNodes() {

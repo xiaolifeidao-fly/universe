@@ -139,6 +139,7 @@ ImageMagick），一次生出下面这些；产物都进版本库，打包机不
 | `<端>/electron/build/icon.ico` | Windows 安装包与 exe |
 | `<端>/electron/build/icons/*.png` | Linux AppImage |
 | `<端>/electron/assets/icon.png` | Windows/Linux 的窗口与任务栏图标（macOS 用的是安装包里的 .icns） |
+| `<端>/electron/assets/icon-mac.png` | 开发态 macOS 的 Dock 图标。`npm run dev` / `start` 跑的是 node_modules 里的 Electron.app，Dock 认包、认不到我们，壳启动时拿这张补上（`common/electron/main.ts`）；装好之后走包里的 .icns |
 | `<端>/webview/src/app/icon.svg`、`apple-icon.png` | 浏览器页签、加到手机主屏（后者满幅直角，圆角由系统自己切） |
 
 字体（Instrument Serif 衬线大数字 + JetBrains Mono 表格数字）自托管在各端

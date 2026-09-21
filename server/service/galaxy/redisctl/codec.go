@@ -53,6 +53,21 @@ func decodeObject(raw string) map[string]any {
 	return out
 }
 
+// decodeUpstreamLeft 控制面里那份「各窗口还剩多少」。
+//
+// 解不动回 nil，也就是「不知道」—— 余量闸门在不知道的时候放行，所以一段坏掉的
+// JSON 只会让这台机器照常接单，不会让它凭空停掉。
+func decodeUpstreamLeft(raw string) map[string]galaxy.UpstreamLeft {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]galaxy.UpstreamLeft
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func decodeSchedule(raw string) []galaxy.ScheduleWindow {
 	if strings.TrimSpace(raw) == "" {
 		return nil
@@ -116,14 +131,18 @@ func decodeSnapshot(cid string, values map[string]string) galaxy.ContributionSna
 		Kind: values["kind"], KindVersion: int(parseInt(values["kindVersion"])), Provider: values["provider"],
 		ModelsAllow: decodeStrings(values["modelsAllow"]), ModelsDeny: decodeStrings(values["modelsDeny"]),
 		Seats: int(parseInt(values["seats"])), SeatConcurrency: int(parseInt(values["seatConc"])),
-		Inflight:   int(parseInt(values["inflight"])),
-		Schedule:   decodeSchedule(values["schedule"]),
-		Draining:   values["draining"] == "1",
-		Paused:     values["paused"] == "1",
-		UpstreamOK: values["upstreamOK"] != "0",
-		Reputation: parseFloat(values["reputation"]),
-		P50TTFBMs:  int(parseInt(values["p50Ttfb"])),
-		QuotaLimit: contract.Metering{}, QuotaUsed: contract.Metering{}, QuotaReserved: contract.Metering{},
+		Inflight: int(parseInt(values["inflight"])),
+		Schedule: decodeSchedule(values["schedule"]),
+		// 余量下限解不动时回的是**默认那条**（剩 0% 才停），不是空 ——
+		// 空等于「这条贡献不受保护」，而真相只是我们自己没读懂这一列。
+		UpstreamFloors: galaxy.DecodeUpstreamFloors(values["upstreamFloor"]),
+		UpstreamLeft:   decodeUpstreamLeft(values["upstreamLeft"]),
+		Draining:       values["draining"] == "1",
+		Paused:         values["paused"] == "1",
+		UpstreamOK:     values["upstreamOK"] != "0",
+		Reputation:     parseFloat(values["reputation"]),
+		P50TTFBMs:      int(parseInt(values["p50Ttfb"])),
+		QuotaLimit:     contract.Metering{}, QuotaUsed: contract.Metering{}, QuotaReserved: contract.Metering{},
 		CachedArtifacts: decodeStrings(values["cachedArtifacts"]),
 		Resources:       decodeObject(values["resources"]),
 	}

@@ -40,14 +40,16 @@ import {
   Pill,
   Seg,
   Switch,
+  type ChipOption,
 } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { isStudio } from "@/utils/auth";
-import { formatCompact, formatRelative, unitLabel } from "@/utils/format";
+import { formatRelative, unitLabel } from "@/utils/format";
 import { isDesktop } from "@/utils/product";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
 import { confirmForceClose, isClosing, switchContributions } from "../../contributionClose";
 import {
+  fetchModelOptions,
   fetchNodes,
   isNodeOnline,
   nodeDisplayName,
@@ -56,6 +58,8 @@ import {
   visibleContributions,
   visibleNodes,
   type ContributionView,
+  type ModelOptionGroup,
+  type UpstreamFloor,
   type NodeView,
   type QuotaGrantInput,
 } from "../../api/provider.api";
@@ -75,6 +79,16 @@ import { MachineRail } from "./MachineRail";
  */
 const COMMON_UNITS = ["llm.total_tokens", "llm.output_tokens", "llm.input_tokens", "llm.calls", "time.seconds"];
 
+/**
+ * 余量下限可以盯哪些窗口。
+ *
+ * 空串是「任一窗口」，排第一也是默认那条：上游报几个窗口、各叫什么由上游说了算，
+ * 主人多半只想说一句「快用完了就别接了」，不想先去认识 5h 和 7d 这两个词。
+ * 5h / 7d 是 Claude 与 Codex 现在都报的那两个；机器报出别的窗口时会自动补进来
+ * （见 floorWindows），所以这里写死两个不会挡住新窗口。
+ */
+const FLOOR_WINDOWS = ["", "5h", "7d"];
+
 /** 和「今天」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
 const REFRESH_MS = 20_000;
 
@@ -84,6 +98,7 @@ interface Draft {
   seats: number;
   seatConcurrency: number;
   quota: QuotaGrantInput[];
+  floors: UpstreamFloor[];
   hours: boolean[];
 }
 
@@ -94,6 +109,11 @@ function toDraft(row: ContributionView): Draft {
     seats: row.seats || 3,
     seatConcurrency: row.seatConcurrency || 2,
     quota: (row.quota ?? []).map((item) => ({ unit: item.unit, limit: item.limit, window: item.window || "day" })),
+    // 服务端保证至少一条，这里的兜底只为「老服务端还没有这个字段」那一阵子：
+    // 空数组会让整段界面消失，而主人会以为这台机器不受保护。
+    floors: (row.upstreamFloors ?? []).length > 0
+      ? (row.upstreamFloors ?? []).map((item) => ({ window: item.window || "", percent: item.percent || 0 }))
+      : [{ window: "", percent: 0 }],
     hours: scheduleToHours(row.schedule),
   };
 }
@@ -107,6 +127,7 @@ function countChanges(draft: Draft, row: ContributionView): number {
   if (draft.seats !== base.seats) changes += 1;
   if (draft.seatConcurrency !== base.seatConcurrency) changes += 1;
   if (JSON.stringify(draft.quota) !== JSON.stringify(base.quota)) changes += 1;
+  if (JSON.stringify(draft.floors) !== JSON.stringify(base.floors)) changes += 1;
   if (draft.hours.join() !== base.hours.join()) changes += 1;
   return changes;
 }
@@ -134,6 +155,8 @@ export function ShareSettings() {
   // 「去授权」给不给（浏览器够不到别的机器的 bridge），以及要不要在列表顶上补一项「这台电脑」。
   // 纯浏览器里是 null：浏览器不是任何一台机器。
   const [local, setLocal] = useState<{ paired: boolean; nodeId: string } | null>(null);
+  // 平台在卖的模型，按厂商分好组（服务端给）。两个模型框的候选项就出自这里。
+  const [modelGroups, setModelGroups] = useState<ModelOptionGroup[]>([]);
   // 主人点过的机器与能力。空串是没点过：机器落在这台电脑上，能力落在第一条。
   const [pickedNode, setPickedNode] = useState("");
   const [pickedCid, setPickedCid] = useState("");
@@ -165,6 +188,14 @@ export function ShareSettings() {
       .finally(() => {
         if (alive) setLoading(false);
       });
+    // 模型候选只取一次，不进那个 20 秒的轮询：它是平台的模型目录，
+    // 不会在主人填规则的这几分钟里变。失败也不弹 —— 没有候选项这两个框
+    // 照样能手输入（它们收的本来就是通配模式），为它挡住整页得不偿失。
+    void fetchModelOptions()
+      .then((groups) => {
+        if (alive) setModelGroups(groups);
+      })
+      .catch(() => undefined);
     // 别的机器上下线、登录态过期都得看得见。刷新失败不弹：
     // 断网时每 20 秒冒一条报错，比数据旧 20 秒更扰人。
     const timer = setInterval(() => void reload().catch(() => undefined), REFRESH_MS);
@@ -202,6 +233,68 @@ export function ShareSettings() {
     [current, currentKey, draft],
   );
   const changes = current && form ? countChanges(form, current) : 0;
+  /**
+   * 这条车道能填哪些模型。
+   *
+   * 两份数据合在一起，但分工不同：
+   *   目录（服务端按厂商分组）  平台在卖什么 —— 清单以它为准
+   *   节点报的 availableModels  这台机器此刻真有什么 —— 只做标注
+   *
+   * 反过来拿节点那份当清单是行不通的：它是探测来的，上游抽一次风就空半天
+   * （见 pool/models.rs 的降级），主人会以为自己突然没有模型可选了。而目录是
+   * 平台的声明，不会抖。按 category 取自己那一族 —— relay_claude 那条车道
+   * 列一排 gpt 出来，选中了也是白选。
+   */
+  const modelOptions = useMemo<ChipOption[]>(() => {
+    if (!current) return [];
+    const available = current.availableModels ?? [];
+    const catalog = modelGroups.find((group) => group.category === current.category)?.models ?? [];
+    const options: ChipOption[] = catalog.map((model) => ({
+      value: model.modelId,
+      label: model.displayName,
+      available: available.includes(model.modelId),
+    }));
+    // 机器上有、目录里没有的补在后面：多半是这台机器接的中转站自己起的名字，
+    // 也可能是平台还没上架。不列的话主人只能手敲 —— 而那恰恰是他最想填的那个。
+    for (const model of available) {
+      if (!options.some((option) => option.value === model)) {
+        options.push({ value: model, available: true });
+      }
+    }
+    return options;
+  }, [current, modelGroups]);
+  /**
+   * 这台机器此刻各窗口还剩百分之多少（节点五分钟一轮探来的）。
+   *
+   * 只用来在每条下限旁边写一句「当前剩 83%」—— **判定不在这里**：真正决定
+   * 接不接单的是服务端（current.upstreamBlock），两边各算一套迟早对不上。
+   * 同一个窗口有好几个桶时取最低的那个，和服务端同一个口径。
+   */
+  const observedLeft = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const bucket of current?.upstreamUsage?.buckets ?? []) {
+      const left =
+        bucket.usedPercent !== undefined
+          ? 100 - bucket.usedPercent
+          : bucket.remaining !== undefined && bucket.limit !== undefined && bucket.limit > 0
+            ? (bucket.remaining / bucket.limit) * 100
+            : undefined;
+      if (left === undefined) continue;
+      const window = (bucket.window || "").toLowerCase();
+      out[window] = out[window] === undefined ? left : Math.min(out[window], left);
+    }
+    return out;
+  }, [current]);
+  // 可选窗口 = 写死那几个 + 这台机器真报出来的 + 已经填过的。
+  // 上游哪天多出一个窗口，主人当天就能给它设线，不用等我们改前端。
+  const floorWindows = useMemo(
+    () => Array.from(new Set([...FLOOR_WINDOWS, ...Object.keys(observedLeft), ...(form?.floors ?? []).map((item) => item.window)])),
+    [observedLeft, form],
+  );
+  // 一个窗口只能有一条线：两条盯同一个窗口时，宽的那条永远不生效，
+  // 而主人看着界面上明明写着的数字，不会想到它是死的。服务端也会拦，这里先不让选。
+  const usedWindows = useMemo(() => new Set((form?.floors ?? []).map((item) => item.window)), [form]);
+  const freeWindow = floorWindows.find((window) => !usedWindows.has(window));
   const isLocal = Boolean(machine && localNodeId && machine.nodeId === localNodeId);
 
   const edit = (value: Draft) => setDraft({ key: currentKey, value });
@@ -291,6 +384,7 @@ export function ShareSettings() {
         seats: form.seats,
         seatConcurrency: form.seatConcurrency,
         quota: form.quota.filter((item) => item.unit && item.limit > 0),
+        upstreamFloors: form.floors,
         schedule: hoursToSchedule(form.hours, Intl.DateTimeFormat().resolvedOptions().timeZone),
       });
       message.success(t("common.saved"));
@@ -474,7 +568,9 @@ export function ShareSettings() {
               <span className="gx-label">{t("share.modelsAllow")}</span>
               <ChipInput
                 values={form.modelsAllow}
-                suggestions={current.availableModels ?? []}
+                options={modelOptions}
+                availableLabel={t("share.modelsOnMachine")}
+                emptyText={t("share.modelsNoOptions")}
                 placeholder={t("share.modelsPlaceholder")}
                 onChange={(next) => edit({ ...form, modelsAllow: next })}
               />
@@ -484,7 +580,9 @@ export function ShareSettings() {
               <ChipInput
                 values={form.modelsDeny}
                 struck
-                suggestions={current.availableModels ?? []}
+                options={modelOptions}
+                availableLabel={t("share.modelsOnMachine")}
+                emptyText={t("share.modelsNoOptions")}
                 placeholder="claude-opus-*"
                 onChange={(next) => edit({ ...form, modelsDeny: next })}
               />
@@ -597,6 +695,99 @@ export function ShareSettings() {
                 上面填得比下面宽，机器就会在 Claude / Codex 那儿撞限流，
                 而共享设置页上看起来一切正常。 */}
             <UpstreamUsageBlock row={current} />
+
+            {/* 下限紧跟在余量下面：主人要看着此刻那几个数才决定线划在哪。
+                它是这一页里唯一一处「让机器少接活」的设置，所以被它挡住的时候
+                要在这儿把话说全 —— 剩多少、线在哪、什么时候自己回来。 */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.floor")}</span>
+                <span className="gx-card__hint">{t("share.floorHint")}</span>
+              </div>
+              {current.upstreamBlock ? (
+                <Note tone="warn">
+                  {t("share.floorBlocked", {
+                    window: current.upstreamBlock.window || t("share.floorAnyWindow"),
+                    left: current.upstreamBlock.left.toFixed(0),
+                    percent: current.upstreamBlock.percent,
+                    bucket: current.upstreamBlock.bucket || "-",
+                  })}
+                </Note>
+              ) : null}
+              {form.floors.map((item, index) => (
+                <div
+                  key={`${item.window}-${index}`}
+                  style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 36px", gap: 10, alignItems: "center" }}
+                >
+                  <select
+                    className="gx-input"
+                    value={item.window}
+                    onChange={(event) => {
+                      const floors = [...form.floors];
+                      floors[index] = { ...item, window: event.target.value };
+                      edit({ ...form, floors });
+                    }}
+                  >
+                    {floorWindows.map((window) => (
+                      <option key={window || "any"} value={window} disabled={window !== item.window && usedWindows.has(window)}>
+                        {window || t("share.floorAnyWindow")}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      className="gx-input gx-input--mono"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={item.percent}
+                      onChange={(event) => {
+                        // 夹在 0–100：服务端也会拦，但那得等主人点了保存才知道。
+                        const percent = Math.max(0, Math.min(100, Number(event.target.value) || 0));
+                        const floors = [...form.floors];
+                        floors[index] = { ...item, percent };
+                        edit({ ...form, floors });
+                      }}
+                    />
+                    <span className="gx-card__hint">%</span>
+                  </div>
+                  {/* 此刻这个窗口还剩多少。没有这句的话，主人填百分比全靠猜 ——
+                      而「未报」和「剩 0」是两件事，必须分开说。 */}
+                  <span className="gx-card__hint">
+                    {observedLeft[item.window] === undefined
+                      ? item.window === "" && Object.keys(observedLeft).length > 0
+                        ? t("share.floorNowLowest", { value: Math.min(...Object.values(observedLeft)).toFixed(0) })
+                        : t("share.floorNoData")
+                      : t("share.floorNow", { value: observedLeft[item.window].toFixed(0) })}
+                  </span>
+                  <Btn
+                    tone="ghost"
+                    small
+                    aria-label="remove"
+                    // 至少留一条：这一项是必填的。全删光之后界面上什么都没有，
+                    // 主人会以为「没有保护」，而服务端那边其实补了一条默认的。
+                    disabled={form.floors.length <= 1}
+                    title={form.floors.length <= 1 ? t("share.floorKeepOne") : undefined}
+                    onClick={() => edit({ ...form, floors: form.floors.filter((_, at) => at !== index) })}
+                  >
+                    ×
+                  </Btn>
+                </div>
+              ))}
+              <Btn
+                tone="ghost"
+                small
+                icon={<IconPlus size={14} />}
+                disabled={freeWindow === undefined}
+                title={freeWindow === undefined ? t("share.floorAllUsed") : undefined}
+                onClick={() => {
+                  if (freeWindow === undefined) return;
+                  edit({ ...form, floors: [...form.floors, { window: freeWindow, percent: 20 }] });
+                }}
+              >
+                {t("share.floorAdd")}
+              </Btn>
+            </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
@@ -784,6 +975,9 @@ function CapabilityRow({
           {row.available ? `${row.kind} · ${row.provider}` : row.unavailableReason || t("share.unavailable")}
         </span>
       </span>
+      {/* 余量到线：开关还是开着的，但此刻不接单。牌子和开关摆在一起，
+          免得主人以为是开关没点上 —— 下面那张卡里有完整的一句话。 */}
+      {row.upstreamBlock ? <Pill tone="warn">{t("share.floorHold")}</Pill> : null}
       {row.seatsBound > 0 ? <Pill tone="accent">{t("share.bound", { value: row.seatsBound })}</Pill> : null}
       {row.available ? (
         <>
@@ -827,8 +1021,21 @@ function CapabilityRow({
 function UpstreamUsageBlock({ row }: { row: ContributionView | null }) {
   const { t } = useLocale();
   const buckets = row?.upstreamUsage?.buckets ?? [];
-  if (!row || buckets.length === 0) {
+  if (!row) {
     return null;
+  }
+  // 没数据时**照样把这一块画出来**，只是把「还没有」说清楚。
+  //
+  // 原先这里是 return null —— 于是一个来找这个数的人在页面上什么都看不到，
+  // 分不清是「还没采到」还是「压根没这个功能」。而这两件事的下一步完全不同：
+  // 前者是等一条请求经过这台机器，后者是去提工单。
+  if (buckets.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.upstream")}</span>
+        <span className="gx-card__hint">{t("share.upstreamEmpty")}</span>
+      </div>
+    );
   }
   const observed = row.upstreamUsageAt || row.upstreamUsage?.observedAt || "";
   return (
@@ -841,19 +1048,25 @@ function UpstreamUsageBlock({ row }: { row: ContributionView | null }) {
         {buckets.map((bucket) => (
           <div className="gx-quota" key={bucket.bucket}>
             <div className="gx-quota__label">
-              <span>{bucket.window || bucket.bucket}</span>
+              {/* 窗口记法（5h / 7d）优先，认不出来才显示上游自己的叫法。 */}
+              <span title={bucket.bucket}>{bucket.window || bucket.bucket}</span>
+              {/* 存的是**已用**，显示的是**还剩** —— 主人要的是「还能跑多少」。
+                  换算只在这一处做：Claude 报已用、Codex 屏幕上报剩余，两边各转一次
+                  的话总有一处会转反，而转反之后数字看着仍然合理，没人会发现。 */}
               <span className="gx-mono" style={{ color: "var(--gx-ink)", fontWeight: 500 }}>
-                {bucket.remaining === undefined
+                {bucket.usedPercent === undefined
                   ? t("share.upstreamUnknown")
-                  : formatCompact(bucket.remaining)}
-                {bucket.limit !== undefined ? (
-                  <span style={{ color: "var(--gx-faint)", fontWeight: 400 }}> / {formatCompact(bucket.limit)}</span>
-                ) : null}
+                  : `${t("share.upstreamLeft")} ${Math.max(0, 100 - bucket.usedPercent).toFixed(0)}%`}
               </span>
             </div>
             {bucket.usedPercent === undefined ? null : (
               <Meter used={Math.round(bucket.usedPercent)} limit={100} warned={bucket.usedPercent >= 80} />
             )}
+            {bucket.reset ? (
+              <span style={{ fontSize: 11, color: "var(--gx-faint)" }}>
+                {t("share.upstreamReset")} {bucket.reset}
+              </span>
+            ) : null}
           </div>
         ))}
       </div>

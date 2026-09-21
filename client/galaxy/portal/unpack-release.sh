@@ -114,7 +114,9 @@ if [ ! -s "$LIST_FILE" ]; then
   exit 1
 fi
 
-ROOT_NAMES="$(sed -e 's|/.*$||' "$LIST_FILE" | sort -u)"
+# 同样要把 macOS 的 AppleDouble 条目（._<包名>）排除在外，否则顶层条目会数出
+# 两个，整个包被判成「不止一个顶层目录」直接拒收 —— 包本身是好的。
+ROOT_NAMES="$(sed -e 's|/.*$||' "$LIST_FILE" | grep -v '^\._' | sort -u)"
 ROOT_COUNT="$(printf '%s\n' "$ROOT_NAMES" | wc -l | tr -d ' ')"
 if [ "$ROOT_COUNT" != "1" ]; then
   echo "archive must contain exactly one top-level directory" >&2

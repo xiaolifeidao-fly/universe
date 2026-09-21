@@ -57,6 +57,8 @@ const EFFORT_TONE: Record<string, string> = {
   high: "purple",
   xhigh: "magenta",
   max: "red",
+  // ultra 只有 Codex 有，排在 max 之上。
+  ultra: "volcano",
 };
 
 type PriceForm = {

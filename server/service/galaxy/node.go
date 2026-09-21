@@ -535,6 +535,10 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 			UpstreamOK:      lane.UpstreamOK == nil || *lane.UpstreamOK,
 			Paused:          lane.Paused != nil && *lane.Paused,
 			CachedArtifacts: capStrings(lane.CachedArtifacts, 64),
+			// 余量闸门吃的就是这一份。在这里算而不是在放置那一侧算：
+			// 派单是按 QPS 走的路径，把一份 JSON 解析放进去不划算，
+			// 而心跳每条通道 15 秒才一次。
+			UpstreamLeft: UpstreamLeftByWindow(lane.Usage),
 		}
 		if lane.ThrottledUntil != nil {
 			runtime.ThrottledUntil = *lane.ThrottledUntil
@@ -617,8 +621,11 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	for _, row := range rows {
 		byCID[row.CID] = row
 	}
-	// 上游余量：节点报上来的事实，只给人看。变了才写库 —— 一份不变的快照
-	// 每 15 秒写一次，是按机器数乘以 240 的空写。
+	// 上游余量：节点报上来的事实。变了才写库 —— 一份不变的快照每 15 秒写一次，
+	// 是按机器数乘以 240 的空写。
+	//
+	// 落库这一份是给界面和控制面重建用的；这一拍的闸门判定不等它，
+	// 走的是上面 runtimes 里那份（UpstreamLeftByWindow），两条路同一个函数算。
 	s.recordUpstreamUsage(ctx, req.NodeID, req.Lanes, byCID, now)
 
 	result := dto.HeartbeatResult{HubURL: s.cfg().ProviderHubURL, Cancel: cancels, QuotaUpdate: map[string]contract.Metering{}, ServerTime: now.UnixMilli()}
@@ -804,11 +811,16 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		snapshot = s.snapshotFromRow(row, grants, time.Time{}, reputation)
 	}
 	plan := BuildQuotaPlan(grants, now)
+	floors := DecodeUpstreamFloors(row.UpstreamFloorJSON)
 	// 每一个列都过一遍 orEmpty：模型白名单、挂机时段、额度都可能是空的，
 	// 而空的 Go 切片如果是 nil，序列化出去就是 null。
 	view := dto.ContributionView{
 		CID: unscopedCID(row.NodeID, row.CID), NodeID: row.NodeID,
 		Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
+		// 这条车道是哪一家的。和用量分类同一个函数算：控制台靠它去取这一族的
+		// 模型候选，而「claude_oauth 算 Claude」这件事只该在服务端写一次。
+		// 不传模型名 —— 一条车道不是一个模型，按路由键认就够。
+		Category:        usageCategory("", row.Provider, row.Kind),
 		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
 		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
@@ -828,6 +840,13 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		// 没接过活的机器会把三小时前的余量显示成此刻的。
 		UpstreamUsage:   decodeUpstreamUsage(row.UpstreamUsageJSON),
 		UpstreamUsageAt: row.UpstreamUsageAt,
+		UpstreamFloors:  ToUpstreamFloorInputs(floors),
+	}
+	// 被余量下限挡住是第三种状态：主人没关、机器也好着，只是上游快用完了。
+	// 按库里最后一次观测算，和派单那一侧用的是同一个函数 —— 两边各写一套的话，
+	// 界面说「正常接单」而实际一单都派不进来，没人查得出来。
+	if block, blocked := UpstreamBlockedBy(floors, UpstreamLeftByWindow(view.UpstreamUsage)); blocked {
+		view.UpstreamBlock = &block
 	}
 	if !snapshot.ThrottledUntil.IsZero() && snapshot.ThrottledUntil.After(now) {
 		throttled := snapshot.ThrottledUntil
@@ -1266,6 +1285,11 @@ func (s *service) snapshotFromRow(row *repository.GalaxyContribution, grants []Q
 		Schedule:   decodeScheduleWindows(row.ScheduleJSON),
 		Reputation: reputation, LastBeatAt: beat,
 		Draining: row.Status != statusActive,
+		// 余量下限是主人设的规则；顺带把库里最后一次观测也带上 ——
+		// 控制面重建之后到下一拍心跳之间，闸门靠的就是这一份，
+		// 缺了它的话一台余量见底的机器会在那十几秒里被重新派单。
+		UpstreamFloors: DecodeUpstreamFloors(row.UpstreamFloorJSON),
+		UpstreamLeft:   UpstreamLeftByWindow(decodeUpstreamUsage(row.UpstreamUsageJSON)),
 	}
 }
 
@@ -1443,17 +1467,24 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 	if len(grants) == 0 {
 		return fmt.Errorf("贡献必须至少保留一个额度上限")
 	}
+	// 余量下限必填。没给不是「不要保护」，而是「这次没填」—— 按默认那条落下去，
+	// 库里那一列永远有值，读的人不必分辨空串是哪一种。
+	floors, err := NormalizeUpstreamFloors(req.UpstreamFloors)
+	if err != nil {
+		return err
+	}
 	seats := defaultInt(req.Seats, row.Seats)
 	if s.cfg().PlatformSeatLimit > 0 && seats > s.cfg().PlatformSeatLimit {
 		return fmt.Errorf("座位数 %d 超过平台上限 %d", seats, s.cfg().PlatformSeatLimit)
 	}
 
 	if err := s.repository.SaveContributionLimits(ctx, bizLine, row.CID, map[string]any{
-		"models_allow_json": encodeJSON(req.ModelsAllow),
-		"models_deny_json":  encodeJSON(req.ModelsDeny),
-		"seats":             seats,
-		"seat_concurrency":  defaultInt(req.SeatConcurrency, row.SeatConcurrency),
-		"schedule_json":     encodeJSON(req.Schedule),
+		"models_allow_json":   encodeJSON(req.ModelsAllow),
+		"models_deny_json":    encodeJSON(req.ModelsDeny),
+		"seats":               seats,
+		"seat_concurrency":    defaultInt(req.SeatConcurrency, row.SeatConcurrency),
+		"schedule_json":       encodeJSON(req.Schedule),
+		"upstream_floor_json": EncodeUpstreamFloors(floors),
 	}, toQuotaRows(row.CID, grants)); err != nil {
 		return err
 	}

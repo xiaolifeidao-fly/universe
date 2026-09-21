@@ -66,6 +66,42 @@ function percent(bps: number): string {
   return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
 
+/**
+ * 目录里的族名（claude / gpt / …）→ 协议族，也就是强度词表的键。
+ *
+ * 和服务端 portal.go 的 protocolFamily 是同一张表。两套族名不合并：目录那一套是
+ * 给人看的分栏，协议族是上游的接口形状（决定请求体里那个强度字段叫什么）。
+ * 认不出来的回空串 —— 那时拿不到词表，排序退化成字典序，但不会排成反的。
+ */
+function protocolFamily(family: string): string {
+  switch (family.trim().toLowerCase()) {
+    case "claude":
+      return "anthropic";
+    case "gpt":
+      return "openai";
+    default:
+      return "";
+  }
+}
+
+/**
+ * 强度胶囊的配色，由浅到深逐级加重。
+ *
+ * 颜色在这里是**排序信息**而不是装饰：一行里并排几个档，光看「低 / 极高」两个词，
+ * 「哪档更深」要一个一个读。词表以外的档没有配色，落到默认灰 —— 不猜。
+ */
+const EFFORT_TONE: Record<string, string> = {
+  none: "default",
+  minimal: "cyan",
+  low: "blue",
+  medium: "geekblue",
+  high: "purple",
+  xhigh: "magenta",
+  max: "red",
+  // ultra 只有 Codex 有，排在 max 之上。
+  ultra: "volcano",
+};
+
 /** 毛利率按万分之一算。负数 = 结算价高过对外价，平台在倒贴。 */
 function marginText(bps: number) {
   return `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 1)}%`;
@@ -131,7 +167,18 @@ function toForm(row: GalaxyModelView | null): ModelForm {
 }
 
 /** 「定价」弹窗打开时锁定的目标。modelId 为空串 = 改这个能力的兜底价。 */
-type PriceTarget = { kind: string; modelId: string; title: string };
+type PriceTarget = {
+  kind: string;
+  modelId: string;
+  title: string;
+  /**
+   * 打开时落在哪一档推理强度上。不填 = 不分强度那一档。
+   *
+   * 有它才能从列表上那几个胶囊直接点进对应的档 —— 否则运营得先点「定价」、
+   * 再在弹框里把档位切一遍，而那一步正是最容易切错的地方（一屏四个桶长得一样）。
+   */
+  effort?: string;
+};
 
 /**
  * 模型目录：门户和使用端模型广场上列出来的模型、它们的单价，以及分享返现比例。
@@ -193,6 +240,52 @@ export function ModelCatalog() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * 每个 (模型, 能力) 真的单独定过价的强度档，按族的词表由浅到深。
+   *
+   * 一次把整张表折出来，而不是每行各扫一遍价目行：价目表是 `能力 × 模型 × 强度 × 单位
+   * × 生效时间` 五维展开的，几十个模型各扫一遍就是几十趟全表。
+   *
+   * 兜底行（modelId 为空）的强度档对每个模型都成立 —— 「所有模型的 max 档加价」
+   * 是一条合法的定价，漏掉它这些模型会全部显示成「不分强度」，而它们其实分了档。
+   */
+  const effortsByModel = useMemo(() => {
+    /**
+     * 排序用**这个模型自己那一族**的词表，不是两族并起来的那一张。
+     *
+     * 并起来会撞：两族都有 none / low / medium / high，而 Map 后写的覆盖先写的，
+     * 于是 anthropic 的 low 拿到 openai 那张表里的下标（8），排到了 max（5）后面 ——
+     * 界面上就是「最深」排在「低」前面。而这一列的全部意义就是让人一眼看出深浅。
+     */
+    const rankOf = (family: string) => {
+      const ladder = table?.efforts?.[protocolFamily(family)] ?? [];
+      return new Map(ladder.map((effort, index) => [effort, index]));
+    };
+    const shared = new Map<string, Set<string>>();
+    const own = new Map<string, Set<string>>();
+    for (const row of table?.prices ?? []) {
+      if (row.effort === "" || !row.effective) continue;
+      const bucket = row.modelId === "" ? shared : own;
+      const key = row.modelId === "" ? row.kind : `${row.kind}\u0000${row.modelId}`;
+      if (!bucket.has(key)) bucket.set(key, new Set());
+      bucket.get(key)?.add(row.effort);
+    }
+    return (modelId: string, kind: string, family: string) => {
+      const merged = new Set([
+        ...Array.from(shared.get(kind) ?? []),
+        ...Array.from(own.get(`${kind}\u0000${modelId}`) ?? []),
+      ]);
+      const rank = rankOf(family);
+      // 词表里没有的档（历史上填错、上游加了新档而我们还没跟上、或者这个模型的族
+      // 根本不认这一档）排在最后按字典序。丢掉它们会让运营看着库里有价、列表上没有，
+      // 而那种不一致没有任何地方会报错。
+      return Array.from(merged).sort(
+        (left, right) => (rank.get(left) ?? 999) - (rank.get(right) ?? 999) || left.localeCompare(right),
+      );
+    };
+  }, [table]);
+  const pricedEffortsOf = effortsByModel;
 
   const saveDefault = async () => {
     setSavingDefault(true);
@@ -328,6 +421,53 @@ export function ModelCatalog() {
             <Typography.Text type="danger">{t("galaxy.model.ourPriceNone")}</Typography.Text>
           </Tooltip>
         ),
+    },
+    {
+      // 这个模型按推理强度单独定过价的那几档。
+      //
+      // 必须摆在列表上，不能只藏在「定价」弹框里：深思考那一档的输出价可以是常规档的
+      // 两三倍，而这一页是运营唯一会逐行扫的地方 —— 看不见的话，「哪些模型分了档、
+      // 哪些还没分」只能一个一个点开弹框去数，而漏掉一个的代价是那一档一直按常规价在收。
+      //
+      // 胶囊可以直接点进对应的档，省掉「先点定价、再切档」这一步 —— 那一步切错不报错。
+      title: t("galaxy.price.effort"),
+      key: "efforts",
+      width: 190,
+      render: (_, row) => {
+        const efforts = pricedEffortsOf(row.modelId, row.kind || DEFAULT_KIND, row.family);
+        if (efforts.length === 0) {
+          // 「没分档」是绝大多数模型的常态，不是缺了什么，所以用灰字而不是红字。
+          return (
+            <Tooltip title={t("galaxy.model.effortNoneHint")}>
+              <Typography.Text type="secondary">{t("galaxy.price.anyEffort")}</Typography.Text>
+            </Tooltip>
+          );
+        }
+        return (
+          <Space size={4} wrap>
+            {efforts.map((effort) => (
+              <Tag
+                key={effort}
+                color={EFFORT_TONE[effort] ?? "default"}
+                style={canWrite ? { cursor: "pointer", marginInlineEnd: 0 } : { marginInlineEnd: 0 }}
+                onClick={
+                  canWrite
+                    ? () =>
+                        setPricing({
+                          kind: row.kind || DEFAULT_KIND,
+                          modelId: row.modelId,
+                          title: row.displayName || row.modelId,
+                          effort,
+                        })
+                    : undefined
+                }
+              >
+                {effortLabel(effort, t)}
+              </Tag>
+            ))}
+          </Space>
+        );
+      },
     },
     {
       // 划线价单独一列，不并进上面那格：它是对外声明的**别人家的价**，
@@ -526,7 +666,8 @@ export function ModelCatalog() {
         dataSource={rows}
         locale={{ emptyText: t("galaxy.model.empty") }}
         pagination={false}
-        scroll={{ x: 1690 }}
+        // 加了 190px 的强度列，横向总宽跟着走；不跟的话最后几列会被挤成两行。
+        scroll={{ x: 1880 }}
       />
 
       <ModelPricing
@@ -716,9 +857,12 @@ function ModelPricing({
   useEffect(() => {
     if (target) setKind(target.kind || DEFAULT_KIND);
     setExtraUnits([]);
-    // 每次打开回到「不分强度」：那是绝大多数改价要动的那一档。
-    // 留着上一次选的档，运营会在没注意的情况下改到 max 上去。
-    setEffort("");
+    // 落在点进来的那一档：从列表上的强度胶囊点进来时它带着档位，从「定价」按钮
+    // 进来时是空的，也就是「不分强度」—— 绝大多数改价要动的那一档。
+    //
+    // 不能留着上一次选的档：那样运营会在没注意的情况下改到 max 上去，而一屏四个桶
+    // 长得一模一样，只有标题说得出自己在改哪一档。
+    setEffort(target?.effort ?? "");
   }, [target]);
 
   /** 这个能力下要摆出来的计量单位。对话类固定四个桶，别的能力照价目表里已有的来。 */
