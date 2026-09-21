@@ -438,7 +438,17 @@ func (s *service) Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageRep
 // 播的是**兜底价**（model_id 与 effort 都留空）：默认值不该替运营决定「哪个模型贵、
 // 哪一档强度贵」，但必须保证每个单位都至少有一行可查 —— 查不到价是静默算 0，不是报错。
 func (s *service) SeedPrices(ctx context.Context, kind string, prices, providerPrices map[contract.MeterUnit]int64) error {
-	effective := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// 时区是 Local 而不是 UTC，因为这个时刻在唯一键 uk_gx_price 里。
+	//
+	// 库里同一批兜底价还有另一个来源：server/galaxy_seed.sql 那些 SQL 种子，它们写的是
+	// 字面量 '2026-01-01 00:00:00'，MySQL 直接照存。而 Go 这边的 time.Time 要经驱动
+	// 按 DSN 上的 loc 转一道 —— loc=Local（+08）时，UTC 的零点会落成 08:00:00。
+	// 两个时刻各算一行，upsert 撞不上，于是每个单位多出一行只差 8 小时的重复价。
+	//
+	// 那种重复不会算错钱（取价按 effective_from 取最新的一条到点行），所以它不报错、
+	// 也不在界面上露头，只是在表里一次次堆积：换个时区跑一次 galaxyinit 就再长一批。
+	// 2026-09-21 清过 7 行。
+	effective := time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local)
 	for _, unit := range contract.Metering(prices).Units() {
 		if err := s.repository.SavePrice(ctx, &repository.GalaxyPrice{
 			BizLine: bizLine, Kind: kind, Unit: unit, EffectiveFrom: effective,

@@ -72,27 +72,27 @@ const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * 混进同一个数字里，主人会以为自己的机器白跑了一大堆活。所以缓存单独跟在后面，
  * 没有就不显示（大多数行都没有，摆一个 0 只是噪声）。
  *
- * 这一页是概览，一行只放得下一个补充数字：缓存读与缓存写在这里合成「缓存」，
- * 拆开的两列在记录页。悬停能看到四个数的明细。
+ * 这一页是概览，一行只放得下一个补充数字，所以只摆缓存读。缓存写入整个不露出
+ * （和模型页、账单、记录页一致）：上游真按 TTL 分档报这一项的只有 Anthropic，
+ * 摆出来会让一多半行常年是 0。悬停能看到输入 / 输出 / 缓存读三个数的明细。
  */
 function TokenFlow({ record }: { record: ExecutionRecord }) {
   const { t } = useLocale();
   const input = record.usage["llm.input_tokens"] ?? 0;
   const output = record.usage["llm.output_tokens"] ?? 0;
+  // 缓存写入不露出（和模型页、账单一致）：只有 Claude 一族真在按 TTL 分档计费，
+  // 摆出来会让一多半记录常年是 0。量照常在 record.usage 里，只是不显示。
   const cacheRead = record.usage["llm.cache_read_tokens"] ?? 0;
-  const cacheWrite = record.usage["llm.cache_write_tokens"] ?? 0;
-  const cached = cacheRead + cacheWrite;
   const detail = [
     `${t("records.col.in")} ${formatInt(input)}`,
     `${t("records.col.out")} ${formatInt(output)}`,
     `${t("records.col.cacheRead")} ${formatInt(cacheRead)}`,
-    `${t("records.col.cacheWrite")} ${formatInt(cacheWrite)}`,
   ].join(" · ");
   return (
     <span className="gx-mono" style={{ color: "var(--gx-soft)", overflow: "hidden", textOverflow: "ellipsis" }} title={detail}>
       {formatCompact(input)} → {formatCompact(output)}
-      {cached > 0 ? (
-        <span style={{ color: "var(--gx-faint)" }}> · {t("today.cached", { value: formatCompact(cached) })}</span>
+      {cacheRead > 0 ? (
+        <span style={{ color: "var(--gx-faint)" }}> · {t("today.cached", { value: formatCompact(cacheRead) })}</span>
       ) : null}
     </span>
   );

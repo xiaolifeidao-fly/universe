@@ -26,7 +26,7 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { ManagerDatePicker } from "@/components/date/DatePickers";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { deletePrice, fetchPrices, savePrice, type PriceTableView, type PriceView } from "../api/galaxy.api";
-import { CodeSelect, CodeText, effortLabel, kindLabel, labeledOptions, optionMatches, unitLabel } from "./labels";
+import { CodeSelect, CodeText, effortLabel, HIDDEN_UNITS, kindLabel, labeledOptions, optionMatches, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万单位的微分」：3,000,000 就是 ¥3 / 百万 token。 */
 const MICRO = 1_000_000;
@@ -126,7 +126,7 @@ export function PriceTable() {
   }, [load]);
 
   const prices = useMemo(() => table?.prices ?? [], [table]);
-  const unpriced = table?.unpriced ?? [];
+  const unpriced = (table?.unpriced ?? []).filter((row) => !HIDDEN_UNITS.has(row.unit));
 
   /**
    * 筛选里只给**表里真有行**的能力。
@@ -146,7 +146,12 @@ export function PriceTable() {
   // 没选过就落在默认能力上；这批价目里压根没有它（比如只接了视频业务），退回「全部」——
   // 不退的话首屏是一张空表，运营看到的是「价目表没了」。
   const kind = kindFilter ?? (kinds.includes(DEFAULT_KIND) ? DEFAULT_KIND : ALL_KINDS);
-  const rows = useMemo(() => (kind ? prices.filter((row) => row.kind === kind) : prices), [kind, prices]);
+  // 缓存写入那几行整个不露出（见 labels.tsx 的 HIDDEN_UNITS）。过滤的是**行**不是列：
+  // 只把列删掉，行还在，只是看不出它是哪个单位的价。
+  const rows = useMemo(
+    () => (kind ? prices.filter((row) => row.kind === kind) : prices).filter((row) => !HIDDEN_UNITS.has(row.unit)),
+    [kind, prices],
+  );
 
   const columns: ColumnsType<PriceView> = useMemo(
     () => [
@@ -404,7 +409,7 @@ export function PriceTable() {
         draft={editing}
         kinds={table?.kinds ?? []}
         models={table?.models ?? []}
-        units={table?.units ?? []}
+        units={(table?.units ?? []).filter((unit) => !HIDDEN_UNITS.has(unit))}
         efforts={table?.efforts ?? {}}
         onClose={() => setEditing(null)}
         onSaved={(saved) => {
@@ -490,8 +495,9 @@ function PriceModal({
       // 「按七成结」变成了「一分不结」—— 而且没有任何地方会报错。
       providerPrice: (draft.settlePrice || draft.providerPrice || 0) / MICRO,
       // 改已有的一行时带上它自己的生效时间 —— 不带就等于新建了一行「现在起生效」，
-      // 旧行还在，两行并存，运营看到的是「改了但没改动」。
-      effectiveFrom: draft.effectiveFrom ? dayjs(draft.effectiveFrom) : null,
+      // 旧行还在，两行并存，运营看到的是「改了但没改动」。新增的那一行预填此刻：
+      // 跟留空是同一个结果，只是让「现在生效」和「预约到将来」看起来不一样。
+      effectiveFrom: draft.effectiveFrom ? dayjs(draft.effectiveFrom) : dayjs(),
     });
   }, [draft, form]);
 

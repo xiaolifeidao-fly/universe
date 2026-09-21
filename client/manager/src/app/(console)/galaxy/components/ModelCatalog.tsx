@@ -38,7 +38,7 @@ import {
   type PriceView,
   type ReferralSettingsView,
 } from "../api/galaxy.api";
-import { effortLabel, kindLabel, unitLabel } from "./labels";
+import { effortLabel, HIDDEN_UNITS, kindLabel, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万 token 的微元」；表单里填元。 */
 const MICRO = 1_000_000;
@@ -47,19 +47,19 @@ const MICRO = 1_000_000;
 const DEFAULT_KIND = "llm.chat";
 
 /**
- * 对话类能力**一定**要摆出来的四个计价桶，哪怕价目表里一行都没有 ——
+ * 对话类能力**一定**要摆出来的计价桶，哪怕价目表里一行都没有 ——
  * 没有价的那一档扣费与结算静默算 0，而「表里没有这一行」和「这一档不要钱」
  * 在界面上长得一模一样。摆出来才看得见「这里是空的」。
  *
- * 四个桶互不重叠：input 只算未命中缓存的新增输入，命中的走 cache_read，
- * 缓存写入按 TTL 分档、卡片与结算都取 5 分钟那一档（合计那个单位不进账本）。
+ * 三个桶互不重叠：input 只算未命中缓存的新增输入，命中的走 cache_read。
+ * 缓存写入不在其中，见下面的 HIDDEN_UNITS。
  */
 const LLM_UNITS = [
   "llm.input_tokens",
   "llm.output_tokens",
   "llm.cache_read_tokens",
-  "llm.cache_write_5m_tokens",
 ] as const;
+
 
 /** 返现比例存万分之一：1000 = 10%。表单里填百分数。折扣也是万分之一，同一个函数。 */
 function percent(bps: number): string {
@@ -353,7 +353,10 @@ export function ModelCatalog() {
   const price = (value: number) => (value > 0 ? `¥${(value / MICRO).toFixed(2)}` : "-");
 
   const prices = useMemo(() => table?.prices ?? [], [table]);
-  const unpriced = table?.unpriced ?? [];
+  // 「有量无价」告警也要跟着藏：藏掉缓存写入的定价入口之后，还留着一条
+  // 「缓存写入 token 有用量、没有价 · 去定价」的橙色胶囊，点过去却找不到那一行，
+  // 是把「我们不收这笔钱」说成了「你忘了填」。
+  const unpriced = (table?.unpriced ?? []).filter((row) => !HIDDEN_UNITS.has(row.unit));
 
   /**
    * 兜底价能改哪些能力：价目表里出现过的，加上模型目录里声明过的。
@@ -871,7 +874,8 @@ function ModelPricing({
     if (kind.startsWith("llm.")) for (const unit of LLM_UNITS) seen.add(unit);
     for (const row of prices) if (row.kind === kind) seen.add(row.unit);
     for (const unit of extraUnits) seen.add(unit);
-    return Array.from(seen);
+    // 藏起来的那几个即使价目表里已经有行，也不摆出来（见 HIDDEN_UNITS）。
+    return Array.from(seen).filter((unit) => !HIDDEN_UNITS.has(unit));
   }, [kind, prices, extraUnits]);
 
   /**
@@ -949,7 +953,10 @@ function ModelPricing({
 
   useEffect(() => {
     if (!target) return;
-    const next: PricingForm = { kind, effectiveFrom: null } as PricingForm;
+    // 生效时间预填成打开这个弹窗的此刻：留空跟填「现在」是同一个结果（服务端
+    // 拿当下的时间），预填出来只是让运营看得见自己正在改的是哪一刻的价 —— 空着
+    // 的框和「预约到下周一」的框长得一样，而这两件事的账是不一样的。
+    const next: PricingForm = { kind, effectiveFrom: dayjs() } as PricingForm;
     for (const unit of units) {
       const row = own[unit];
       next[unit] = {
@@ -1096,7 +1103,7 @@ function ModelPricing({
             style={{ width: 320 }}
             placeholder={t("galaxy.model.pricingAddUnit")}
             options={unitCandidates
-              .filter((unit) => !units.includes(unit))
+              .filter((unit) => !units.includes(unit) && !HIDDEN_UNITS.has(unit))
               .map((unit) => ({ value: unit, label: `${unitLabel(unit, t)} · ${unit}` }))}
             onChange={(next: string[]) => {
               const picked = next[next.length - 1]?.trim();

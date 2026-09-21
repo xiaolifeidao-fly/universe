@@ -146,6 +146,13 @@ func unpricedFrom(usage []repository.UsageRow, priced map[string]bool) []dto.Pri
 	seen := map[string]bool{}
 	out := make([]dto.PriceView, 0)
 	for _, row := range usage {
+		// 合计口径不进这张告警。它们**永远不会计费**（record 里 derivedUnits 那道闸
+		// 直接 continue），所以「有量无价」对它们不成立 —— 量是真的，价则是一件
+		// 不该发生的事。摆进来的后果是运营照着提示去给合计定一个价，填完发现
+		// 账单一分没变，而没有任何地方解释为什么。
+		if derivedUnits[row.Unit] {
+			continue
+		}
 		// 只按 kind 查兜底价：这张告警回答的是「有没有一行价兜得住这个单位」，
 		// 而兜得住它的只可能是兜底行。用量行本身也不带模型（SumUsage 会按模型分组，
 		// 但这里只关心单位有没有价，同一单位的多个模型行去重成一条）。

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"contract"
 	"service/galaxy/dto"
 	"service/galaxy/internal/repository"
 )
@@ -165,5 +166,27 @@ func TestMarkLivePricesShowsWhatProvidersActuallyGet(t *testing.T) {
 	}
 	if views[1].ProviderPrice != 0 {
 		t.Fatal("ProviderPrice 要保持 0 —— 界面靠它区分「填过」和「还在回落」")
+	}
+}
+
+// 合计口径不进「有量无价」告警。
+//
+// 它们永远不会计费（record 里 derivedUnits 那道闸），所以「有量无价」对它们不成立：
+// 量是真的，价则是一件不该发生的事。摆进来的后果是运营照着提示去给合计定一个价，
+// 填完发现账单一分没变 —— 而没有任何地方解释为什么。
+func TestUnpricedIgnoresDerivedUnits(t *testing.T) {
+	usage := []repository.UsageRow{
+		{Kind: "llm.chat", Unit: contract.UnitTotalTokens},
+		{Kind: "llm.chat", Unit: contract.UnitCacheWriteTokens},
+		{Kind: "llm.chat", Unit: contract.UnitReasoningTokens},
+		{Kind: "llm.chat", Unit: contract.UnitOutputTokens},
+	}
+	got := unpricedFrom(usage, map[string]bool{})
+	if len(got) != 1 || got[0].Unit != contract.UnitOutputTokens {
+		units := make([]string, 0, len(got))
+		for _, row := range got {
+			units = append(units, row.Unit)
+		}
+		t.Fatalf("只有真会计费的单位该进告警，期望 [%s]，实际 %v", contract.UnitOutputTokens, units)
 	}
 }

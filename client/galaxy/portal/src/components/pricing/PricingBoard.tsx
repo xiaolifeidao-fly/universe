@@ -21,9 +21,22 @@ import type { PortalOverview } from "@/utils/portal";
 
 const HOW_ICONS = [<IconGauge key="1" />, <IconReceipt key="2" />, <IconShield key="3" />];
 
+/**
+ * 公开单价表上一律不露出的计量单位：缓存写入的三个桶。
+ *
+ * 真按 TTL 分档报这一项的只有 Anthropic（cache_creation 拆成 5m / 1h 两档），
+ * OpenAI 一族只有缓存**读取**。在一张对所有模型通用的单价表上摆两行只对一半模型
+ * 成立的价，比不摆更容易让人算错自己的成本。量照常计，只是不在这里标价。
+ */
+const HIDDEN_UNITS = new Set([
+  "llm.cache_write_tokens",
+  "llm.cache_write_5m_tokens",
+  "llm.cache_write_1h_tokens",
+]);
+
 export function PricingBoard({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
-  const { prices } = overview;
+  const prices = overview.prices.filter((line) => !HIDDEN_UNITS.has(line.unit));
 
   return (
     <>

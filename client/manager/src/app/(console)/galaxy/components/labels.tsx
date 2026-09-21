@@ -30,6 +30,28 @@ export function kindLabel(kind: string, t: Translate): string {
 }
 
 /**
+ * 界面上一律不露出的计量单位：缓存写入的三个桶。
+ *
+ * 为什么藏：真按 TTL 分档报这一项的只有 Anthropic（usage.go 里 cache_creation
+ * 拆成 ephemeral_5m / ephemeral_1h 两档），OpenAI 一族只有缓存**读取**。
+ * 摆在定价与价目界面上，结果是一多半模型常年空着两行，而空行和「这一档不要钱」
+ * 在界面上长得一模一样。
+ *
+ * 藏的是**显示与定价入口**，不是计量与账：actual 里仍然有这几个单位，
+ * 结算汇总、用量偏差那些对账口径也照常带着它们 —— 那两页要能和服务端的合计对得上，
+ * 在前端把真有钱的行滤掉，只会让明细加不出总数。
+ *
+ * 必须是一张集合而不是「从某个常量数组里删掉」：这几处的单位大多是**数据驱动**的
+ * （价目表里已有的行、服务端给的候选、运营手填的 id 都会冒出来），
+ * 删常量堵不住任何一条来路。
+ */
+export const HIDDEN_UNITS = new Set([
+  "llm.cache_write_tokens",
+  "llm.cache_write_5m_tokens",
+  "llm.cache_write_1h_tokens",
+]);
+
+/**
  * 推理强度的中文名。
  *
  * 认不出来的原样显示 —— 库里可能躺着历史上填错的档，或者上游加了新档而我们还没跟上。

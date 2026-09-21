@@ -29,8 +29,12 @@ func (r *GalaxyRepository) SaveModel(ctx context.Context, row *GalaxyModel) erro
 			DoUpdates: clause.AssignmentColumns([]string{
 				"display_name", "vendor", "family", "kind",
 				"context_tokens", "max_output_tokens",
-				"input_price", "output_price", "cache_price", "cache_write_price",
-				"list_input_price", "list_output_price", "currency",
+				// input_price / output_price / cache_price / cache_write_price 这四列
+				// 已经被 20260920_galaxy_model_drop_display_price.sql 删掉了
+				// （单价只剩 zt_galaxy_price 一个出处）。名字留在这里的后果不是
+				// 「多更新一列」，是**每一次保存模型都报 1054 Unknown column** ——
+				// 运营在模型目录上点一次保存就失败，而错误信息指向一个他没填过的字段。
+				"list_input_price", "list_output_price", "list_cache_price", "currency",
 				"tags_json", "summary", "badge_text", "badge_tone",
 				"referral_bps", "listed", "featured", "sort_order", "updated_time",
 			}),

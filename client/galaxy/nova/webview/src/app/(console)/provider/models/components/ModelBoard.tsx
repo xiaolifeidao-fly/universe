@@ -337,11 +337,6 @@ function ModelDetail({ model }: { model: ProviderModelView }) {
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
         {model.contextTokens > 0 ? <span className="gx-chip">{t("models.context", { value: formatCompact(model.contextTokens) })}</span> : null}
-        {model.cacheWritePrice > 0 ? (
-          <span className="gx-chip">
-            {t("models.price.cacheWrite")} {formatPoints(model.cacheWritePrice)}
-          </span>
-        ) : null}
         {(model.tags ?? []).map((tag) => (
           <span key={tag} className="gx-chip">
             {tag}

@@ -168,9 +168,8 @@ export function ModelCard({ model }: { model: PortalModel }) {
   // 缓存读取跟输入、输出一样是**真会被扣的一桶**，不是折扣说明，所以进价格块而不是脚注。
   // 只在真有价时占一格：没配价的时候摆一个「-」，等于让人猜这是免费还是没上架。
   const cacheRead = model.cachePrice > 0;
-  // 缓存写入退成小字。它按 TTL 还分 5 分钟 / 1 小时两档，卡片上只显示 5 分钟那一档
-  // （见服务端 applyKindPrice），摆成第四个大数会把真正要比较的那三个数一起稀释掉。
-  const cacheWrite = model.cacheWritePrice > 0;
+  // 缓存写入不对外露出：只有 Claude 一族真在按 TTL 分档计费，Codex 走
+  // /v1/chat/completions 时连这个量都没有，摆在卡片上会让一多半模型空着一格。
 
   return (
     <Card lift className="gp-model">
@@ -222,7 +221,7 @@ export function ModelCard({ model }: { model: PortalModel }) {
         ) : null}
       </div>
 
-      {listed || cacheWrite ? (
+      {listed ? (
         <div className="gp-model__list">
           <span>
             {listed ? (
@@ -236,8 +235,6 @@ export function ModelCard({ model }: { model: PortalModel }) {
                 </s>
               </>
             ) : null}
-            {listed && cacheWrite ? " · " : ""}
-            {cacheWrite ? t("models.cacheWrite", { price: formatUnitPrice(model.cacheWritePrice, model.currency) }) : ""}
           </span>
           {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
           {discountBps > 0 ? <Tag tone="ok">{t("models.discount").replace("{rate}", formatBps(discountBps))}</Tag> : null}
