@@ -3,6 +3,8 @@ package galaxy
 import (
 	"testing"
 	"time"
+
+	"service/galaxy/dto"
 )
 
 // 运行参数这套东西最容易错的不是「能不能改」，是**改错了会怎样**：
@@ -115,7 +117,14 @@ func TestDeploymentFactsAreNotTunable(t *testing.T) {
 // 校验写在 apply 里，所以保存接口和进程回查（loadSettings）走的是同一道 ——
 // 手工改库塞进去的 javascript: 会在回查时被跳过，而不是被摆到页面上。
 func TestClientDownloadURLsAreValidated(t *testing.T) {
-	for _, key := range []string{SettingClientProviderDownloadURL, SettingClientConsumerDownloadURL} {
+	keys := []string{}
+	for _, prefix := range []string{SettingClientProviderDownloadURL, SettingClientConsumerDownloadURL} {
+		keys = append(keys, prefix)
+		for _, platform := range dto.DesktopPlatforms {
+			keys = append(keys, clientDownloadKey(prefix, platform))
+		}
+	}
+	for _, key := range keys {
 		spec, err := lookupSpec(key)
 		if err != nil {
 			t.Fatalf("%s 应当是可调参数：%v", key, err)
@@ -163,5 +172,84 @@ func TestLoadSettingsSkipsWhatItCannotUse(t *testing.T) {
 	}
 	if merged.MaxWait != base.MaxWait {
 		t.Fatal("被挡住的值不该改动配置")
+	}
+}
+
+// TestClientDownloadSlotsCoverEveryPlatform 管理端那张卡片是照服务端给的行画的：
+// 少一行就是界面上少一个能填的平台，而那种缺失没有任何一处会报错。
+//
+// 顺带钉住两件在改名时最容易各改一半的事：分平台的键名是「前缀 + . + 平台」，
+// 以及通用那一行用的就是原来那个键 —— 老部署升上来，运营填过的那条要原样还在。
+func TestClientDownloadSlotsCoverEveryPlatform(t *testing.T) {
+	urls := dto.DesktopDownloadURLs{
+		Default:  "https://www.galaxy.rodeo/download",
+		Windows:  "https://oss.example.com/Nova-0.1.0-win.exe",
+		MacX64:   "https://oss.example.com/Nova-0.1.0-x64.zip",
+		MacArm64: "https://oss.example.com/Nova-0.1.0-arm64.zip",
+	}
+	slots := ClientDownloadSlots(SettingClientProviderDownloadURL, urls)
+	if len(slots) != len(dto.DesktopPlatforms)+1 {
+		t.Fatalf("应当是通用那条加每个平台一条，实际 %d 条", len(slots))
+	}
+	if slots[0].Platform != "" || slots[0].SettingKey != SettingClientProviderDownloadURL {
+		t.Fatalf("第一行应当是通用下载页、用原来那个键，实际 %+v", slots[0])
+	}
+	want := map[string]string{
+		"":                          urls.Default,
+		dto.DesktopPlatformWindows:  urls.Windows,
+		dto.DesktopPlatformMacX64:   urls.MacX64,
+		dto.DesktopPlatformMacArm64: urls.MacArm64,
+	}
+	for _, slot := range slots {
+		if slot.URL != want[slot.Platform] {
+			t.Errorf("%s 那一行摆的是 %q，应当是 %q", slot.Platform, slot.URL, want[slot.Platform])
+		}
+		if _, known := settingSpecByKey[slot.SettingKey]; !known {
+			t.Errorf("%s 不是可调参数：界面照它提交会被顶回来", slot.SettingKey)
+		}
+	}
+}
+
+// TestClientDownloadSlotsShowWhatIsStored 卡片上的空格子要如实显示成「未填写」。
+//
+// 不走 Pick 是有意的：退回通用那条会让四行看着都填过，运营下一步就会去清一个
+// 根本不存在的值 —— 而「清除」删的是库里那一行，删一个不存在的行什么也不会发生，
+// 页面上那条地址却还在，看着像没生效。
+func TestClientDownloadSlotsShowWhatIsStored(t *testing.T) {
+	slots := ClientDownloadSlots(SettingClientConsumerDownloadURL, dto.DesktopDownloadURLs{
+		Default: "https://www.galaxy.rodeo/download",
+	})
+	for _, slot := range slots {
+		if slot.Platform == "" {
+			continue
+		}
+		if slot.URL != "" {
+			t.Errorf("%s 没填过，不该摆出 %q", slot.Platform, slot.URL)
+		}
+	}
+}
+
+// TestDesktopDownloadPickFallsBackToDefault 取地址的那一路反过来：平台没填就用通用页。
+//
+// 认不出来的平台也走通用页 —— 界面传来一个我们还不认识的平台名时，
+// 给一条下载页比给空串好：用户至少能自己在那一页上挑。
+func TestDesktopDownloadPickFallsBackToDefault(t *testing.T) {
+	urls := dto.DesktopDownloadURLs{
+		Default:  "https://www.galaxy.rodeo/download",
+		MacArm64: "https://oss.example.com/Orbit-0.1.0-arm64.zip",
+	}
+	if got := urls.Pick(dto.DesktopPlatformMacArm64); got != urls.MacArm64 {
+		t.Errorf("填过的平台应当用自己那条，实际 %q", got)
+	}
+	for _, platform := range []string{"", dto.DesktopPlatformWindows, dto.DesktopPlatformMacX64, "linux-x64"} {
+		if got := urls.Pick(platform); got != urls.Default {
+			t.Errorf("%q 应当退回通用页，实际 %q", platform, got)
+		}
+	}
+	if (dto.DesktopDownloadURLs{}).Any() {
+		t.Error("一条都没填时 Any 应当是 false —— 界面靠它决定那一块显不显示")
+	}
+	if !urls.Any() {
+		t.Error("填过就该是 true")
 	}
 }

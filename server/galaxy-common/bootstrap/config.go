@@ -38,7 +38,11 @@ func LoadConfig() galaxy.Config {
 	config.ProviderHubURL = strings.TrimSpace(httpx.Property("galaxy.provider_hub_url"))
 	// 使用端桌面客户端的下载地址。只有使用端控制台用得上，不配就是那一块不显示 ——
 	// 安装包托管在哪儿派生不出来。
-	config.ConsumerClientDownloadURL = strings.TrimSpace(httpx.Property("galaxy.consumer_client_download_url"))
+	//
+	// 配置文件里只有**通用那条**（一个列出各系统安装包的下载页）。分平台的三条
+	// （Windows / mac Intel / mac Apple 芯片）只在后台改：它们跟着发版走，
+	// 一版一换，而配置文件改一次要重新部署一次。
+	config.ConsumerClientDownload.Default = strings.TrimSpace(httpx.Property("galaxy.consumer_client_download_url"))
 	config.SessionIdleTTL = time.Duration(IntProperty("galaxy.session_idle_hours", 24)) * time.Hour
 	config.PayoutRate = IntProperty("galaxy.payout_rate", config.PayoutRate)
 	config.PayoutMinCredits = int64(IntProperty("galaxy.payout_min_credits", int(config.PayoutMinCredits)))

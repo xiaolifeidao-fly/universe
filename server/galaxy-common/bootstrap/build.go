@@ -23,6 +23,10 @@ type Assembly struct {
 	Galaxy  galaxy.Service
 	Metrics *metrics.Registry
 	Control *redisctl.ControlPlane
+	// DesktopFeedBase 桌面壳去哪儿取更新清单：OSS 上那个公开读目录的前缀，
+	// 从 oss.* 推出来（<publicHost>/<dirPrefix>），两个端共用，端那一段由界面补。
+	// 没装对象存储就是空串 —— 那个部署不检查更新，不是故障。
+	DesktopFeedBase string
 }
 
 func Build(database *gorm.DB, registry *galaxy.KindRegistry, replayer galaxy.ShadowReplayer) (*Assembly, error) {
@@ -42,17 +46,31 @@ func Build(database *gorm.DB, registry *galaxy.KindRegistry, replayer galaxy.Sha
 		return nil, fmt.Errorf("Galaxy 需要 redis.addr：控制面缺席就无法保证座位与额度的原子性")
 	}
 	var signer galaxy.ObjectSigner
+	var desktopFeedBase string
 	if config, err := objectstore.LoadAliyunOSSDeployment(httpx.Property); err != nil {
 		log.Printf("galaxy OSS 配置不可用: %v", err)
-	} else if storage, err := config.NewClient(); err != nil {
-		log.Printf("galaxy OSS 客户端不可用: %v", err)
-	} else if storage != nil {
-		signer = local.ObjectSigner{Storage: storage}
+	} else {
+		// 桌面壳的更新目录前缀从同一份 oss.* 推出来，不另设一份配置：发版页往
+		// <dirPrefix>/<端>/ 写清单，客户端就得去同一个地方取。让界面那一侧再配一遍
+		// 等于养第二份真相，而抄错了没人会发现 —— 客户端只是安静地不更新。
+		//
+		// 它排在建客户端**之前**，而且不看客户端建没建起来：公开读地址不签名，
+		// 没有 oss.accessKey* 的部署照样该把更新地址报给壳。
+		if base, err := config.PublicPrefixURL(); err != nil {
+			log.Printf("galaxy 桌面更新目录地址不可用: %v", err)
+		} else {
+			desktopFeedBase = base
+		}
+		if storage, err := config.NewClient(); err != nil {
+			log.Printf("galaxy OSS 客户端不可用: %v", err)
+		} else if storage != nil {
+			signer = local.ObjectSigner{Storage: storage}
+		}
 	}
 	metrics := metrics.New()
 	service := galaxy.New(database, galaxy.Ports{Control: control, Signer: signer, Replayer: replayer,
 		Audit: LoadAuditConfig(), Metrics: metrics}, registry, LoadConfig())
-	return &Assembly{Galaxy: service, Metrics: metrics, Control: control}, nil
+	return &Assembly{Galaxy: service, Metrics: metrics, Control: control, DesktopFeedBase: desktopFeedBase}, nil
 }
 
 // Accounts 装配账号服务。keys 是使用端「注册即送一把密钥」的签发方，传 Assembly.Galaxy；

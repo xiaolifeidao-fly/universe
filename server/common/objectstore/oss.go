@@ -24,7 +24,16 @@ import (
 // OSSConfig 来自服务端部署配置。Endpoint 必须是不带 bucket 的 OSS 服务端点，
 // 例如 https://oss-cn-hangzhou.aliyuncs.com。
 type OSSConfig struct {
-	Endpoint        string
+	Endpoint string
+	// PublicHost 交到**别人手里**的地址走哪个域名：签名地址（浏览器直传、节点下载）
+	// 与公开读地址（桌面壳取更新清单）都用它，服务端自己的读写仍然走 Endpoint。
+	//
+	// 两者要分开是因为最优解相反：服务端和桶同区时 Endpoint 填 -internal 既快又不计
+	// 流量，而那个域名在 VPC 外根本解析不到 —— 同一个地址交到运营的浏览器或用户的
+	// 桌面壳手里就是连不上，两边都只看到一个超时。
+	//
+	// 不配就回落到 Endpoint，老部署行为不变。挂了 CDN 或自定义域名就填那个。
+	PublicHost      string
 	Bucket          string
 	AccessKeyID     string
 	AccessKeySecret string
@@ -37,6 +46,7 @@ type OSSConfig struct {
 // AliyunOSS 是 OSS V1 的私有桶写入客户端。
 type AliyunOSS struct {
 	endpoint        *url.URL
+	publicHost      *url.URL
 	bucket          string
 	accessKeyID     string
 	accessKeySecret string
@@ -57,16 +67,16 @@ const maxObjectReadBytes = 8 * 1024 * 1024
 
 // NewAliyunOSS 校验配置并构造一个用于服务端同步的 OSS 客户端。
 func NewAliyunOSS(config OSSConfig) (*AliyunOSS, error) {
-	endpointText := strings.TrimSpace(config.Endpoint)
-	if endpointText == "" {
-		return nil, errors.New("OSS endpoint 未配置")
+	endpoint, err := parseEndpoint(config.Endpoint, "endpoint")
+	if err != nil {
+		return nil, err
 	}
-	endpoint, err := url.Parse(endpointText)
-	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") {
-		return nil, errors.New("OSS endpoint 无效")
-	}
-	if endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return nil, errors.New("OSS endpoint 不能包含查询参数或片段")
+	// publicHost 是可选的：不配就让签名地址与公开读地址继续走 endpoint。
+	publicHost := endpoint
+	if strings.TrimSpace(config.PublicHost) != "" {
+		if publicHost, err = parseEndpoint(config.PublicHost, "publicHost"); err != nil {
+			return nil, err
+		}
 	}
 	bucket := strings.TrimSpace(config.Bucket)
 	if bucket == "" || strings.ContainsAny(bucket, "/\\?#:@") {
@@ -93,7 +103,7 @@ func NewAliyunOSS(config OSSConfig) (*AliyunOSS, error) {
 		now = time.Now
 	}
 	return &AliyunOSS{
-		endpoint: endpoint, bucket: bucket, accessKeyID: strings.TrimSpace(config.AccessKeyID),
+		endpoint: endpoint, publicHost: publicHost, bucket: bucket, accessKeyID: strings.TrimSpace(config.AccessKeyID),
 		accessKeySecret: strings.TrimSpace(config.AccessKeySecret), prefix: prefix, pathStyle: config.PathStyle,
 		httpClient: client, now: now,
 	}, nil
@@ -125,6 +135,20 @@ func (c *AliyunOSS) ResolveKey(objectKey string) string {
 	default:
 		return c.prefix + "/" + trimmed
 	}
+}
+
+// PublicURL 公开读地址：把一个**真正的对象键**（或一段前缀，传空串就是 prefix 本身）
+// 拼成谁都能取的地址。不签名，所以只对设成公开读的前缀有意义。
+//
+// 桌面壳的更新清单就得是这种地址：electron-updater 拿到的是一个**目录**，自己往后拼
+// latest-mac.yml，再拼清单里的文件名 —— 签名签的是单个对象，签不出目录；而且签名有
+// 有效期，检查更新却发生在用户机器上的任意时刻，用户可能一个月后才点那一下。
+func (c *AliyunOSS) PublicURL(objectKey string) (string, error) {
+	key, err := normalizeObjectKey(objectKey, true)
+	if err != nil {
+		return "", fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	return c.publicObjectURL(key), nil
 }
 
 // PutObject 写一个对象，objectKey 是**真正的对象键**（不再补 prefix）。
@@ -239,7 +263,7 @@ func (c *AliyunOSS) SignedURL(objectKey string, expiresAt time.Time) (string, er
 	_, _ = signer.Write([]byte(stringToSign))
 	signature := base64.StdEncoding.EncodeToString(signer.Sum(nil))
 
-	parsed, err := url.Parse(c.objectURL(key))
+	parsed, err := url.Parse(c.publicObjectURL(key))
 	if err != nil {
 		return "", fmt.Errorf("构造 OSS 签名地址失败: %w", err)
 	}
@@ -251,18 +275,44 @@ func (c *AliyunOSS) SignedURL(objectKey string, expiresAt time.Time) (string, er
 	return parsed.String(), nil
 }
 
+// objectURL 服务端自己发请求用的地址，走部署配置的 endpoint（同区时是内网域名）。
 func (c *AliyunOSS) objectURL(key string) string {
-	result := *c.endpoint
+	return buildObjectURL(c.endpoint, c.bucket, c.pathStyle, key)
+}
+
+// publicObjectURL 交到别人手里的地址，走 publicHost（没配就是 endpoint）。
+func (c *AliyunOSS) publicObjectURL(key string) string {
+	return buildObjectURL(c.publicHost, c.bucket, c.pathStyle, key)
+}
+
+func buildObjectURL(base *url.URL, bucket string, pathStyle bool, key string) string {
+	result := *base
 	result.RawQuery = ""
 	result.Fragment = ""
-	if c.pathStyle {
-		result.Path = joinURLPath(result.Path, c.bucket, key)
+	if pathStyle {
+		result.Path = joinURLPath(result.Path, bucket, key)
 	} else {
-		result.Host = c.bucket + "." + result.Host
+		result.Host = bucket + "." + result.Host
 		result.Path = joinURLPath(result.Path, key)
 	}
 	result.RawPath = ""
 	return result.String()
+}
+
+// parseEndpoint 校验一个 OSS 服务端点（endpoint / publicHost 共用）。
+func parseEndpoint(raw, name string) (*url.URL, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return nil, fmt.Errorf("OSS %s 未配置", name)
+	}
+	parsed, err := url.Parse(text)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil, fmt.Errorf("OSS %s 无效", name)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("OSS %s 不能包含查询参数或片段", name)
+	}
+	return parsed, nil
 }
 
 func joinURLPath(base string, parts ...string) string {
@@ -316,7 +366,7 @@ func (c *AliyunOSS) SignedPutURL(objectKey, contentType string, expiresAt time.T
 	_, _ = signer.Write([]byte(stringToSign))
 	signature := base64.StdEncoding.EncodeToString(signer.Sum(nil))
 
-	parsed, err := url.Parse(c.objectURL(key))
+	parsed, err := url.Parse(c.publicObjectURL(key))
 	if err != nil {
 		return "", fmt.Errorf("构造 OSS 签名地址失败: %w", err)
 	}

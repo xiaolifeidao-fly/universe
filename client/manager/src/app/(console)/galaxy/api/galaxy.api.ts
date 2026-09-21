@@ -691,13 +691,32 @@ export class BridgeReleaseView {
   updatedAt = "";
 }
 
-/** 两个桌面客户端的安装包下载地址。空串表示还没填，界面上那一格显示「未填写」。 */
+/**
+ * 一个客户端在一个平台上的那条地址。
+ *
+ * platform 空串表示通用下载页（一个列出各系统安装包的页面，也是平台那条没填时的兜底）；
+ * 其余取值见服务端的 dto.DesktopPlatforms —— 界面只按它取自己的标题，不自己枚举，
+ * 所以加一个平台不用改这里。
+ *
+ * settingKey 由服务端给：改地址走的是 /settings/save，键名拼错了要等运营点保存那一刻
+ * 才被「这一项不是可调参数」顶回来。
+ */
+export class ClientDownloadSlot {
+  platform = "";
+
+  settingKey = "";
+
+  /** 现在填的地址，空串表示还没填 —— 界面上那一格显示「未填写」。 */
+  url = "";
+}
+
+/** 两个桌面客户端各自的那几行，顺序由服务端排（通用那条在前）。 */
 export class ClientDownloads {
   /** 共享端 Nova。目前只有管理端展示它。 */
-  providerUrl = "";
+  provider: ClientDownloadSlot[] = [];
 
-  /** 使用端 Orbit。使用端控制台的密钥页摆出来的就是这一条。 */
-  consumerUrl = "";
+  /** 使用端 Orbit。使用端控制台的密钥页摆出来的就是这几条。 */
+  consumer: ClientDownloadSlot[] = [];
 }
 
 /**
@@ -705,16 +724,12 @@ export class ClientDownloads {
  *
  * 两样东西合在一条接口里，因为它们是同一个问题的两半 ——「用户要装的东西从哪儿拿」。
  * 客户端地址存在运行参数表里，但读它跟着这一页的授权走，不必再要一份「运行参数」的读权限；
- * 改它才回到 /settings/save（写权限判在那条路上），键名由服务端一并给出，前端不自己拼。
+ * 改它才回到 /settings/save（写权限判在那条路上），键名跟着每一行由服务端给，前端不自己拼。
  */
 export class AdminBridgeReleasePage {
   releases: BridgeReleaseView[] = [];
 
   clients: ClientDownloads = new ClientDownloads();
-
-  providerSettingKey = "";
-
-  consumerSettingKey = "";
 
   /** 改完最多多少秒在全部进程上生效 —— 使用端控制台读的是同一行，不是立刻跟着变。 */
   propagationSeconds = 0;

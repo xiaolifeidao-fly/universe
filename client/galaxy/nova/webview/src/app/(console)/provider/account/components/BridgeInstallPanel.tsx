@@ -9,6 +9,10 @@
  *
  * 默认停在 Linux：要单独装 ai-bridge 的多半是机房服务器，不是主人坐着的这台 —— 这台的 Nova 自带一份。
  *
+ * 接入方式（轮询 / 公网直连）摆在命令上面而不是收进「手动安装」里：这是一台机器接进来之前
+ * 要先定下的事，定完命令才成立。公网直连要填的地址和端口本机推不出来 —— 出口 IP、端口映射、
+ * 前面有没有反代，只有部署的人知道，所以只能问。
+ *
  * 手动安装默认收起：一行命令能用时没人去看，摊开就是一大块没人复制的代码。
  * 这里只列最短的几步，长版本在安装包里的 README。
  */
@@ -16,7 +20,7 @@
 import { message } from "antd";
 import { useState, type ReactNode } from "react";
 import { IconCheck, IconChevronDown, IconCopy, IconDownload } from "@/components/ui/icons";
-import { Btn, Card, CardHead, Loading, Note } from "@/components/ui/kit";
+import { Btn, Card, CardHead, Field, Loading, Note, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { copyText, formatBytes, formatDay } from "@/utils/format";
 import { openExternal } from "@/utils/shell";
@@ -33,13 +37,74 @@ const SYSTEMS: { value: Os; label: string }[] = [
 
 const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
 
-/** 一行装好并注册。签发密钥的弹窗里那条带真密钥的也用它，写法只有一处。 */
-export function unixInstallCommand(script: string, key: string): string {
-  return `curl -fsSL ${script} | sh -s -- --key ${key}`;
+/** 接入方式。和节点、Hub 两边的 accessMode 同名同义，机器列表里显示的也是这两个词。 */
+type Access = "poll" | "export";
+
+/** ai-bridge 的 pool.export.port 默认值。这里跟着它，不另定一个。 */
+const DEFAULT_PORT = "8788";
+
+/** 密钥的 gpk-… 一个用法：还没填的地方留个一眼看得出要换掉的东西。 */
+const HOST_PLACEHOLDER = "<public-host>";
+const KEY_PLACEHOLDER = "gpk-…";
+
+/**
+ * 把主人填的公网地址收成 Hub 能回连的 URL。
+ *
+ * 不写协议时补的是 http:// 而不是 https://：那个端口上跑的是 ai-bridge 自己的明文 HTTP，
+ * 它没有证书那一段配置。要 https 的人前面有反代，会连 https:// 一起写出来。
+ *
+ * 地址里已经带了端口就以它为准 —— 做了端口映射的机器，对外那个端口和本机监听的不是一个。
+ */
+function publicUrlOf(address: string, port: string): string {
+  const raw = address.trim();
+  const listen = port.trim() || DEFAULT_PORT;
+  if (!raw) return `http://${HOST_PLACEHOLDER}:${listen}`;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  try {
+    const url = new URL(withScheme);
+    if (!url.port) url.port = listen;
+    return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    // 一个字符一个字符敲的过程中，地址大半时间都还不合法，每敲一下报一次错太吵。
+    // 命令先照原样拼出来；真填错了，ai-bridge 在那台机器上注册时会当面说。
+    return withScheme;
+  }
 }
 
-function windowsInstallCommand(script: string, key: string): string {
-  return `powershell -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${script}))) -Key ${key}"`;
+/**
+ * 公网直连要多带的注册参数。安装脚本自己不解释它们，原样转交给 `ai-bridge register`。
+ *
+ * PowerShell 那条的参数名是 -Mode / -PublicUrl / -Port：脚本里监听地址叫 -BindHost
+ * 而不是 -Host，因为 $Host 在 PowerShell 里是只读的自动变量。
+ */
+function accessArgs(access: Access, publicUrl: string, port: string, style: "unix" | "powershell"): string[] {
+  if (access !== "export") return [];
+  const flags =
+    style === "unix"
+      ? { mode: "--mode", url: "--public-url", port: "--port" }
+      : { mode: "-Mode", url: "-PublicUrl", port: "-Port" };
+  const args = [flags.mode, "export", flags.url, publicUrl];
+  const listen = port.trim();
+  // 端口就是默认值时不写出来：配置里本来就是它，多一个参数只是多一处要对的地方。
+  if (listen && listen !== DEFAULT_PORT) args.push(flags.port, listen);
+  return args;
+}
+
+/**
+ * 一行装好并注册。签发密钥的弹窗里那条带真密钥的也用它，写法只有一处。
+ *
+ * 多出来的参数折到第二行：公网直连那条带上地址就有一百多个字符，挤在一行里
+ * 看不出参数从哪儿开始。
+ */
+export function unixInstallCommand(script: string, key: string, extra: string[] = []): string {
+  const head = `curl -fsSL ${script} | sh -s -- --key ${key}`;
+  return extra.length > 0 ? `${head} \\\n  ${extra.join(" ")}` : head;
+}
+
+/** PowerShell 这条不折行：参数在 -Command 的引号里面，续行符跨 cmd 传不过去。 */
+function windowsInstallCommand(script: string, key: string, extra: string[] = []): string {
+  const args = [`-Key ${key}`, ...(extra.length > 0 ? [extra.join(" ")] : [])].join(" ");
+  return `powershell -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm ${script}))) ${args}"`;
 }
 
 /** 平台名是 <系统>-<架构>。 */
@@ -59,16 +124,19 @@ function shortHash(hash: string): string {
  * chown 那一行不能省：远程升级要替换可执行文件，目录不归运行它的用户，节点就报「目录不可写」，
  * 上面机器列表里那台只剩一句原因、没有升级按钮。
  */
-function manualCommand(os: Os, item: BridgeReleasePackage, hub: string): string {
+function manualCommand(os: Os, item: BridgeReleasePackage, hub: string, key: string, extra: string[]): string {
   const file = item.fileName ?? "";
   const stem = file.replace(/\.(tar\.gz|zip)$/, "");
+  // 这几行调的是 ai-bridge 可执行文件本身，不是安装脚本：参数一律 --mode 这套写法，
+  // Windows 上也一样（-Mode 只是 install.ps1 的参数名）。
+  const register = ["register", "--hub", hub, "--key", key, ...extra].join(" ");
   if (os === "windows") {
     const exe = `"$env:LOCALAPPDATA\\ai-bridge\\ai-bridge.exe"`;
     return [
       `Expand-Archive .\\${file} $env:TEMP -Force`,
       `New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\\ai-bridge" | Out-Null`,
       `Copy-Item "$env:TEMP\\${stem}\\*" "$env:LOCALAPPDATA\\ai-bridge" -Recurse -Force`,
-      `& ${exe} register --hub ${hub} --key gpk-…`,
+      `& ${exe} ${register}`,
       `& ${exe} run`,
     ].join("\n");
   }
@@ -77,7 +145,7 @@ function manualCommand(os: Os, item: BridgeReleasePackage, hub: string): string 
     `sudo tar -xzf ${file} -C /opt/ai-bridge --strip-components 1`,
     `sudo chown -R "$(id -un)" /opt/ai-bridge`,
     "sudo ln -sf /opt/ai-bridge/ai-bridge /usr/local/bin/ai-bridge",
-    `ai-bridge register --hub ${hub} --key gpk-…`,
+    `ai-bridge ${register}`,
     "ai-bridge run",
   ].join("\n");
 }
@@ -98,6 +166,12 @@ export function BridgeInstallPanel({
   const { t } = useLocale();
   const [picked, setPicked] = useState<Os | null>(null);
   const [showManual, setShowManual] = useState(false);
+  const [access, setAccess] = useState<Access>("poll");
+  const [address, setAddress] = useState("");
+  const [port, setPort] = useState(DEFAULT_PORT);
+  // 密钥只停在这一次会话的内存里，不写 localStorage：拿到它的人能以主人的名义加机器，
+  // 它不该在这台电脑上多活一分钟。命令复制走了，它的去处就是那台服务器的配置文件。
+  const [key, setKey] = useState("");
 
   const packages = manifest?.platforms ?? [];
   // 没挑过就停在第一个有包的系统上（Linux → macOS → Windows），一个包都没有时是 Linux。
@@ -106,7 +180,16 @@ export function BridgeInstallPanel({
   const mine = packages.filter((item) => splitPlatform(item.platform).os === os);
   const hub = manifest?.hubUrl || hubUrl || "https://hub.example.com";
   const script = (os === "windows" ? manifest?.installPowerShell : manifest?.installScript) ?? "";
-  const oneLiner = script ? (os === "windows" ? windowsInstallCommand(script, "gpk-…") : unixInstallCommand(script, "gpk-…")) : "";
+  const publicUrl = publicUrlOf(address, port);
+  const accessKey = key.trim() || KEY_PLACEHOLDER;
+  // 一行命令走的是安装脚本（Windows 上参数写法不同），手动那几行走的是 ai-bridge 自己。
+  const scriptArgs = accessArgs(access, publicUrl, port, os === "windows" ? "powershell" : "unix");
+  const cliArgs = accessArgs(access, publicUrl, port, "unix");
+  const oneLiner = script
+    ? os === "windows"
+      ? windowsInstallCommand(script, accessKey, scriptArgs)
+      : unixInstallCommand(script, accessKey, scriptArgs)
+    : "";
 
   const download = async (item: BridgeReleasePackage) => {
     try {
@@ -153,16 +236,76 @@ export function BridgeInstallPanel({
             <Blank title={t("install.osEmpty", { os: osLabel })} />
           ) : (
             <>
-              {oneLiner ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "14px 18px 12px" }}>
-                  <CommandBlock title={t("install.oneLiner")} command={oneLiner} />
-                  <span className="gx-card__hint" style={{ lineHeight: 1.6 }}>
-                    {t("install.oneLinerHint")}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "14px 18px 12px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                  <Seg
+                    value={access}
+                    onChange={setAccess}
+                    options={[
+                      { value: "poll" as const, label: t("account.accessPoll") },
+                      { value: "export" as const, label: t("account.accessExport") },
+                    ]}
+                  />
+                  <span className="gx-card__hint" style={{ flex: "1 1 240px", minWidth: 0, lineHeight: 1.6 }}>
+                    {t(access === "export" ? "install.accessExportHint" : "install.accessPollHint")}
                   </span>
                 </div>
-              ) : null}
-              {mine.map((item, index) => (
-                <PackageRow key={item.platform} item={item} first={index === 0 && !oneLiner} onDownload={() => void download(item)} />
+                {/* 窄窗口下换行而不是挤成三根细条：960 的 Nova 里这一排刚好放得下，再窄就该折。 */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  {access === "export" ? (
+                    <>
+                      <div style={{ flex: "2 1 240px", minWidth: 0 }}>
+                        <Field label={t("install.publicAddress")} hint={t("install.publicAddressHint")}>
+                          <input
+                            className="gx-input gx-input--mono"
+                            value={address}
+                            maxLength={200}
+                            spellCheck={false}
+                            placeholder="203.0.113.7"
+                            onChange={(event) => setAddress(event.target.value)}
+                          />
+                        </Field>
+                      </div>
+                      <div style={{ flex: "0 1 140px", minWidth: 0 }}>
+                        <Field label={t("install.port")} hint={t("install.portHint")}>
+                          <input
+                            className="gx-input gx-input--mono"
+                            value={port}
+                            inputMode="numeric"
+                            maxLength={5}
+                            placeholder={DEFAULT_PORT}
+                            // 只收数字：端口填成 "8788 " 或 "：8788" 时，错要等到那台机器上才报。
+                            onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, ""))}
+                          />
+                        </Field>
+                      </div>
+                    </>
+                  ) : null}
+                  <div style={{ flex: "2 1 240px", minWidth: 0 }}>
+                    <Field label={t("install.key")} hint={t("install.keyHint")}>
+                      <input
+                        className="gx-input gx-input--mono"
+                        value={key}
+                        maxLength={128}
+                        spellCheck={false}
+                        placeholder={KEY_PLACEHOLDER}
+                        onChange={(event) => setKey(event.target.value)}
+                      />
+                    </Field>
+                  </div>
+                </div>
+                {oneLiner ? (
+                  <>
+                    <CommandBlock title={t("install.oneLiner")} command={oneLiner} />
+                    <span className="gx-card__hint" style={{ lineHeight: 1.6 }}>
+                      {t(key.trim() ? "install.oneLinerHintKeyed" : "install.oneLinerHint")}
+                    </span>
+                  </>
+                ) : null}
+                {access === "export" ? <Note>{t("install.exportNote", { url: publicUrl })}</Note> : null}
+              </div>
+              {mine.map((item) => (
+                <PackageRow key={item.platform} item={item} onDownload={() => void download(item)} />
               ))}
               <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "12px 18px 16px", borderTop: "1px solid var(--gx-line)" }}>
                 <button
@@ -186,7 +329,7 @@ export function BridgeInstallPanel({
                           ? t("install.manualWhereArch", { arch: splitPlatform(mine[0].platform).arch })
                           : t("install.manualWhere")
                       }
-                      command={manualCommand(os, mine[0], hub)}
+                      command={manualCommand(os, mine[0], hub, accessKey, cliArgs)}
                     />
                     <Note>{t(os === "windows" ? "install.manualWindows" : "install.manualUnix")}</Note>
                   </>
@@ -207,11 +350,11 @@ export function BridgeInstallPanel({
   );
 }
 
-function PackageRow({ item, first, onDownload }: { item: BridgeReleasePackage; first: boolean; onDownload: () => void }) {
+function PackageRow({ item, onDownload }: { item: BridgeReleasePackage; onDownload: () => void }) {
   const { t } = useLocale();
   const [copied, setCopied] = useState(false);
   return (
-    <div className="gx-row" style={{ gridTemplateColumns: "56px minmax(0, 1fr) auto", padding: "11px 18px", borderTop: first ? 0 : undefined }}>
+    <div className="gx-row" style={{ gridTemplateColumns: "56px minmax(0, 1fr) auto", padding: "11px 18px" }}>
       <span
         className="gx-mono"
         style={{ height: 30, borderRadius: 8, display: "grid", placeItems: "center", background: "var(--gx-muted)", color: "var(--gx-soft)", fontSize: 11.5 }}

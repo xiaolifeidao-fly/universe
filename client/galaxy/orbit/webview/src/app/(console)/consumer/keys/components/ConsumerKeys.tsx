@@ -22,10 +22,12 @@ import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconAlert, IconCopy, IconDownload, IconEye, IconEyeOff, IconKey, IconMonitor, IconPlus, IconRefresh } from "@/components/ui/icons";
 import { Btn, Card, CardHead, CopyBtn, EmptyState, IconBtn, Loading, Note, Pill, Seg, Tabs } from "@/components/ui/kit";
-import { useLocale } from "@/i18n/LocaleProvider";
+import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
 import { copyText, formatDay, formatPoints } from "@/utils/format";
 import {
   acceptNotice,
+  // 值，不是类型：取不到接口时要 new 一个空的出来，那几格才都是空串而不是 undefined。
+  ConsumerClientDownloads,
   createKey,
   fetchConsumerEndpoint,
   fetchDashboard,
@@ -93,9 +95,9 @@ export function ConsumerKeys() {
   // SDK 要填的 base_url **由服务端给** —— 消费者路由挂在 galaxy-api 的 /v1 上，
   // 那个地址前端猜不出来（控制台和 API 可能不同域、不同端口）。
   const [baseUrl, setBaseUrl] = useState("");
-  // 桌面客户端的下载地址，同样由服务端给（galaxy.consumer_client_download_url）。
-  // 没配就是空串 —— 那一块直接不显示，而不是给一个猜来的地址。
-  const [downloadUrl, setDownloadUrl] = useState("");
+  // 桌面客户端各系统的下载地址，同样由服务端给（运行参数 client.consumer_download_url[.平台]）。
+  // 一条都没配就是那一块直接不显示，而不是给一个猜来的地址。
+  const [downloads, setDownloads] = useState<ConsumerClientDownloads>(() => new ConsumerClientDownloads());
   // 「使用」只有桌面壳里有。判断依赖 window，挂载之后再定，否则首屏 HTML 和水合结果对不上。
   const [desktop, setDesktop] = useState(false);
   const [clientStatus, setClientStatus] = useState<ClientConfigStatus | null>(null);
@@ -137,11 +139,11 @@ export function ConsumerKeys() {
     void fetchConsumerEndpoint()
       .then((row) => {
         setBaseUrl(row.baseUrl);
-        setDownloadUrl(row.clientDownloadUrl);
+        setDownloads(row.clientDownloads ?? new ConsumerClientDownloads());
       })
       .catch(() => {
         setBaseUrl("");
-        setDownloadUrl("");
+        setDownloads(new ConsumerClientDownloads());
       });
   }, [load]);
 
@@ -402,8 +404,8 @@ export function ConsumerKeys() {
           clientStatus ? (
             <LocalClients status={clientStatus} keys={keys} />
           ) : null
-        ) : downloadUrl ? (
-          <ClientDownload url={downloadUrl} />
+        ) : hasDownload(downloads) ? (
+          <ClientDownload downloads={downloads} />
         ) : null}
 
         {shown.length === 0 ? (
@@ -770,6 +772,60 @@ function LocalClients({ status, keys }: { status: ClientConfigStatus; keys: Cons
   );
 }
 
+/** 填过的那几条里有没有东西。全空就是那一块不显示 —— 空着不是故障，是这套部署没登记安装包。 */
+function hasDownload(downloads: ConsumerClientDownloads) {
+  return Boolean(downloads.default || downloads.windows || downloads.macX64 || downloads.macArm64);
+}
+
+/**
+ * 浏览器认得出的只有「是不是 Windows / 是不是 Mac」。
+ *
+ * 认不出的是 Mac 的芯片：navigator.platform 在 Intel 和 Apple 芯片上**都报 MacIntel**，
+ * userAgent 里也没有这一条（能分出来的只有 userAgentData 的高熵字段，Safari 上没有）。
+ * 所以这里只排个顺序 —— 把对面那个系统的按钮放前面 —— 而不是替人挑一个包：
+ * 挑错给出 arm64 的包，Intel 机器上装完直接起不来。
+ */
+function guessOS(): "windows" | "mac" | "" {
+  if (typeof navigator === "undefined") return "";
+  const hint = `${navigator.userAgent} ${navigator.platform ?? ""}`.toLowerCase();
+  if (hint.includes("win")) return "windows";
+  if (hint.includes("mac")) return "mac";
+  return "";
+}
+
+/** 一个下载按钮：标题的翻译键 + 地址。 */
+type DownloadOption = { key: string; labelKey: TranslationKey; url: string };
+
+/**
+ * 摆哪几个按钮、按什么顺序。
+ *
+ * 只摆填过的：没登记地址的系统给一个按钮，点下去就是 404，比没有按钮更糟。
+ * 通用下载页排在最后，标题也不一样 —— 有分系统的按钮时它是「其他版本」，
+ * 一个分系统的都没有时它就是**那个**下载按钮。
+ */
+function downloadOptions(downloads: ConsumerClientDownloads): DownloadOption[] {
+  const byPlatform: DownloadOption[] = (
+    [
+      { key: "windows", labelKey: "keys.client.windows", url: downloads.windows },
+      { key: "mac-arm64", labelKey: "keys.client.macArm64", url: downloads.macArm64 },
+      { key: "mac-x64", labelKey: "keys.client.macX64", url: downloads.macX64 },
+    ] as DownloadOption[]
+  ).filter((option) => Boolean(option.url));
+
+  if (guessOS() === "mac") {
+    // Mac 上把两个 mac 的包提到前面，两者之间的顺序不动（Apple 芯片在前）。
+    byPlatform.sort((left, right) => Number(right.key.startsWith("mac")) - Number(left.key.startsWith("mac")));
+  }
+
+  if (byPlatform.length === 0) {
+    return downloads.default ? [{ key: "default", labelKey: "keys.client.download", url: downloads.default }] : [];
+  }
+  if (downloads.default) {
+    byPlatform.push({ key: "default", labelKey: "keys.client.other", url: downloads.default });
+  }
+  return byPlatform;
+}
+
 /**
  * 浏览器里看控制台时的那一块：把桌面客户端拿到手。
  *
@@ -777,28 +833,42 @@ function LocalClients({ status, keys }: { status: ClientConfigStatus; keys: Cons
  * Claude Code / Codex 接没接上），只是浏览器里的答案还停在前一步：一键写本机配置的
  * 「使用」按钮只有桌面壳里有，没装客户端的人得先装上（不装也行，照下面「接入方式」手填）。
  *
+ * 一个系统一个按钮，而不是一个「下载」了事：Windows 的 exe、mac 的两种包互不通用，
+ * 而浏览器分不出 Mac 的芯片（见 guessOS），所以由本人挑 —— 他知道自己那台是什么。
+ *
  * 用 <a> 而不是 Btn + window.open：这一块只在浏览器里渲染，而浏览器里一条真链接才能
  * 右键另存、复制地址、中键新开一个页 —— 弹窗拦截也拦不到它。
  */
-function ClientDownload({ url }: { url: string }) {
+function ClientDownload({ downloads }: { downloads: ConsumerClientDownloads }) {
   const { t } = useLocale();
+  const options = downloadOptions(downloads);
+  if (options.length === 0) return null;
   return (
-    <Card className="gx-rise" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14 }}>
+    <Card className="gx-rise" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
       <IconMonitor size={16} style={{ color: "var(--gx-faint)", flex: "0 0 auto" }} />
-      <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: 1 }}>
+      {/* 基准宽度 220 而不是 flex:1：一排四个按钮在窄窗口里放不下时，要让**按钮整排**
+          换到下一行，而不是把这段说明挤成每行两个字。 */}
+      <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0, flex: "1 1 220px" }}>
         <span style={{ fontSize: 13, fontWeight: 600 }}>{t("keys.client.title")}</span>
         <span className="gx-card__hint">{t("keys.client.hint")}</span>
       </span>
-      <a
-        className="gx-btn gx-btn--accent gx-btn--sm"
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        style={{ textDecoration: "none", flex: "0 0 auto" }}
-      >
-        <IconDownload size={14} />
-        {t("keys.client.download")}
-      </a>
+      <span style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: "0 1 auto", maxWidth: "100%" }}>
+        {options.map((option, index) => (
+          <a
+            key={option.key}
+            // 第一个按对面那个系统排过序，所以它是最可能被点的那个 —— 只给它重色，
+            // 四个一样重的按钮等于没有推荐。
+            className={`gx-btn ${index === 0 ? "gx-btn--accent" : "gx-btn--ghost"} gx-btn--sm`}
+            href={option.url}
+            target="_blank"
+            rel="noreferrer"
+            style={{ textDecoration: "none" }}
+          >
+            {index === 0 ? <IconDownload size={14} /> : null}
+            {t(option.labelKey)}
+          </a>
+        ))}
+      </span>
     </Card>
   );
 }

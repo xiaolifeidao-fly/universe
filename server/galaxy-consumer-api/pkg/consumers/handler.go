@@ -164,11 +164,21 @@ func (h *Handler) renewKey(context *gin.Context) {
 //
 // 下载地址跟着它一起下发而不是单开一个接口：密钥页本来就要取一次 base_url，
 // 而这两条是同一类事实——「这套部署把东西摆在哪儿」，合在一起少一次往返。
+//
+// 下载地址给的是一组（通用页 + Windows / mac Intel / mac Apple 芯片）：浏览器认得出
+// 是不是 Mac，但认不出是哪种芯片（navigator.platform 两种都报 MacIntel），
+// 所以由界面把填过的那几条一起摆出来让人自己挑，而不是在这里替他猜一个 ——
+// 猜错给出 arm64 的包，Intel 机器上装完直接起不来。
+//
+// clientDownloadUrl 是**给老界面的那一条**：灰度期间浏览器里可能还开着上一版控制台，
+// 它只认这个字段。给通用那条而不是随便挑一个平台的 —— 老界面把它当成一个按钮
+// 摆给所有人，塞一个 mac 的包进去，Windows 用户点下去拿到的是一个装不上的文件。
 func (h *Handler) consumerEndpoint(context *gin.Context) {
 	config := h.service.Config()
 	httpx.JSON(context, gin.H{
 		"baseUrl":           config.ConsumerBaseURL,
-		"clientDownloadUrl": config.ConsumerClientDownloadURL,
+		"clientDownloadUrl": config.ConsumerClientDownload.Default,
+		"clientDownloads":   config.ConsumerClientDownload,
 	}, nil)
 }
 

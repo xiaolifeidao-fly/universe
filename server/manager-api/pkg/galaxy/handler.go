@@ -429,6 +429,9 @@ func (h *Handler) deletePrice(context *gin.Context) {
 // 它们存在运行参数表里，但读它们不该再要一份「运行参数」的授权：这一页问的
 // 就是「用户要装的东西从哪儿拿」，ai-bridge 和两个客户端是同一个问题的两半。
 // 改地址仍然走 /settings/save（写权限在那条路上判），键名由这里一并给出。
+//
+// 每个端给四行：通用下载页 + Windows / mac Intel / mac Apple 芯片。行和键名都由
+// 服务端排，界面照着画 —— 以后加一个平台（比如 Linux）只动 dto.DesktopPlatforms。
 func (h *Handler) bridgeReleases(context *gin.Context) {
 	if !h.enabled(context) {
 		return
@@ -444,11 +447,9 @@ func (h *Handler) bridgeReleases(context *gin.Context) {
 	httpx.JSON(context, dto.AdminBridgeReleasePage{
 		Releases: views,
 		Clients: dto.ClientDownloads{
-			ProviderURL: config.ProviderClientDownloadURL,
-			ConsumerURL: config.ConsumerClientDownloadURL,
+			Provider: galaxysvc.ClientDownloadSlots(galaxysvc.SettingClientProviderDownloadURL, config.ProviderClientDownload),
+			Consumer: galaxysvc.ClientDownloadSlots(galaxysvc.SettingClientConsumerDownloadURL, config.ConsumerClientDownload),
 		},
-		ProviderSettingKey: galaxysvc.SettingClientProviderDownloadURL,
-		ConsumerSettingKey: galaxysvc.SettingClientConsumerDownloadURL,
 		PropagationSeconds: galaxysvc.SettingsPropagationSeconds(),
 	}, nil)
 }

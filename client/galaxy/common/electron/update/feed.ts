@@ -1,4 +1,5 @@
 import type { Product } from '../../index';
+import { defaultUpdateFeed } from '../../index';
 
 /**
  * 更新清单放在哪儿。
@@ -9,23 +10,28 @@ import type { Product } from '../../index';
  * 地址指向 OSS 上这个端的**目录**，electron-updater 会在它下面取
  * `latest-mac.yml` / `latest.yml` / `latest-linux.yml`，再按清单里的文件名取安装包：
  *
- *     https://<桶>.<endpoint>/<oss.dirPrefix>/desktop/nova
- *     └─ latest-mac.yml、Nova-0.1.1-arm64-mac.zip、…
+ *     https://<桶>.<公网 endpoint>/<oss.dirPrefix>/nova
+ *     └─ latest-mac.yml、Nova-0.1.1-arm64.zip、…
  *
- * 和 origin 不同的是**它没有编译进壳的兜底值**：桶名是部署出来的，写死一个在代码里，
- * 换桶就要重新打包所有平台的安装包 —— 而更新地址恰恰是那种「换了之后老包还得能用」
- * 的东西。所以它由部署提供（见下），没配就是这个壳不检查更新，不是错误。
+ * 主来源是**部署那一侧**（见下）。编译进壳的 defaultUpdateFeed 只是最后一级兜底，
+ * 而且默认是空的 —— 桶名是部署出来的，写死一个在代码里，换桶就等于所有老版本永远
+ * 收不到更新，而更新地址恰恰是那种「换了之后老包还得能用」的东西。真要填，只填
+ * 自己控制的域名（理由见 @galaxy/common 里那个常量的注释）。
+ *
+ * 一级都拿不到就是这个壳不检查更新，不是错误。
  */
 export interface UpdateFeedSource {
   product: Product;
   env: Record<string, string | undefined>;
   /**
    * 控制台自己报的地址：壳启动时探 `<base>/api/desktop-health`，那一跳顺带把这个端的
-   * 更新目录带回来（界面部署机的 runtime.json 里的 GALAXY_UPDATE_FEED_URL）。
+   * 更新目录带回来 —— 界面那一侧不自己配，是向后端要的，后端从发版用的同一份
+   * `oss.*` 推出来（`<publicHost>/<dirPrefix>`，见 server/common/objectstore 的
+   * PublicPrefixURL），再由界面补上端那一段。
    *
    * 为什么不冻进安装包：装出去的壳改不了，而「更新包放哪儿」是运维的事 ——
-   * 冻进去之后换桶就等于所有老版本永远收不到更新。放在界面那一侧，改一次
-   * runtime.json 重启界面，全网的壳下一次检查就跟着走了。
+   * 冻进去之后换桶就等于所有老版本永远收不到更新。放在部署那一侧，改一次
+   * oss.* 重启服务，全网的壳下一次检查就跟着走了。
    */
   remote?: string;
 }
@@ -42,18 +48,26 @@ export interface UpdateFeed {
  *
  *   GALAXY_<端>_UPDATE_FEED   单端覆盖 —— 一台机器上拿两个端对不同的桶测试
  *   GALAXY_UPDATE_FEED        两端共用的覆盖
- *   控制台 /api/desktop-health 带回来的地址（部署机 runtime.json）
+ *   控制台 /api/desktop-health 带回来的地址（后端从发版用的同一份 oss.* 推出来）
+ *   defaultUpdateFeed         编译进壳的兜底前缀，默认空；壳自己补上 /<端>
+ *
+ * 前三级给的都是**这个端的目录**（desktop-health 已经补过端那一段了），只有最后
+ * 那一级是两端共用的前缀，所以由这里补 —— 编译进壳的东西不该分端各写一份。
+ *
+ * 兜底排在最后而不是最前：部署那一侧随时能改，编译进去的改不了。反过来的话，
+ * 换桶之后老壳会一直认那个写死的地址，而那正是要避免的事。
  *
  * 一级都拿不到就是「这个部署没开自动更新」：返回空 url + 一句原因，界面上整块不画。
  * 更新是可选的，**任何一步都不许把应用弄崩** —— 地址写错了也只是不更新。
  */
 export function resolveUpdateFeed(source: UpdateFeedSource): UpdateFeed {
   const upper = source.product.toUpperCase();
+  const fallback = defaultUpdateFeed.trim();
   const configured =
     source.env[`GALAXY_${upper}_UPDATE_FEED`]?.trim() ||
     source.env.GALAXY_UPDATE_FEED?.trim() ||
     source.remote?.trim() ||
-    '';
+    (fallback ? `${fallback.replace(/\/+$/, '')}/${source.product}` : '');
   if (!configured) {
     return { url: '', reason: '这个部署没有配置更新地址，不检查更新' };
   }

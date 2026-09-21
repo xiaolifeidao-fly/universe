@@ -3,6 +3,12 @@
 #
 #   curl -fsSL <平台地址>/agent/v1/bridge/install.sh | sh
 #   curl -fsSL <平台地址>/agent/v1/bridge/install.sh | sh -s -- --key gpk-XXXX [--name 机器名] [--dir 目录] [--user 用户]
+#   curl -fsSL <平台地址>/agent/v1/bridge/install.sh | sh -s -- --key gpk-XXXX \
+#       --mode export --public-url http://203.0.113.7:8788
+#
+# 接入方式（--mode）：poll 主动向平台领活，不需要公网 IP；export 平台主动回连，
+# 要一个平台够得着的地址（--public-url）和放行的端口。这两个参数只是原样交给
+# `ai-bridge register` —— 安装脚本不认识它们的含义，认识的是 ai-bridge 自己。
 #
 # 装到哪：root 执行是 /opt/ai-bridge，并建软链 /usr/local/bin/ai-bridge；
 # 普通用户执行是 ~/.local/share/ai-bridge，软链 ~/.local/bin/ai-bridge。
@@ -22,6 +28,10 @@ ai_bridge_install() {
   NAME=""
   DIR=""
   RUN_USER=""
+  MODE=""
+  PUBLIC_URL=""
+  BIND_HOST=""
+  PORT=""
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,14 +40,29 @@ ai_bridge_install() {
       --name) NAME="${2:-}"; shift 2 ;;
       --dir) DIR="${2:-}"; shift 2 ;;
       --user) RUN_USER="${2:-}"; shift 2 ;;
+      --mode) MODE="${2:-}"; shift 2 ;;
+      --public-url) PUBLIC_URL="${2:-}"; shift 2 ;;
+      --host) BIND_HOST="${2:-}"; shift 2 ;;
+      --port) PORT="${2:-}"; shift 2 ;;
       -h|--help)
         echo "用法：install.sh [--key gpk-XXXX] [--name 机器名] [--dir 安装目录] [--user 运行用户] [--hub 平台地址]"
+        echo "      [--mode poll|export] [--public-url 地址] [--host 监听地址] [--port 监听端口]"
         return 0 ;;
       *) echo "ai-bridge: 不认识的参数 $1" >&2; return 2 ;;
     esac
   done
 
   [ -n "$HUB" ] || { echo "ai-bridge: 缺少平台地址（--hub）" >&2; return 2; }
+
+  # 接入参数在下载之前就核一遍：填错时主人还没等完一次下载，报错也还在屏幕上。
+  case "$MODE" in
+    ""|poll|export) ;;
+    *) echo "ai-bridge: --mode 只能是 poll 或 export，收到 $MODE" >&2; return 2 ;;
+  esac
+  if [ "$MODE" = "export" ] && [ -z "$PUBLIC_URL" ]; then
+    echo "ai-bridge: --mode export 需要 --public-url：平台要靠这个地址回连这台机器" >&2
+    return 2
+  fi
 
   # ---- 认平台 ----
   os=$(uname -s)
@@ -136,9 +161,21 @@ ai_bridge_install() {
   echo "ai-bridge: 已安装 $version → $DIR/ai-bridge（软链 $bin）"
 
   # ---- 顺手注册 ----
+  # 下面几处提示里要重复的接入参数，先拼成一段。
+  access_hint=""
+  [ -n "$MODE" ] && access_hint="$access_hint --mode $MODE"
+  [ -n "$PUBLIC_URL" ] && access_hint="$access_hint --public-url $PUBLIC_URL"
+  [ -n "$BIND_HOST" ] && access_hint="$access_hint --host $BIND_HOST"
+  [ -n "$PORT" ] && access_hint="$access_hint --port $PORT"
+
   if [ -n "$KEY" ]; then
     set -- register --hub "$HUB" --key "$KEY"
     [ -n "$NAME" ] && set -- "$@" --name "$NAME"
+    # 接入方式原样转交：认不认得这些值是 ai-bridge 的事，脚本只负责不把它们弄丢。
+    [ -n "$MODE" ] && set -- "$@" --mode "$MODE"
+    [ -n "$PUBLIC_URL" ] && set -- "$@" --public-url "$PUBLIC_URL"
+    [ -n "$BIND_HOST" ] && set -- "$@" --host "$BIND_HOST"
+    [ -n "$PORT" ] && set -- "$@" --port "$PORT"
     if [ "$root" = "1" ] && [ -n "$RUN_USER" ]; then
       # 注册要写的是**那个用户**的家目录（配置与节点身份都在那儿），所以换用户执行。
       quoted=""
@@ -147,7 +184,7 @@ ai_bridge_install() {
         quoted="$quoted '$escaped'"
       done
       su -s /bin/sh "$RUN_USER" -c "'$bin'$quoted" || {
-        echo "ai-bridge: 注册失败，修好之后以 $RUN_USER 执行：$bin register --hub $HUB --key <密钥>" >&2
+        echo "ai-bridge: 注册失败，修好之后以 $RUN_USER 执行：$bin register --hub $HUB --key <密钥>$access_hint" >&2
         return 1
       }
     else
@@ -158,11 +195,14 @@ ai_bridge_install() {
   echo ""
   echo "下一步："
   if [ -z "$KEY" ]; then
-    echo "  1) 注册：$bin register --hub $HUB --key <接入密钥>"
+    echo "  1) 注册：$bin register --hub $HUB --key <接入密钥>$access_hint"
     echo "     接入密钥在控制台「账户 → 接入密钥」里签发。"
     echo "  2) 运行：$bin run"
   else
     echo "  1) 运行：$bin run"
+  fi
+  if [ "$MODE" = "export" ]; then
+    echo "  这台机器按 export 接入：平台会回连 $PUBLIC_URL，确认防火墙和安全组放行了那个端口。"
   fi
   echo "  长期运行请配成系统服务，模板和说明在 $DIR/deploy/（systemd / launchd / 计划任务）。"
   echo "  之后的升级可以在控制台的机器列表里点「升级」，或者在这台机器上跑 $bin upgrade。"

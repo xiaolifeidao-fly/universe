@@ -38,12 +38,21 @@ curl -fsSL https://hub.example.com/agent/v1/bridge/install.sh | sh
 curl -fsSL https://hub.example.com/agent/v1/bridge/install.sh | sh -s -- --key gpk-XXXX [--name 机器名] [--dir 目录] [--user 用户]
 ```
 
+按 export 接入的，把接入参数一起给（见「两种接入方式」）：
+
+```bash
+curl -fsSL https://hub.example.com/agent/v1/bridge/install.sh | sh -s -- --key gpk-XXXX \
+    --mode export --public-url http://203.0.113.7:8788 [--host 0.0.0.0] [--port 8788]
+```
+
 - 装到哪：root 执行时是 `/opt/ai-bridge/ai-bridge`，并建软链 `/usr/local/bin/ai-bridge`；
   普通用户执行时是 `~/.local/share/ai-bridge/ai-bridge`，软链 `~/.local/bin/ai-bridge`。
   部署说明和服务模板在安装目录的 `deploy/` 下。
 - `--user <用户>`（root 执行时）：把安装目录交给这个用户。**服务以这个用户运行，就必须带它** ——
   否则远程升级换不了文件，见下面「远程升级的前提」。
 - `--key`：装完执行 `ai-bridge register --hub <平台地址> --key <密钥>`；root 加 `--user` 时以那个用户执行。
+- `--mode` / `--public-url` / `--host` / `--port`：脚本不解释它们，原样转交给上面那条 register。
+  `--mode export` 没给 `--public-url` 时，脚本在下载之前就拒掉。
 - 脚本用 `<平台地址>/agent/v1/bridge/checksum/<平台>` 校验下载的包。
 - **重复执行就是原地升级**，配置和节点身份都不动。
 
@@ -54,7 +63,9 @@ powershell -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https
 ```
 
 装到 `%LOCALAPPDATA%\ai-bridge\ai-bridge.exe`（当前用户可写，远程升级才换得了文件），并把这个目录加进用户 PATH。
-参数：`-Key`、`-Name`、`-Dir`。配成开机自启见下面「长期运行 → Windows」。
+参数：`-Key`、`-Name`、`-Dir`，以及接入方式那一组 `-Mode`、`-PublicUrl`、`-BindHost`、`-Port`
+（监听地址那个参数叫 `-BindHost` 不叫 `-Host`：`$Host` 在 PowerShell 里是只读的自动变量）。
+配成开机自启见下面「长期运行 → Windows」。
 
 ### 手动安装
 
@@ -96,8 +107,11 @@ Windows 的包是 `.zip`。
 
    # export
    ai-bridge register --hub https://hub.example.com --key gpk-XXXX \
-     --mode export --public-url https://203.0.113.7:8788 --port 8788
+     --mode export --public-url http://203.0.113.7:8788 --port 8788
    ```
+
+   `--public-url` 写的是**平台访问你的地址**，协议按那个地址上实际跑的填：直接暴露
+   ai-bridge 自己的端口就是 `http`，前面架了 TLS 反代才是 `https`（见「export 的网络要求」）。
 
    不带 `--key` 时会在终端里问你；也可以用环境变量 `AI_BRIDGE_ACCESS_KEY` 传。
    一行安装时带了 `--key` 的，这一步已经做过了。

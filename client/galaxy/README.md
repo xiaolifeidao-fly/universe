@@ -480,22 +480,53 @@ macOS arm64 可构建未签名 `.app`；Windows/Linux 安装包与真实账户�
 
 ### 更新地址不冻进安装包
 
-地址由**界面那一侧**给：壳启动本来就要探 `<base>/api/desktop-health`，那一跳顺带把
-这个端的更新目录带回来（部署机 `runtime.json` 里的 `GALAXY_UPDATE_FEED_URL` + `/<端>`）。
+地址既不冻进安装包，也不在界面那一侧维护：它由**后端从发版用的同一份 `oss.*` 推出来**。
+壳启动本来就要探 `<base>/api/desktop-health`，那一跳顺带把这个端的更新目录带回来。
 
 OSS 上的落点是 `<oss.dirPrefix>/<端>/`，和 ai-bridge 的包（`<oss.dirPrefix>/ai-bridge/`）平级 ——
 它们本来就是同一类东西，「某个客户端的安装包」。
 
 ```
-runtime.json  GALAXY_UPDATE_FEED_URL = https://<桶>.<endpoint>/<oss.dirPrefix>
-     ↓  /api/desktop-health（自己补上 /nova、/orbit）
-桌面壳        https://…/<oss.dirPrefix>/nova/latest-mac.yml、…/Nova-0.1.1-arm64.zip
+oss.*         publicHost + dirPrefix（galaxy-api / galaxy-consumer-api，和管理端发版页同一份）
+     ↓  GET /api/galaxy/desktop/update-feed   →  https://<桶>.<公网 endpoint>/<dirPrefix>
+界面          /api/desktop-health（自己补上 /nova、/orbit）
+     ↓
+桌面壳        https://…/<dirPrefix>/nova/latest-mac.yml、…/Nova-0.1.1-arm64.zip
 ```
 
-冻进安装包的话，换一次桶就等于所有老版本永远收不到更新 —— 而更新地址恰恰是那种
-「换了之后老包还得能用」的东西。启动环境里的 `GALAXY_<端>_UPDATE_FEED` /
-`GALAXY_UPDATE_FEED` 仍然覆盖它（对着本地目录调更新流程时用）。没配就是这个部署
-不检查更新，**不是故障**，界面上整块不画。
+**为什么推而不是配**：发版页往 `<dirPrefix>/<端>/` 写清单，客户端就得去同一个地方取。
+让界面那一侧另配一个地址等于养第二份真相，而两份对不上的症状是客户端 404 ——
+表现为「安静地不更新」，没有任何人会收到告警。同理，冻进安装包的话换一次桶就等于
+所有老版本永远收不到更新，而更新地址恰恰是那种「换了之后老包还得能用」的东西。
+
+`oss.publicHost` 和 `oss.endpoint` 是两条路：前者是**交到别人手里**的地址（签名直传、
+产物下载、桌面壳取清单）走的域名，后者是**服务端自己**读写走的（同区填 `-internal`
+免流量）。不配 publicHost 就回落到 endpoint —— 同区部署那样签出来的是内网域名，
+VPC 外一律连不上，而两边都只看到一个超时。
+
+更新目录那一路**不需要 `oss.accessKey*`**：公开读地址不签名。
+
+完整的优先级（`common/electron/update/feed.ts`）：
+
+| 级别 | 来源 | 给的是 |
+|---|---|---|
+| 1 | `GALAXY_<端>_UPDATE_FEED`（壳的启动环境） | 这个端的目录 |
+| 2 | `GALAXY_UPDATE_FEED`（壳的启动环境） | 这个端的目录 |
+| 3 | `/api/desktop-health` 带回来的（后端从 `oss.*` 推） | 这个端的目录 |
+| 4 | `defaultUpdateFeed`（编译进壳，`@galaxy/common`，**默认空**） | 两端共用前缀，壳自己补 `/<端>` |
+
+前两级留作对着本地静态目录调更新流程用；界面那一侧的 `GALAXY_UPDATE_FEED_URL`
+（部署机 `runtime.json`）同样降级成覆盖，默认空着。
+
+第 4 级排在最后而不是最前：部署那一侧随时能改，编译进去的改不了。**填之前想清楚**
+——它会进每一个安装包，而装出去的壳改不了，所以只填你自己控制的域名（CDN / CNAME，
+换桶时改回源即可），别填 `<桶>.<region>.aliyuncs.com` 那种桶自带域名：那等于把桶名
+和地域焊死，以后换桶换区所有老版本永远收不到更新，而补救手段本身就是更新。
+
+一级都拿不到就是这个部署不检查更新，**不是故障**，界面上整块不画。
+
+桶那一侧要两条：`<dirPrefix>/nova/`、`<dirPrefix>/orbit/` 公开读（`ai-bridge/` 不要放开，
+它走 Hub 当场签发的地址），以及允许管理端那个域名跨域 PUT。
 
 `electron/package.json` 里那条 `publish.url`（`https://galaxy.invalid/…`）只是为了让
 electron-builder 生成 `latest-*.yml`，运行时不会被读到 —— 壳在检查之前一定先

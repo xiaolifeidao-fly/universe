@@ -49,7 +49,7 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 | `galaxy.referral.rate` / `.days` | galaxy-api、galaxy-hub-api | 页面写着返现比例，结算时按另一个值发 |
 | `oss.*` | galaxy-consumer-api、galaxy-hub-api（manager-api 同一个桶） | 一边传上去、另一边签不出下载地址；和 manager-api 不同桶时，Hub 给 ai-bridge 安装包签出来的地址指向一个不存在的对象 |
 
-各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的下载地址，只在密钥页展示；不配就是那一块不显示。它只是**默认值** —— 管理端「ai-bridge 版本」页上的「客户端安装包下载地址」改的是数据库里的 `client.consumer_download_url`，盖过这里；共享端 Nova 的地址 `client.provider_download_url` 只在那张卡片上，没有配置项）、`galaxy.portal.*`；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
+各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的**通用下载页**，只在密钥页展示；不配就是那一块不显示。它只是**默认值** —— 管理端「ai-bridge 版本」页上的「客户端安装包下载地址」改的是数据库里的 `client.consumer_download_url`，盖过这里。分系统的三条地址 `client.consumer_download_url.windows` / `.mac-x64` / `.mac-arm64` 只在后台改，没有配置项；某个系统没填就退回通用那条。共享端 Nova 的四条 `client.provider_download_url[.平台]` 同样只在那张卡片上）、`galaxy.portal.*`；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
 
 ### 三个「对外地址」必须和 nginx 上那条 location 对齐
 

@@ -8,6 +8,7 @@ use ai_bridge_native::pool::setup::{hub_needs_rebind, shell_quote};
 use ai_bridge_native::pool::tools::{parse_version, resolve_in};
 use base64::Engine;
 use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod common;
@@ -434,11 +435,16 @@ const UNIX_SUFFIXES: &[&str] = &[""];
 
 #[test]
 fn finds_the_first_match_along_path() {
-    let present = ["/opt/homebrew/bin/npm", "/usr/local/bin/npm"];
+    // 目录和名字用 Path::join 拼起来比，**不要写死带 "/" 的字面量**：resolve_in 里
+    // 拼的也是 Path::join，分隔符跟着宿主平台走，Windows 上出来的是
+    // `/opt/homebrew/bin\npm`。写死字面量的话这条在 Windows runner 上必挂，而它挂了
+    // 之后 `build .node` 那一步就不会跑 —— win32-x64 那片原生模块因此一直出不来，
+    // 表现是「CI 明明跑了，工件里就是没有 Windows 那片」。
+    let present: Vec<PathBuf> = ["/opt/homebrew/bin", "/usr/local/bin"].iter().map(|dir| Path::new(dir).join("npm")).collect();
     let found = resolve_in("/usr/bin:/opt/homebrew/bin:/usr/local/bin", "npm", ':', UNIX_SUFFIXES, |candidate| {
-        present.contains(&candidate.to_string_lossy().as_ref())
+        present.iter().any(|known| known == candidate)
     });
-    assert_eq!(found.unwrap().to_string_lossy(), "/opt/homebrew/bin/npm");
+    assert_eq!(found.unwrap(), Path::new("/opt/homebrew/bin").join("npm"));
 }
 
 #[test]

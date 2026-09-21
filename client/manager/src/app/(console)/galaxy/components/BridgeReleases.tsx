@@ -27,7 +27,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useLocale } from "@/i18n/LocaleProvider";
+import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import {
   fetchBridgeReleases,
@@ -37,6 +37,7 @@ import {
   type AdminBridgeReleasePage,
   type BridgeReleaseStatus,
   type BridgeReleaseView,
+  type ClientDownloadSlot,
 } from "../api/galaxy.api";
 
 /**
@@ -422,17 +423,36 @@ function isDownloadURL(value: string) {
 }
 
 /**
+ * 平台 → 那一行的标题。空串是通用下载页。
+ *
+ * 行是服务端排的（dto.DesktopPlatforms），这里只负责取标题：表里没有的平台
+ * 照原样显示平台名，而不是画一行没有标题的空格子 —— 服务端加了平台、界面还没跟上时，
+ * 运营至少看得出那一行是干什么的。
+ */
+const CLIENT_PLATFORM_LABELS: Record<string, TranslationKey> = {
+  "": "galaxy.bridge.clientPlatformAny",
+  windows: "galaxy.bridge.clientPlatformWindows",
+  "mac-x64": "galaxy.bridge.clientPlatformMacX64",
+  "mac-arm64": "galaxy.bridge.clientPlatformMacArm64",
+};
+
+/**
  * 两个桌面客户端的安装包下载地址。
  *
  * 摆在 ai-bridge 的包上面，照着「谁装什么」的顺序：绝大多数人装的是客户端，
  * 要单独在服务器上部署 ai-bridge 的才往下看。
  *
- * 值存在运行参数表里（client.*_download_url），不在配置文件里 —— 换个桶放安装包
+ * 每个端四行：通用下载页，加 Windows / mac Intel / mac Apple 芯片各一条。分平台不是
+ * 为了整齐 —— Apple 芯片和 Intel 的包**不能互相代替**（arm64 的包在 Intel 机器上
+ * 装完直接起不来），而浏览器认不出对面是哪种芯片，只能把填过的那几条都摆出来让人自己挑。
+ *
+ * 通用那条是兜底：某个平台没填就用它，四条都没填那一块就不显示。
+ *
+ * 值存在运行参数表里（client.*_download_url[.平台]），不在配置文件里 —— 换个桶放安装包
  * 不该要一次重新部署，而且管理端和使用端服务是两个进程，留在配置文件里就得两边各配一遍。
  * 代价是改完不立刻到处生效：各进程按自己的节奏回查同一行，所以保存提示里把秒数原样说出来。
  *
- * 地址没填就是空着 —— 使用端控制台那一块直接不显示。这里不摆一个猜出来的地址，
- * 猜错只会换来一次 404。
+ * 地址没填就是空着。这里不摆一个猜出来的地址，猜错只会换来一次 404。
  */
 function ClientDownloadCard({
   page,
@@ -454,21 +474,19 @@ function ClientDownloadCard({
       <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
         {t("galaxy.bridge.clientsHint")}
       </Typography.Paragraph>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <ClientDownloadRow
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <ClientDownloadGroup
           label={t("galaxy.bridge.clientProvider")}
           hint={t("galaxy.bridge.clientProviderHint")}
-          url={page.clients?.providerUrl ?? ""}
-          settingKey={page.providerSettingKey}
+          slots={page.clients?.provider ?? []}
           canWrite={canWrite}
           propagationSeconds={page.propagationSeconds}
           onSaved={onSaved}
         />
-        <ClientDownloadRow
+        <ClientDownloadGroup
           label={t("galaxy.bridge.clientConsumer")}
           hint={t("galaxy.bridge.clientConsumerHint")}
-          url={page.clients?.consumerUrl ?? ""}
-          settingKey={page.consumerSettingKey}
+          slots={page.clients?.consumer ?? []}
           canWrite={canWrite}
           propagationSeconds={page.propagationSeconds}
           onSaved={onSaved}
@@ -478,28 +496,62 @@ function ClientDownloadCard({
   );
 }
 
-function ClientDownloadRow({
+/** 一个端的那几行：端名和说明在上，平台一行一条。 */
+function ClientDownloadGroup({
   label,
   hint,
-  url,
-  settingKey,
+  slots,
   canWrite,
   propagationSeconds,
   onSaved,
 }: {
   label: string;
   hint: string;
-  url: string;
-  /** 运行参数的键名，服务端给的。前端不自己拼 —— 拼错了保存会被「这一项不是可调参数」顶回来。 */
-  settingKey: string;
+  /** 服务端排好的行，顺序照原样用（通用那条在前）。 */
+  slots: ClientDownloadSlot[];
+  canWrite: boolean;
+  propagationSeconds: number;
+  onSaved: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <Typography.Text strong>{label}</Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {hint}
+      </Typography.Text>
+      {slots.map((slot) => (
+        <ClientDownloadRow
+          key={slot.settingKey}
+          slot={slot}
+          canWrite={canWrite}
+          propagationSeconds={propagationSeconds}
+          onSaved={onSaved}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ClientDownloadRow({
+  slot,
+  canWrite,
+  propagationSeconds,
+  onSaved,
+}: {
+  /** 一行：填哪个平台、改它提交哪个键、现在填的是什么。键名由服务端给 —— 前端拼错了
+   * 会被「这一项不是可调参数」顶回来，而那是点保存那一刻才看得到的错。 */
+  slot: ClientDownloadSlot;
   canWrite: boolean;
   propagationSeconds: number;
   onSaved: () => void;
 }) {
   const { t } = useLocale();
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(url);
+  const [draft, setDraft] = useState(slot.url);
   const [saving, setSaving] = useState(false);
+
+  const url = slot.url;
+  const labelKey = CLIENT_PLATFORM_LABELS[slot.platform];
 
   // 保存成功后父组件会重新拉一次，跟着新值走；别人改过之后刷新页面也一样。
   useEffect(() => {
@@ -509,7 +561,7 @@ function ClientDownloadRow({
   const commit = async (payload: { value?: string; reset?: boolean }) => {
     setSaving(true);
     try {
-      await saveSetting({ key: settingKey, ...payload });
+      await saveSetting({ key: slot.settingKey, ...payload });
       message.success(t("galaxy.setting.saved").replace("{seconds}", String(propagationSeconds)));
       setEditing(false);
       onSaved();
@@ -524,9 +576,9 @@ function ClientDownloadRow({
   const dirty = value !== url;
 
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-      <Typography.Text strong style={{ width: 132, flexShrink: 0 }}>
-        {label}
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingLeft: 12 }}>
+      <Typography.Text style={{ width: 148, flexShrink: 0, fontSize: 13 }}>
+        {labelKey ? t(labelKey) : slot.platform}
       </Typography.Text>
 
       {editing ? (
@@ -585,6 +637,8 @@ function ClientDownloadRow({
               </a>
             </Typography.Text>
           ) : (
+            // 平台那几行空着不是「坏了」：它退回通用下载页，所以标签只说「未填写」，
+            // 旁边那句提示负责说清楚退回哪儿。
             <Tag>{t("galaxy.bridge.clientEmpty")}</Tag>
           )}
           {canWrite ? (
@@ -595,7 +649,11 @@ function ClientDownloadRow({
           {canWrite && url ? (
             <Popconfirm
               title={t("galaxy.bridge.clientClear")}
-              description={<div style={{ maxWidth: 320 }}>{t("galaxy.bridge.clientClearHint")}</div>}
+              description={
+                <div style={{ maxWidth: 320 }}>
+                  {slot.platform ? t("galaxy.bridge.clientClearPlatformHint") : t("galaxy.bridge.clientClearHint")}
+                </div>
+              }
               okText={t("galaxy.confirm")}
               cancelText={t("galaxy.cancel")}
               onConfirm={() => void commit({ reset: true })}
@@ -607,10 +665,6 @@ function ClientDownloadRow({
           ) : null}
         </>
       )}
-
-      <Typography.Text type="secondary" style={{ fontSize: 12, flexBasis: "100%" }}>
-        {hint}
-      </Typography.Text>
     </div>
   );
 }

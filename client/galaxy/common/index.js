@@ -24,4 +24,18 @@ const products = Object.freeze({
 // common/electron/origin.ts。
 const defaultOrigin = 'https://www.galaxy.rodeo';
 
-module.exports = { products, defaultOrigin };
+// 桌面壳取更新清单的**兜底**目录前缀，两个端共用（壳自己补 /nova、/orbit）。
+//
+// 正常来源是部署那一侧：后端从发版用的同一份 oss.* 推出来，经 /api/desktop-health
+// 回给壳（见 common/electron/update/feed.ts 的优先级表）。这里这一份只在那条路
+// 拿不到时兜底 —— 比如界面还是旧版本、或者后端没配对象存储。
+//
+// ⚠️ 填之前想清楚：它会被编译进**每一个安装包**，而装出去的壳改不了。
+// 所以只填**你自己控制的域名**（CDN / CNAME，换桶时改回源就行），别填
+// `<桶>.<region>.aliyuncs.com` 那种桶自带域名 —— 那等于把桶名和地域焊死，
+// 以后换桶、换区、迁云，所有老版本永远收不到更新，而且补救手段本身就是更新。
+//
+// 空串＝没有兜底，完全靠部署那一侧给（现在就是这样，两条链都通的时候它用不上）。
+const defaultUpdateFeed = '';
+
+module.exports = { products, defaultOrigin, defaultUpdateFeed };

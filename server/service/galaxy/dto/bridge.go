@@ -41,15 +41,89 @@ type BridgeReleaseManifest struct {
 
 // ---------- 客户端安装包 ----------
 
-// ClientDownloads 两个桌面客户端的安装包下载地址。
+// 桌面客户端的平台。取值同时是运行参数的键后缀、接口上的字段和界面上那一行的标识，
+// 所以只在这里定义一次。
 //
-// 空串的含义是「这一块不显示」：安装包托管在哪儿服务端派生不出来，
+// 词表比 ai-bridge 那套（darwin-arm64 / windows-x64…）粗一档，是有意的：
+// 这里回答的是「用户该点哪个下载按钮」，而用户分得清的只有「Windows / Mac 的两种芯片」。
+const (
+	// DesktopPlatformWindows Windows（x64 与 arm64 共用一个安装包）。
+	DesktopPlatformWindows = "windows"
+	// DesktopPlatformMacX64 macOS，Intel 芯片。
+	DesktopPlatformMacX64 = "mac-x64"
+	// DesktopPlatformMacArm64 macOS，Apple 芯片。
+	DesktopPlatformMacArm64 = "mac-arm64"
+)
+
+// DesktopPlatforms 界面上的固定顺序。空串（通用下载页）不在里面 —— 它不是一个平台。
+var DesktopPlatforms = []string{DesktopPlatformWindows, DesktopPlatformMacX64, DesktopPlatformMacArm64}
+
+// DesktopDownloadURLs 一个桌面客户端的安装包地址：按平台分的三条，加一条通用的。
+//
+// 为什么要分平台：一个 Electron 应用出的是三个互不通用的包（Windows 的 exe、
+// mac 的两种 zip/dmg），而 Apple 芯片和 Intel 那两个**不能互相代替** ——
+// 把 arm64 的包给 Intel 机器，装上去直接起不来。一条地址走天下的做法，
+// 要么逼运营去做一个下载页，要么就有一半人下错。
+//
+// Default 不是「第一条」，是**兜底**：一个列出各系统安装包的下载页。平台那条没填
+// 就退回它；它也没填，那一块就不显示 —— 安装包托管在哪儿服务端派生不出来，
 // 猜一个只会换来一次 404。
+type DesktopDownloadURLs struct {
+	// Default 通用下载页。平台地址没填时退回它。
+	Default string `json:"default"`
+	// Windows Windows 安装包。
+	Windows string `json:"windows"`
+	// MacX64 macOS（Intel）安装包。
+	MacX64 string `json:"macX64"`
+	// MacArm64 macOS（Apple 芯片）安装包。
+	MacArm64 string `json:"macArm64"`
+}
+
+// Pick 某个平台该给哪条地址：平台那条没填就退回通用的。
+//
+// platform 用的是 DesktopPlatform* 那组词（空串 = 只要通用那条）。
+// 认不出来的平台按空串处理 —— 给一条通用地址，而不是猜一个包。
+func (u DesktopDownloadURLs) Pick(platform string) string {
+	var value string
+	switch platform {
+	case DesktopPlatformWindows:
+		value = u.Windows
+	case DesktopPlatformMacX64:
+		value = u.MacX64
+	case DesktopPlatformMacArm64:
+		value = u.MacArm64
+	}
+	if value != "" {
+		return value
+	}
+	return u.Default
+}
+
+// Any 一条都没填吗。界面用它决定那一块显不显示。
+func (u DesktopDownloadURLs) Any() bool {
+	return u.Default != "" || u.Windows != "" || u.MacX64 != "" || u.MacArm64 != ""
+}
+
+// ClientDownloadSlot 管理端那张卡片上的一行：填哪个平台、改它要提交哪个键、现在填的是什么。
+//
+// 连键名一起给，是因为改地址仍然走 /settings/save —— 前端不自己拼键名，
+// 拼错了会被「这一项不是可调参数」顶回来，而那是保存那一刻才看得到的错。
+// 加一个平台因此只改服务端这一处（界面按 Platform 取自己的标题）。
+type ClientDownloadSlot struct {
+	// Platform 平台，空串表示通用下载页。
+	Platform string `json:"platform"`
+	// SettingKey 改这一行要提交给 /settings/save 的键名。
+	SettingKey string `json:"settingKey"`
+	// URL 现在填的地址，空串表示还没填。
+	URL string `json:"url"`
+}
+
+// ClientDownloads 两个桌面客户端各自的那几行，按界面顺序。
 type ClientDownloads struct {
-	// ProviderURL 共享端 Nova。
-	ProviderURL string `json:"providerUrl"`
-	// ConsumerURL 使用端 Orbit。使用端控制台的密钥页摆的就是它。
-	ConsumerURL string `json:"consumerUrl"`
+	// Provider 共享端 Nova。
+	Provider []ClientDownloadSlot `json:"provider"`
+	// Consumer 使用端 Orbit。使用端控制台的密钥页摆的就是它们。
+	Consumer []ClientDownloadSlot `json:"consumer"`
 }
 
 // AdminBridgeReleasePage 管理端那一页要的全部东西：ai-bridge 的包，加上两个客户端的下载地址。
@@ -59,11 +133,9 @@ type ClientDownloads struct {
 // 但读它不必再要一份「运行参数」的授权。
 type AdminBridgeReleasePage struct {
 	Releases []BridgeReleaseView `json:"releases"`
-	Clients  ClientDownloads     `json:"clients"`
-	// ProviderSettingKey / ConsumerSettingKey 改地址时要提交给 /settings/save 的键名。
-	// 由服务端给而不是前端自己拼：键名只在一处定义，改名时不会有一边悄悄留在旧名字上。
-	ProviderSettingKey string `json:"providerSettingKey"`
-	ConsumerSettingKey string `json:"consumerSettingKey"`
+	// Clients 每个客户端一组行，键名跟着行一起给 —— 前端不自己拼键名，
+	// 改名或者加一个平台时不会有一边悄悄留在旧名字上。
+	Clients ClientDownloads `json:"clients"`
 	// PropagationSeconds 改完最多多少秒在全部进程上生效（使用端控制台读的是同一行）。
 	PropagationSeconds int `json:"propagationSeconds"`
 }

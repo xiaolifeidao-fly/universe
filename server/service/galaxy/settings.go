@@ -40,15 +40,72 @@ import (
 // 而每个进程每分钟四次单行查询对一张几十行的表毫无压力。
 const settingsTTL = 15 * time.Second
 
-// 两个客户端安装包下载地址的键名。
+// 两个客户端安装包下载地址的键名**前缀**。
 //
-// 单独拎出来是因为它们有**表外的用途**：管理端的「ai-bridge 版本」页把这两个值
+// 单独拎出来是因为它们有**表外的用途**：管理端的「ai-bridge 版本」页把这几个值
 // 摆在自己的卡片上，保存时按键名提交回 /settings/save。其余参数只被那张通用的
 // 参数表按 settingSpecs 循环用到，键名留在字面量里就够了。
+//
+// 前缀本身就是一个键（通用下载页那条），分平台的三条在它后面接 ".<平台>" ——
+// 加平台不用动已经存在库里的那一行，老部署升上来仍旧是「只有通用那条」。
 const (
 	SettingClientProviderDownloadURL = "client.provider_download_url"
 	SettingClientConsumerDownloadURL = "client.consumer_download_url"
 )
+
+// clientDownloadKey 某个客户端、某个平台的键名。platform 为空串表示通用下载页。
+func clientDownloadKey(prefix, platform string) string {
+	if platform == "" {
+		return prefix
+	}
+	return prefix + "." + platform
+}
+
+// clientDownloadField 在一组地址里，某个平台对应的那一格。认不出来的平台返回 nil。
+func clientDownloadField(urls *dto.DesktopDownloadURLs, platform string) *string {
+	switch platform {
+	case "":
+		return &urls.Default
+	case dto.DesktopPlatformWindows:
+		return &urls.Windows
+	case dto.DesktopPlatformMacX64:
+		return &urls.MacX64
+	case dto.DesktopPlatformMacArm64:
+		return &urls.MacArm64
+	}
+	return nil
+}
+
+// clientDownloadSpec 一个客户端在一个平台上的那条地址。
+//
+// 八条（两个端 × 四个位置）长得一模一样，所以由这里拼而不是抄八遍：
+// 抄出来的那种错（apply 写 Windows、read 读 MacX64）不会报错，只会让运营
+// 改完一格、页面上另一格跟着变，而两边都是合法地址，没有任何一处会喊。
+func clientDownloadSpec(prefix, platform string, pick func(*Config) *dto.DesktopDownloadURLs) SettingSpec {
+	return SettingSpec{
+		Key: clientDownloadKey(prefix, platform), Group: "client", Kind: SettingText,
+		apply: applyURL(func(c *Config, v string) { *clientDownloadField(pick(c), platform) = v }),
+		read:  func(c Config) string { return *clientDownloadField(pick(&c), platform) },
+	}
+}
+
+// ClientDownloadSlots 管理端那张卡片上的几行：通用那条在前，分平台的按固定顺序跟在后面。
+//
+// 顺序与键名都由服务端定：界面照着画，不自己拼键名 —— 拼错了会被
+// 「这一项不是可调参数」顶回来，而那是运营点保存那一刻才看得到的错。
+func ClientDownloadSlots(prefix string, urls dto.DesktopDownloadURLs) []dto.ClientDownloadSlot {
+	slots := make([]dto.ClientDownloadSlot, 0, len(dto.DesktopPlatforms)+1)
+	for _, platform := range append([]string{""}, dto.DesktopPlatforms...) {
+		slots = append(slots, dto.ClientDownloadSlot{
+			Platform:   platform,
+			SettingKey: clientDownloadKey(prefix, platform),
+			// 这里要的是「这一格填的是什么」，不是「该给谁哪条地址」，所以不走 Pick ——
+			// 退回通用那条会让页面显示成四行都填过，运营下一步就会去清一个根本不存在的值。
+			URL: *clientDownloadField(&urls, platform),
+		})
+	}
+	return slots
+}
 
 // SettingKind 一项参数的类型，决定怎么解析、怎么校验、界面上怎么填。
 type SettingKind string
@@ -255,27 +312,30 @@ var settingSpecs = []SettingSpec{
 
 	// ---------- 客户端安装包 ----------
 	//
-	// 两个桌面客户端的下载地址。它们**看着像部署地址，但不是**：
-	// 没有任何流量走它们，填错的代价只是某一页上多一条坏链接；而它们变动的理由
-	// （换个桶放安装包、前面挂上 CDN、改成指一个列各系统安装包的下载页）和这套部署
-	// 挪没挪位置完全无关。让运营为了换一条链接去登服务器改文件、重启进程，代价和收益不成比例。
+	// 两个桌面客户端的下载地址，一个端四条：通用下载页，加 Windows / mac Intel /
+	// mac Apple 芯片各一条。分平台不是为了整齐 —— 一个 Electron 应用出的三个包互不通用，
+	// 而 arm64 的包在 Intel 机器上装完直接起不来，一条地址走天下就有一半人下错。
+	// 某个平台没填就退回通用那条（dto.DesktopDownloadURLs.Pick），四条都没填才是「不显示」。
+	//
+	// 它们**看着像部署地址，但不是**：没有任何流量走它们，填错的代价只是某一页上多一条
+	// 坏链接；而它们变动的理由（换个桶放安装包、前面挂上 CDN、发了新版换个文件名）
+	// 和这套部署挪没挪位置完全无关。让运营为了换一条链接去登服务器改文件、重启进程，
+	// 代价和收益不成比例 —— 尤其是分平台之后，一次发版要换三条。
 	//
 	// 更硬的一条理由是管理端要展示它们：manager-api 和 galaxy-consumer-api 是两个进程、
 	// 两份 application.properties，留在配置文件里就得两边各配一遍还得人工保持一致 ——
 	// 一处真相被拆成两处，迟早对不上。落到这张表上，两个进程读的是同一行。
 	//
-	// 空值的含义是「这一块不显示」，所以清空要走「改回默认」（删掉那一行），
-	// 而不是保存一个空字符串 —— SaveAdminSetting 那里本来也不收空值。
-	{
-		Key: SettingClientProviderDownloadURL, Group: "client", Kind: SettingText,
-		apply: applyURL(func(c *Config, v string) { c.ProviderClientDownloadURL = v }),
-		read:  func(c Config) string { return c.ProviderClientDownloadURL },
-	},
-	{
-		Key: SettingClientConsumerDownloadURL, Group: "client", Kind: SettingText,
-		apply: applyURL(func(c *Config, v string) { c.ConsumerClientDownloadURL = v }),
-		read:  func(c Config) string { return c.ConsumerClientDownloadURL },
-	},
+	// 空值的含义是「退回上一层」（平台退回通用那条，通用那条退回配置文件），所以清空要走
+	// 「改回默认」删掉那一行，而不是保存一个空字符串 —— SaveAdminSetting 那里本来也不收空值。
+	clientDownloadSpec(SettingClientProviderDownloadURL, "", pickProviderDownload),
+	clientDownloadSpec(SettingClientProviderDownloadURL, dto.DesktopPlatformWindows, pickProviderDownload),
+	clientDownloadSpec(SettingClientProviderDownloadURL, dto.DesktopPlatformMacX64, pickProviderDownload),
+	clientDownloadSpec(SettingClientProviderDownloadURL, dto.DesktopPlatformMacArm64, pickProviderDownload),
+	clientDownloadSpec(SettingClientConsumerDownloadURL, "", pickConsumerDownload),
+	clientDownloadSpec(SettingClientConsumerDownloadURL, dto.DesktopPlatformWindows, pickConsumerDownload),
+	clientDownloadSpec(SettingClientConsumerDownloadURL, dto.DesktopPlatformMacX64, pickConsumerDownload),
+	clientDownloadSpec(SettingClientConsumerDownloadURL, dto.DesktopPlatformMacArm64, pickConsumerDownload),
 
 	// ---------- 合规与门户 ----------
 	// 版本号一改，旧的同意记录**全部失效**：提供者下次 hello 会被要求重新同意，
@@ -297,6 +357,10 @@ var settingSpecs = []SettingSpec{
 		read:  func(c Config) string { return c.PortalAvailability },
 	},
 }
+
+func pickProviderDownload(c *Config) *dto.DesktopDownloadURLs { return &c.ProviderClientDownload }
+
+func pickConsumerDownload(c *Config) *dto.DesktopDownloadURLs { return &c.ConsumerClientDownload }
 
 var settingSpecByKey = func() map[string]SettingSpec {
 	byKey := make(map[string]SettingSpec, len(settingSpecs))

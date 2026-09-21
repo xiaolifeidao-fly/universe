@@ -367,6 +367,13 @@ function pollCommand(hub: string, key: string) {
   return `ai-bridge register --hub ${hub} --key ${key}\nai-bridge run`;
 }
 
+/**
+ * 公网直连的占位符版本。地址要填什么只有部署的人知道，所以这里只摆形状 ——
+ * 上面「安装 ai-bridge」那一块能把地址和端口填进去，拼出可以直接跑的那条。
+ *
+ * 协议写 http 而不是 https：那个端口上跑的是 ai-bridge 自己的明文 HTTP。
+ * 前面架了反代的人会把它改成 https，反过来（默认 https 而机器上没有证书）没人改得动。
+ */
 function exportCommand(hub: string, key: string) {
-  return `ai-bridge register --hub ${hub} --key ${key} \\\n  --mode export --public-url https://<public-host>:8788\nai-bridge run`;
+  return `ai-bridge register --hub ${hub} --key ${key} \\\n  --mode export --public-url http://<public-host>:8788\nai-bridge run`;
 }

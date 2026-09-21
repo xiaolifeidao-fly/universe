@@ -108,17 +108,37 @@ export class UsageReport {
 }
 
 /**
- * 接入要的两条部署事实，都由服务端给，前端不再自己拼。
+ * 桌面客户端的安装包地址，一个系统一条，外加一条通用下载页。
  *
- * baseUrl            SDK 要填的地址（galaxy.instance / galaxy.consumer_base_url）。
- * clientDownloadUrl  桌面客户端的下载地址（galaxy.consumer_client_download_url）。
+ * 分系统不是为了整齐：Apple 芯片和 Intel 的包**不能互相代替**（arm64 的包在 Intel
+ * 机器上装完直接起不来），而浏览器认得出是不是 Mac，却认不出是哪种芯片 ——
+ * navigator.platform 在两种 Mac 上都报 MacIntel。所以页面把填过的那几条都摆出来让人自己挑，
+ * 不替他猜。
  *
- * 两条都可能是空串 —— 部署方没配就是没配，页面各自少显示一块，不猜。
+ * default 是兜底：一个列出各系统安装包的下载页。某个系统没填就用它，全空就是那一块不显示。
+ */
+export class ConsumerClientDownloads {
+  default = "";
+
+  windows = "";
+
+  macX64 = "";
+
+  macArm64 = "";
+}
+
+/**
+ * 接入要的两类部署事实，都由服务端给，前端不再自己拼。
+ *
+ * baseUrl          SDK 要填的地址（galaxy.instance / galaxy.consumer_base_url）。
+ * clientDownloads  桌面客户端各系统的下载地址（运行参数 client.consumer_download_url[.平台]）。
+ *
+ * 都可能是空的 —— 部署方没配就是没配，页面各自少显示一块，不猜。
  */
 export class ConsumerEndpoint {
   baseUrl = "";
 
-  clientDownloadUrl = "";
+  clientDownloads: ConsumerClientDownloads = new ConsumerClientDownloads();
 }
 
 export async function fetchConsumerEndpoint() {

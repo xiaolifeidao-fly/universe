@@ -21,10 +21,10 @@ const root = path.resolve(__dirname, '..');
 // /api/galaxy/portal/* 都在 galaxy-consumer-api :10005 上。指错了不会 502、
 // 也不报错，是后端回一句 Go 默认的「404 page not found」，看上去像页面丢了。
 //
-// runtime 里的 GALAXY_UPDATE_FEED_URL 是两个端共用的**更新目录前缀**（OSS 上那个
-// 公开读的目录，管理端发版就是往它下面写）。桌面壳探 /api/desktop-health 时把它带走，
-// 所以换桶不用重新打包安装包 —— 改这台机器的 runtime.json 再重启界面就行。
-// 不配就是这个部署不检查更新。
+// runtime 里的 GALAXY_UPDATE_FEED_URL 现在只是**本机覆盖**：更新目录前缀由后端从
+// 发版用的同一份 oss.* 推出来（<publicHost>/<dirPrefix>），/api/desktop-health 去问
+// 一次再回给壳。留这一项是为了对着本地起的静态目录调更新流程，平时空着。
+// 换桶改的是后端那份 oss.*，安装包和界面都不用重新打。
 const members = {
   nova: { dir: 'nova/webview', target: 'http://127.0.0.1:10004', runtime: { GALAXY_UPDATE_FEED_URL: '' } },
   orbit: { dir: 'orbit/webview', target: 'http://127.0.0.1:10005', runtime: { GALAXY_UPDATE_FEED_URL: '' } },

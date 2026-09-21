@@ -78,28 +78,32 @@ type Config struct {
 	// 节点就会去连一个它根本够不到的地方。这条必须显式配。
 	ProviderHubURL string
 
-	// ConsumerClientDownloadURL 使用端桌面客户端（Orbit）的下载地址，使用端控制台原样展示。
+	// ConsumerClientDownload 使用端桌面客户端（Orbit）的下载地址，使用端控制台原样展示。
 	//
 	// 控制台自己就是这个客户端的界面，但它同时挂在浏览器上给没装客户端的人用，
 	// 而「使用」那个一键写本机配置的按钮只有桌面壳里才有 —— 在浏览器里看控制台的人
 	// 需要一条路把客户端拿到手，这就是那条路。
 	//
-	// 不配就是空串，控制台那一块直接不显示：安装包托管在哪儿是部署方的事，
-	// 这里派生不出来，猜一个地址只会换来一次 404。
+	// 一个端有四条地址：Windows / mac Intel / mac Apple 芯片各一条，加一条通用下载页。
+	// 分平台不是为了整齐 —— Apple 芯片和 Intel 的包不能互相代替，只给一条地址就有一半人下错。
 	//
-	// 源头有两个，叠加关系：配置文件里的 galaxy.consumer_client_download_url 是默认值，
-	// 后台「运行参数」的 client.consumer_download_url 覆盖它（管理端那一页就是改这一行）。
-	ConsumerClientDownloadURL string
+	// 一条都不配就是那一块不显示：安装包托管在哪儿是部署方的事，这里派生不出来，
+	// 猜一个地址只会换来一次 404。
+	//
+	// 源头有两个，叠加关系：配置文件里的 galaxy.consumer_client_download_url 是**通用那条**
+	// 的默认值，后台「运行参数」的 client.consumer_download_url[.平台] 覆盖它
+	// （管理端那一页就是改这几行）。分平台的三条只有数据库一个源头，见下面 Provider 那段的理由。
+	ConsumerClientDownload dto.DesktopDownloadURLs
 
-	// ProviderClientDownloadURL 共享端桌面客户端（Nova）的下载地址。
+	// ProviderClientDownload 共享端桌面客户端（Nova）的下载地址。
 	//
 	// 和上面那个成对，但**只有数据库这一个源头**（照 ConsumerReferralBps 的先例）：
-	// 它是这次为管理端展示加的，还没有任何一个服务从配置文件里读它，
+	// 它是为管理端展示加的，还没有任何一个服务从配置文件里读它，
 	// 再开一个 galaxy.provider_client_download_url 出来，等于一上来就摆两个都要维护
 	// 而其中一个永远没人填的地方。真需要预置时再补配置文件那一层。
 	//
 	// 现在只有管理端在展示它 —— 共享端控制台那一块要不要摆，是另一件事。
-	ProviderClientDownloadURL string
+	ProviderClientDownload dto.DesktopDownloadURLs
 
 	// UsageMismatchRatio 节点自报与 Hub 解析的偏差告警阈值。
 	UsageMismatchRatio float64

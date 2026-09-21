@@ -19,5 +19,6 @@ func route(assembly *Assembly, drain *bootstrap.Drain) *gin.Engine {
 	console := engine.Group("/api/galaxy")
 	assembly.Auth.RegisterHandler(console)
 	assembly.Providers.RegisterHandler(console)
+	bootstrap.RegisterDesktop(console, assembly.DesktopFeedBase)
 	return engine
 }

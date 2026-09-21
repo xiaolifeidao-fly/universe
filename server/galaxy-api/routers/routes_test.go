@@ -36,7 +36,8 @@ func TestOwnedRoutes(t *testing.T) {
 		}
 	}
 	for _, r := range []string{"POST /api/galaxy/provider/auth/login", "POST /api/galaxy/provider/auth/register",
-		"GET /api/galaxy/provider/nodes", "GET /api/galaxy/provider/model-options"} {
+		"GET /api/galaxy/provider/nodes", "GET /api/galaxy/provider/model-options",
+		"GET /api/galaxy/desktop/update-feed"} {
 		if !registered[r] {
 			t.Errorf("missing route %s", r)
 		}
