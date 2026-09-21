@@ -2,7 +2,8 @@
 name = "ai-bridge-native"
 # 0.2.0 起节点认远程升级协议（hello 报 platform / distribution / upgradeBlocker，心跳收 upgrade 指令）。
 # 0.3.0 起心跳带上游订阅余量（每条通道一份 usage，从中转响应的限流头里捎回来）。
-version = "0.3.0"
+# 0.4.0 起 Codex 协议头原样透传（会话身份跟着客户端走，上游前缀缓存才命中得了）。
+version = "0.4.0"
 edition = "2021"
 
 [lib]
