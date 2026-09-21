@@ -1,7 +1,15 @@
 "use client";
 
 /**
- * 模型页。
+ * 模型页：有哪些模型、每个多少钱。
+ *
+ * **列表，不是卡片墙。** 加上推理强度这一维之后，一个模型不再是一个价而是一小张
+ * 价目表（同一个模型最深那档能是最浅那档的十几倍），卡片里塞不下；而来访者在这一页
+ * 真正在做的事是「在几个模型之间比价」—— 比价要求数字上下对齐，一排卡片做不到。
+ *
+ * 分档那张表收在行里，点开才展开：先看的总是那三个主价，「这一档要多少」是追问。
+ * 但收起来的那一行要把**分档的输出价区间**说出来 —— 只写一个「6 档」，等于让人
+ * 一个个点开才知道有没有必要点开。
  *
  * 筛选与搜索都在浏览器里做：整份清单也就几十条，一次全给、本地过滤，
  * 比每敲一个字母打一次接口快得多，也不会在搜索时把页面刷白。
@@ -11,11 +19,13 @@
  */
 
 import { useMemo, useState } from "react";
-import { familyLabel, useLocale } from "@/i18n/LocaleProvider";
-import { Btn, Card, Empty, Section, useCopy } from "@/components/site/kit";
-import { IconCheck, IconCopy, IconSearch } from "@/components/site/icons";
-import { CtaBand, ModelCard, PageHero } from "@/components/home/HomeSections";
-import type { PortalOverview } from "@/utils/portal";
+import { effortLabel, familyLabel, useLocale } from "@/i18n/LocaleProvider";
+import { BADGE_TONES, Btn, Card, Empty, Section, Tag, familyColor, useCopy } from "@/components/site/kit";
+import { IconCheck, IconChevron, IconCopy, IconSearch } from "@/components/site/icons";
+import { CtaBand, PageHero } from "@/components/home/HomeSections";
+import { VendorMark } from "@shared/brand/VendorMark";
+import { formatBps, formatContext, formatUnitPrice } from "@/utils/format";
+import type { PortalEffortPrice, PortalModel, PortalOverview } from "@/utils/portal";
 
 const ALL = "__all__";
 
@@ -23,6 +33,8 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
   const [family, setFamily] = useState<string>(ALL);
   const [keyword, setKeyword] = useState("");
+  /** 展开的那一行，一次只开一个：同时摊开几张分档表，上下相邻的价就又对不齐了。 */
+  const [open, setOpen] = useState("");
   const copier = useCopy();
 
   const models = useMemo(() => {
@@ -109,14 +121,31 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
           />
         ) : (
           <>
-            <div className="gp-grid gp-grid--3">
-              {models.map((model) => (
-                <ModelCard key={model.modelId} model={model} />
-              ))}
-            </div>
+            <Card style={{ padding: "18px 6px 6px" }}>
+              <div className="gp-list">
+                {/* 表头在窄屏上整条不显示 —— 那时每个数字自己带标签（见 globals.css）。 */}
+                <div className="gp-list__head">
+                  <span>{t("models.col.model")}</span>
+                  <span className="gp-list__right">{t("models.context")}</span>
+                  <span className="gp-list__right">{t("models.input")}</span>
+                  <span className="gp-list__right">{t("models.output")}</span>
+                  <span className="gp-list__right">{t("models.cache")}</span>
+                  <span>{t("models.col.effort")}</span>
+                  <span />
+                </div>
+                {models.map((model) => (
+                  <ModelRow
+                    key={model.modelId}
+                    model={model}
+                    open={open === model.modelId}
+                    onToggle={() => setOpen(open === model.modelId ? "" : model.modelId)}
+                  />
+                ))}
+              </div>
+            </Card>
             <p className="gp-body" style={{ marginTop: 22, fontSize: 13, maxWidth: "76ch" }}>
               {/* 「与具体模型无关」这句只有在**没有任何模型自己定价**时才成立。
-                  运营一旦给某个模型填了价，这句话就会和它上面那排卡片自相矛盾。 */}
+                  运营一旦给某个模型填了价，这句话就会和它上面那张表自相矛盾。 */}
               {overview.models.every((model) => !model.priced)
                 ? t("models.priceNoteFlat")
                 : t("models.priceNoteBase")}
@@ -129,5 +158,209 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
         <CtaBand />
       </div>
     </>
+  );
+}
+
+/**
+ * 分档里最便宜和最贵的输出价。
+ *
+ * 只看输出：输入与缓存读取在各档之间基本是同一个数，摆出区间等于说了句废话，
+ * 而账单的大头本来就在输出这一桶。
+ *
+ * 各档都一个价时返 null —— 「¥15.00 – ¥15.00」既占地方又读不出任何信息。
+ */
+function outputRange(efforts: PortalEffortPrice[]): [number, number] | null {
+  const values = efforts.map((row) => row.outputPrice).filter((value) => value > 0);
+  if (values.length === 0) return null;
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  return high > low ? [low, high] : null;
+}
+
+/** 官方参考价至少填了一档，而且自家真有价可比 —— 两个条件缺一个就不划线。 */
+function hasListPrice(model: PortalModel): boolean {
+  const listed = (model.listInputPrice ?? 0) > 0 || (model.listOutputPrice ?? 0) > 0 || (model.listCachePrice ?? 0) > 0;
+  return listed && (model.inputPrice > 0 || model.outputPrice > 0);
+}
+
+/**
+ * 这一行点开之后有没有东西可看。
+ *
+ * 什么都没有的模型（目录表空着、靠 galaxy.models 兜底出来的那几行）就不做成按钮：
+ * 一个点下去什么也不展开的箭头，比没有箭头更让人以为页面坏了。
+ */
+function hasDetail(model: PortalModel): boolean {
+  return (
+    (model.efforts?.length ?? 0) > 0 ||
+    !!model.summary ||
+    (model.tags?.length ?? 0) > 0 ||
+    hasListPrice(model) ||
+    !model.priced
+  );
+}
+
+function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean; onToggle: () => void }) {
+  const { t } = useLocale();
+  const efforts = model.efforts ?? [];
+  const context = formatContext(model.contextTokens ?? 0);
+  const range = outputRange(efforts);
+  const detail = hasDetail(model);
+
+  const cells = (
+    <>
+      <span className="gp-list__name">
+        {/* 方块底色按族走，官方标在上面落成白色单色版 —— 只等比缩放、只改颜色。 */}
+        <span className="gp-list__mark" style={{ background: familyColor(model.family) }}>
+          <VendorMark vendor={model.vendor ?? ""} fallback={model.displayName || model.modelId} size={15} />
+        </span>
+        <span className="gp-list__title">
+          <span className="gp-list__label">
+            {/* 角标和胶囊定宽、不让步；该被省略号截掉的是名字。 */}
+            <b>{model.displayName || model.modelId}</b>
+            <span className="gp-list__marks">
+              {model.badgeText ? (
+                <Tag tone={BADGE_TONES[model.badgeTone ?? "neutral"] ?? "default"}>{model.badgeText}</Tag>
+              ) : null}
+              {!model.priced ? (
+                <span className="gp-tag" title={t("common.unifiedHint")}>
+                  {t("common.unified")}
+                </span>
+              ) : null}
+            </span>
+          </span>
+          {/* 模型名照原样给出来：来访者要把它一个字不差地填进自己的客户端。 */}
+          <span className="gp-mono gp-list__id">{model.modelId}</span>
+        </span>
+      </span>
+      <span className="gp-list__num gp-list__num--soft" data-label={t("models.context")}>
+        {context || "—"}
+      </span>
+      <span className="gp-list__num" data-label={t("models.input")}>
+        {formatUnitPrice(model.inputPrice, model.currency)}
+      </span>
+      <span className="gp-list__num" data-label={t("models.output")}>
+        {formatUnitPrice(model.outputPrice, model.currency)}
+      </span>
+      <span className="gp-list__num gp-list__num--soft" data-label={t("models.cache")}>
+        {formatUnitPrice(model.cachePrice, model.currency)}
+      </span>
+      <span className="gp-list__effort" data-label={t("models.col.effort")}>
+        {/* 分档了才说。没分档的写「不分强度」会让人以为这里本该有点什么，
+            而不分档的模型就是一个价走到底。 */}
+        {efforts.length > 0 ? (
+          <>
+            <Tag tone="accent">{t("models.effortCount", { count: efforts.length })}</Tag>
+            {range ? (
+              <span className="gp-mono gp-list__range">
+                {formatUnitPrice(range[0], model.currency)} – {formatUnitPrice(range[1], model.currency)}
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span style={{ color: "var(--gp-faint)" }}>—</span>
+        )}
+      </span>
+      <span className="gp-list__caret" data-open={open} aria-hidden="true">
+        {detail ? <IconChevron /> : null}
+      </span>
+    </>
+  );
+
+  return (
+    <div className="gp-list__item">
+      {detail ? (
+        <button type="button" className="gp-list__row" onClick={onToggle} aria-expanded={open} title={t("models.expand")}>
+          {cells}
+        </button>
+      ) : (
+        <div className="gp-list__row" data-static="true">
+          {cells}
+        </div>
+      )}
+      {detail && open ? <ModelDetail model={model} /> : null}
+    </div>
+  );
+}
+
+/** 展开之后的那一块：介绍、标签、按推理强度分档的价，以及划线价那一行小字。 */
+function ModelDetail({ model }: { model: PortalModel }) {
+  const { t } = useLocale();
+  const efforts = model.efforts ?? [];
+  const listed = hasListPrice(model);
+  const discountBps = model.discountBps ?? 0;
+
+  return (
+    <div className="gp-list__detail">
+      {model.summary ? (
+        <p className="gp-body" style={{ fontSize: 13.5, lineHeight: 1.65 }}>
+          {model.summary}
+        </p>
+      ) : null}
+
+      {model.tags && model.tags.length > 0 ? (
+        <div className="gp-model__tags">
+          {model.tags.map((tag) => (
+            <Tag key={tag}>{tag}</Tag>
+          ))}
+        </div>
+      ) : null}
+
+      {efforts.length > 0 ? <EffortTable efforts={efforts} currency={model.currency} /> : null}
+
+      <div className="gp-list__foot">
+        <span>
+          {t("models.priceUnit")}
+          {listed ? (
+            <>
+              {" · "}
+              {t("models.listPrice")}{" "}
+              {/* 划线价按主价那几列的顺序排。缓存那一段只在真声明了官方缓存价时才出现：
+                  绝大多数模型没有这个数，平白多一个「-」等于让人以为我们漏填了。 */}
+              <s className="gp-mono">
+                {formatUnitPrice(model.listInputPrice ?? 0, model.currency)} /{" "}
+                {formatUnitPrice(model.listOutputPrice ?? 0, model.currency)}
+                {(model.listCachePrice ?? 0) > 0 ? ` / ${formatUnitPrice(model.listCachePrice ?? 0, model.currency)}` : ""}
+              </s>
+            </>
+          ) : null}
+          {/* 回落到统一价时说出来：不说的话一屏模型显示同一个数，看起来像页面坏了。 */}
+          {!model.priced ? ` · ${t("common.unifiedHint")}` : ""}
+        </span>
+        {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
+        {discountBps > 0 ? <Tag tone="ok">{t("models.discount", { rate: formatBps(discountBps) })}</Tag> : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 按推理强度分档的价。
+ *
+ * 只列真的单独定过价的档（服务端就是这么下发的）。回落之后每一档都等于上面那一行，
+ * 把六档一律铺开说的是「分了档但都一样」—— 那会让人以为运营填漏了。
+ */
+function EffortTable({ efforts, currency }: { efforts: PortalEffortPrice[]; currency: string }) {
+  const { t } = useLocale();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <span className="gp-list__caption">{t("models.effortTitle")}</span>
+      <div className="gp-efforts">
+        <div className="gp-efforts__head">
+          <span>{t("models.col.effort")}</span>
+          <span className="gp-list__right">{t("models.input")}</span>
+          <span className="gp-list__right">{t("models.output")}</span>
+          <span className="gp-list__right">{t("models.cache")}</span>
+        </div>
+        {efforts.map((row) => (
+          <div className="gp-efforts__row" key={row.effort}>
+            <span>{effortLabel(row.effort, t)}</span>
+            <span className="gp-mono gp-list__right">{formatUnitPrice(row.inputPrice, currency)}</span>
+            <span className="gp-mono gp-list__right">{formatUnitPrice(row.outputPrice, currency)}</span>
+            <span className="gp-mono gp-list__right gp-list__num--soft">{formatUnitPrice(row.cachePrice, currency)}</span>
+          </div>
+        ))}
+      </div>
+      <span className="gp-list__hint">{t("models.effortHint")}</span>
+    </div>
   );
 }

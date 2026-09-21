@@ -36,6 +36,14 @@ export function IconArrowRight(props: IconProps) {
   );
 }
 
+export function IconChevron(props: IconProps) {
+  return (
+    <Icon size={16} {...props}>
+      <path d="m9 5 7 7-7 7" />
+    </Icon>
+  );
+}
+
 export function IconPlus(props: IconProps) {
   return (
     <Icon {...props}>

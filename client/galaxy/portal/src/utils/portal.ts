@@ -36,6 +36,22 @@ export interface PortalFamily {
   currency: string;
 }
 
+/**
+ * 一个模型在某一档推理强度上的单价，口径与模型那一行的单价完全一致。
+ *
+ * 服务端只下发**真的单独定过价**的那几档，由浅到深；没在这张表里的强度按模型
+ * 那一行的价收。一档都不列的模型就是不分强度 —— 把六档一律铺开、每档都等于
+ * 那一行的数，说的是「分了档但都一样」，而那会让人以为运营填漏了价。
+ */
+export interface PortalEffortPrice {
+  /** 档位名，上游原生：Claude 是 low…max，Codex 是 minimal…high。 */
+  effort: string;
+  inputPrice: number;
+  outputPrice: number;
+  cachePrice: number;
+  cacheWritePrice: number;
+}
+
 export interface PortalModel {
   modelId: string;
   displayName: string;
@@ -63,6 +79,12 @@ export interface PortalModel {
   featured: boolean;
   /** false 表示这几个价来自 kind 的统一价，不是这个模型自己的。 */
   priced: boolean;
+  /**
+   * 按推理强度单独定过价的那几档，由浅到深。空 = 不分强度，上面那几个数就是全部。
+   *
+   * 服务端可能整个键都不给（omitempty），所以读的时候一律当可能缺。
+   */
+  efforts?: PortalEffortPrice[];
   sortOrder: number;
 }
 

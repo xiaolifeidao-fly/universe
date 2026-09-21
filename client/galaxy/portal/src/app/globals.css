@@ -1002,6 +1002,299 @@ svg {
   gap: 6px;
 }
 
+/* ---------- 模型列表 ----------
+   卡片墙换成列表是因为这一页的用法变了：加上推理强度这一维之后，一个模型是一小张
+   价目表而不是一个价，而来访者在做的事是横向比价 —— 比价要求数字上下对齐。 */
+
+.gp-list {
+  /* 列宽只写一份，表头和每一行共用。各写一份迟早错开一列。 */
+  --gp-model-cols: minmax(0, 1.7fr) 78px 98px 98px 98px 132px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.gp-list__head,
+.gp-list__row {
+  display: grid;
+  grid-template-columns: var(--gp-model-cols);
+  align-items: center;
+  gap: 12px;
+}
+
+.gp-list__head {
+  padding: 0 16px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  border-bottom: 1px solid var(--gp-line);
+}
+
+.gp-list__item + .gp-list__item {
+  border-top: 1px solid var(--gp-line);
+}
+
+/* 整行是按钮：点哪儿都能展开。做成只有箭头能点的话，一行里能点的区域只有 20px 宽。 */
+.gp-list__row {
+  width: 100%;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s var(--gp-ease);
+}
+
+/* 底色比 --gp-surface-2 淡一档，不直接用它：行里的「统一价」标签正是那个底色，
+   两者一样的话，鼠标一悬停那个标签就在自己的行里消失了。 */
+.gp-list__row:hover,
+.gp-list__row[aria-expanded="true"] {
+  background: rgba(16, 26, 25, 0.03);
+}
+
+/* 没有东西可展开的那几行不是按钮，也就不该有 hover 的响应。 */
+.gp-list__row[data-static="true"] {
+  cursor: default;
+}
+
+.gp-list__row[data-static="true"]:hover {
+  background: transparent;
+}
+
+.gp-list__name {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.gp-list__mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  flex: 0 0 auto;
+}
+
+.gp-list__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gp-list__label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* 名字有省略号兜着，角标没有 —— 所以让步的是名字。不写 flexShrink 的话，
+   flex 会先压最长的那个孩子，于是「带角标的那一行连模型名都不见了」。 */
+.gp-list__label b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gp-ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gp-list__marks {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.gp-list__id {
+  font-size: 11.5px;
+  color: var(--gp-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gp-list__num {
+  text-align: right;
+  font-family: var(--gp-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gp-ink);
+  white-space: nowrap;
+}
+
+.gp-list__num--soft {
+  color: var(--gp-soft);
+  font-weight: 500;
+}
+
+.gp-list__right {
+  text-align: right;
+}
+
+.gp-list__effort {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  font-size: 12px;
+}
+
+/* 分档的输出价区间。收起来的行上只写「6 档」的话，有没有必要点开得一个个试。 */
+.gp-list__range {
+  font-size: 11px;
+  color: var(--gp-faint);
+  white-space: nowrap;
+}
+
+.gp-list__caret {
+  display: flex;
+  justify-content: flex-end;
+  color: var(--gp-faint);
+}
+
+/* 转的是箭头本身，不是那一格。格子在窄屏上有一整列那么宽，
+   转整格等于把箭头甩到行的另一头去 —— 而它看起来只像画坏了。 */
+.gp-list__caret svg {
+  transition: transform 0.18s var(--gp-ease);
+}
+
+.gp-list__caret[data-open="true"] svg {
+  transform: rotate(90deg);
+}
+
+/* 展开的那一块缩进到与模型名对齐 —— 它属于上面那一行，不是新的一条。 */
+.gp-list__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 2px 16px 20px 55px;
+}
+
+.gp-list__caption {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+}
+
+.gp-list__hint,
+.gp-list__foot {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--gp-faint);
+}
+
+.gp-list__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gp-efforts {
+  border: 1px solid var(--gp-line);
+  border-radius: 12px;
+  background: var(--gp-surface-2);
+  padding: 2px 14px;
+}
+
+.gp-efforts__head,
+.gp-efforts__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 98px 98px 98px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.gp-efforts__head {
+  padding: 9px 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  border-bottom: 1px solid var(--gp-line);
+}
+
+.gp-efforts__row {
+  padding: 9px 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--gp-ink);
+}
+
+.gp-efforts__row + .gp-efforts__row {
+  border-top: 1px solid var(--gp-line);
+}
+
+/* 窄屏：表头整条撤掉，每个数字自己带上列名（data-label）。
+   横向滚动的表格在手机上等于「看价格时看不见模型名」—— 而这一页就是拿来比价的。 */
+@media (max-width: 880px) {
+  .gp-list__head {
+    display: none;
+  }
+
+  .gp-list__row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 14px;
+    align-items: start;
+  }
+
+  .gp-list__name {
+    grid-column: 1 / -1;
+  }
+
+  .gp-list__num,
+  .gp-list__right {
+    text-align: left;
+  }
+
+  .gp-list__num::before,
+  .gp-list__effort::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--gp-sans);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--gp-faint);
+    margin-bottom: 3px;
+  }
+
+  .gp-list__caret {
+    align-self: center;
+  }
+
+  .gp-list__detail {
+    padding-left: 16px;
+  }
+
+  /* 分档表四列等分。给价格列写死宽度的话，剩给「推理强度」那一列的就只有二十来像素，
+     表头会一个字一行竖着排下来。 */
+  .gp-efforts__head,
+  .gp-efforts__row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .gp-efforts {
+    padding-inline: 12px;
+  }
+}
+
 .gp-filters {
   display: flex;
   flex-wrap: wrap;

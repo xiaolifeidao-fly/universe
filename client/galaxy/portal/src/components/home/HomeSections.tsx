@@ -9,7 +9,7 @@
 
 import Link from "next/link";
 import { familyLabel, useLocale } from "@/i18n/LocaleProvider";
-import { Card, Faq, LinkBtn, Page, Section, SectionHead, Tag, TextLink, familyColor } from "@/components/site/kit";
+import { BADGE_TONES, Card, Faq, LinkBtn, Page, Section, SectionHead, Tag, TextLink, familyColor } from "@/components/site/kit";
 import {
   IconArrowRight,
   IconGauge,
@@ -145,14 +145,6 @@ export function ModelPeek({ models }: { models: PortalModel[] }) {
     </Section>
   );
 }
-
-/** 角标配色：目录里存的是语义，这里落到门户自己的标签配色。 */
-const BADGE_TONES: Record<string, "accent" | "warn" | "ok" | "default"> = {
-  hot: "accent",
-  new: "warn",
-  value: "ok",
-  neutral: "default",
-};
 
 /** 模型卡片。首页和模型页共用一份 —— 同一个东西在两处长得不一样是最廉价的不一致。 */
 export function ModelCard({ model }: { model: PortalModel }) {

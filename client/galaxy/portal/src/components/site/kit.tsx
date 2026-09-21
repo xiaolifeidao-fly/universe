@@ -243,6 +243,18 @@ export function useCopy(resetMs = 1800): { state: CopyState; copy: (value: strin
 
 /* ---------- 品牌色卡 ---------- */
 
+/**
+ * 角标配色：目录里存的是语义（主推 / 新上 / 划算 / 中性），这里落到门户的标签配色。
+ * 和族色一样收在这里 —— 首页的卡片和模型页的列表各留一份的话，
+ * 同一个「首发」角标迟早在两处是两个颜色。
+ */
+export const BADGE_TONES: Record<string, "accent" | "ok" | "warn" | "default"> = {
+  hot: "accent",
+  new: "warn",
+  value: "ok",
+  neutral: "default",
+};
+
 /** 模型族各有一个固定色。同一个族在门户各处必须是同一个颜色，所以收在这里。 */
 export const FAMILY_COLORS: Record<string, string> = {
   claude: "#b4531f",

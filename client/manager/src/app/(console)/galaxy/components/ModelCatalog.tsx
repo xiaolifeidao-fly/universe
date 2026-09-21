@@ -38,13 +38,24 @@ import {
   type PriceView,
   type ReferralSettingsView,
 } from "../api/galaxy.api";
-import { effortLabel, HIDDEN_UNITS, kindLabel, unitLabel } from "./labels";
+import { effortLabel, familyName, HIDDEN_UNITS, kindLabel, optionMatches, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万 token 的微元」；表单里填元。 */
 const MICRO = 1_000_000;
 
 /** 模型没写 kind 时按它算。和服务端 portalKind 同一个值。 */
 const DEFAULT_KIND = "llm.chat";
+
+/** 「全部厂商」在 Select 里用空串表达：undefined 会被 antd 当成没选，显示成占位符。 */
+const ALL_VENDORS = "";
+
+/**
+ * 「未标厂商」那一档的值。
+ *
+ * 用一个不可能当厂商名的字符，而不是 "-" / "none" / "未知"：真有个厂商叫那个名字时，
+ * 两档会并成一档，而筛出来的表看起来完全正常 —— 少的那几行没有任何地方会提示。
+ */
+const NO_VENDOR = "\u0000";
 
 /**
  * 对话类能力**一定**要摆出来的计价桶，哪怕价目表里一行都没有 ——
@@ -82,6 +93,26 @@ function protocolFamily(family: string): string {
     default:
       return "";
   }
+}
+
+/**
+ * 这个模型的推理强度该按哪一族的词表 —— 强度下拉、强度胶囊的排序都认它。
+ *
+ * 先认目录里的族名（claude / gpt），认不出来再拿族名和**厂商**去词表里对：厂商栏里
+ * 填的本来就常常是协议族名本身（anthropic / openai），而新接一个 OpenAI 兼容的上游时，
+ * 族名多半是它自己的牌子、只有厂商对得上词表。
+ *
+ * 两个都认不出来回空串，**不猜一族**：那时界面退回摆两族的全集，让运营自己挑。
+ * 猜错的后果是给这个模型摆出几档它根本没有的价，而那几行价永远匹配不上任何一次请求。
+ */
+function effortFamilyOf(family: string, vendor: string, ladders: Record<string, string[]>): string {
+  const known = protocolFamily(family);
+  if (known) return known;
+  for (const candidate of [family, vendor]) {
+    const key = candidate.trim().toLowerCase();
+    if (key && (ladders[key]?.length ?? 0) > 0) return key;
+  }
+  return "";
 }
 
 /**
@@ -172,6 +203,13 @@ type PriceTarget = {
   modelId: string;
   title: string;
   /**
+   * 这个模型的族与厂商。弹窗里只拿它们定一件事：强度下拉摆哪一族的档。
+   *
+   * 兜底价那一行（modelId 为空）不带 —— 它跨模型，不属于任何一族。
+   */
+  family?: string;
+  vendor?: string;
+  /**
    * 打开时落在哪一档推理强度上。不填 = 不分强度那一档。
    *
    * 有它才能从列表上那几个胶囊直接点进对应的档 —— 否则运营得先点「定价」、
@@ -214,6 +252,8 @@ export function ModelCatalog() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pricing, setPricing] = useState<PriceTarget | null>(null);
+  /** 只按厂商筛。空串 = 全部厂商（见 ALL_VENDORS）。 */
+  const [vendorFilter, setVendorFilter] = useState(ALL_VENDORS);
   const [form] = Form.useForm<ModelForm>();
 
   const load = useCallback(async () => {
@@ -258,8 +298,9 @@ export function ModelCatalog() {
      * 于是 anthropic 的 low 拿到 openai 那张表里的下标（8），排到了 max（5）后面 ——
      * 界面上就是「最深」排在「低」前面。而这一列的全部意义就是让人一眼看出深浅。
      */
-    const rankOf = (family: string) => {
-      const ladder = table?.efforts?.[protocolFamily(family)] ?? [];
+    const rankOf = (family: string, vendor: string) => {
+      const ladders = table?.efforts ?? {};
+      const ladder = ladders[effortFamilyOf(family, vendor, ladders)] ?? [];
       return new Map(ladder.map((effort, index) => [effort, index]));
     };
     const shared = new Map<string, Set<string>>();
@@ -271,12 +312,12 @@ export function ModelCatalog() {
       if (!bucket.has(key)) bucket.set(key, new Set());
       bucket.get(key)?.add(row.effort);
     }
-    return (modelId: string, kind: string, family: string) => {
+    return (modelId: string, kind: string, family: string, vendor: string) => {
       const merged = new Set([
         ...Array.from(shared.get(kind) ?? []),
         ...Array.from(own.get(`${kind}\u0000${modelId}`) ?? []),
       ]);
-      const rank = rankOf(family);
+      const rank = rankOf(family, vendor);
       // 词表里没有的档（历史上填错、上游加了新档而我们还没跟上、或者这个模型的族
       // 根本不认这一档）排在最后按字典序。丢掉它们会让运营看着库里有价、列表上没有，
       // 而那种不一致没有任何地方会报错。
@@ -373,6 +414,34 @@ export function ModelCatalog() {
     return Array.from(seen).sort();
   }, [table, prices, rows]);
 
+  /**
+   * 厂商候选：目录里**真出现过**的那几个。
+   *
+   * 不写死一张厂商表 —— 接一个新上游只是 vendor 这一列多一个值，写死的话它永远进不了
+   * 这个下拉，而运营看到的是「筛选器里没有我刚加的那家」。没填厂商的模型单独归一档：
+   * 它们最容易在「按厂商核一遍价」时被整批漏掉，而漏掉的那些照常在计费。
+   */
+  const vendors = useMemo(() => {
+    const seen = new Set<string>();
+    let blank = false;
+    for (const row of rows) {
+      const value = row.vendor?.trim() ?? "";
+      if (value) seen.add(value);
+      else blank = true;
+    }
+    const list = Array.from(seen).sort();
+    return blank ? [...list, NO_VENDOR] : list;
+  }, [rows]);
+
+  // 选中的厂商在这批数据里已经没有了（改过厂商名、模型下架），退回「全部」——
+  // 不退的话是一张空表，而空表和「模型目录没了」长得一模一样。
+  const vendor = vendors.includes(vendorFilter) ? vendorFilter : ALL_VENDORS;
+
+  const visibleRows = useMemo(() => {
+    if (vendor === ALL_VENDORS) return rows;
+    return rows.filter((row) => (row.vendor?.trim() ? row.vendor.trim() === vendor : vendor === NO_VENDOR));
+  }, [rows, vendor]);
+
   const columns: ColumnsType<GalaxyModelView> = [
     {
       title: t("galaxy.model.model"),
@@ -437,7 +506,7 @@ export function ModelCatalog() {
       key: "efforts",
       width: 190,
       render: (_, row) => {
-        const efforts = pricedEffortsOf(row.modelId, row.kind || DEFAULT_KIND, row.family);
+        const efforts = pricedEffortsOf(row.modelId, row.kind || DEFAULT_KIND, row.family, row.vendor);
         if (efforts.length === 0) {
           // 「没分档」是绝大多数模型的常态，不是缺了什么，所以用灰字而不是红字。
           return (
@@ -460,6 +529,8 @@ export function ModelCatalog() {
                           kind: row.kind || DEFAULT_KIND,
                           modelId: row.modelId,
                           title: row.displayName || row.modelId,
+                          family: row.family,
+                          vendor: row.vendor,
                           effort,
                         })
                     : undefined
@@ -536,6 +607,8 @@ export function ModelCatalog() {
                   kind: row.kind || DEFAULT_KIND,
                   modelId: row.modelId,
                   title: row.displayName || row.modelId,
+                  family: row.family,
+                  vendor: row.vendor,
                 })
               }
             >
@@ -641,6 +714,28 @@ export function ModelCatalog() {
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
+        {/* 按厂商筛。核价是按厂商一批一批核的（同一家的几个模型共用一份上游价表），
+            而这张表默认是全量的几十行 —— 不筛就得每次先用眼睛过一遍。 */}
+        <Select
+          showSearch
+          style={{ width: 200 }}
+          value={vendor}
+          onChange={setVendorFilter}
+          filterOption={optionMatches}
+          options={[
+            { value: ALL_VENDORS, label: t("galaxy.model.vendorAll") },
+            ...vendors.map((value) => {
+              const label = value === NO_VENDOR ? t("galaxy.model.vendorNone") : value;
+              return { value, title: label, label };
+            }),
+          ]}
+        />
+        {/* 藏了多少行要说出来：不说的话，少掉的那几十行看着就像没存进去。 */}
+        {vendor === ALL_VENDORS ? null : (
+          <Typography.Text type="secondary">
+            {t("galaxy.model.filtered", { shown: visibleRows.length, total: rows.length })}
+          </Typography.Text>
+        )}
         {/* 兜底价不属于任何模型（价目行的 modelId 是空串），所以它进不了上面任何一行的
             「定价」。没有这个入口的话，没单独定价的模型全部退回「查不到价」，
             而查不到价是静默算 0。 */}
@@ -666,8 +761,10 @@ export function ModelCatalog() {
         size="small"
         loading={loading}
         columns={columns}
-        dataSource={rows}
-        locale={{ emptyText: t("galaxy.model.empty") }}
+        dataSource={visibleRows}
+        // 筛空了和「目录是空的」要说两句话：后者那句写着「门户会回落到 galaxy.models」,
+        // 在只是筛掉了的时候念出来，是在报一个并不存在的故障。
+        locale={{ emptyText: rows.length > 0 ? t("galaxy.model.vendorEmpty") : t("galaxy.model.empty") }}
         pagination={false}
         // 加了 190px 的强度列，横向总宽跟着走；不跟的话最后几列会被挤成两行。
         scroll={{ x: 1880 }}
@@ -933,23 +1030,74 @@ function ModelPricing({
     return seen;
   }, [prices, kind, target]);
 
-  /** 强度候选，按族分组。分组的理由见 PriceTable 里那段同样的注释。 */
-  const effortOptions = useMemo(
-    () => [
-      { value: "", label: t("galaxy.price.anyEffort") },
-      ...Object.entries(efforts)
-        .filter(([, levels]) => levels.length > 0)
-        .map(([family, levels]) => ({
-          label: t(`galaxy.price.family.${family}`),
-          options: levels.map((level) => ({
-            value: level,
-            // 已经定过价的档标一下：一眼看出这个模型分了哪几档。
-            label: pricedEfforts.has(level) ? `${effortLabel(level, t)} ·` : effortLabel(level, t),
-          })),
-        })),
-    ],
-    [efforts, pricedEfforts, t],
+  /**
+   * 这一屏的模型属于哪一族 —— 强度下拉摆哪张词表由它定。
+   *
+   * 兜底价那一行回空串：它跨模型，不属于任何一族，两族的档都可能落在它上面。
+   */
+  const family = useMemo(
+    () => (target && !fallback ? effortFamilyOf(target.family ?? "", target.vendor ?? "", efforts) : ""),
+    [target, fallback, efforts],
   );
+
+  /**
+   * 这个模型**自己**定过价的强度档。
+   *
+   * 和上面的 pricedEfforts 不是一回事：那个含着跨模型的兜底行，用来给下拉打标；
+   * 这个只认这个模型自己的行，用来决定「哪些词表以外的档必须留在下拉里」——
+   * 别人家的兜底行不该把一个别族的档带进这个模型的下拉。
+   */
+  const ownEfforts = useMemo(() => {
+    const seen = new Set<string>();
+    if (!target?.modelId) return seen;
+    for (const row of prices) {
+      if (row.kind !== kind || row.effort === "" || !row.effective) continue;
+      if (row.modelId !== target.modelId) continue;
+      seen.add(row.effort);
+    }
+    return seen;
+  }, [prices, kind, target]);
+
+  /**
+   * 强度候选，按族分组。
+   *
+   * 认得出这个模型是哪一族，就**只摆那一族**的档。两族的档位名只是长得像：
+   * none / minimal / ultra 只有 Codex 有，xhigh 只有 Claude 有。给一个 Claude 模型
+   * 配上 minimal 档，服务端拦不住（它只校验档位名是不是上游真有的），而那行价
+   * 永远匹配不上任何一次请求 —— 运营以为自己给这个模型加过价，账上照常按
+   * 不分强度的价在收，两边都不报错。
+   *
+   * 族认不出来（新接的上游，族和厂商都对不上词表），以及兜底价那一行，照旧摆两族的
+   * 全集并分组：这时候收窄等于替一个我们并不了解的上游宣布它的计价刻度。
+   */
+  const effortOptions = useMemo(() => {
+    const groups = Object.entries(efforts).filter(([, levels]) => levels.length > 0);
+    const scoped = family ? groups.filter(([key]) => key === family) : groups;
+    const listed = new Set(scoped.flatMap(([, levels]) => levels));
+    // 词表以外、但这个模型库里真有一行价的档（历史上填错、上游加了新档而我们还没跟上、
+    // 或者这个模型的族后来改过），外加此刻选中的这一档，都得留在下拉里：
+    // 收窄不能把一档已经在收钱的价从界面上抹掉 —— 抹掉之后它照常计价，却再没有入口改它。
+    const extras = Array.from(
+      new Set([...Array.from(ownEfforts), effort].filter((level) => level && !listed.has(level))),
+    ).sort();
+    // 已经定过价的档标一下：一眼看出这个模型分了哪几档。
+    const label = (level: string) => (pricedEfforts.has(level) ? `${effortLabel(level, t)} ·` : effortLabel(level, t));
+    return [
+      { value: "", label: t("galaxy.price.anyEffort") },
+      ...scoped.map(([key, levels]) => ({
+        label: t(`galaxy.price.family.${key}`),
+        options: levels.map((level) => ({ value: level, label: label(level) })),
+      })),
+      ...(extras.length > 0
+        ? [
+            {
+              label: t("galaxy.price.effortOther"),
+              options: extras.map((level) => ({ value: level, label: label(level) })),
+            },
+          ]
+        : []),
+    ];
+  }, [efforts, family, ownEfforts, effort, pricedEfforts, t]);
 
   useEffect(() => {
     if (!target) return;
@@ -1054,7 +1202,17 @@ function ModelPricing({
               <Input value={kind} disabled className="manager-mono" />
             )}
           </Form.Item>
-          <Form.Item label={t("galaxy.price.effort")} extra={t("galaxy.price.effortHint")} style={{ minWidth: 220 }}>
+          {/* 提示分两句：认出族之后要说清「这里只摆这一族的档」，否则运营会以为
+              另一族那几档是漏了。 */}
+          <Form.Item
+            label={t("galaxy.price.effort")}
+            extra={
+              family
+                ? t("galaxy.price.effortScopedHint", { family: familyName(family, t) })
+                : t("galaxy.price.effortHint")
+            }
+            style={{ minWidth: 220 }}
+          >
             <Select value={effort} onChange={setEffort} options={effortOptions} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item

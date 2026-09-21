@@ -64,6 +64,20 @@ export function effortLabel(effort: string, t: Translate): string {
 }
 
 /**
+ * 协议族的短名：anthropic → Claude，openai → Codex。
+ *
+ * 和 galaxy.price.family.* 那一份不是一回事：那一份要连上游的字段名一起说清
+ * （「Claude（output_config.effort）」），那是下拉里的分组标题；这一份是塞进句子里的，
+ * 带着字段名读起来是两句话叠在一起。认不出来的原样显示族键 —— 新接一个上游
+ * 只是还没来得及补文案，不该在句子中间变成空白。
+ */
+export function familyName(family: string, t: Translate): string {
+  const key = `galaxy.price.familyName.${family}`;
+  const label = t(key);
+  return label === key ? family : label;
+}
+
+/**
  * 下拉候选：中文名在前，原始 id 灰着跟在后面。
  *
  * id 必须一直露着 —— 选中之后回填到输入框、以及最终存进库里的都是它。只剩中文名

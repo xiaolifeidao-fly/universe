@@ -442,6 +442,18 @@ Electron 源码全部是 TypeScript，`tsc --noEmit` 检查后由 esbuild 分别
 `bash start.sh nova|orbit` 启动已有构建的桌面应用；`bash stop.sh nova|orbit` 只停止受脚本管理的启动器。
 `bash package.sh nova|orbit` 等价于对应的桌面打包命令。原 `unpack-release.sh` 仅兼容历史 Web tar 包。
 
+只想出客户端安装包时，进端自己的目录跑 `<端>/package.sh`（`nova/package.sh` /
+`orbit/package.sh`），产物一样落在 `release/<端>/`。它和工作区那条的区别只有一处：
+**不顺带构建界面那份 standalone**（`--no-webview`）。安装包里本来就没有 Next 服务，
+界面走 `<端>/webview/package.sh` 那条线发版；少跑那一步还避开一件事 ——
+界面的构建会重写 `<端>/webview/.next`，本机常驻着 `next dev` 的话那个开发服务器
+会当场开始报 `ChunkLoadError`。
+
+平台与架构参数原样往后加（`./package.sh --mac --arm64 --x64`、`./package.sh --win --x64`），
+`APP_ORIGIN` 照样把「默认连哪个控制台」冻进这个包。**一个平台的几个架构必须在同一条
+命令里出**，理由见 `scripts/desktop.cjs` 里那段注释：分两次跑，后一次会把前一次的架构
+从 `latest-*.yml` 里挤掉，那一半用户永远收不到更新。
+
 安装包内不含 Next 服务：Electron 直接 `loadURL` 远端地址。部署到服务器的那份
 standalone 同样不打入原始 `.env`，仅提取公开的 `SERVER_TARGET` 与 `APP_URL_PREFIX`
 到 `.desktop/<端>/runtime.json`，启动环境同名变量可覆盖。

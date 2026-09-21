@@ -2,8 +2,14 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { products, defaultOrigin } = require('../common');
-const [action, product, ...targets] = process.argv.slice(2);
-if (!products[product] || !['dev', 'start', 'build', 'package'].includes(action)) throw new Error('Usage: desktop.cjs dev|start|build|package nova|orbit [electron-builder 的平台/架构参数]');
+const [action, product, ...rest] = process.argv.slice(2);
+if (!products[product] || !['dev', 'start', 'build', 'package'].includes(action)) throw new Error('Usage: desktop.cjs dev|start|build|package nova|orbit [--no-webview] [electron-builder 的平台/架构参数]');
+// --no-webview 只出桌面安装包，跳过界面那份 standalone。两样东西本来就互不相干
+// （见下面 package 分支的注释：安装包里没有 Next 服务），而界面的构建会重写
+// <端>/webview/.next —— 本机常驻着 next dev 的话那个开发服务器会当场开始报
+// ChunkLoadError。<端>/package.sh 走的就是这条；工作区的 package.sh 仍然两样都出。
+const shellOnly = rest.includes('--no-webview');
+const targets = rest.filter((arg) => arg !== '--no-webview');
 // package 之后多余的参数原样转给 electron-builder，用来一次出多个平台 / 架构：
 //
 //   package nova --mac --arm64 --x64     一次出 Intel 与 Apple 芯片两份
@@ -12,7 +18,7 @@ if (!products[product] || !['dev', 'start', 'build', 'package'].includes(action)
 // **一个平台的几个架构必须在同一次调用里出**：electron-builder 每跑一次就重写一遍
 // 那个平台的 latest-*.yml，分两次跑的话后一次会把前一次的架构从清单里挤掉，
 // 于是另一半用户永远收不到更新（清单里没有他那一片，客户端只会说「已经是最新」）。
-if (action !== 'package' && targets.length) throw new Error(`${action} 不接受额外参数：${targets.join(' ')}`);
+if (action !== 'package' && rest.length) throw new Error(`${action} 不接受额外参数：${rest.join(' ')}`);
 const root = path.resolve(__dirname, '..');
 const webview = path.join(root, product, 'webview');
 const electron = path.join(root, product, 'electron');
@@ -80,7 +86,7 @@ async function main() {
   //
   // 安装包里不再带那份 standalone —— 界面在远端，壳只负责加载它。
   // 前一样交给 build-webview.cjs：界面自己的 <端>/webview/build.sh 走的也是它。
-  require('./build-webview.cjs').buildWebview(product);
+  if (!shellOnly) require('./build-webview.cjs').buildWebview(product);
 
   // APP_ORIGIN 是「这个安装包默认连哪个控制台」—— 发测试环境的包时给它。
   // 启动时同名的 GALAXY_<端>_APP_ORIGIN / GALAXY_APP_ORIGIN 仍然可以覆盖。
