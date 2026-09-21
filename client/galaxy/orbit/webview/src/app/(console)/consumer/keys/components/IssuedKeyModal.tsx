@@ -6,7 +6,7 @@
  * 明文已经存进这台设备的保险箱（桌面端 SQLite / 浏览器 localStorage），关掉这个框之后
  * 在密钥页还能查看、复制、一键接到本机客户端，所以这里不再是「只显示这一次」的警告框。
  * 但它仍然是一个要手动关的模态框：签发完第一件事就是拿密钥去填客户端，
- * 让它自己消失等于让人再去找一遍。
+ * 让它自己消失等于让人再去找一遍 —— 末尾那句话就是把人指到「怎么用这把密钥」那张卡上。
  *
  * 存不下的时候（没登录、浏览器禁了站点数据、桌面端的库打不开）就得说实话：那一刻起
  * 这串明文只在这个框里，关掉就要靠换发。两种情况的文案必须不一样。
@@ -70,6 +70,12 @@ export function IssuedKeyModal({
           <span>{t("keys.expiresAt", { value: issued?.expiresAt ? formatDay(issued.expiresAt) : "—" })}</span>
           <span className="gx-mono">{issued?.keyId}</span>
         </div>
+        {/* 签发完最先冒出来的问题是「这串东西往哪儿放」。答案整个摆在密钥页那张
+            「怎么用这把密钥」上，这里只把人指过去 —— 三条路抄进这个框，
+            框就会长到要滚动，而它现在唯一的任务是让人先把明文收好。 */}
+        <p style={{ margin: 0, paddingTop: 12, borderTop: "1px solid var(--gx-line)", fontSize: 12.5, lineHeight: 1.7, color: "var(--gx-soft)" }}>
+          {t("issued.next")}
+        </p>
       </div>
     </Modal>
   );

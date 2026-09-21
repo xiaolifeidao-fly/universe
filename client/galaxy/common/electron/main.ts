@@ -6,6 +6,7 @@ import { registerRpc } from './rpc';
 import path from 'node:path';
 import { products } from '../index';
 import { resolveOrigin } from './origin';
+import { ShellImpl } from './shell.impl';
 import { UpdateRuntime } from './update/runtime';
 import { UpdateImpl } from './update/impl';
 
@@ -53,8 +54,9 @@ async function probe(base: string, product: Product, title: string): Promise<{ o
 
 export function start(product: Product, { preload, implementations, onReady, onShutdown }: { preload: string; implementations: readonly ElectronApi[]; onReady?: () => Promise<void>; onShutdown?: () => Promise<void> }): void {
   const config = products[product];
-  // 自动更新归壳自己管，不归端：两个端是同一个壳，各端的 impl/register.ts 里
-  // 不需要出现它（契约由 registerApi 给两端都注册了，实现在下面统一补上）。
+  // 自动更新和「用系统浏览器打开一个地址」都归壳自己管，不归端：两个端是同一个壳，
+  // 各端的 impl/register.ts 里不需要出现它们（契约由 registerApi 给两端都注册了，
+  // 实现在下面统一补上）。
   const updates = new UpdateRuntime(product);
   app.setName(config.name);
   app.setPath('userData', path.join(app.getPath('appData'), `Galaxy-${config.name}`));
@@ -132,7 +134,7 @@ export function start(product: Product, { preload, implementations, onReady, onS
     window.webContents.on('will-redirect', sameOrigin);
     window.webContents.on('will-attach-webview', (event) => event.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    const dispose = registerRpc(ipcMain, registerApi(product), [...implementations, new UpdateImpl(updates)], event =>
+    const dispose = registerRpc(ipcMain, registerApi(product), [...implementations, new ShellImpl(), new UpdateImpl(updates)], event =>
       event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame &&
       new URL(event.senderFrame.url).origin === origin,
     );

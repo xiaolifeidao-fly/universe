@@ -52,6 +52,7 @@ import {
 } from "../../api/clientconfig.api";
 import { forgetKeySecret, listLocalKeyIds, readKeySecret, rememberKeySecret } from "../../api/keyvault.api";
 import { IssuedKeyModal } from "./IssuedKeyModal";
+import { UsageGuide } from "./UsageGuide";
 import { apiBase, buildSnippet, defaultSnippetTab, hostRoot, pinnedModel, SECRET_PLACEHOLDER, type SnippetTab } from "./snippets";
 
 const KEY_FREEZE_DAYS = 30;
@@ -208,7 +209,16 @@ export function ConsumerKeys() {
         tool, baseUrl: target, secret, keyId: key.keyId,
         model: pinnedModel(key.modelTier, key.modelId),
       });
-      if (result.applied) message.success(t("keys.use.applied", { tool: TOOL_LABELS[tool] }));
+      // 配置写好了，但 Claude Code / Codex 都是**启动时读一次**配置：正在跑的那个会话
+      // 里什么都不会变。用弹框而不是 message —— 这一句是「才算接上」的最后一步，
+      // 而角落里飘过去的那条提示，恰恰是人转头就去终端里敲命令时看不到的那一条。
+      if (result.applied) {
+        modal.success({
+          title: t("keys.use.applied", { tool: TOOL_LABELS[tool] }),
+          content: t("keys.use.restart"),
+          okText: t("issued.done"),
+        });
+      }
       await refreshClientStatus();
     } catch (error) {
       message.error((error as Error).message || t("common.actionFailed"));
@@ -438,6 +448,10 @@ export function ConsumerKeys() {
             ))}
           </div>
         )}
+
+        {/* 「怎么用」放在列表和详情之间：它回答的是刚签完那一刻最先冒出来的问题，
+            而下面那张「接入方式」给的是三条路里最后一条要填的东西。 */}
+        {tab === "valid" && valid.length > 0 ? <UsageGuide desktop={desktop} hasDownload={hasDownload(downloads)} /> : null}
 
         {current ? (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
