@@ -266,6 +266,12 @@ type HelloResult struct {
 type HeartbeatRequest struct {
 	NodeID string      `json:"-"`
 	Lanes  []LaneInput `json:"lanes"`
+	// Tools 这台机器上那几个外部工具（claude、codex）的版本，以及正在装的那一个走到哪了。
+	//
+	// 搭在心跳上而不是单开一条路：它和通道、额度一样都是「这台机器现在什么样」。
+	// 老版本节点不报，字段缺失 —— 那和「报了个空数组」不一样，后者表示这台机器
+	// 一个工具都没有。所以存的时候要分清，缺失一律不动库里已有的那份。
+	Tools []NodeToolReport `json:"tools"`
 }
 
 type LaneInput struct {
@@ -363,6 +369,8 @@ type HeartbeatResult struct {
 	// 没有指令时整个字段省略，**不能发 null**：节点侧的 serde 遇上显式 null 会让
 	// 整个响应解析失败，那次心跳里的取消、排空、生效配置会一起丢掉。
 	Upgrade *NodeUpgradeCommand `json:"upgrade,omitempty"`
+	// Tool 待执行的「装 / 升本机工具」指令。省略规则同 Upgrade。
+	Tool *NodeToolCommand `json:"tool,omitempty"`
 }
 
 // ---------- 节点：领活与回传 ----------
@@ -760,6 +768,11 @@ type NodeView struct {
 	UpgradeAvailable bool `json:"upgradeAvailable"`
 	// Upgrade 最近一次升级。从没升级过就没有这个字段。
 	Upgrade *NodeUpgradeView `json:"upgrade,omitempty"`
+	// Tools 这台机器上的 claude / codex：装没装、什么版本、要不要升、正在装的走到哪了。
+	//
+	// 全是节点自报的事实，平台不验证也不拿它做任何判定 —— 和 upstream usage 同一个性质。
+	// 老版本节点报不上来，这里是空数组（**不是 null**：前端拿 null 当数组用会整页白屏）。
+	Tools []NodeToolView `json:"tools"`
 }
 
 // ExecutionRecord 是「我的机器上跑过什么」的匿名化日志（P-14）：

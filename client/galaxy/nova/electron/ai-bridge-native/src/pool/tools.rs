@@ -185,24 +185,36 @@ async fn current_version(command: &str) -> String {
 /// 桌面模式下 ai-bridge 随 Nova 一起分发，版本由调用方（Node 侧读自己的
 /// package.json）传进来，没有独立的升级通道。
 pub async fn tool_statuses(bridge_version: &str) -> Vec<ToolStatus> {
+    let mut all = vec![ToolStatus {
+        name: "ai-bridge".into(),
+        current: bridge_version.to_string(),
+        latest: bridge_version.to_string(),
+        upgradable: false,
+        installed: true,
+        job: None,
+    }];
+    all.extend(external_tool_statuses().await);
+    all
+}
+
+/// 要主人自己升的那两个外部工具。心跳报给 Hub 的就是这一份 ——
+/// ai-bridge 不在里面：它的版本早就在 bridgeVersion 里，而且远程升级走的是另一条路。
+///
+/// **会走网络**（问 npm 要最新版，30 分钟缓存一次），所以别直接摆进心跳循环里，
+/// 那一路卡住多久，心跳就迟到多久。心跳读的是后台探针存下的快照。
+pub async fn external_tool_statuses() -> Vec<ToolStatus> {
     let (claude, claude_latest, codex, codex_latest) = tokio::join!(
         current_version("claude"),
         npm_latest("@anthropic-ai/claude-code"),
         current_version("codex"),
         npm_latest("@openai/codex"),
     );
-    vec![
-        ToolStatus {
-            name: "ai-bridge".into(),
-            current: bridge_version.to_string(),
-            latest: bridge_version.to_string(),
-            upgradable: false,
-            installed: true,
-            job: None,
-        },
-        status("claude", claude, claude_latest),
-        status("codex", codex, codex_latest),
-    ]
+    vec![status("claude", claude, claude_latest), status("codex", codex, codex_latest)]
+}
+
+/// 有没有哪个工具正在装。心跳据此把节奏提快 —— 远端那台的进度条也该看着动。
+pub fn any_job_running() -> bool {
+    jobs().lock().unwrap().values().any(|record| record.finished.is_none())
 }
 
 fn status(name: &str, current: String, latest: String) -> ToolStatus {
@@ -253,6 +265,12 @@ pub struct ToolJob {
     pub elapsed_ms: u64,
     /// 真正跑的那条命令。失败时界面把它摆出来，好让人自己去终端跑一遍看个究竟。
     pub command: String,
+    /// 这一次是 Hub 让装的话，是那条指令的 id；本机自己点的没有。
+    ///
+    /// 心跳把它原样报回去，Hub 才分得清「机器已经领走了我发的那条」和
+    /// 「机器上本来就有人在装」—— 分不清就会一直重发同一条指令。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
 }
 
 struct JobRecord {
@@ -323,9 +341,52 @@ const JOB_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// 看日志的节奏。界面一秒一轮，比它快没意义。
 const JOB_POLL: Duration = Duration::from_millis(500);
 
-/// 拉起一次安装或升级。**立刻返回**那条进度记录 —— npm 全局安装动辄几十秒，
-/// 干等只会超时；真正跑到哪了由 getTools 里的 job 一路报上去。
+/// 本机自己点的那一次。远端下发的走 run_tool_job。
 pub async fn upgrade_tool(name: &str) -> Result<ToolJob, String> {
+    run_tool_job(name, None).await
+}
+
+/// 拉起一次安装或升级。**立刻返回**那条进度记录 —— npm 全局安装动辄几十秒，
+/// 干等只会超时；真正跑到哪了由 getTools（本机）或心跳里的 tools（远端）一路报上去。
+///
+/// command_id 是 Hub 下发的指令 id，本机自己点的传 None。
+pub async fn run_tool_job(name: &str, command_id: Option<&str>) -> Result<ToolJob, String> {
+    match start_tool_job(name, command_id).await {
+        Ok(job) => Ok(job),
+        Err(message) => {
+            // 远端下发的那一条：连命令都没起来（npm 不在 PATH 上、工具名不认识）时也要
+            // 留一条失败记录 —— 它是这台机器唯一的发声渠道，心跳把它报回去，控制台才
+            // 说得出原因。不留的话，主人看到的是一个「等机器领取」挂满十分钟然后消失。
+            //
+            // 本机自己点的不用留：那条调用当场就把错误返给界面了。
+            if let Some(id) = command_id {
+                record_failed_job(name, id, &message);
+            }
+            Err(message)
+        }
+    }
+}
+
+fn record_failed_job(name: &str, command_id: &str, message: &str) {
+    let job = ToolJob {
+        name: name.to_string(),
+        action: ACTION_INSTALL,
+        state: STATE_FAILED,
+        phase: PHASE_FAILED,
+        percent: 0,
+        detail: clip(message),
+        elapsed_ms: 0,
+        command: String::new(),
+        command_id: Some(command_id.to_string()),
+    };
+    let now = Instant::now();
+    jobs()
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), JobRecord { job, started: now, finished: Some(now) });
+}
+
+async fn start_tool_job(name: &str, command_id: Option<&str>) -> Result<ToolJob, String> {
     if name == "ai-bridge" {
         return Err("ai-bridge 随 Nova 更新，请更新 Nova 应用".into());
     }
@@ -350,6 +411,7 @@ pub async fn upgrade_tool(name: &str) -> Result<ToolJob, String> {
         detail: String::new(),
         elapsed_ms: 0,
         command: command.clone(),
+        command_id: command_id.map(str::to_string),
     };
     let started = Instant::now();
     jobs()
@@ -372,8 +434,10 @@ fn log_path(name: &str) -> PathBuf {
 /// 装到一半的全局包比没装上麻烦得多。写文件的话 Nova 关掉它照样装完，
 /// 只是没人盯着进度了（下次打开看版本号就知道结果）。
 fn spawn_logged(program: &str, args: &[&str], log: &Path) -> Result<std::process::Child, String> {
+    // 这句话服务器上的人也要看得懂：systemd 起的服务拿到的 PATH 很窄，nvm 装的 node
+    // 根本不在里面 —— 那是这条路上最常见的失败，而它和「这台机器没装 Node」要分得开。
     let resolved = resolve_program(program)
-        .ok_or_else(|| format!("{program} 不在 PATH 上：本机没装，Nova 自带的也没铺好"))?;
+        .ok_or_else(|| format!("{program} 不在 PATH 上：这台机器上没有，或者跑 ai-bridge 的那个用户看不到它"))?;
     let file = std::fs::File::create(log).map_err(|e| format!("{} 写不了：{e}", log.display()))?;
     let errors = file.try_clone().map_err(|e| format!("{} 写不了：{e}", log.display()))?;
     let mut command = std::process::Command::new(&resolved);

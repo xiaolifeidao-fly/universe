@@ -305,6 +305,56 @@ export class NodeView {
    * NodeUpgrade 上的默认值在这里不生效 —— 读的时候按可能缺字段处理。
    */
   upgrade?: NodeUpgrade;
+
+  /**
+   * 这台机器上的 claude / codex：装没装、什么版本、正在装的那一个走到哪了。
+   *
+   * 全是机器自报的，平台不验证也不拿它做判定。ai-bridge 老版本报不上来，是空数组 ——
+   * 那时这一格什么都不画（不是「一个都没装」）。
+   */
+  tools: NodeTool[] = [];
+}
+
+/** 机器上的一个本机工具。形状与本机那份（ToolStatus）一致，好让两处共用同一个组件。 */
+export class NodeTool {
+  name = "";
+
+  /** 机器上在跑的版本，空串是没装。 */
+  current = "";
+
+  /** 上游最新版，空串是机器这会儿问不到（网络不通等）—— 这时不催人升级。 */
+  latest = "";
+
+  upgradable = false;
+
+  installed = false;
+
+  /** 正在装 / 刚装完的那一次。同 upgrade：嵌套对象不经过 class-transformer。 */
+  job?: NodeToolJob;
+}
+
+export class NodeToolJob {
+  /** 这一次是哪条指令拉起来的。机器上自己点的那次没有。 */
+  commandId = "";
+
+  action: "install" | "upgrade" = "upgrade";
+
+  /** pending 是「指令发了、机器还没领」，只有远端那条路才有。 */
+  state: "pending" | "running" | "succeeded" | "failed" = "running";
+
+  /** pending | starting | resolving | downloading | installing | done | failed。 */
+  phase = "";
+
+  /** 0-100。npm 不报百分比，这是机器按真实事件推的估算。 */
+  percent = 0;
+
+  /** 最后一行有信息量的输出；失败时是原因。 */
+  detail = "";
+
+  elapsedMs = 0;
+
+  /** 机器上真正跑的那条命令。 */
+  command = "";
 }
 
 export type NodeUpgradeStatus = "pending" | "downloading" | "installing" | "restarting" | "succeeded" | "failed";
@@ -740,6 +790,17 @@ export async function revokeNode(nodeId: string) {
  * 远程升级一台 cli 机器。只是下发指令：机器下一次心跳领走，之后的进度看 NodeView.upgrade。
  * 条件不满足时服务端回人话（不在线、随 Nova 分发、版本太旧、有障碍、没有包、已是最新、正在升级），原样弹出。
  */
+/**
+ * 让远端那台机器装 / 升一个本机工具（claude、codex）。
+ *
+ * 和 requestNodeUpgrade 一样只是下发指令：机器最多等一个心跳（15 秒）领走，
+ * 之后的进度看 NodeView.tools 里那条 job。装东西期间机器会把心跳提到 5 秒一跳。
+ */
+export async function installNodeTool(nodeId: string, tool: string) {
+  const response = await instance.post<ApiResponse<NodeTool>>("/galaxy/provider/node/tool", { nodeId, tool });
+  return unwrapApiResponse(response.data);
+}
+
 export async function requestNodeUpgrade(nodeId: string) {
   const response = await instance.post<ApiResponse<NodeUpgrade>>("/galaxy/provider/node/upgrade", { nodeId });
   return unwrapApiResponse(response.data);

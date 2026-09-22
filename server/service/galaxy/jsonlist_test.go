@@ -49,9 +49,15 @@ func TestListFieldsNeverSerializeToNull(t *testing.T) {
 		value any
 	}{
 		{"没有额度、没有时段、不限模型的贡献（生产路径）", bare},
-		{"没有贡献的机器", dto.NodeView{Contributions: make([]dto.ContributionView, 0)}},
+		{"没有贡献的机器", dto.NodeView{
+			Contributions: make([]dto.ContributionView, 0),
+			Tools:         make([]dto.NodeToolView, 0),
+		}},
 		{"没有贡献的机器（运营视图）", dto.AdminNodeView{
-			NodeView: dto.NodeView{Contributions: make([]dto.ContributionView, 0)},
+			NodeView: dto.NodeView{
+				Contributions: make([]dto.ContributionView, 0),
+				Tools:         make([]dto.NodeToolView, 0),
+			},
 		}},
 	}
 	for _, item := range cases {

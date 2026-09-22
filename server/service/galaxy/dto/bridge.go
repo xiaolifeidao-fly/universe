@@ -261,3 +261,72 @@ type ProviderInviteePage struct {
 	Total int64                 `json:"total"`
 	Items []ProviderInviteeView `json:"items"`
 }
+
+// ---------- 机器上的本机工具（claude / codex） ----------
+//
+// 和上面那套远程升级是两件事：那个升的是 ai-bridge 自己，这个装的是它调用的那两个
+// 命令行。共用的只有「指令搭心跳下发」这条路 —— 控制台点一下，机器最多等一个心跳
+// 就收到，之后的进度顺着心跳报回来。
+//
+// Hub 只说**装哪一个工具**，不说怎么装：命令在节点自己那张固定表里
+// （pool::tools::upgrade_command）。让 Hub 送一条命令过去执行，等于把
+// 「在我的机器上跑什么」这条边界交出去。
+
+// 工具任务的状态。pending 是 Hub 这边的：指令发出去了、机器还没开工。
+// 其余三个都是节点报的。
+const (
+	ToolJobPending   = "pending"
+	ToolJobRunning   = "running"
+	ToolJobSucceeded = "succeeded"
+	ToolJobFailed    = "failed"
+)
+
+// NodeToolCommand 搭在心跳响应上下发的「装 / 升这个工具」。
+type NodeToolCommand struct {
+	ID   string `json:"id"`
+	Tool string `json:"tool"`
+}
+
+// NodeToolReport 节点在心跳里自报的一个工具。字段与节点侧 ToolStatus 一一对应。
+type NodeToolReport struct {
+	Name string `json:"name"`
+	// Current 本机在跑的版本，空串表示没装。
+	Current string `json:"current"`
+	// Latest 上游最新版，空串表示节点这会儿问不到（网络不通等），此时不该催人升级。
+	Latest     string       `json:"latest"`
+	Upgradable bool         `json:"upgradable"`
+	Installed  bool         `json:"installed"`
+	Job        *NodeToolJob `json:"job,omitempty"`
+}
+
+// NodeToolJob 正在装 / 刚装完的那一次。
+type NodeToolJob struct {
+	// CommandID 这一次是被哪条指令拉起来的。节点自己在机器上点的那次没有这个值 ——
+	// Hub 靠它认出「机器已经领走了我发的那条」，认不出就会一直重发。
+	CommandID string `json:"commandId"`
+	// Action install / upgrade；State running / succeeded / failed。
+	Action string `json:"action"`
+	State  string `json:"state"`
+	// Phase starting / resolving / downloading / installing / done / failed。
+	Phase string `json:"phase"`
+	// Percent 0-100。npm 不报百分比，这是节点按真实事件推的估算，只进不退。
+	Percent int `json:"percent"`
+	// Detail 最后一行有信息量的输出；失败时是 npm 说的原因。
+	Detail    string `json:"detail"`
+	ElapsedMs int64  `json:"elapsedMs"`
+	// Command 节点真正跑的那条命令，失败时摆给主人看，他可以自己去机器上跑一遍。
+	Command string `json:"command"`
+}
+
+// NodeToolView 控制台上机器详情里的一行工具。
+//
+// 比 NodeToolReport 多一个 Job.State=pending：指令已经发出去、机器还没来领的那段时间，
+// 界面上必须有东西在动 —— 否则点完按钮到下一个心跳之间，看起来就像没点上。
+type NodeToolView struct {
+	Name       string       `json:"name"`
+	Current    string       `json:"current"`
+	Latest     string       `json:"latest"`
+	Upgradable bool         `json:"upgradable"`
+	Installed  bool         `json:"installed"`
+	Job        *NodeToolJob `json:"job,omitempty"`
+}

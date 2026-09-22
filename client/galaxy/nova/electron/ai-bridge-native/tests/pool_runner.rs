@@ -26,6 +26,10 @@ struct HubState {
     stream_headers: Mutex<Option<(String, String)>>,
     completed: Mutex<Vec<Value>>,
     enabled: Mutex<Value>,
+    /// 收到的心跳请求体，按先后存着。
+    heartbeats: Mutex<Vec<Value>>,
+    /// 要搭在心跳响应上下发的工具指令。
+    tool_command: Mutex<Option<Value>>,
 }
 
 async fn start_hub(state: Arc<HubState>) -> String {
@@ -35,8 +39,15 @@ async fn start_hub(state: Arc<HubState>) -> String {
             let enabled = state.enabled.lock().unwrap().clone();
             axum::Json(json!({ "accepted": [], "rejected": [], "quotaEffective": {}, "enabled": enabled }))
         }))
-        .route("/agent/v1/heartbeat", post(|| async {
-            axum::Json(json!({ "cancel": [], "drain": [], "quotaUpdate": {}, "serverTime": 0 }))
+        .route("/agent/v1/heartbeat", post(|State(state): State<Arc<HubState>>, body: String| async move {
+            if let Ok(value) = serde_json::from_str::<Value>(&body) {
+                state.heartbeats.lock().unwrap().push(value);
+            }
+            let mut response = json!({ "cancel": [], "drain": [], "quotaUpdate": {}, "serverTime": 0 });
+            if let Some(command) = state.tool_command.lock().unwrap().clone() {
+                response["tool"] = command;
+            }
+            axum::Json(response)
         }))
         .route("/agent/v1/next", post(|State(state): State<Arc<HubState>>, _body: String| async move {
             state.next_calls.fetch_add(1, Ordering::SeqCst);
@@ -264,4 +275,24 @@ async fn stopping_the_runner_ends_the_long_poll() {
     let after_stop = h.hub.next_calls.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(h.hub.next_calls.load(Ordering::SeqCst), after_stop, "停了之后不该再领活");
+}
+
+/// 心跳要带上本机那两个工具（控制台上远端机器那一行就是它喂的），而且一条
+/// **认不出来的**工具指令只能被当场拒掉：命令表在节点自己手里，Hub 说什么都不算。
+///
+/// 故意用一个不存在的工具名 —— 真名字会让这条测试在构建机上真去装一遍 npm 包。
+#[tokio::test]
+async fn heartbeats_carry_local_tools_and_refuse_an_unknown_tool_command() {
+    let h = harness(200, enabled_lane(1, vec![]), None).await;
+    *h.hub.tool_command.lock().unwrap() = Some(json!({ "id": "tl_1", "tool": "definitely-not-a-tool" }));
+    h.runner.start().await.expect("hello");
+
+    wait_for("第一次心跳", || !h.hub.heartbeats.lock().unwrap().is_empty()).await;
+    let beat = h.hub.heartbeats.lock().unwrap()[0].clone();
+    let tools = beat.get("tools").expect("心跳要有 tools 这一栏");
+    assert!(tools.is_array(), "没探到也要发空数组，不能是 null：Hub 那边 null 和「没报」是两回事");
+
+    // 拒掉之后一切照常：心跳继续、通道还在。指令跑不起来不该让这台机器停摆。
+    wait_for("心跳照常继续", || h.hub.heartbeats.lock().unwrap().len() >= 2).await;
+    assert_eq!(h.runner.lane_ids(), vec!["claude".to_string()]);
 }

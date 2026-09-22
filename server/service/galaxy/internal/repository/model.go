@@ -62,6 +62,19 @@ type GalaxyNode struct {
 	UpgradeRequestedAt *time.Time `gorm:"column:upgrade_requested_at;type:timestamp null default null" description:"控制台点「升级」的时刻"`
 	UpgradeUpdatedAt   *time.Time `gorm:"column:upgrade_updated_at;type:timestamp null default null" description:"升级状态最近一次变化的时刻"`
 
+	// 机器上那两个**外部工具**（claude / codex）：装没装、什么版本、正在装的走到哪了。
+	// 和上面那组升级列讲的不是一回事 —— 那组升的是 ai-bridge 自己。
+	//
+	// ToolsJSON 是节点每次心跳自报的一份 dto.NodeToolReport 数组。只在**内容真的变了**
+	// 的时候才写（同 upstream_usage_json 的规矩）：不比就写是每台机器每天四千多次空 UPDATE。
+	// 老版本节点不报，一直是空串 —— 界面上那一格什么都不画，不是「一个工具都没装」。
+	ToolsJSON string `gorm:"column:tools_json;type:text" description:"节点自报的本机工具（claude/codex）版本与安装进度，JSON"`
+	// 待下发的「装 / 升某个工具」指令。同一台机器同时只排一条：npm 全局安装本来就
+	// 不该两个一起跑，而且挂在节点这一行上，心跳不用多查一次。
+	ToolCommandID   string     `gorm:"column:tool_command_id;type:varchar(40)" description:"工具指令 id，节点在心跳里原样报回，对不上的一律忽略"`
+	ToolCommandName string     `gorm:"column:tool_command_name;type:varchar(32)" description:"要装 / 升的工具名：claude 或 codex"`
+	ToolCommandAt   *time.Time `gorm:"column:tool_command_at;type:timestamp null default null" description:"控制台点下那一刻；超过时限还没人领就作废"`
+
 	// AccessMode 这台机器和 Hub 之间是怎么通信的：
 	//   poll   节点长轮询领活，Hub 永不主动连它（可视化客户端唯一支持的方式）
 	//   export 节点把自己暴露在公网上，Hub 拿 endpoint + secret 主动回连

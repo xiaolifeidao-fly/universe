@@ -1,6 +1,6 @@
 use super::client::{
     AccessDeclaration, CapabilityReport, CompleteBody, EnabledContribution, HeartbeatLane, HubClient,
-    HubFailure, HubLane, InstallInfo, NextResult,
+    HubFailure, HubLane, InstallInfo, NextResult, ToolCommand,
 };
 use super::export::{normalize_public_url, resolve_secret, ExportServer};
 use super::hub_address::HubAddressCheck;
@@ -9,6 +9,7 @@ use super::machine::machine_fingerprint;
 use super::models::list_models;
 use super::probe::probe;
 use super::token::{fingerprint, read_node_identity, resolve_node_token_file, NodeIdentity};
+use super::tools::{any_job_running, external_tool_statuses, run_tool_job, tool_job, ToolStatus};
 use super::upgrade::{compare_versions, current_platform, UpgradeCommand, UpgradeState, Updater, Version};
 use crate::business::llm_chat::RelayProvider;
 use crate::business::video_edit::FfmpegLocalProvider;
@@ -60,6 +61,21 @@ const HEALTH_PROBE_MS: u64 = 60_000;
 ///
 /// 比心跳（15 秒）慢得多是故意的：这件事要起子进程，而那个数在五分钟里变不出花来。
 const USAGE_PROBE_INTERVAL_MS: u64 = 5 * 60_000;
+
+/// 问本机工具（claude / codex）版本的间隔。
+///
+/// 同样比心跳慢：问版本要起一次 node，查最新版还要走网络。一分钟一次够了 ——
+/// 这两个数只在有人装了什么之后才变，而装完那一下会自己把缓存清掉。
+const TOOLS_PROBE_INTERVAL_MS: u64 = 60_000;
+
+/// 头一次探工具之前先等多久。同上：起子进程要避开启动那一阵。
+const TOOLS_PROBE_DELAY_MS: u64 = 15_000;
+
+/// 有工具正在装时的心跳间隔上限。
+///
+/// 远端那台的进度条也是从心跳里来的：15 秒一跳的话，界面上那个数一分钟只动四次，
+/// 看着像卡住了。只在装东西的那几十秒里提速，平时照旧。
+const TOOL_JOB_BEAT_MS: u64 = 5_000;
 
 /// 没有 updater 时（随 Nova 分发）对升级指令的回答。契约 3.4 第 2 条的原话，控制台原样显示。
 const NO_UPDATER_MESSAGE: &str = "这台机器的 ai-bridge 随 Nova 应用分发，不能远程升级，请更新 Nova";
@@ -143,6 +159,11 @@ pub(crate) struct RunnerInner {
     distribution: String,
     updater: Option<Arc<dyn Updater>>,
     upgrade_gate: Mutex<UpgradeGate>,
+    /// 本机那两个外部工具最近一次探到的版本。心跳读它，后台探针写它 ——
+    /// 探一次要起子进程、还要问 npm 要最新版，摆进心跳循环里就是让心跳陪着等。
+    tool_snapshot: Mutex<Vec<ToolStatus>>,
+    /// 接手过的工具指令 id。Hub 在看到机器开工之前每次心跳都重发同一条。
+    tool_seen: Mutex<HashSet<String>>,
     /// 新版本已经装好，正在为重启排空：不领新活、心跳把通道报成 paused、export 入口回 503。
     ///
     /// 和 stopping 分开：排空期间心跳、续租、终态上报都要照常走，在跑的单元得好好跑完 ——
@@ -249,6 +270,8 @@ pub async fn create_pool_runner_with(
             distribution: options.distribution,
             updater: options.updater,
             upgrade_gate: Mutex::new(UpgradeGate::default()),
+            tool_snapshot: Mutex::new(Vec::new()),
+            tool_seen: Mutex::new(HashSet::new()),
             restart_draining: AtomicBool::new(false),
             restart: tokio::sync::watch::Sender::new(false),
         }),
@@ -365,6 +388,7 @@ impl PoolRunner {
         }
         tasks.push(tokio::spawn(Arc::clone(&inner).health_loop()));
         tasks.push(tokio::spawn(Arc::clone(&inner).usage_probe_loop()));
+        tasks.push(tokio::spawn(Arc::clone(&inner).tools_probe_loop()));
         let lanes: Vec<String> = inner.lanes.read().unwrap().keys().cloned().collect();
         log_info!("pool_started", "nodeId": inner.identity.node_id, "lanes": lanes,
             "accessMode": inner.access.mode);
@@ -811,7 +835,8 @@ impl RunnerInner {
                     usage: self.upstream_usage.get(&lane.route_key()),
                 })
                 .collect();
-            match self.client.heartbeat(&payload, &self.loop_cancel).await {
+            let tools = self.tools_report();
+            match self.client.heartbeat(&payload, &tools, &self.loop_cancel).await {
                 Ok(result) => {
                     self.hub_address.lock().unwrap().check_and_log(result.hub_url.as_deref());
                     // 取消搭在心跳的响应里：延迟不超过一个上报周期（T-05）。
@@ -826,11 +851,80 @@ impl RunnerInner {
                     if let Some(command) = result.upgrade {
                         self.accept_upgrade(command);
                     }
+                    if let Some(command) = result.tool {
+                        self.accept_tool_command(command);
+                    }
                 }
                 Err(failure) => log_warn!("pool_heartbeat_failed", "message": failure.message()),
             }
-            self.wait(self.settings.heartbeat_sec as u64 * 1000).await;
+            let beat_ms = self.settings.heartbeat_sec as u64 * 1000;
+            // 正在装东西就跳快一点：控制台上那个进度条是这条心跳喂的。
+            self.wait(if any_job_running() { beat_ms.min(TOOL_JOB_BEAT_MS) } else { beat_ms }).await;
         }
+    }
+
+    // ---------- 本机工具 ----------
+
+    /// 定时问本机的 claude / codex 是什么版本、上游最新是什么版本。
+    ///
+    /// 和上游余量那条探针一个道理：要起子进程、要走网络，不能摆在心跳的路上 ——
+    /// 那条路卡住多久，Hub 就多久看不到这台机器的心跳，45 秒之后它就掉出候选了。
+    async fn tools_probe_loop(self: Arc<Self>) {
+        // 启动先等一会儿：刚起来那几秒 hello 和通道都还在建，这时候去起两个子进程
+        // 只是和它们抢。晚十几秒报上去没人会察觉 —— 这两个版本号本来就不常变。
+        self.wait(TOOLS_PROBE_DELAY_MS).await;
+        while !self.stopping.load(Ordering::Relaxed) {
+            let statuses = external_tool_statuses().await;
+            *self.tool_snapshot.lock().unwrap() = statuses;
+            // 装完之后那一版号要尽快报上去，所以装东西期间也跟着提速。
+            self.wait(if any_job_running() { TOOL_JOB_BEAT_MS } else { TOOLS_PROBE_INTERVAL_MS }).await;
+        }
+    }
+
+    /// 心跳里那一份工具状态：版本取探针存下的快照，进度取此刻的实况。
+    ///
+    /// 两个来源分开是必须的 —— 版本一分钟才探一次，而进度每一跳都在变。
+    fn tools_report(&self) -> Vec<ToolStatus> {
+        let mut tools = self.tool_snapshot.lock().unwrap().clone();
+        for tool in &mut tools {
+            tool.job = tool_job(&tool.name);
+        }
+        tools
+    }
+
+    /// 接一条「装 / 升本机工具」的指令：按 id 去重，真正的活放到后台。
+    ///
+    /// 不判断该不该装（该不该由主人在控制台点那一下决定），只判断**认不认得**这个
+    /// 工具名 —— 认不认得那张表在节点自己手里（原则 8：在我的机器上跑什么，不信 Hub）。
+    fn accept_tool_command(self: &Arc<Self>, command: ToolCommand) {
+        if command.id.is_empty() {
+            log_warn!("pool_tool_command_without_id", "tool": command.tool,
+                "hint": "工具指令没有 id，没法让 Hub 认出这一次，不执行");
+            return;
+        }
+        if !self.tool_seen.lock().unwrap().insert(command.id.clone()) {
+            return;
+        }
+        let inner = Arc::clone(self);
+        tokio::spawn(async move {
+            match run_tool_job(&command.tool, Some(&command.id)).await {
+                Ok(job) => log_info!("pool_tool_job_started", "id": command.id,
+                    "tool": command.tool, "action": job.action),
+                // 失败也只是记一笔：进度和原因都在下一跳心跳的 tools 里，控制台照样看得见。
+                // 这里连不上任何上报通道 —— 连指令都没跑起来，也就没有 job 可报。
+                Err(message) => {
+                    inner.report_tool_command_failure(&command, &message);
+                }
+            }
+        });
+    }
+
+    /// 指令根本没跑起来（工具名不认识、npm 不在 PATH 上）。
+    ///
+    /// 没有 job 能挂进度，所以在日志里说清楚；控制台那边由 Hub 的超时兜底
+    /// —— 机器领了却一条进度都不报，那一次就按「没反应」收掉。
+    fn report_tool_command_failure(&self, command: &ToolCommand, message: &str) {
+        log_warn!("pool_tool_job_failed", "id": command.id, "tool": command.tool, "message": message);
     }
 
     // ---------- 远程升级 ----------

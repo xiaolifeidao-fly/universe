@@ -524,6 +524,9 @@ type Service interface {
 	RequestNodeUpgrade(ctx context.Context, ownerUserID, nodeID string) (dto.NodeUpgradeView, error)
 	// ReportNodeUpgrade 节点回报升级进度。返回 false 表示这条回报对应的不是当前这一次升级。
 	ReportNodeUpgrade(ctx context.Context, req dto.NodeUpgradeReport) (bool, error)
+	// RequestNodeTool 控制台点机器上某个本机工具（claude / codex）的「安装 / 升级」。
+	// 同样是记一条指令等心跳下发；装什么包、怎么装在节点自己手里。
+	RequestNodeTool(ctx context.Context, ownerUserID, nodeID, tool string) (dto.NodeToolView, error)
 
 	// ---------- 提供者：邀请返现 ----------
 	ProviderReferral(ctx context.Context, ownerUserID string) (dto.ProviderReferralOverview, error)

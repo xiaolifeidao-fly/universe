@@ -37,6 +37,7 @@ import {
   fetchRetiredNodes,
   fetchTerms,
   isUpgradeInProgress,
+  installNodeTool,
   nodeDisplayName,
   orderMachines,
   requestNodeUpgrade,
@@ -51,6 +52,7 @@ import { AccessKeyPanel } from "./AccessKeyPanel";
 import { BridgeInstallPanel } from "./BridgeInstallPanel";
 import { MachineList } from "./MachineList";
 import { ThisComputerPanel } from "./ThisComputerPanel";
+import { isToolJobBusy } from "./ToolRow";
 
 /** 和「今天」「共享设置」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
 const REFRESH_MS = 20_000;
@@ -148,7 +150,12 @@ export function AccountPanel() {
     };
   }, [loadKeys, loadNodes, loadReleases, loadRetired, t]);
 
-  const upgrading = nodes.some((node) => isUpgradeInProgress(node.upgrade));
+  // 有机器在升级、或者有机器在装工具时都要刷得勤一点：两件事的进度都是跟着
+  // 心跳回来的，按 20 秒一刷，盯着看的那一台会从「等机器领取」直接跳到结果。
+  const upgrading = nodes.some(
+    (node) =>
+      isUpgradeInProgress(node.upgrade) || (node.tools ?? []).some((tool) => isToolJobBusy(tool.job)),
+  );
 
   // 别的机器上下线、回连通不通、升级走到哪都得看得见。刷新失败不弹：
   // 断网时每 20 秒冒一条报错，比数据旧 20 秒更扰人。
@@ -217,6 +224,35 @@ export function AccountPanel() {
     });
   };
 
+  /**
+   * 让某台机器装 / 升一个本机工具。
+   *
+   * 不弹确认框：装一个命令行工具不像升 ai-bridge 那样要重启进程、断一两分钟的活 ——
+   * 它只是往那台机器上多装一个东西，点错了再点一次就好。
+   */
+  const installTool = async (node: NodeView, tool: string) => {
+    setBusy(true);
+    try {
+      const started = await installNodeTool(node.nodeId, tool);
+      // 先把这一台就地标成「等机器领取」再去刷新：列表回来之前按钮还亮着，
+      // 手快再点一次只会被服务端拒回来。这一改也立刻把轮询切到 5 秒。
+      if (started) {
+        setNodes((current) =>
+          current.map((item) =>
+            item.nodeId === node.nodeId
+              ? { ...item, tools: (item.tools ?? []).map((row) => (row.name === tool ? { ...row, ...started } : row)) }
+              : item,
+          ),
+        );
+      }
+      await loadNodes().catch(() => undefined);
+    } catch (error) {
+      message.error((error as Error).message || t("common.actionFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 签发弹窗里那条带密钥的一行安装命令用的是 sh 脚本：平台一个 Linux 包都没发布时不给，
   // 照着跑只会装到一半报「没有这个平台的包」。手装 ai-bridge 只认 Linux，同「安装 ai-bridge」那一块。
   const unixInstallScript =
@@ -253,6 +289,7 @@ export function AccountPanel() {
                   busy={busy}
                   onUnbind={unbind}
                   onUpgrade={upgrade}
+                  onInstallTool={(node, tool) => void installTool(node, tool)}
                   onAddServer={() => setIssueOpen(true)}
                   onRetryRetired={() => void loadRetired()}
                 />

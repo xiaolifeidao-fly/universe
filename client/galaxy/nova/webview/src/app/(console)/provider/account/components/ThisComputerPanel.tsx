@@ -28,10 +28,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { IconMonitor, IconRefresh } from "@/components/ui/icons";
 import { Btn, Card, CardHead, LiveDot, Note, Pill } from "@/components/ui/kit";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
-import { formatMillis, formatRelative } from "@/utils/format";
+import { formatRelative } from "@/utils/format";
 import { isDesktop } from "@/utils/product";
 import { bridgeApi, fetchTools, syncBridgeHub, upgradeTool, type BridgeRuntimeStatus, type ToolStatus } from "../../api/bridge.api";
 import { fetchProviderEndpoint, nodeDisplayName, type NodeView } from "../../api/provider.api";
+import { ToolRow } from "./ToolRow";
 
 const ellipsis = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
 
@@ -314,71 +315,5 @@ export function ThisComputerPanel({
         ) : null}
       </div>
     </Card>
-  );
-}
-
-/**
- * 「本机工具」里的一格：名字 · 版本 · 这会儿该给它什么。
- *
- * 装着的时候这一格变成进度。阶段（查依赖 / 下载 / 写入本机）是 bridge 从 npm 的输出里
- * **认出来**的，百分比是按取了几个包估的 —— npm 根本不报百分比，所以旁边还写着一个真的
- * 秒数：卡住的时候，不动的秒数比不动的进度条更说明问题。
- *
- * 装挂了不自动重来，也不把那条记录一抹了事：原因留在这儿（鼠标停上去是 npm 的原话和
- * 那条命令，实在不行照着去终端跑一遍），旁边给一个「重试」。
- */
-function ToolRow({
-  tool,
-  busy,
-  onRun,
-  t,
-}: {
-  tool: ToolStatus;
-  busy: boolean;
-  onRun: () => void;
-  t: (key: string, vars?: Record<string, string | number>) => string;
-}) {
-  const job = tool.job;
-  const running = job?.state === "running";
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
-      <b style={{ fontWeight: 600 }}>{tool.name}</b>
-      <span className="gx-mono gx-muted">{tool.installed ? tool.current : t("bridge.toolsMissing")}</span>
-      {running && job ? (
-        <>
-          <span className="gx-pill gx-pill--sm">
-            {t(job.action === "install" ? "bridge.toolsInstalling" : "bridge.toolsUpgrading")}
-          </span>
-          {/* 进度条只表示「还在动」，所以不给它数字以外的强调色，宽度也压到一行放得下。 */}
-          <span className="gx-meter" style={{ display: "block", width: 64, flex: "0 0 auto" }}>
-            <span className="gx-meter__fill" style={{ display: "block", width: `${job.percent}%` }} />
-          </span>
-          <span className="gx-mono" style={{ fontSize: 11, color: "var(--gx-faint)" }} title={job.detail || undefined}>
-            {job.percent}% · {t(`bridge.toolsPhase.${job.phase}`)} · {formatMillis(job.elapsedMs)}
-          </span>
-        </>
-      ) : job?.state === "failed" ? (
-        <>
-          <span className="gx-pill gx-pill--sm gx-pill--err" title={[job.detail, job.command].filter(Boolean).join("\n\n")}>
-            {t("bridge.toolsFailed")}
-          </span>
-          <Btn tone="soft" small loading={busy} onClick={onRun}>
-            {t("bridge.toolsRetry")}
-          </Btn>
-        </>
-      ) : tool.upgradable ? (
-        <Btn tone="soft" small loading={busy} onClick={onRun}>
-          {t("bridge.toolsUpgrade")} {tool.latest}
-        </Btn>
-      ) : !tool.installed ? (
-        // 没装的工具以前只写一句「未安装」，装它得自己去开终端 —— 而这台机器接不接得了单，
-        // 正取决于它装没装。
-        <Btn tone="soft" small loading={busy} onClick={onRun}>
-          {t("bridge.toolsInstall")}
-        </Btn>
-      ) : tool.latest ? (
-        <span className="gx-pill gx-pill--sm gx-pill--ok">{t("bridge.toolsLatest")}</span>
-      ) : null}
-    </span>
   );
 }

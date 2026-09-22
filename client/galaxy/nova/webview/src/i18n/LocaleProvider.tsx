@@ -567,6 +567,9 @@ const messages = {
     "account.upgradable": "可升级",
     "account.upgradeAction": "升级到 {version}",
     "account.upgradeHint": "等手上的活跑完再原地重启，不用登录那台机器",
+    // 机器详情里那一行 claude / codex。远端那台也能就地装 —— 以前这件事只能 ssh 上去手敲。
+    "account.machineTools": "机器上的工具",
+    "account.machineToolsUnknown": "这台机器的 ai-bridge 还没报过（版本太旧），升一次就能在这里装",
     "account.upgradeTitle": "把 {name} 的 ai-bridge 升级到 {version}？",
     "account.upgradeConfirm": "机器先在后台下好、验过新版，然后停止接新活，等手上的活跑完（最多 2 分钟）就原地重启 ai-bridge，重启完自动接着接单。",
     "account.upgradeOk": "升级",
@@ -640,6 +643,7 @@ const messages = {
     "bridge.toolsMissing": "未安装",
     // npm 走到哪一步了。这几个是 bridge 从 npm 的输出里认出来的，不是猜的时间段 ——
     // 旁边那个百分比才是估的（npm 根本不报），所以这几个字比它更该信。
+    "bridge.toolsPhase.pending": "等机器领",
     "bridge.toolsPhase.starting": "准备",
     "bridge.toolsPhase.resolving": "查依赖",
     "bridge.toolsPhase.downloading": "下载",
@@ -1195,6 +1199,8 @@ const messages = {
     "account.upgradable": "Update available",
     "account.upgradeAction": "Upgrade to {version}",
     "account.upgradeHint": "Waits for running work, then restarts in place — no need to log in to the machine",
+    "account.machineTools": "Tools on this machine",
+    "account.machineToolsUnknown": "This machine's ai-bridge hasn't reported them (too old) — upgrade it once to install from here",
     "account.upgradeTitle": "Upgrade ai-bridge on {name} to {version}?",
     "account.upgradeConfirm": "The machine downloads and verifies the new version in the background, then stops taking new work, lets running work finish (up to 2 minutes) and restarts ai-bridge in place, picking up work again once it's back.",
     "account.upgradeOk": "Upgrade",
@@ -1266,6 +1272,7 @@ const messages = {
     "bridge.toolsJobFailed": "{name} failed: {message}",
     "bridge.toolsLatest": "Up to date",
     "bridge.toolsMissing": "Not installed",
+    "bridge.toolsPhase.pending": "Waiting for the machine",
     "bridge.toolsPhase.starting": "Starting",
     "bridge.toolsPhase.resolving": "Resolving",
     "bridge.toolsPhase.downloading": "Downloading",

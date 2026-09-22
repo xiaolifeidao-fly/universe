@@ -17,6 +17,9 @@
  *
  * 远程升级也照这个分法：行上只在名字后面挂一个小标签（升级中 / 可升级），扫一眼知道哪几台该升；
  * 版本、平台、上一次升级走到哪、为什么点不了，都在点开的那一格里。已解绑的机器不给升级。
+ *
+ * 机器上的 claude / codex 同理，摆在点开那一格里：它回答的是「这台为什么接不了 claude 的单」，
+ * 属于排查某一台时才看的东西。装和升就地点，进度跟着心跳回来 —— 以前这件事只能 ssh 上去手敲。
  */
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
@@ -32,6 +35,7 @@ import {
   type NodeView,
 } from "../../api/provider.api";
 import { Blank, RowList, TabStrip } from "./parts";
+import { ToolRow } from "./ToolRow";
 
 type Tab = "active" | "retired";
 
@@ -144,6 +148,7 @@ export function MachineList({
   busy,
   onUnbind,
   onUpgrade,
+  onInstallTool,
   onAddServer,
   onRetryRetired,
 }: {
@@ -159,6 +164,8 @@ export function MachineList({
   onUnbind: (node: NodeView) => void;
   /** 确认、下发、刷新都由页面做：确认框要用页面那个 useModal，刷新也得连着轮询节奏一起改。 */
   onUpgrade: (node: NodeView) => void;
+  /** 让某台机器装 / 升一个本机工具。同 onUpgrade，下发和刷新都在页面那一层。 */
+  onInstallTool: (node: NodeView, tool: string) => void;
   onAddServer: () => void;
   onRetryRetired: () => void;
 }) {
@@ -213,6 +220,7 @@ export function MachineList({
         onToggle={() => setExpanded((current) => (current === node.nodeId ? "" : node.nodeId))}
         onUnbind={() => onUnbind(node)}
         onUpgrade={() => onUpgrade(node)}
+        onInstallTool={(tool) => onInstallTool(node, tool)}
       />
     ));
   }
@@ -274,6 +282,7 @@ function MachineRow({
   onToggle,
   onUnbind,
   onUpgrade,
+  onInstallTool,
 }: {
   node: NodeView;
   retired: boolean;
@@ -284,6 +293,7 @@ function MachineRow({
   onToggle: () => void;
   onUnbind: () => void;
   onUpgrade: () => void;
+  onInstallTool: (tool: string) => void;
 }) {
   const { t } = useLocale();
   const online = !retired && isNodeOnline(node);
@@ -364,7 +374,15 @@ function MachineRow({
         />
       </button>
       {open ? (
-        <MachineDetail id={detailId} node={node} retired={retired} busy={busy} onUnbind={onUnbind} onUpgrade={onUpgrade} />
+        <MachineDetail
+          id={detailId}
+          node={node}
+          retired={retired}
+          busy={busy}
+          onUnbind={onUnbind}
+          onUpgrade={onUpgrade}
+          onInstallTool={onInstallTool}
+        />
       ) : null}
     </div>
   );
@@ -377,6 +395,7 @@ function MachineDetail({
   busy,
   onUnbind,
   onUpgrade,
+  onInstallTool,
 }: {
   id: string;
   node: NodeView;
@@ -384,6 +403,7 @@ function MachineDetail({
   busy: boolean;
   onUnbind: () => void;
   onUpgrade: () => void;
+  onInstallTool: (tool: string) => void;
 }) {
   const { t } = useLocale();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -466,6 +486,22 @@ function MachineDetail({
           ) : null}
         </div>
       ) : null}
+      {retired ? null : (
+        // 机器上的 claude / codex。它回答的是「这台为什么接不了 claude 的单」——
+        // 一台在线、心跳正常、却什么单都接不到的机器，十有八九是这里没装。
+        <div style={{ display: "flex", alignItems: "center", gap: "8px 14px", marginTop: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("account.machineTools")}</span>
+          {(node.tools ?? []).length > 0 ? (
+            (node.tools ?? []).map((tool) => (
+              <ToolRow key={tool.name} tool={tool} busy={busy} onRun={() => onInstallTool(tool.name)} t={t} />
+            ))
+          ) : (
+            // 老版本 ai-bridge 报不上来。说清楚是「还没报」而不是「没装」——
+            // 后者会让主人跑去机器上装一个本来就在的东西。
+            <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("account.machineToolsUnknown")}</span>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
         <span className="gx-card__hint" style={{ flex: 1, lineHeight: 1.6 }}>
           {retired ? t("account.retiredHint") : t("account.unbindHint")}

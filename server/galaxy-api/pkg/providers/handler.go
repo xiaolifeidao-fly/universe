@@ -59,6 +59,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	// 和别的接口走同一套鉴权与信封，顺带把平台地址一起给前端。
 	api.GET("/bridge/releases", h.bridgeReleases)
 	api.POST("/node/upgrade", h.upgradeNode)
+	// 机器上的 claude / codex：远端那台也能一键装 / 升，进度同样在机器列表里看。
+	api.POST("/node/tool", h.installNodeTool)
 	// 邀请返现。
 	api.GET("/referral", h.referral)
 	api.GET("/referral/invitees", h.referralInvitees)
@@ -99,6 +101,24 @@ func (h *Handler) upgradeNode(context *gin.Context) {
 		return
 	}
 	view, err := h.service.RequestNodeUpgrade(context.Request.Context(), auth.UserID(context), req.NodeID)
+	httpx.JSON(context, view, err)
+}
+
+// installNodeTool 在这台机器上装 / 升一个本机工具（claude、codex）。
+//
+// 和 upgradeNode 一样只是记一条指令：机器最多等一个心跳就领走，之后的进度
+// 跟着机器列表里的 tools 回来。工具名由服务端按白名单校验 —— 这个接口不接受
+// 任何形式的命令，只接受一个名字。
+func (h *Handler) installNodeTool(context *gin.Context) {
+	var req struct {
+		NodeID string `json:"nodeId" binding:"required"`
+		Tool   string `json:"tool" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.RequestNodeTool(context.Request.Context(), auth.UserID(context), req.NodeID, req.Tool)
 	httpx.JSON(context, view, err)
 }
 

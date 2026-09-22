@@ -457,6 +457,35 @@ fn heartbeat_upgrade_commands_parse_and_a_malformed_one_does_not_take_the_rest_d
     assert_eq!(parsed.enabled.expect("enabled 不该丢").len(), 1);
 }
 
+/// 工具指令（装 / 升本机的 claude、codex）和升级指令同一条路、同一套规矩：
+/// 形状对就解出来，形状不对只丢掉它自己 —— 一条坏掉的工具指令不该让这次心跳里的
+/// 取消清单和生效配置跟着失效。老 Hub 不发这个字段，解出来是 None。
+#[test]
+fn heartbeat_tool_commands_parse_and_a_malformed_one_does_not_take_the_rest_down() {
+    let parsed: HeartbeatResult = serde_json::from_value(json!({
+        "cancel": ["u_1"],
+        "tool": { "id": "tl_01J8", "tool": "claude" },
+    }))
+    .unwrap();
+    let command = parsed.tool.expect("工具指令要解出来");
+    assert_eq!((command.id.as_str(), command.tool.as_str()), ("tl_01J8", "claude"));
+
+    for absent in [json!({ "cancel": ["u_1"] }), json!({ "cancel": ["u_1"], "tool": null })] {
+        let parsed: HeartbeatResult = serde_json::from_value(absent).unwrap();
+        assert!(parsed.tool.is_none(), "没有指令时不该凭空解出一条");
+    }
+
+    let malformed = json!({
+        "cancel": ["u_1"],
+        "enabled": [{ "cid": "c", "kind": "llm.chat", "kindVersion": 1, "provider": "p", "seats": 1, "seatConcurrency": 1 }],
+        "tool": { "id": 7 },
+    });
+    let parsed: HeartbeatResult = serde_json::from_value(malformed).expect("坏掉的工具指令不能让整份心跳解析失败");
+    assert!(parsed.tool.is_none());
+    assert_eq!(parsed.cancel, vec!["u_1".to_string()]);
+    assert_eq!(parsed.enabled.expect("enabled 不该丢").len(), 1);
+}
+
 /// 发布清单按契约第 4 节的样例解析；一个包都没发布时是空版本、空列表，而不是解析失败。
 #[test]
 fn release_manifests_parse_the_contract_example_and_the_empty_case() {

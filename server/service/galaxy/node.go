@@ -691,6 +691,10 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	// 升级指令走的是同一条路：控制台点完，机器最多等一个心跳周期就收到。
 	// 没有待执行的指令时它是 nil，序列化时整个字段省略。
 	result.Upgrade = s.pendingUpgradeCommand(ctx, node, now)
+	// 本机工具（claude / codex）：先记下机器自报的版本与进度，再看有没有指令要发。
+	// 顺序不能反 —— saveNodeTools 会把已经被领走的指令收掉，反过来会白发一次。
+	s.saveNodeTools(ctx, node, req.Tools, now)
+	result.Tool = s.pendingToolCommand(node, now)
 	// 同 Hello：空切片发 []，不发 null，否则节点连这次心跳一起丢掉。
 	result.Cancel = orEmpty(result.Cancel)
 	result.Drain = orEmpty(result.Drain)
@@ -759,6 +763,8 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 			Distribution:   node.BridgeDistribution,
 			UpgradeBlocker: node.UpgradeBlocker,
 			Upgrade:        nodeUpgradeView(node, now),
+			// 机器上的 claude / codex。同 Contributions：一定是切片不是 nil。
+			Tools: nodeToolViews(node, now),
 		}
 		if release, ok := latest[node.BridgePlatform]; ok {
 			view.LatestVersion = release.Version
@@ -800,6 +806,8 @@ func (s *service) ListRetiredNodes(ctx context.Context, ownerUserID string) ([]d
 			EndpointURL: node.EndpointURL,
 			// 同 ListNodes：nil 切片会序列化成 null，前端的 .map() 会崩。
 			Contributions: []dto.ContributionView{},
+			// 解绑之后没人再去装什么，留着解绑前的旧话只会让人去点一个点不动的按钮。
+			Tools: []dto.NodeToolView{},
 		})
 	}
 	return views, nil

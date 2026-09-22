@@ -1,3 +1,4 @@
+use super::tools::ToolStatus;
 use super::upgrade::{truncate_message, UpgradeCommand, UpgradeState};
 use crate::business::{ArtifactRef, Metering, NamedArtifact, UnitError, WorkUnit, WorkspaceRef};
 use crate::core::errors::{http_error, BridgeError};
@@ -147,6 +148,37 @@ pub struct HeartbeatResult {
     /// 直到节点报了 downloading 或终态 —— 所以节点必须按 id 去重。
     #[serde(default, deserialize_with = "lenient_upgrade")]
     pub upgrade: Option<UpgradeCommand>,
+    /// 装 / 升本机工具（claude、codex）的指令，同样搭在心跳上下来。
+    /// 和 upgrade 一样：Hub 会重发，节点按 id 去重。老版本 Hub 不发这个字段。
+    #[serde(default, deserialize_with = "lenient_tool")]
+    pub tool: Option<ToolCommand>,
+}
+
+/// Hub 让这台机器装 / 升一个本机工具。
+///
+/// 只带工具名，**不带命令** —— 装什么、怎么装由节点自己那张固定表决定
+/// （pool::tools::upgrade_command）。让 Hub 送一条命令过来执行，
+/// 等于把「在我的机器上跑什么」这条边界交出去。
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolCommand {
+    pub id: String,
+    pub tool: String,
+}
+
+/// 工具指令解不动就当没有，理由同 lenient_upgrade。
+fn lenient_tool<'de, D>(deserializer: D) -> Result<Option<ToolCommand>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(raw) = Option::<Value>::deserialize(deserializer)? else { return Ok(None) };
+    match serde_json::from_value(raw) {
+        Ok(command) => Ok(Some(command)),
+        Err(error) => {
+            log_warn!("pool_tool_command_unparsable", "error": error.to_string(),
+                "hint": "心跳里的工具指令解不动，这一次当作没有；取消清单和生效配置照常处理");
+            Ok(None)
+        }
+    }
 }
 
 /// 升级指令解不动就当没有，**不连累整份心跳响应**。
@@ -510,13 +542,24 @@ impl HubClient {
         Ok(parse_or_default("hello", payload))
     }
 
+    /// tools 是本机那两个外部工具的版本和「这会儿装到哪了」。
+    ///
+    /// 搭在心跳上而不是单开一条路：控制台上看远端那台的工具，和看它的通道、
+    /// 额度是同一件事 —— 都是「这台机器现在什么样」，一条路报完最省事。
+    /// 老版本 Hub 会忽略这个字段。
     pub async fn heartbeat(
         &self,
         lanes: &[HeartbeatLane],
+        tools: &[ToolStatus],
         cancel: &Cancel,
     ) -> Result<HeartbeatResult, HubFailure> {
         let response = self
-            .send_cancellable("/agent/v1/heartbeat", &json!({ "lanes": lanes }), Some(REQUEST_TIMEOUT), cancel)
+            .send_cancellable(
+                "/agent/v1/heartbeat",
+                &json!({ "lanes": lanes, "tools": tools }),
+                Some(REQUEST_TIMEOUT),
+                cancel,
+            )
             .await?;
         let status = response.status().as_u16();
         let payload = read_json(response).await;
