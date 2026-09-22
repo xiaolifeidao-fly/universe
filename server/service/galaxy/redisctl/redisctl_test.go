@@ -142,8 +142,8 @@ func seedContribution(t *testing.T, plane *ControlPlane, cid string, seats, seat
 	snapshot := galaxy.ContributionSnapshot{
 		CID: cid, NodeID: "n_1", OwnerUserID: "u_1",
 		Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth",
-		ModelsAllow: []string{"claude-sonnet-*"},
-		Seats:       seats, SeatConcurrency: seatConc,
+		Groups: []string{"mg_STD"},
+		Seats:  seats, SeatConcurrency: seatConc,
 		QuotaLimit: limits, UpstreamOK: true, Reputation: 1, LastBeatAt: time.Now(),
 	}
 	ctx := context.Background()

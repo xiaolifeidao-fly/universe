@@ -58,66 +58,89 @@ func TestProviderModelViewFallsBackAndSaysSo(t *testing.T) {
 	}
 }
 
-// 「名单放不放它过」和「机器上有没有」是两件事。
+// providerModelGroups 三个模型各一个分组，够这组用例区分「加入了哪个」。
+func providerModelGroups() []*repository.GalaxyModelGroup {
+	return []*repository.GalaxyModelGroup{
+		{GroupID: "mg_SONNET", ModelID: "claude-sonnet-5", Name: "标准", Listed: true},
+		{GroupID: "mg_OPUS", ModelID: "claude-opus-5", Name: "标准", Listed: true},
+		{GroupID: "mg_GPT", ModelID: "gpt-5", Name: "标准", Listed: true},
+	}
+}
+
+// 「主人开放了没有」和「机器上有没有」是两件事。
 //
-// 合成一个布尔的话，允许了但上游没有的模型会显示成「没开放」，主人就会去改一个
+// 合成一个布尔的话，加入了但上游没有的模型会显示成「没开放」，主人就会去改一个
 // 本来没错的设置；反过来合成「开放中」又会让他以为在接单，而实际一单都接不到。
 func TestProviderModelViewSeparatesAllowedFromAvailable(t *testing.T) {
 	contributions := []*repository.GalaxyContribution{{
-		ModelsAllowJSON:     `["claude-*"]`,
+		GroupsJSON:          `["mg_SONNET","mg_OPUS"]`,
 		ModelsAvailableJSON: `["claude-sonnet-5"]`,
 	}}
-	rows := providerModelRows()
+	rows, groups := providerModelRows(), providerModelGroups()
 
-	sonnet := providerModelView(&repository.GalaxyModel{ModelID: "claude-sonnet-5", Kind: "llm.chat"}, rows, nil, contributions, nil)
+	sonnet := providerModelView(&repository.GalaxyModel{ModelID: "claude-sonnet-5", Kind: "llm.chat"}, rows, groups, contributions, nil)
 	if !sonnet.Allowed || !sonnet.Available {
-		t.Fatalf("名单放过且机器上有：allowed=%v available=%v", sonnet.Allowed, sonnet.Available)
+		t.Fatalf("加入了它的分组且机器上有：allowed=%v available=%v", sonnet.Allowed, sonnet.Available)
 	}
 
-	opus := providerModelView(&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"}, rows, nil, contributions, nil)
+	opus := providerModelView(&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"}, rows, groups, contributions, nil)
 	if !opus.Allowed {
-		t.Fatal("claude-* 通配应当放 opus 过")
+		t.Fatal("opus 的分组也加入了，该算接单中")
 	}
 	if opus.Available {
 		t.Fatal("上游没报 opus，Available 该是 false —— 这不是设置错了，是机器上没有")
 	}
 
-	gpt := providerModelView(&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"}, rows, nil, contributions, nil)
+	gpt := providerModelView(&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"}, rows, groups, contributions, nil)
 	if gpt.Allowed {
-		t.Fatal("白名单只写了 claude-*，gpt-5 不该算接单中")
+		t.Fatal("没加入 gpt-5 的任何分组，不该算接单中")
 	}
 }
 
-// 多台机器：任意一条贡献放它过就算接单中。
-// 要求「所有贡献都放过」的话，主人新加一台还没配的机器会把整页变成「未接」。
+// 多台机器：任意一条贡献加入了它的分组就算接单中。
+// 要求「所有贡献都加入」的话，主人新加一台还没配的机器会把整页变成「未接」。
 func TestProviderModelViewAllowedIsAnyContribution(t *testing.T) {
 	view := providerModelView(
 		&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"},
-		providerModelRows(), nil,
+		providerModelRows(), providerModelGroups(),
 		[]*repository.GalaxyContribution{
-			{ModelsAllowJSON: `["claude-*"]`},
-			{ModelsAllowJSON: `["gpt-*"]`},
+			{GroupsJSON: `["mg_SONNET"]`},
+			{GroupsJSON: `["mg_GPT"]`},
 		},
 		nil,
 	)
 	if !view.Allowed {
-		t.Fatal("第二条贡献放它过，就算接单中")
+		t.Fatal("第二条贡献加入了它的分组，就算接单中")
 	}
 }
 
-// 拒绝名单优先于允许名单：两边都写了同一个模型时，结论是不接。
-func TestProviderModelViewDenyBeatsAllow(t *testing.T) {
+// 「不限分组」的车道（存量贡献，那一列是空的）什么单都接，模型也就都算开放。
+func TestProviderModelViewUnrestrictedContributionAllowsEverything(t *testing.T) {
 	view := providerModelView(
-		&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"},
-		providerModelRows(), nil,
-		[]*repository.GalaxyContribution{{
-			ModelsAllowJSON: `["claude-*"]`,
-			ModelsDenyJSON:  `["claude-opus-*"]`,
-		}},
+		&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"},
+		providerModelRows(), providerModelGroups(),
+		[]*repository.GalaxyContribution{{GroupsJSON: ""}},
+		nil,
+	)
+	if !view.GroupsUnrestricted {
+		t.Fatal("空名单就是不限分组")
+	}
+	if !view.Allowed {
+		t.Fatal("不限分组的车道接得到 gpt-5 的单，该算开放")
+	}
+}
+
+// 没有分组在卖的模型，连「不限分组」的车道也接不到它的单 —— 那一页上说成「已开放」
+// 就是句空话：使用端根本签不出能调用它的密钥。
+func TestProviderModelViewModelWithoutGroupsIsNotAllowed(t *testing.T) {
+	view := providerModelView(
+		&repository.GalaxyModel{ModelID: "claude-haiku-5", Kind: "llm.chat"},
+		providerModelRows(), providerModelGroups(),
+		[]*repository.GalaxyContribution{{GroupsJSON: ""}},
 		nil,
 	)
 	if view.Allowed {
-		t.Fatal("拒绝名单点了名，就不该算接单中")
+		t.Fatal("这个模型一个分组都没上架，不该算接单中")
 	}
 }
 
@@ -143,7 +166,7 @@ func TestModelOptionGroupsKeepCatalogOrder(t *testing.T) {
 		{ModelID: "claude-sonnet-5", DisplayName: "Sonnet 5", Family: "claude", Vendor: "anthropic"},
 		{ModelID: "gpt-5.6-terra", DisplayName: "GPT-5.6", Family: "gpt", Vendor: "openai"},
 		{ModelID: "claude-opus-5", DisplayName: "Opus 5", Family: "claude", Vendor: "anthropic"},
-	}, nil)
+	}, nil, nil)
 	if len(groups) != 2 {
 		t.Fatalf("两家厂商应当分成两组，实际 %d 组", len(groups))
 	}
@@ -166,7 +189,7 @@ func TestModelOptionGroupsCategoryMatchesLane(t *testing.T) {
 	groups := modelOptionGroups([]*repository.GalaxyModel{
 		{ModelID: "claude-sonnet-5", Family: "claude", Vendor: "anthropic"},
 		{ModelID: "gpt-5.6-terra", Family: "gpt", Vendor: "openai"},
-	}, nil)
+	}, nil, nil)
 	byCategory := map[string]string{}
 	for _, group := range groups {
 		byCategory[group.Category] = group.Family
@@ -185,7 +208,7 @@ func TestModelOptionGroupsCategoryMatchesLane(t *testing.T) {
 // 堆进去的后果是这个模型在共享设置里选不到：它不属于任何一条车道认得的那一组，
 // 而主人并不知道原因出在运营没填 vendor 那一列。
 func TestModelOptionGroupsInferMissingVendor(t *testing.T) {
-	groups := modelOptionGroups([]*repository.GalaxyModel{{ModelID: "claude-haiku-4-5"}}, nil)
+	groups := modelOptionGroups([]*repository.GalaxyModel{{ModelID: "claude-haiku-4-5"}}, nil, nil)
 	if len(groups) != 1 {
 		t.Fatalf("应当只有一组，实际 %d", len(groups))
 	}
@@ -197,9 +220,33 @@ func TestModelOptionGroupsInferMissingVendor(t *testing.T) {
 	}
 }
 
+// 候选项带的是**结算价**，不是对外价。
+//
+// 勾不勾一个分组就是「这一档值不值得我接」的决定，而共享端从来看不到对外价 ——
+// 报成对外价的话，共享者会照着一个自己永远拿不到的数做这个决定。
+func TestModelOptionGroupsCarrySettlePrice(t *testing.T) {
+	groups := modelOptionGroups(
+		[]*repository.GalaxyModel{{ModelID: "claude-opus-5", Kind: "llm.chat", Family: "claude", Vendor: "anthropic"}},
+		[]*repository.GalaxyModelGroup{
+			{GroupID: "mg_OPUS_STD", ModelID: "claude-opus-5", Name: "标准", Listed: true},
+			// 下架的分组不进候选：不卖了就不该再让人加入它。
+			{GroupID: "mg_OPUS_OLD", ModelID: "claude-opus-5", Name: "旧档", Listed: false},
+		},
+		providerModelRows(),
+	)
+	rows := groups[0].Models[0].Groups
+	if len(rows) != 1 || rows[0].GroupID != "mg_OPUS_STD" {
+		t.Fatalf("只该给上架的那一个分组，实际 %+v", rows)
+	}
+	// providerModelRows 里 opus 的输出价对外 90，结算是它的一半（priceAt 的约定）。
+	if rows[0].OutputPrice != 45_000_000 {
+		t.Fatalf("应当给结算价 45,000,000，实际 %d", rows[0].OutputPrice)
+	}
+}
+
 // 空目录回空切片，不是 nil：nil 序列化出去是 null，前端那一侧要多一处判空。
 func TestModelOptionGroupsEmptyCatalog(t *testing.T) {
-	groups := modelOptionGroups(nil, nil)
+	groups := modelOptionGroups(nil, nil, nil)
 	if groups == nil {
 		t.Fatal("空目录也要回空切片")
 	}

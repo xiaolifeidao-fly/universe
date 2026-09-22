@@ -259,9 +259,8 @@ func (c *ControlPlane) ReplaceContributions(ctx context.Context, nodeID string, 
 		values := map[string]any{
 			"nodeId": snapshot.NodeID, "ownerUserId": snapshot.OwnerUserID,
 			"kind": snapshot.Kind, "kindVersion": snapshot.KindVersion, "provider": snapshot.Provider,
-			"lane": lane, "modelsAllow": encode(snapshot.ModelsAllow), "modelsDeny": encode(snapshot.ModelsDeny),
-			"groups": encode(snapshot.Groups),
-			"seats":  snapshot.Seats, "seatConc": snapshot.SeatConcurrency,
+			"lane": lane, "groups": encode(snapshot.Groups),
+			"seats": snapshot.Seats, "seatConc": snapshot.SeatConcurrency,
 			"schedule": encode(snapshot.Schedule), "reputation": snapshot.Reputation,
 			// 余量下限是**配置**，跟着这条全量替换写。此刻剩多少是运行态，
 			// 由心跳的 UpdateLaneRuntime 维护 —— 不过重建时也顺手带一份进来

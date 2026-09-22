@@ -401,27 +401,22 @@ function ModelDetail({ model }: { model: ConsumerModelView }) {
       ) : null}
 
       {groups.length > 0 ? (
-        <GroupTable groups={groups} caption={t("models.groupTitle")} hint={t("models.groupHint")} />
+        <GroupTable groups={groups} caption={t("models.groupTitle")} />
       ) : (
         <span className="gx-card__hint" style={{ color: "var(--gx-warn, var(--gx-faint))" }}>{t("models.groupNone")}</span>
       )}
 
 
-      <span className="gx-card__hint">
-        {t("models.priceUnit")}
-        {listed ? (
-          <>
-            {" · "}
-            {t("models.listPrice")}{" "}
-            <s className="gx-mono">
-              {points(model.listInputPrice)} / {points(model.listOutputPrice)}
-              {model.listCachePrice > 0 ? ` / ${points(model.listCachePrice)}` : ""}
-            </s>
-          </>
-        ) : null}
-        {/* 回落到统一价时说出来：不说的话所有模型显示同一个数，看起来像页面坏了。 */}
-        {!model.priced ? ` · ${t("models.unifiedPrice")}` : ""}
-      </span>
+      {/* 这一行只剩划线价：没声明官方价的模型整行不出现，否则留下一个空行的 gap。 */}
+      {listed ? (
+        <span className="gx-card__hint">
+          {t("models.listPrice")}{" "}
+          <s className="gx-mono">
+            {points(model.listInputPrice)} / {points(model.listOutputPrice)}
+            {model.listCachePrice > 0 ? ` / ${points(model.listCachePrice)}` : ""}
+          </s>
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -434,7 +429,7 @@ function ModelDetail({ model }: { model: ConsumerModelView }) {
  * 「快速」单独一格：它不是价，是能力。买了不支持快速的分组，客户端开了快速也不算数
  * （请求会被改写成普通档），这件事必须在买之前就说清楚。
  */
-export function GroupTable({ groups, caption, hint }: { groups: ModelGroupPrice[]; caption: string; hint: string }) {
+export function GroupTable({ groups, caption }: { groups: ModelGroupPrice[]; caption: string }) {
   const { t } = useLocale();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -475,7 +470,6 @@ export function GroupTable({ groups, caption, hint }: { groups: ModelGroupPrice[
           </div>
         ))}
       </div>
-      <span className="gx-card__hint">{hint}</span>
     </div>
   );
 }

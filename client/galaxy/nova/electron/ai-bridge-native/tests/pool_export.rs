@@ -59,7 +59,7 @@ async fn start_hub(state: Arc<HubState>) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-fn execute_body(model: Option<&str>) -> Value {
+fn execute_body(group: Option<&str>) -> Value {
     let body = base64::engine::general_purpose::STANDARD.encode("{\"model\":\"test\"}");
     let path = base64::engine::general_purpose::STANDARD.encode("/v1/messages");
     let mut unit = json!({
@@ -67,8 +67,9 @@ fn execute_body(model: Option<&str>) -> Value {
         "provider": "api_key", "consumerKey": "ck_1", "state": "running",
         "inputs": [{ "name": "path", "inline": path }, { "name": "body", "inline": body }],
     });
-    if let Some(model) = model {
-        unit["model"] = json!(model);
+    if let Some(group) = group {
+        unit["model"] = json!("claude-sonnet-5");
+        unit["group"] = json!(group);
     }
     json!({
         "unit": unit,
@@ -78,10 +79,10 @@ fn execute_body(model: Option<&str>) -> Value {
     })
 }
 
-fn enabled_lane(allow: Vec<&str>) -> Value {
+fn enabled_lane(groups: Vec<&str>) -> Value {
     json!([{
         "cid": "claude", "kind": "llm.chat", "kindVersion": 1, "provider": "api_key",
-        "modelsAllow": allow, "modelsDeny": [], "seats": 1, "seatConcurrency": 1,
+        "groups": groups, "seats": 1, "seatConcurrency": 1,
     }])
 }
 
@@ -246,11 +247,11 @@ async fn a_wrong_secret_is_refused_and_the_response_still_identifies_the_node() 
     h.runner.stop().await;
 }
 
-/// 白名单自校验在这条路上同样有效：Hub 是路由权威，但「在我的机器上执行什么」
+/// 分组自校验在这条路上同样有效：Hub 是路由权威，但「在我的机器上执行什么」
 /// 这条边界不信任 Hub。拒绝要用 409 —— Hub 据此改派，而不是当成单元本身有问题。
 #[tokio::test]
-async fn a_unit_outside_the_declared_model_range_is_refused_with_409() {
-    let h = harness(enabled_lane(vec!["claude-*"]), Some("https://box.example.com:8788")).await;
+async fn a_unit_outside_the_joined_groups_is_refused_with_409() {
+    let h = harness(enabled_lane(vec!["mg_STD"]), Some("https://box.example.com:8788")).await;
     h.runner.start().await.expect("hello");
     let base = h.base().await;
 
@@ -258,7 +259,7 @@ async fn a_unit_outside_the_declared_model_range_is_refused_with_409() {
         .client
         .post(format!("{base}/node/v1/execute"))
         .header("authorization", format!("Bearer {SECRET}"))
-        .json(&execute_body(Some("gpt-4o")))
+        .json(&execute_body(Some("mg_DEEP")))
         .send()
         .await
         .expect("回连成功");

@@ -450,13 +450,12 @@ func (s *service) Next(ctx context.Context, req dto.NextRequest) (*dto.NextResul
 	if err := json.Unmarshal(claimed.Unit, &unit); err != nil {
 		return nil, err
 	}
-	// 贡献可能在入队之后被改过：把单元的 kind / provider / model / 分组再对一遍申报范围。
+	// 贡献可能在入队之后被改过：把单元的 kind / provider / 分组再对一遍申报范围。
 	snapshot, found, err := s.control.GetContribution(ctx, claimed.CID)
 	if err != nil {
 		return nil, err
 	}
 	if !found || snapshot.Kind != unit.Kind || snapshot.Provider != unit.Provider ||
-		(unit.Model != "" && !contract.ModelMatch(unit.Model, snapshot.ModelsAllow, snapshot.ModelsDeny)) ||
 		!groupJoined(snapshot.Groups, unit.Group) {
 		_ = s.FailUnit(ctx, unit.ID, contract.NewUnitError(contract.ErrorClassNode, contract.CodeCapabilityMismatch, true,
 			"贡献已变更，单元不再落在其申报范围内"))

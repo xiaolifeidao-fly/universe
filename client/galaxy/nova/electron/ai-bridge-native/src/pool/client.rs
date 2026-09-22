@@ -62,10 +62,12 @@ pub struct CapabilityReport {
     pub available: bool,
     #[serde(rename = "unavailableReason", skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
-    /// 上游可用的模型名。控制台拿它当「只放/不放这些模型」的候选项。
+    /// 上游可用的模型名。**只作标注**：控制台拿它在分组旁边写一句「这台机器有」，
+    /// 任何判定都不看它 —— 接哪些模型由主人加入的分组决定。
     ///
-    /// 字段名不能叫 models：Hub 的 ContributionInput 上已经有一个 models，而且是
-    /// `{allow, deny}` 对象 —— 发数组过去反序列化直接失败，整个 hello 就挂了。
+    /// 名字里的 available 不能省成 models：老 Hub 的 ContributionInput 上有一个
+    /// `models` 字段，而且是 `{allow, deny}` 对象 —— 发数组过去反序列化直接失败，
+    /// 整个 hello 就挂了。那份名单已经撤掉，但改名要两端同时发版，不值当。
     #[serde(rename = "availableModels", skip_serializing_if = "Option::is_none")]
     pub available_models: Option<Vec<String>>,
 }
@@ -88,7 +90,7 @@ where
 }
 
 /// Hub 下发的**生效配置**：主人开着、且本机报了可用的那些能力，连同座位、
-/// 额度、模型范围和挂机时段。节点按它建通道。
+/// 额度、加入的分组和挂机时段。节点按它建通道。
 #[derive(Debug, Clone, Deserialize)]
 pub struct EnabledContribution {
     pub cid: String,
@@ -96,10 +98,15 @@ pub struct EnabledContribution {
     #[serde(rename = "kindVersion")]
     pub kind_version: u32,
     pub provider: String,
-    #[serde(default, rename = "modelsAllow", deserialize_with = "null_as_default")]
-    pub models_allow: Vec<String>,
-    #[serde(default, rename = "modelsDeny", deserialize_with = "null_as_default")]
-    pub models_deny: Vec<String>,
+    /// 主人加入的模型分组（mg_…）。**空 = 不限**，什么分组的单都接。
+    ///
+    /// 节点拿它做本机自校验（原则 8）：派下来的单元带着自己的分组，不在这份名单里
+    /// 就不执行。2026-09-22 之前这里是一对模型通配名单（modelsAllow / modelsDeny），
+    /// 已经随分组体系撤掉 —— 分组属于某一个模型，「跑哪些模型」它已经答完了。
+    ///
+    /// 老 Hub 不下发这个字段：解出来是空数组，也就是「不限」，和它原先的行为一致。
+    #[serde(default, deserialize_with = "null_as_default")]
+    pub groups: Vec<String>,
     pub seats: u32,
     #[serde(rename = "seatConcurrency")]
     pub seat_concurrency: u32,

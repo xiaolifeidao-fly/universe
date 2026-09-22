@@ -30,11 +30,12 @@ type ContributionSnapshot struct {
 	KindVersion int
 	Provider    string
 
-	ModelsAllow []string
-	ModelsDeny  []string
 	// Groups 这条贡献加入的模型分组。空 = 不限（存量贡献、或者主人就这么选的）。
-	// 硬过滤看它：分组不在名单里，这台机器就接不到那个分组的单 —— 同一个模型的
-	// 「标准」和「深度」是两份价、两种上游成本，主人可以只接前者。
+	//
+	// 硬过滤只看它：分组不在名单里，这台机器就接不到那个分组的单。分组属于某一个模型，
+	// 所以「提供哪些模型能力」这件事也由它回答 —— 2026-09-22 之前并排摆着的那份
+	// 模型通配名单（ModelsAllow / ModelsDeny）已经撤掉，两个维度各拦一半的时候，
+	// 一条被拦下的单在界面上看不出是哪一道闸拦的。
 	Groups []string
 
 	Seats           int

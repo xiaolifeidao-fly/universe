@@ -232,6 +232,16 @@ func portalModelView(row *repository.GalaxyModel) dto.PortalModelView {
 	}
 }
 
+// adminPortalModelView 在公开目录视图上补上只属于运营端的记录信息。
+// 数据库主键不参与调用模型；它只用来让运营在排查数据时能准确定位这一行。
+func adminPortalModelView(row *repository.GalaxyModel) dto.PortalModelView {
+	view := portalModelView(row)
+	view.ID = row.ID
+	listed := row.Listed
+	view.Listed = &listed
+	return view
+}
+
 // fallbackModelViews 目录表为空时，把声明清单摊成最朴素的一份目录。
 // 只有模型名和推出来的族 —— 上下文长度、能力标签这些没有出处的东西一律留空。
 func fallbackModelViews(declared []string) []dto.PortalModelView {
@@ -475,11 +485,7 @@ func (s *service) ListPortalModels(ctx context.Context, listedOnly bool) ([]dto.
 	}
 	views := make([]dto.PortalModelView, 0, len(rows))
 	for _, row := range rows {
-		view := portalModelView(row)
-		// 上下架只给运营看：门户那条公开接口不走这里。
-		listed := row.Listed
-		view.Listed = &listed
-		views = append(views, view)
+		views = append(views, adminPortalModelView(row))
 	}
 	// 和门户走同一套取价（含回落到 kind 兜底价）—— 运营目录那一列回答的正是
 	// 「门户上会标成多少」，不回落的话，一个靠兜底价卖的模型在这里显示成「没有价」，

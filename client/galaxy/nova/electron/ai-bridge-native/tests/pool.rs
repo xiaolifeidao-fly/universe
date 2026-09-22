@@ -1,4 +1,4 @@
-use ai_bridge_native::business::{inline_json, inline_text, model_match, Primitive, WorkUnit};
+use ai_bridge_native::business::{group_joined, inline_json, inline_text, Primitive, WorkUnit};
 use ai_bridge_native::pool::client::{BridgeReleaseManifest, CapabilityReport, HeartbeatResult, HelloResult};
 use ai_bridge_native::pool::hub_address::{HubAddressCheck, HubAddressEvent};
 use ai_bridge_native::pool::lane::{Lane, LaneConfig};
@@ -19,7 +19,7 @@ fn lane(seats: u32, seat_concurrency: u32) -> Lane {
         LaneConfig {
             id: "claude-main".into(), kind: "llm.chat".into(), kind_version: 1,
             provider: "claude_oauth".into(), seats, seat_concurrency,
-            models_allow: vec![], models_deny: vec![],
+            groups: vec![],
         },
         fake_provider(),
     )
@@ -107,15 +107,19 @@ fn lane_honors_retry_after_and_cannot_shorten_an_active_cooldown() {
     assert_eq!(target.throttled_until_ms(), Some(NOW + 120_000));
 }
 
-// ---------- 白名单自校验 ----------
+// ---------- 分组自校验 ----------
 
 #[test]
-fn model_allowlist_matches_the_server_semantics() {
-    let allow = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert!(model_match("claude-sonnet-4-5", &allow(&["claude-sonnet-*"]), &[]));
-    assert!(!model_match("claude-opus-4-1", &allow(&["claude-*"]), &allow(&["claude-opus-*"])));
-    assert!(model_match("anything", &[], &[]));
-    assert!(!model_match("gpt-4o", &allow(&["claude-*"]), &[]));
+fn joined_groups_match_the_server_semantics() {
+    let joined = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(group_joined(&joined(&["mg_STD"]), Some("mg_STD")));
+    assert!(!group_joined(&joined(&["mg_STD"]), Some("mg_DEEP")));
+    // 名单为空 = 不限：存量车道那一列本来就是空的。
+    assert!(group_joined(&[], Some("mg_DEEP")));
+    // 单元没带分组（没有模型的请求、还没建分组的模型）一律放行 ——
+    // 把「不知道」当成「不接」，这两类单在本机会全部被判成能力不符。
+    assert!(group_joined(&joined(&["mg_STD"]), None));
+    assert!(group_joined(&joined(&["mg_STD"]), Some("")));
 }
 
 // ---------- 工作单元解码 ----------
@@ -304,8 +308,7 @@ fn hello_result_tolerates_null_collections() {
             "kind": "llm.chat",
             "kindVersion": 1,
             "provider": "codex_chatgpt",
-            "modelsAllow": null,
-            "modelsDeny": null,
+            "groups": null,
             "seats": 3,
             "seatConcurrency": 2,
             "quota": null,
@@ -316,7 +319,7 @@ fn hello_result_tolerates_null_collections() {
     let enabled = result.enabled.expect("enabled 不该丢");
     assert_eq!(enabled.len(), 1);
     assert_eq!(enabled[0].cid, "relay_codex");
-    assert!(enabled[0].models_allow.is_empty());
+    assert!(enabled[0].groups.is_empty());
 }
 
 /// 心跳同理：cancel / drain 是 nil 切片时也不能把 enabled 一起带走。

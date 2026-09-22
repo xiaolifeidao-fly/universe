@@ -28,7 +28,7 @@ func (r *GalaxyRepository) ReplaceContributions(ctx context.Context, bizLine, no
 				Columns: []clause.Column{{Name: "biz_line"}, {Name: "cid"}},
 				DoUpdates: clause.AssignmentColumns([]string{
 					"node_id", "owner_user_id", "kind", "kind_version", "provider",
-					"models_allow_json", "models_deny_json", "seats", "seat_concurrency",
+					"groups_json", "seats", "seat_concurrency",
 					"schedule_json", "status", "updated_time",
 				}),
 			}).Create(row).Error; err != nil {
@@ -59,7 +59,7 @@ func (r *GalaxyRepository) ReplaceContributions(ctx context.Context, bizLine, no
 //	                           「共享不共享、共享多少」是主人在控制台定的
 //
 // 所以这里**只写节点报得出来的那几列**：kind / provider / available / 原因。
-// status、seats、models、schedule 一律不碰 —— 它们是主人的设置，
+// status、seats、groups、schedule 一律不碰 —— 它们是主人的设置，
 // 被一次心跳覆盖掉，等于主人每次重启插件都要重新配一遍。额度更不碰，
 // 那是 quota_grant 的事，走控制台的改额度接口。
 //

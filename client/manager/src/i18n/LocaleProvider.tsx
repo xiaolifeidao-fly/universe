@@ -819,6 +819,7 @@ const messages = {
     "galaxy.account.passwordReset": "密码已重置",
 
     "galaxy.model.model": "模型",
+    "galaxy.model.recordId": "ID",
     "galaxy.model.modelId": "模型名",
     "galaxy.model.modelIdHint": "要和客户端里填的模型名一模一样（relay 的 /v1/models 那份）",
     "galaxy.model.modelIdLocked": "模型名不可修改。要换名就新建一个，把旧的下架或删掉",
@@ -1986,6 +1987,7 @@ const messages = {
     "galaxy.account.passwordReset": "Password reset",
 
     "galaxy.model.model": "Model",
+    "galaxy.model.recordId": "ID",
     "galaxy.model.modelId": "Model id",
     "galaxy.model.modelIdHint": "Must match exactly what clients send (the /v1/models list)",
     "galaxy.model.modelIdLocked": "The model id can't change. Create a new one and unlist or delete the old one",

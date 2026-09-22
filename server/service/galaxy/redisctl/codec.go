@@ -129,7 +129,6 @@ func decodeSnapshot(cid string, values map[string]string) galaxy.ContributionSna
 	snapshot := galaxy.ContributionSnapshot{
 		CID: cid, NodeID: values["nodeId"], OwnerUserID: values["ownerUserId"],
 		Kind: values["kind"], KindVersion: int(parseInt(values["kindVersion"])), Provider: values["provider"],
-		ModelsAllow: decodeStrings(values["modelsAllow"]), ModelsDeny: decodeStrings(values["modelsDeny"]),
 		Groups: decodeStrings(values["groups"]),
 		Seats:  int(parseInt(values["seats"])), SeatConcurrency: int(parseInt(values["seatConc"])),
 		Inflight: int(parseInt(values["inflight"])),

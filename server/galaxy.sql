@@ -251,10 +251,8 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `kind`              varchar(64),                                  -- 能力注册名，如 llm.chat
   `kind_version`      bigint,
   `provider`          varchar(64),                                  -- 路由键，选节点 provider
-  `models_allow_json` varchar(1024),                                -- 模型白名单模式数组
-  `models_available_json` varchar(4096) DEFAULT NULL,               -- 节点上报的上游可用模型名，仅作控制台候选项
-  `models_deny_json`  varchar(1024),                                -- 模型黑名单模式数组
-  `groups_json`       varchar(4096),                                -- 主人确认加入的模型分组（mg_…）数组，空=不限；派单硬过滤看它
+  `models_available_json` varchar(4096) DEFAULT NULL,               -- 节点上报的上游可用模型名，只作界面标注，不参与任何判定
+  `groups_json`       varchar(4096),                                -- 主人确认加入的模型分组（mg_…）数组，空=不限；派单硬过滤只看它，模型范围也由它决定
   `upstream_usage_json` varchar(4096),                              -- 节点自报的上游订阅余量（Claude / Codex 自己的 5 小时、周限额），节点每 5 分钟问本机 CLI 探来
   `upstream_usage_at` timestamp NULL DEFAULT NULL,                  -- 上面那份数的观测时刻。探针可能连着几轮没采到，界面必须显示它
   `upstream_floor_json` varchar(512),                               -- 余量下限：某个窗口剩到这个百分比就不再接单。空按 [{"window":"","percent":0}] 解

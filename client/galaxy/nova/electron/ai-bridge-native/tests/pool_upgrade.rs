@@ -226,7 +226,7 @@ async fn harness(setup: Setup) -> Harness {
 fn enabled_lane() -> Value {
     json!([{
         "cid": "claude", "kind": "llm.chat", "kindVersion": 1, "provider": "api_key",
-        "modelsAllow": [], "modelsDeny": [], "seats": 1, "seatConcurrency": 1,
+        "groups": [], "seats": 1, "seatConcurrency": 1,
     }])
 }
 

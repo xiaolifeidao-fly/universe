@@ -3,8 +3,13 @@
 /**
  * 共享设置 —— 提供者的**唯一**配置入口。
  *
- * 开关、额度、座位、模型范围、挂机时段都在这里改，改完下一次心跳（≤15s）
+ * 开关、额度、座位、接哪些模型分组、挂机时段都在这里改，改完下一次心跳（≤15s）
  * 那台机器就换过来了。主人不需要回到那台机器上做任何事。
+ *
+ * 范围只有一处可改：**加入哪些分组**。分组属于某一个模型，勾上「Claude Sonnet 5 ·
+ * 标准」就是提供这个模型这一档的能力。2026-09-22 之前这里还并排摆着一对模型通配
+ * 名单（允许 / 拒绝），已经撤掉 —— 两道闸各拦一半的时候，主人勾了分组却接不到单，
+ * 界面上看不出是哪一道拦的。
  *
  * 按机器分开看：左边挑一台，右边只摆这一台的能力和设置，默认选中这台电脑。
  * 工作室名下除了这台电脑，还可能有机房里用接入密钥注册的一排服务器 —— 每台都有
@@ -24,12 +29,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HourBar } from "@/components/galaxy/charts";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconAlert, IconGpu, IconMonitor, IconPlus, IconSparkle } from "@/components/ui/icons";
+import {
+  IconAlert,
+  IconChevronDown,
+  IconChevronRight,
+  IconGpu,
+  IconMonitor,
+  IconPlus,
+  IconSparkle,
+} from "@/components/ui/icons";
 import {
   Btn,
   Card,
   CardHead,
-  ChipInput,
   EmptyState,
   Field,
   LinkBtn,
@@ -40,11 +52,10 @@ import {
   Pill,
   Seg,
   Switch,
-  type ChipOption,
 } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { isStudio } from "@/utils/auth";
-import { formatRelative, unitLabel } from "@/utils/format";
+import { formatPoints, formatRelative, unitLabel } from "@/utils/format";
 import { isDesktop } from "@/utils/product";
 import { hoursToSchedule, scheduleToHours } from "@/utils/schedule";
 import { confirmForceClose, isClosing, switchContributions } from "../../contributionClose";
@@ -58,7 +69,7 @@ import {
   visibleContributions,
   visibleNodes,
   type ContributionView,
-  type ModelGroupBrief,
+  type ModelGroupPrice,
   type ModelOptionGroup,
   type UpstreamFloor,
   type NodeView,
@@ -93,14 +104,39 @@ const FLOOR_WINDOWS = ["", "5h", "7d"];
 /** 和「今天」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
 const REFRESH_MS = 20_000;
 
+/**
+ * 分组表的列宽。表头和每一行共用同一份 —— 各写一份迟早错开一列。
+ *
+ * 列的含义与「模型」那一页的分组表（ModelDetail）一一对应：那一页只读，
+ * 这一页点一下就是加入或退出。两页说同一件事，摆法不一样只会让人以为是两件事。
+ */
+const GROUP_COLUMNS = "minmax(0, 1fr) 76px 84px 84px 84px";
+
+/** 0 不写成「0」：那一档没有价，写 0 会被读成免费。和「模型」那一页同一条规矩。 */
+function points(value: number): string {
+  return value > 0 ? formatPoints(value) : "-";
+}
+
+/**
+ * 「接哪些分组」那一块里的一行：一个模型，连同它在卖的分组。
+ *
+ * available 是**节点报的事实**（这台机器的上游此刻有没有它），只作标注 ——
+ * 清单以平台目录为准，见 modelChoices 的注释。
+ */
+interface ModelChoice {
+  modelId: string;
+  modelName: string;
+  available: boolean;
+  groups: ModelGroupPrice[];
+}
+
 interface Draft {
-  modelsAllow: string[];
-  modelsDeny: string[];
   /**
    * 加入了哪些模型分组。**空数组 = 不限**，什么分组的单都接（存量车道就是这样）。
    *
-   * 它和上面两个名单是两件事：名单管「跑哪些模型」，分组管「以什么档次跑」——
-   * 同一个模型的「标准」和「深度」是两份结算价、两种上游消耗。
+   * 这一条就是这台机器的全部范围设置：分组属于某一个模型，加入了哪些分组，
+   * 就提供那些模型的那几档能力 —— 同一个模型的「标准」和「深度」是两份结算价、
+   * 两种上游消耗，可以只接前者。
    */
   groups: string[];
   seats: number;
@@ -112,8 +148,6 @@ interface Draft {
 
 function toDraft(row: ContributionView): Draft {
   return {
-    modelsAllow: [...(row.modelsAllow ?? [])],
-    modelsDeny: [...(row.modelsDeny ?? [])],
     groups: [...(row.groups ?? [])],
     seats: row.seats || 3,
     seatConcurrency: row.seatConcurrency || 2,
@@ -131,8 +165,6 @@ function toDraft(row: ContributionView): Draft {
 function countChanges(draft: Draft, row: ContributionView): number {
   const base = toDraft(row);
   let changes = 0;
-  if (draft.modelsAllow.join() !== base.modelsAllow.join()) changes += 1;
-  if (draft.modelsDeny.join() !== base.modelsDeny.join()) changes += 1;
   if (draft.groups.join() !== base.groups.join()) changes += 1;
   if (draft.seats !== base.seats) changes += 1;
   if (draft.seatConcurrency !== base.seatConcurrency) changes += 1;
@@ -244,7 +276,10 @@ export function ShareSettings() {
   );
   const changes = current && form ? countChanges(form, current) : 0;
   /**
-   * 这条车道能填哪些模型。
+   * 这条车道能接哪些模型、每个模型在卖哪几档。
+   *
+   * 厂商由车道自己定（relay_claude 就是 Claude），所以这里不让主人再选一次厂商：
+   * 按 category 取自己那一族就行 —— 给一条 Claude 车道列一排 gpt，选中了也是白选。
    *
    * 两份数据合在一起，但分工不同：
    *   目录（服务端按厂商分组）  平台在卖什么 —— 清单以它为准
@@ -252,43 +287,36 @@ export function ShareSettings() {
    *
    * 反过来拿节点那份当清单是行不通的：它是探测来的，上游抽一次风就空半天
    * （见 pool/models.rs 的降级），主人会以为自己突然没有模型可选了。而目录是
-   * 平台的声明，不会抖。按 category 取自己那一族 —— relay_claude 那条车道
-   * 列一排 gpt 出来，选中了也是白选。
+   * 平台的声明，不会抖。
+   *
+   * 没有分组的模型不列：一个分组都没上架的模型，谁也接不到它的单，
+   * 摆出来只会给人一个点不动的空壳。
    */
-  const modelOptions = useMemo<ChipOption[]>(() => {
+  const modelChoices = useMemo<ModelChoice[]>(() => {
     if (!current) return [];
     const available = current.availableModels ?? [];
-    const catalog = modelGroups.find((group) => group.category === current.category)?.models ?? [];
-    const options: ChipOption[] = catalog.map((model) => ({
-      value: model.modelId,
-      label: model.displayName,
-      available: available.includes(model.modelId),
-    }));
-    // 机器上有、目录里没有的补在后面：多半是这台机器接的中转站自己起的名字，
-    // 也可能是平台还没上架。不列的话主人只能手敲 —— 而那恰恰是他最想填的那个。
-    for (const model of available) {
-      if (!options.some((option) => option.value === model)) {
-        options.push({ value: model, available: true });
-      }
-    }
-    return options;
-  }, [current, modelGroups]);
-  /**
-   * 这条车道能加入哪些分组：本族模型底下的全部上架分组。
-   *
-   * 按模型分组摆（一个模型一行），因为主人要做的决定就是「这个模型我接哪几档」。
-   * 清单同样来自平台目录 —— 分组是平台定义的商品，节点那边没有这个概念。
-   */
-  const groupChoices = useMemo(() => {
-    if (!current) return [] as { modelId: string; modelName: string; groups: ModelGroupBrief[] }[];
     const catalog = modelGroups.find((group) => group.category === current.category)?.models ?? [];
     return catalog
       .filter((model) => (model.groups ?? []).length > 0)
       .map((model) => ({
         modelId: model.modelId,
         modelName: model.displayName || model.modelId,
+        available: available.includes(model.modelId),
         groups: model.groups ?? [],
       }));
+  }, [current, modelGroups]);
+  /**
+   * 这台机器探到了、而平台没在卖的模型。
+   *
+   * 摆一句出来是因为不摆的话这件事无处可查：主人看着本机的 claude 里明明有这个模型，
+   * 清单里却没有，会以为是控制台漏了。它共享不出去 —— 平台没上架就没有价、没有分组，
+   * 也就没有人买得到。
+   */
+  const offCatalog = useMemo(() => {
+    if (!current) return [] as string[];
+    const catalog = modelGroups.find((group) => group.category === current.category)?.models ?? [];
+    const listed = new Set(catalog.map((model) => model.modelId));
+    return (current.availableModels ?? []).filter((model) => !listed.has(model));
   }, [current, modelGroups]);
   /**
    * 这台机器此刻各窗口还剩百分之多少（节点五分钟一轮探来的）。
@@ -406,8 +434,6 @@ export function ShareSettings() {
       await saveContributionLimits({
         nodeId: current.nodeId,
         cid: current.cid,
-        modelsAllow: form.modelsAllow,
-        modelsDeny: form.modelsDeny,
         groups: form.groups,
         seats: form.seats,
         seatConcurrency: form.seatConcurrency,
@@ -588,37 +614,10 @@ export function ShareSettings() {
             }
           />
           <div style={{ padding: "0 22px 20px", display: "flex", flexDirection: "column", gap: 22 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.models")}</span>
-                <span className="gx-card__hint">{t("share.modelsHint")}</span>
-              </div>
-              <span className="gx-label">{t("share.modelsAllow")}</span>
-              <ChipInput
-                values={form.modelsAllow}
-                options={modelOptions}
-                availableLabel={t("share.modelsOnMachine")}
-                emptyText={t("share.modelsNoOptions")}
-                placeholder={t("share.modelsPlaceholder")}
-                onChange={(next) => edit({ ...form, modelsAllow: next })}
-              />
-              <span className="gx-label" style={{ marginTop: 6 }}>
-                {t("share.modelsDeny")}
-              </span>
-              <ChipInput
-                values={form.modelsDeny}
-                struck
-                options={modelOptions}
-                availableLabel={t("share.modelsOnMachine")}
-                emptyText={t("share.modelsNoOptions")}
-                placeholder="claude-opus-*"
-                onChange={(next) => edit({ ...form, modelsDeny: next })}
-              />
-            </div>
-
             <GroupJoin
-              choices={groupChoices}
+              choices={modelChoices}
               picked={form.groups}
+              offCatalog={offCatalog}
               onChange={(next) => edit({ ...form, groups: next })}
             />
 
@@ -1116,39 +1115,67 @@ function formatObserved(at: string): string {
 }
 
 /**
- * 加入哪些分组。
+ * 接哪些模型、每个模型接哪几档。
  *
- * 分组是平台在一个模型上卖的档次（「标准」「深度」「快速」），价、思考深度、
- * 支不支持快速都挂在它上面。**加入了才接得到那个分组的单** —— 所以这一块和
- * 上面的模型名单是两件事：名单管「跑哪些模型」，这里管「以什么档次跑」。
+ * 厂商由车道自己定死了（relay_claude 就是 Claude），所以这里从模型开始：一个模型一行，
+ * 点开才露出它在卖的**分组**。分组是平台在一个模型上卖的档次（「标准」「深度」「快速」），
+ * 价、思考深度、支不支持快速都挂在它上面 —— **加入了才接得到那一档的单**。
+ *
+ * 分组是这一页唯一的范围设置：勾中哪几个，这台机器就提供哪几个的能力。
+ * 一个模型一档都不勾，它的单就不会派到这台机器上。
  *
  * 一个都不勾 = **不限**：什么分组的单都接，也包括以后新加的分组。这是存量车道的状态，
  * 也是绝大多数人想要的 —— 所以它是默认，而不是「一个都没选、什么都接不到」。
  * 那种默认会在迁移那一刻让全网机器一起停摆，而界面上每台都还显示着共享中。
+ *
+ * 折叠是有代价的（一眼看不全自己接了什么），所以折起来的那一行要把结论说完：
+ * 接了几档、这台机器上有没有这个模型。展开只是为了改。
  */
 function GroupJoin({
   choices,
   picked,
+  offCatalog,
   onChange,
 }: {
-  choices: { modelId: string; modelName: string; groups: ModelGroupBrief[] }[];
+  choices: ModelChoice[];
   picked: string[];
+  offCatalog: string[];
   onChange: (next: string[]) => void;
 }) {
   const { t } = useLocale();
+  // 一次只开一个：这一屏下面还有额度、时段要填，几个模型同时摊开会把它们挤出视野。
+  const [open, setOpen] = useState("");
   const unrestricted = picked.length === 0;
   const all = useMemo(() => choices.flatMap((row) => row.groups.map((group) => group.groupId)), [choices]);
 
-  if (choices.length === 0) return null;
+  if (choices.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.groups")}</span>
+        <Note>{t("share.groupsCatalogEmpty")}</Note>
+      </div>
+    );
+  }
+
+  // 全都勾上等于不限。存成空数组，这样平台以后新加的分组会自动接上 ——
+  // 存一份当时的全量名单，新分组永远进不来，而主人以为自己什么都接。
+  const commit = (next: string[]) => onChange(next.length === all.length ? [] : next);
+  // 从「不限」点第一下：把全部分组先铺上，再在这份底稿上改 —— 直接只留点中的那个的话，
+  // 主人点一下「深度」就从「什么都接」变成了「只接深度」，那不是他要表达的意思。
+  const base = () => (unrestricted ? all : picked);
 
   const toggle = (groupId: string) => {
-    // 从「不限」点第一下：把全部分组先铺上，再去掉点中的那个 —— 直接只留一个的话，
-    // 主人点一下「深度」就从「什么都接」变成了「只接深度」，那不是他要表达的意思。
-    const base = unrestricted ? all : picked;
-    const next = base.includes(groupId) ? base.filter((id) => id !== groupId) : [...base, groupId];
-    // 全都勾上等于不限。存成空数组，这样平台以后新加的分组会自动接上 ——
-    // 存一份当时的全量名单，新分组永远进不来，而主人以为自己什么都接。
-    onChange(next.length === all.length ? [] : next);
+    const from = base();
+    commit(from.includes(groupId) ? from.filter((id) => id !== groupId) : [...from, groupId]);
+  };
+
+  // 整个模型一起开关。常见的决定是「这个模型我全接」或者「这个模型不接」，
+  // 逐档点一遍既慢又容易漏掉一个 —— 漏掉的那一档会安静地继续接单。
+  const toggleModel = (row: ModelChoice) => {
+    const ids = row.groups.map((group) => group.groupId);
+    const from = base();
+    const joined = ids.every((id) => from.includes(id));
+    commit(joined ? from.filter((id) => !ids.includes(id)) : Array.from(new Set([...from, ...ids])));
   };
 
   return (
@@ -1157,44 +1184,134 @@ function GroupJoin({
         <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.groups")}</span>
         <span className="gx-card__hint">{unrestricted ? t("share.groupsAll") : t("share.groupsHint")}</span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {choices.map((row) => (
-          <div key={row.modelId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span className="gx-mono" style={{ fontSize: 12, color: "var(--gx-soft)" }}>
-              {row.modelName}
-            </span>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {row.groups.map((group) => {
-                const active = unrestricted || picked.includes(group.groupId);
-                return (
-                  <button
-                    key={group.groupId}
-                    type="button"
-                    onClick={() => toggle(group.groupId)}
-                    title={group.summary || undefined}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "5px 10px",
-                      borderRadius: 999,
-                      fontSize: 12.5,
-                      cursor: "pointer",
-                      border: `1px solid ${active ? "var(--gx-accent)" : "var(--gx-line)"}`,
-                      background: active ? "var(--gx-accent-soft, var(--gx-muted))" : "var(--gx-card, transparent)",
-                      color: active ? "var(--gx-accent)" : "inherit",
-                    }}
+      <div style={{ border: "1px solid var(--gx-line)", borderRadius: 10, overflow: "hidden" }}>
+        {choices.map((row, index) => {
+          const ids = row.groups.map((group) => group.groupId);
+          const joined = unrestricted ? ids : ids.filter((id) => picked.includes(id));
+          const expanded = open === row.modelId;
+          return (
+            <div key={row.modelId}>
+              <button
+                type="button"
+                className="gx-row"
+                style={{
+                  gridTemplateColumns: "1fr auto auto 16px",
+                  cursor: "pointer",
+                  borderTop: index === 0 ? "none" : undefined,
+                }}
+                onClick={() => setOpen(expanded ? "" : row.modelId)}
+                aria-expanded={expanded}
+              >
+                <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {row.modelName}
+                  </span>
+                  <span
+                    className="gx-mono"
+                    style={{ fontSize: 11.5, color: "var(--gx-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                   >
-                    <span style={{ fontWeight: active ? 600 : 500 }}>{group.name}</span>
-                    {/* 快速档上游烧得更快：接不接由你定，但得先看得见。 */}
-                    {group.allowFast ? <Pill tone="warn">{t("share.groupFast")}</Pill> : null}
-                  </button>
-                );
-              })}
+                    {row.modelId}
+                  </span>
+                </span>
+                {/* 「这台机器有没有」是上游说了算的事实，和「我接不接」分开说：
+                    接了但机器上没有，照样一单都接不到 —— 而那不是设置错了。 */}
+                <span style={{ fontSize: 12 }}>
+                  {row.available ? <Pill tone="ok">{t("share.modelsOnMachine")}</Pill> : <Pill>{t("share.modelsOffMachine")}</Pill>}
+                </span>
+                <span style={{ fontSize: 12 }}>
+                  {unrestricted ? (
+                    <Pill tone="ok">{t("share.groupsAllPill")}</Pill>
+                  ) : (
+                    <Pill tone={joined.length > 0 ? "accent" : "default"}>
+                      {t("share.groupJoined", { joined: joined.length, total: ids.length })}
+                    </Pill>
+                  )}
+                </span>
+                <span
+                  style={{
+                    textAlign: "right",
+                    color: "var(--gx-faint)",
+                    display: "inline-flex",
+                    justifyContent: "flex-end",
+                  }}
+                >
+                  {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+                </span>
+              </button>
+              {expanded ? (
+                <div
+                  style={{
+                    padding: "2px 16px 14px",
+                    background: "var(--gx-muted)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <span className="gx-card__hint">{t("share.groupsPickHint")}</span>
+                    <LinkBtn onClick={() => toggleModel(row)}>
+                      {joined.length === ids.length ? t("share.groupsClear") : t("share.groupsPickAll")}
+                    </LinkBtn>
+                  </div>
+                  {/* 一档一行，右边是**结算价**：这一档跑一百万 token 给这台机器记多少积分。
+                      列和「模型」那一页的分组表一一对应（ModelDetail），两页看同一件事
+                      就该长得一样；那一页只读，这一页点一下就是加入或退出。 */}
+                  <div>
+                    <div className="gx-th" style={{ gridTemplateColumns: GROUP_COLUMNS, padding: "6px 0" }}>
+                      <span>{t("share.groupCol.group")}</span>
+                      <span style={{ textAlign: "center" }}>{t("share.groupCol.join")}</span>
+                      <span style={{ textAlign: "right" }}>{t("share.groupCol.input")}</span>
+                      <span style={{ textAlign: "right" }}>{t("share.groupCol.output")}</span>
+                      <span style={{ textAlign: "right" }}>{t("share.groupCol.cache")}</span>
+                    </div>
+                    {row.groups.map((group) => {
+                      const active = unrestricted || picked.includes(group.groupId);
+                      return (
+                        <button
+                          key={group.groupId}
+                          type="button"
+                          className="gx-row"
+                          style={{ gridTemplateColumns: GROUP_COLUMNS, padding: "9px 0", cursor: "pointer" }}
+                          onClick={() => toggle(group.groupId)}
+                          aria-pressed={active}
+                        >
+                          <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontWeight: active ? 600 : 500, color: active ? "var(--gx-accent)" : "inherit" }}>
+                                {group.name}
+                              </span>
+                              {/* 快速档上游烧得更快，而你的订阅余量有限：接不接由你定，但得先看得见。 */}
+                              {group.allowFast ? <Pill tone="warn">{t("share.groupFast")}</Pill> : null}
+                            </span>
+                            {group.summary ? (
+                              <span style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>{group.summary}</span>
+                            ) : null}
+                          </span>
+                          <span style={{ textAlign: "center", fontSize: 12 }}>
+                            {active ? <Pill tone="ok">{t("share.groupJoinedYes")}</Pill> : <Pill>{t("share.groupJoinedNo")}</Pill>}
+                          </span>
+                          <span className="gx-mono" style={{ textAlign: "right" }}>{points(group.inputPrice)}</span>
+                          <span className="gx-mono" style={{ textAlign: "right" }}>{points(group.outputPrice)}</span>
+                          <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>
+                            {points(group.cachePrice)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    <span className="gx-card__hint" style={{ display: "block", paddingTop: 8 }}>
+                      {t("share.groupsPriceHint")}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+      {/* 机器上有、平台没在卖的那些模型。不说的话这件事无处可查：主人看着本机的
+          claude 里明明有它，清单里却没有，只会以为是控制台漏了。 */}
+      {offCatalog.length > 0 ? <Note>{t("share.modelsOffCatalog", { value: offCatalog.join("、") })}</Note> : null}
     </div>
   );
 }

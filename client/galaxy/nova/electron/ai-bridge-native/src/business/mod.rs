@@ -66,6 +66,12 @@ pub struct WorkUnit {
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// 这一单落在哪个模型分组上（mg_…）。节点拿它做本机自校验：主人只加入了
+    /// 「标准」，深档的单落过来就不执行（见 runner 的 resolve_lane）。
+    ///
+    /// 可空：没有模型的请求（count_tokens 之类）与还没建分组的模型都没有分组。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     #[serde(rename = "consumerKey")]
     pub consumer_key: String,
     /// space 是业务自己的空间。共享池按平台维度运行，这个字段只供业务回查。
@@ -266,24 +272,18 @@ pub fn inline_json(unit: &WorkUnit, name: &str, fallback: Value) -> Value {
     }
 }
 
-/// modelMatch 与服务端 contract.ModelMatch 同语义：deny 优先，allow 为空表示不限。
-/// 两侧都要有这段逻辑：Hub 是路由权威，节点收单时必须再校验一次（原则 8）。
-pub fn model_match(model: &str, allow: &[String], deny: &[String]) -> bool {
-    let hit = |pattern: &String| {
-        let p = pattern.trim();
-        if p.is_empty() {
-            return false;
-        }
-        if p == "*" {
-            return true;
-        }
-        match p.strip_suffix('*') {
-            Some(prefix) => model.starts_with(prefix),
-            None => model == p,
-        }
-    };
-    if deny.iter().any(hit) {
-        return false;
+/// group_joined 与服务端 galaxy.groupJoined 同语义：名单为空是「不限」，
+/// 单元没带分组（没有模型的请求、还没建分组的模型）同样放行。
+///
+/// 两侧都要有这段逻辑：Hub 是路由权威，但「在我的机器上执行什么」这条边界
+/// 不信任 Hub，节点收单时必须再校验一次（原则 8）。
+pub fn group_joined(joined: &[String], group: Option<&str>) -> bool {
+    if joined.is_empty() {
+        return true;
     }
-    allow.is_empty() || allow.iter().any(hit)
+    match group {
+        None => true,
+        Some("") => true,
+        Some(id) => joined.iter().any(|value| value == id),
+    }
 }

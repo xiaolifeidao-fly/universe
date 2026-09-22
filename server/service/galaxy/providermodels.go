@@ -52,7 +52,7 @@ func (s *service) ProviderModels(ctx context.Context, ownerUserID string) ([]dto
 		return nil, err
 	}
 
-	// 这个人名下的全部贡献。**不按状态过滤**：允许/拒绝名单是主人定的规则，
+	// 这个人名下的全部贡献。**不按状态过滤**：加入哪些分组是主人定的规则，
 	// 暂停只是此刻不接单，不代表他不想要这个模型。「此刻接不接得到单」
 	// 是「今天」那一页回答的问题，不是这一页。
 	contributions, err := s.repository.ListContributionsByOwner(ctx, bizLine, ownerUserID)
@@ -130,9 +130,6 @@ func providerModelView(
 	}
 	joined := map[string]bool{}
 	for _, contribution := range contributions {
-		if contract.ModelMatch(row.ModelID, decodeStrings(contribution.ModelsAllowJSON), decodeStrings(contribution.ModelsDenyJSON)) {
-			view.Allowed = true
-		}
 		if containsString(decodeStrings(contribution.ModelsAvailableJSON), row.ModelID) {
 			view.Available = true
 		}
@@ -152,6 +149,12 @@ func providerModelView(
 			view.JoinedGroups = append(view.JoinedGroups, price.GroupID)
 		}
 	}
+	// 开放与否就是「加入了这个模型底下的某个分组没有」：分组是唯一的范围闸，
+	// 模型通配名单那一维 2026-09-22 起不再存在。
+	//
+	// 不限分组的车道（GroupsUnrestricted）要这个模型**确实有分组在卖**才算开放 ——
+	// 一个没建分组的模型谁也接不到它的单，说成「已开放」是句空话。
+	view.Allowed = len(view.JoinedGroups) > 0 || (view.GroupsUnrestricted && len(view.Groups) > 0)
 	return view
 }
 
@@ -180,28 +183,35 @@ func (s *service) earningsByModel(ctx context.Context, ownerUserID string, now t
 
 // ---------- 模型候选 ----------
 
-// ProviderModelOptions 共享设置页那两个框（允许 / 拒绝）的候选项。
+// ProviderModelOptions 共享设置页「接哪些分组」的候选项：平台在卖的模型，
+// 每个模型底下挂着它的分组。
 //
 // 为什么不复用「模型」那一页（ProviderModels）：那一页要算四档结算价、要比对
-// 每个人的允许名单、还要数最近七天赚了多少 —— 填规则的人一个都用不上，
+// 每个人加入了哪些分组、还要数最近七天赚了多少 —— 填规则的人一个都用不上，
 // 而共享设置这一页会跟着切机器、切车道反复取。这里只要名字。
 //
 // 也不从节点的 availableModels 汇总：那是「这台机器的上游此刻有什么」，
 // 上游抽一次风候选项就空半天（见 pool/models.rs 的降级），而主人这会儿
 // 要填的是一条长期生效的规则。两者都要 —— 界面上把「平台在卖」当清单，
-// 把「这台机器有」当标注，见 ShareSettings 的 modelOptions。
+// 把「这台机器有」当标注，见 ShareSettings 的 groupChoices。
 func (s *service) ProviderModelOptions(ctx context.Context) ([]dto.ModelOptionGroup, error) {
 	rows, err := s.repository.ListModels(ctx, bizLine, true)
 	if err != nil {
 		return nil, err
 	}
-	// 分组跟着候选项一起给：共享设置那一屏除了「跑哪些模型」，还要勾「加入哪些分组」。
+	// 分组跟着模型一起给：共享设置那一屏勾的就是分组，而分组要按所属模型摆成一行一行。
 	// 分开两条接口取的话，两份数据会在不同时刻到达，界面得自己对齐模型与它的分组。
 	groups, err := s.repository.ListModelGroups(ctx, bizLine, "", true)
 	if err != nil {
 		return nil, err
 	}
-	return modelOptionGroups(rows, groups), nil
+	// 价也一起：勾不勾一个分组就是「这一档值不值得我接」的决定，而那个决定要看着数字做。
+	// 取的是**结算价**（settlePrice），和「模型」那一页同一个口径 —— 共享端从不看对外价。
+	prices, err := s.repository.ListEffectivePrices(ctx, bizLine, "", time.Now())
+	if err != nil {
+		return nil, err
+	}
+	return modelOptionGroups(rows, groups, prices), nil
 }
 
 // modelOptionGroups 已上架的模型目录 → 按厂商分组的候选项。
@@ -212,14 +222,11 @@ func (s *service) ProviderModelOptions(ctx context.Context) ([]dto.ModelOptionGr
 //
 // 顺序一律跟着目录本身（仓储已按 sort_order, model_id 排过）：运营把主推的
 // 模型排在前面是有意的，替他排一次等于把这个决定抹掉。组的顺序按首次出现。
-func modelOptionGroups(rows []*repository.GalaxyModel, groups []*repository.GalaxyModelGroup) []dto.ModelOptionGroup {
-	briefs := map[string][]dto.ModelGroupBrief{}
-	for _, row := range groups {
-		briefs[row.ModelID] = append(briefs[row.ModelID], dto.ModelGroupBrief{
-			GroupID: row.GroupID, Name: row.Name, Summary: row.Summary,
-			AllowFast: row.AllowFast, IsDefault: row.Default(),
-		})
-	}
+func modelOptionGroups(
+	rows []*repository.GalaxyModel,
+	groups []*repository.GalaxyModelGroup,
+	prices []*repository.GalaxyPrice,
+) []dto.ModelOptionGroup {
 	order := make([]string, 0, 2)
 	// byFamily 按厂商分栏。名字里带 family 是为了和上面那份「模型分组」分开 ——
 	// 这个文件里「组」有两个意思：界面上的厂商分栏，和平台在卖的模型分组。
@@ -242,7 +249,9 @@ func modelOptionGroups(rows []*repository.GalaxyModel, groups []*repository.Gala
 		}
 		group.Models = append(group.Models, dto.ModelOption{
 			ModelID: row.ModelID, DisplayName: defaultString(row.DisplayName, row.ModelID),
-			Groups: briefs[row.ModelID],
+			// 和「模型」那一页算价的是同一个函数、同一个 pick —— 两页对同一个分组
+			// 报出不同的数，共享者会按其中一个错的做决定，而我们分不清是哪一个错。
+			Groups: modelGroupPrices(groups, prices, defaultString(row.Kind, portalKind), row.ModelID, settlePrice),
 		})
 	}
 	// 空目录回空切片而不是 nil：nil 序列化出去是 null，前端的 .find() 会崩。

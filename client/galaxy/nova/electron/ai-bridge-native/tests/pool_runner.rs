@@ -71,7 +71,7 @@ async fn start_hub(state: Arc<HubState>) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-fn work_unit(hub: &str, model: Option<&str>) -> Value {
+fn work_unit(hub: &str, group: Option<&str>) -> Value {
     let body = base64::engine::general_purpose::STANDARD.encode("{\"model\":\"test\"}");
     let path = base64::engine::general_purpose::STANDARD.encode("/v1/messages");
     let mut unit = json!({
@@ -79,8 +79,9 @@ fn work_unit(hub: &str, model: Option<&str>) -> Value {
         "provider": "api_key", "consumerKey": "ck_1", "state": "running",
         "inputs": [{ "name": "path", "inline": path }, { "name": "body", "inline": body }],
     });
-    if let Some(model) = model {
-        unit["model"] = json!(model);
+    if let Some(group) = group {
+        unit["model"] = json!("claude-sonnet-5");
+        unit["group"] = json!(group);
     }
     json!({
         "unit": unit,
@@ -90,10 +91,10 @@ fn work_unit(hub: &str, model: Option<&str>) -> Value {
     })
 }
 
-fn enabled_lane(seats: u32, allow: Vec<&str>) -> Value {
+fn enabled_lane(seats: u32, groups: Vec<&str>) -> Value {
     json!([{
         "cid": "claude", "kind": "llm.chat", "kindVersion": 1, "provider": "api_key",
-        "modelsAllow": allow, "modelsDeny": [], "seats": seats, "seatConcurrency": 1,
+        "groups": groups, "seats": seats, "seatConcurrency": 1,
     }])
 }
 
@@ -223,10 +224,10 @@ async fn an_upstream_429_throttles_the_lane_and_is_reported_as_a_retryable_fault
 }
 
 /// Hub 是路由权威，但「在我的机器上执行什么」这条边界不信任 Hub：
-/// 派下来一个不在申报范围内的模型，节点必须自己挡掉。
+/// 派下来一个主人没加入的分组，节点必须自己挡掉。
 #[tokio::test]
-async fn a_unit_outside_the_declared_model_range_is_refused_without_touching_the_upstream() {
-    let h = harness(200, enabled_lane(1, vec!["claude-*"]), Some(work_unit("", Some("gpt-4o")))).await;
+async fn a_unit_outside_the_joined_groups_is_refused_without_touching_the_upstream() {
+    let h = harness(200, enabled_lane(1, vec!["mg_STD"]), Some(work_unit("", Some("mg_DEEP")))).await;
     h.runner.start().await.expect("hello");
     wait_for("单元被拒", || !h.hub.completed.lock().unwrap().is_empty()).await;
 

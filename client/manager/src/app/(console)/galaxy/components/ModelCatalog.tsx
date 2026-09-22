@@ -461,6 +461,11 @@ export function ModelCatalog() {
           <Typography.Text type="secondary" className="manager-mono" style={{ fontSize: 12 }}>
             {modelId}
           </Typography.Text>
+          {row.id > 0 ? (
+            <Typography.Text type="secondary" className="manager-mono" style={{ fontSize: 12 }}>
+              {t("galaxy.model.recordId")}: {row.id}
+            </Typography.Text>
+          ) : null}
         </Space>
       ),
     },

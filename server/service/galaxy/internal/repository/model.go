@@ -330,17 +330,18 @@ type GalaxyContribution struct {
 	KindVersion int    `gorm:"column:kind_version"`
 	Provider    string `gorm:"column:provider;type:varchar(64);index:idx_gx_contribution_lane,priority:3" description:"路由键，选节点 provider"`
 
-	ModelsAllowJSON string `gorm:"column:models_allow_json;type:varchar(1024)" description:"模型白名单模式数组"`
 	// ModelsAvailableJSON 是**节点报上来的事实**：上游现在有哪些模型。
-	// 和 ModelsAllow/Deny 是两回事 —— 那两个是主人定的规则（还支持 claude-sonnet-* 这种
-	// 通配），这个只是给控制台当候选项，免得主人得自己记住上游有什么。
+	// 它不是规则，任何判定都不看它 —— 只给界面当标注（「这台机器有」），
+	// 免得主人得自己记住上游有什么。
 	ModelsAvailableJSON string `gorm:"column:models_available_json;type:varchar(4096)" description:"节点上报的上游可用模型名"`
-	ModelsDenyJSON      string `gorm:"column:models_deny_json;type:varchar(1024)" description:"模型黑名单模式数组"`
-	// GroupsJSON 主人确认加入的**模型分组**（mg_…）数组。派单的硬过滤看它：
-	// 分组不在名单里，这台机器就接不到那个分组的单。
+	// GroupsJSON 主人确认加入的**模型分组**（mg_…）数组，是这条贡献**唯一**的范围闸：
+	// 分组不在名单里，这台机器就接不到那个分组的单；分组属于某一个模型，所以
+	// 「提供哪些模型能力」也由它回答。
 	//
-	// 它和 ModelsAllow/Deny 不重复：那两个回答「跑哪些模型」，这个回答「以什么档次跑」——
-	// 同一个模型的「标准」与「深度」是两份价、两种体验，主人可以只接前者。
+	// 2026-09-22 之前旁边还有 models_allow_json / models_deny_json 两列通配名单，
+	// 已经随分组体系一并撤掉（见 20260922_galaxy_contribution_drop_model_list.sql）——
+	// 两个维度各拦一半时，一条被拦下的单在界面上看不出是哪一道闸拦的。
+	//
 	// 空 = 不限（存量贡献），迁移那一刻没有任何机器会掉出候选。
 	GroupsJSON string `gorm:"column:groups_json;type:varchar(4096)" description:"加入的模型分组数组，空=不限"`
 	// UpstreamUsageJSON 节点自报的**上游订阅余量**（Claude / Codex 自己的 5 小时、

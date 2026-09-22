@@ -59,7 +59,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_provider` | 共享端账号的身份：散户 / 工作室。没有行就是散户，只有运营能设成工作室 |
 | `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
 | `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
-| `zt_galaxy_contribution` | 贡献：kind + provider + 模型白名单 + 座位 + 挂机时段 + 信誉。`upstream_usage_json` / `upstream_usage_at` 是节点自报的**上游订阅余量**（Claude / Codex 账号自己的 5 小时、周限额），和 `quota_grant` 讲的不是一件事：那张表是主人打算放多少出去，这两列是上游实际还让跑多少。数据来自节点**问本机装着的 `claude` / `codex` 自己**（`claude -p "/usage"`、codex app-server 的 `account/rateLimits/read`），每 5 分钟一次，两条都不花 token。存的是**已用百分比**，不是剩余：Claude 报已用、Codex 屏幕上报剩余，统一成一种，换算只在界面做一次。观测时刻单独一列，界面必须一起显示 —— 探针可能连着几轮没采到（CLI 没装、没登录、超时）。`upstream_floor_json` 是主人按它划的线（`[{"window":"7d","percent":20}]`，window 为空 = 任一窗口，percent 是**剩余**百分比下限，剩余 ≤ 它就不接新单）：必填，默认 `[{"window":"","percent":0}]`，空字符串按默认解、存量行不必回填。这一对是 2026-09-21 起**唯一**拿节点自报的数去挡派单的地方，而且判定单向 —— 认得出来的窗口低于线才拦，认不出来 / 没采到一律放行（见 `service/galaxy/upstreamfloor.go`）。计费仍然不碰它。心跳 15 秒一次但只在变了时才 UPDATE |
+| `zt_galaxy_contribution` | 贡献：kind + provider + 加入的模型分组（`groups_json`）+ 座位 + 挂机时段 + 信誉。`groups_json` 是**范围上唯一的闸**：分组属于某一个模型，加入了哪些分组就等于提供哪些模型的哪几档能力，空 = 不限。2026-09-22 起不再有 `models_allow_json` / `models_deny_json` 两列通配名单（见 `20260922_galaxy_contribution_drop_model_list.sql`）—— 两个维度各拦一半时，一条被拦下的单在界面上看不出是哪一道闸拦的；`models_available_json` 留着，但它是节点报的事实、只作界面标注，任何判定都不看它。`upstream_usage_json` / `upstream_usage_at` 是节点自报的**上游订阅余量**（Claude / Codex 账号自己的 5 小时、周限额），和 `quota_grant` 讲的不是一件事：那张表是主人打算放多少出去，这两列是上游实际还让跑多少。数据来自节点**问本机装着的 `claude` / `codex` 自己**（`claude -p "/usage"`、codex app-server 的 `account/rateLimits/read`），每 5 分钟一次，两条都不花 token。存的是**已用百分比**，不是剩余：Claude 报已用、Codex 屏幕上报剩余，统一成一种，换算只在界面做一次。观测时刻单独一列，界面必须一起显示 —— 探针可能连着几轮没采到（CLI 没装、没登录、超时）。`upstream_floor_json` 是主人按它划的线（`[{"window":"7d","percent":20}]`，window 为空 = 任一窗口，percent 是**剩余**百分比下限，剩余 ≤ 它就不接新单）：必填，默认 `[{"window":"","percent":0}]`，空字符串按默认解、存量行不必回填。这一对是 2026-09-21 起**唯一**拿节点自报的数去挡派单的地方，而且判定单向 —— 认得出来的窗口低于线才拦，认不出来 / 没采到一律放行（见 `service/galaxy/upstreamfloor.go`）。计费仍然不碰它。心跳 15 秒一次但只在变了时才 UPDATE |
 | `zt_galaxy_quota_grant` | 授权行 `(cid, unit, limit, window, reset_at)`；额度以 Hub 为权威。`window` 是 `5h` / `day` / `week` / `month` / `total`，认不出来的按 `day` 算。**5h 是一天切五段**（最后一段 20:00–24:00 只有四小时，24 不是 5 的整数倍）—— Claude / Codex 的订阅额度本来就按 5 小时一轮刷新，摊平成日额度的话，早上就能把一天的量跑完然后在上游撞限流 |
 | `zt_galaxy_quota_window` | Redis 计数器的分钟级快照，供对账与控制台展示。**旧窗口从不清理**，所以行数是「贡献 × 单位 × 天数」，不是一张小表；`idx_gx_quota_window_key` 给「全池此刻还剩多少额度」用（那个查询手上只有窗口键、没有 cid，走不了按 cid 打头的唯一键） |
 | `zt_galaxy_seat_binding` | 座位绑定留痕；权威在 Redis（带 TTL），这里供审计 |
@@ -153,6 +153,16 @@ group_id 和迁移算的是同一个值，两边都跑过也不会翻倍。
 
 存量密钥与存量贡献的分组列都是空，含义是**不限**：密钥落在各模型的默认分组上，
 贡献什么分组的单都接 —— 迁移那一刻没有任何一台在线机器会掉出候选。
+
+`20260922_galaxy_contribution_drop_model_list.sql` 丢掉贡献上的
+`models_allow_json` / `models_deny_json`：模型范围从此只由加入的分组决定
+（分组属于某一个模型，这个问题它已经答完了）。两道闸并排摆着的时候，
+主人勾上了分组却仍然接不到单，界面上看不出是谁拦的。**发版前后跑都行** ——
+新版不读它，旧版读到的是自己写下的值，没有哪一边会因为缺列报错。
+不回填 `groups_json`：通配模式翻不成分组（`claude-sonnet-*` 对应哪几个档次只有主人清楚），
+猜一份等于替他做了「接不接深度档」这个花钱的决定，脚本改为先把原先收窄过范围的车道列出来。
+顺带修掉一处长期静默的覆盖：`ReplaceContributions` 的 upsert 把这两列列进了 `DoUpdates`，
+而节点从来不上报名单，每走一次那条路径主人填的名单就被清成空。
 
 `20260919_galaxy_price_model.sql` 给价目表加 `model_id` 并把唯一键换成
 `(biz_line, kind, model_id, unit, effective_from)`，让同一个 kind 下每个模型能各自定价。

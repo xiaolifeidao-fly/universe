@@ -17,8 +17,8 @@ func relaySpec() contract.KindSpec {
 func healthy(cid string, now time.Time) ContributionSnapshot {
 	return ContributionSnapshot{
 		CID: cid, NodeID: "n_1", Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth",
-		ModelsAllow: []string{"claude-sonnet-*"}, ModelsDeny: []string{"claude-opus-*"},
-		Seats: 3, SeatConcurrency: 2, UpstreamOK: true, Reputation: 1, LastBeatAt: now,
+		Groups: []string{"mg_STD"},
+		Seats:  3, SeatConcurrency: 2, UpstreamOK: true, Reputation: 1, LastBeatAt: now,
 		QuotaLimit:    contract.Metering{contract.UnitOutputTokens: 100_000},
 		QuotaUsed:     contract.Metering{},
 		QuotaReserved: contract.Metering{},
@@ -33,20 +33,38 @@ func filterInput(now time.Time, snapshots []ContributionSnapshot) FilterInput {
 		}, now)
 	}
 	return FilterInput{
-		Route:    contract.RouteKey{Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth", Model: "claude-sonnet-4-5"},
+		Route: contract.RouteKey{
+			Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth",
+			Model: "claude-sonnet-4-5", Group: "mg_STD",
+		},
 		Spec:     relaySpec(),
 		Estimate: contract.Metering{contract.UnitOutputTokens: 4096},
 		Plans:    plans, Now: now, HeartbeatTimeout: 45 * time.Second, Weights: DefaultScoreWeights(),
 	}
 }
 
-func TestFilterRejectsDeniedModel(t *testing.T) {
+// 范围上只剩分组这一道闸：主人加入了「标准」，别的分组的单就落不到他机器上，
+// 哪怕那是同一个模型的另一档。
+func TestFilterRejectsGroupNotJoined(t *testing.T) {
 	now := mustTime(t, "2026-09-07T12:00:00Z")
 	snapshot := healthy("c1", now)
 	in := filterInput(now, []ContributionSnapshot{snapshot})
-	in.Route.Model = "claude-opus-4-1"
+	in.Route.Group = "mg_DEEP"
 	if candidates := Filter([]ContributionSnapshot{snapshot}, in); len(candidates) != 0 {
-		t.Fatal("deny 列表命中的模型不该进入候选")
+		t.Fatal("没加入的分组不该进入候选")
+	}
+}
+
+// 名单为空是「不限」，不是「一个都不接」：存量贡献那一列本来就是空的，
+// 当成「都不接」会在迁移那一刻让全网机器一起掉出候选。
+func TestFilterAcceptsUnrestrictedContribution(t *testing.T) {
+	now := mustTime(t, "2026-09-07T12:00:00Z")
+	snapshot := healthy("c1", now)
+	snapshot.Groups = nil
+	in := filterInput(now, []ContributionSnapshot{snapshot})
+	in.Route.Group = "mg_DEEP"
+	if candidates := Filter([]ContributionSnapshot{snapshot}, in); len(candidates) != 1 {
+		t.Fatal("不限分组的贡献什么单都该接得到")
 	}
 }
 
@@ -93,7 +111,8 @@ func TestWaitableOnlyWhenBusyWithInflightWork(t *testing.T) {
 		{"额度被在途请求预留着", func(s *ContributionSnapshot) {
 			s.QuotaReserved = contract.Metering{contract.UnitOutputTokens: 95_000}
 		}, true},
-		{"模型没人提供", func(s *ContributionSnapshot) { s.ModelsAllow = []string{"claude-haiku-*"} }, false},
+		// 分组是范围上唯一的闸：没加入这个分组，这台机器等多久都接不到它的单。
+		{"分组没人加入", func(s *ContributionSnapshot) { s.Groups = []string{"mg_DEEP"} }, false},
 		{"离线", func(s *ContributionSnapshot) { s.LastBeatAt = now.Add(-90 * time.Second) }, false},
 		{"暂停", func(s *ContributionSnapshot) { s.Paused = true }, false},
 		{"上游限流", func(s *ContributionSnapshot) { s.ThrottledUntil = now.Add(time.Minute) }, false},

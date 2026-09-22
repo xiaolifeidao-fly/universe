@@ -44,6 +44,7 @@ import {
   type IssuedKeyView,
   type NoticeStatus,
 } from "../../api/consumer.api";
+import { GroupPicker } from "./GroupPicker";
 import {
   canApplyLocally,
   clientConfigApi,
@@ -567,6 +568,8 @@ export function ConsumerKeys() {
       <Modal
         open={creating}
         title={t("keys.new")}
+        // 比默认的 520 宽：分组那三级要左右摆两栏，520 宽里模型名和价会各占一行。
+        width={720}
         okText={t("keys.createOk")}
         cancelText={t("common.cancel")}
         confirmLoading={busy}
@@ -1035,100 +1038,5 @@ function ConnectCard({
         </span>
       </div>
     </Card>
-  );
-}
-
-/**
- * 新建密钥时挑分组。
- *
- * 一个模型一行，行里几颗分组胶囊，**一个模型最多选一个**：一次请求只认模型，
- * 同一个模型选两个分组就答不出「按哪份价收」。点第二颗自动换掉第一颗。
- *
- * 一颗都不选就建不出密钥 —— 这不是界面上的洁癖：中转按分组走，没有分组的密钥
- * 回答不了「这一次按哪份价收、共享者该不该接」。
- *
- * 胶囊上摆的是**输出价**和「支不支持快速」：这两样是分组之间真正的区别，
- * 而输入价、缓存价在同一个模型的几个分组之间往往只差一点。完整的价在模型广场上。
- */
-function GroupPicker({
-  options,
-  picked,
-  onPick,
-}: {
-  options: ConsumerGroupOption[];
-  picked: Record<string, string>;
-  onPick: (next: Record<string, string>) => void;
-}) {
-  const { t } = useLocale();
-  // 按模型归组，顺序跟着服务端给的（运营排过的目录顺序）。
-  const byModel = useMemo(() => {
-    const order: string[] = [];
-    const map = new Map<string, ConsumerGroupOption[]>();
-    for (const option of options) {
-      const bucket = map.get(option.modelId);
-      if (bucket) bucket.push(option);
-      else {
-        map.set(option.modelId, [option]);
-        order.push(option.modelId);
-      }
-    }
-    return order.map((modelId) => ({ modelId, items: map.get(modelId) ?? [] }));
-  }, [options]);
-
-  if (options.length === 0) {
-    // 平台一个分组都没上架时，这里是空的 —— 直说，而不是留一片空白让人以为在加载。
-    return <span className="gx-card__hint">{t("keys.groupsEmpty")}</span>;
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <span className="gx-label">{t("keys.groups")}</span>
-      <span className="gx-card__hint">{t("keys.groupsHint")}</span>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 280, overflowY: "auto", paddingRight: 4 }}>
-        {byModel.map(({ modelId, items }) => (
-          <div key={modelId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span className="gx-mono" style={{ fontSize: 12, color: "var(--gx-soft)" }}>
-              {items[0]?.modelName || modelId}
-            </span>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {items.map((option) => {
-                const active = picked[modelId] === option.group.groupId;
-                return (
-                  <button
-                    key={option.group.groupId}
-                    type="button"
-                    onClick={() => {
-                      const next = { ...picked };
-                      // 再点一次 = 取消这个模型的选择。没有这一下，选错了就只能关掉重来。
-                      if (active) delete next[modelId];
-                      else next[modelId] = option.group.groupId;
-                      onPick(next);
-                    }}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      fontSize: 12.5,
-                      cursor: "pointer",
-                      border: `1px solid ${active ? "var(--gx-accent)" : "var(--gx-line)"}`,
-                      background: active ? "var(--gx-accent-soft, var(--gx-muted))" : "var(--gx-card, transparent)",
-                      color: active ? "var(--gx-accent)" : "inherit",
-                    }}
-                  >
-                    <span style={{ fontWeight: active ? 600 : 500 }}>{option.group.name}</span>
-                    <span className="gx-mono" style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>
-                      {formatPoints(option.group.outputPrice)}
-                    </span>
-                    {option.group.allowFast ? <Pill tone="accent">{t("keys.groupFast")}</Pill> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }

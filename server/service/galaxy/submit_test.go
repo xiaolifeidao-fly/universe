@@ -22,14 +22,14 @@ import (
 const submitMaxWait = 3 * time.Second
 
 func TestSubmitFailsFastWhenNothingCanServe(t *testing.T) {
-	haikuOnly := healthy("c1", time.Now())
-	haikuOnly.ModelsAllow = []string{"claude-haiku-*"}
+	otherGroup := healthy("c1", time.Now())
+	otherGroup.Groups = []string{"mg_DEEP"}
 	cases := []struct {
 		name string
 		lane []ContributionSnapshot
 	}{
 		{"车道里没人", nil},
-		{"模型没人提供", []ContributionSnapshot{haikuOnly}},
+		{"这个分组没人加入", []ContributionSnapshot{otherGroup}},
 	}
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {
@@ -150,7 +150,8 @@ func TestSubmitFailsFastWhenEveryoneIsHolding(t *testing.T) {
 
 func relayUnit() contract.WorkUnit {
 	unit := contract.WorkUnit{
-		Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth", Model: "claude-sonnet-4-5", ConsumerKey: "ck_1",
+		Kind: "llm.chat", KindVersion: 1, Provider: "claude_oauth",
+		Model: "claude-sonnet-4-5", Group: "mg_STD", ConsumerKey: "ck_1",
 	}
 	unit.Metering.Estimate = contract.Metering{contract.UnitOutputTokens: 4096}
 	return unit

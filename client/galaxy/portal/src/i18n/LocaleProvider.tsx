@@ -173,11 +173,8 @@ const messages = {
     "models.col.group": "分组",
     "models.groupCount": "{count} 组",
     "models.groupTitle": "分组与价格",
-    "models.groupHint":
-      "分组是这个模型在卖的几个档次：买哪个分组，就按哪个分组的价、它卖的思考深度、支不支持快速来跑。上面那几个数是没单独定价的分组共用的价。",
     "models.fastOn": "支持快速",
     "models.expand": "展开看这个模型的分组价与说明",
-    "models.priceUnit": "单价都是每百万 token",
     "models.endpointTitle": "填进客户端的就是这一行",
 
     "pricing.title": "定价",
@@ -406,11 +403,8 @@ const messages = {
     "models.col.group": "Group",
     "models.groupCount": "{count} groups",
     "models.groupTitle": "Groups and pricing",
-    "models.groupHint":
-      "A group is one of the tiers this model is sold as: the group you buy decides the price, how deeply it thinks, and whether fast mode counts. The rates above are shared by every group without one of its own.",
     "models.fastOn": "Fast",
     "models.expand": "Open this model for its group rates and details",
-    "models.priceUnit": "All rates are per 1M tokens",
     "models.endpointTitle": "This is the line your client needs",
 
     "pricing.title": "Pricing",

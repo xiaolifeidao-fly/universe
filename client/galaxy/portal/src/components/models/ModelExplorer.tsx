@@ -325,12 +325,11 @@ function ModelDetail({ model }: { model: PortalModel }) {
       {groups.length > 0 ? <GroupTable groups={groups} currency={model.currency} /> : null}
 
 
-      <div className="gp-list__foot">
-        <span>
-          {t("models.priceUnit")}
+      {/* 这一行只剩数：划线价和折扣都没有时整行不出现，否则留下一个空行的 gap。 */}
+      {listed || discountBps > 0 ? (
+        <div className="gp-list__foot">
           {listed ? (
-            <>
-              {" · "}
+            <span>
               {t("models.listPrice")}{" "}
               {/* 划线价按主价那几列的顺序排。缓存那一段只在真声明了官方缓存价时才出现：
                   绝大多数模型没有这个数，平白多一个「-」等于让人以为我们漏填了。 */}
@@ -339,14 +338,12 @@ function ModelDetail({ model }: { model: PortalModel }) {
                 {formatUnitPrice(model.listOutputPrice ?? 0, model.currency)}
                 {(model.listCachePrice ?? 0) > 0 ? ` / ${formatUnitPrice(model.listCachePrice ?? 0, model.currency)}` : ""}
               </s>
-            </>
+            </span>
           ) : null}
-          {/* 回落到统一价时说出来：不说的话一屏模型显示同一个数，看起来像页面坏了。 */}
-          {!model.priced ? ` · ${t("common.unifiedHint")}` : ""}
-        </span>
-        {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
-        {discountBps > 0 ? <Tag tone="ok">{t("models.discount", { rate: formatBps(discountBps) })}</Tag> : null}
-      </div>
+          {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
+          {discountBps > 0 ? <Tag tone="ok">{t("models.discount", { rate: formatBps(discountBps) })}</Tag> : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -387,7 +384,6 @@ function GroupTable({ groups, currency }: { groups: PortalGroupPrice[]; currency
           </div>
         ))}
       </div>
-      <span className="gp-list__hint">{t("models.groupHint")}</span>
     </div>
   );
 }

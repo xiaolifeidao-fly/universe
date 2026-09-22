@@ -380,6 +380,9 @@ export async function resolveDispute(disputeId: string, status: string, resoluti
  * 运营这条接口列全部（含下架的），并且带着返现比例 —— 公开接口不给那个比例。
  */
 export class GalaxyModelView {
+  /** 模型目录记录的数据库主键；只由管理端目录接口返回。 */
+  id = 0;
+
   modelId = "";
 
   displayName = "";

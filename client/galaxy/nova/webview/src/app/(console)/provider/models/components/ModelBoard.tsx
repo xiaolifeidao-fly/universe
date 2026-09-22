@@ -402,15 +402,10 @@ function ModelDetail({ model }: { model: ProviderModelView }) {
               </div>
             ))}
           </div>
-          <span className="gx-card__hint">{t("models.groupHint")}</span>
         </div>
       ) : null}
 
-      <span className="gx-card__hint">
-        {t("models.priceUnit")} · {t("models.earned", { value: formatPoints(model.earned7d) })}
-        {/* 回落到能力统一价时说出来，否则一屏的模型都是同一个数，读起来像页面坏了。 */}
-        {!model.priced ? ` · ${t("models.unifiedPrice")}` : ""}
-      </span>
+      <span className="gx-card__hint">{t("models.earned", { value: formatPoints(model.earned7d) })}</span>
     </div>
   );
 }

@@ -152,21 +152,21 @@ type ContributionInput struct {
 	Kind        string `json:"kind" binding:"required"`
 	KindVersion int    `json:"kindVersion"`
 	Provider    string `json:"provider" binding:"required"`
-	Models      struct {
-		Allow []string `json:"allow"`
-		Deny  []string `json:"deny"`
-	} `json:"models"`
 	// Groups 这条车道加入了哪些模型分组（mg_…）。空 = 不限。
 	// 节点自己不决定它 —— 这是主人在控制台上的选择，hello 时原样回传，
-	// 以 Hub 上存的为准（同 ModelsAllow/Deny 的口径）。
+	// 以 Hub 上存的为准。
 	Groups          []string          `json:"groups"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
 	Quota           []QuotaGrantInput `json:"quota"`
 	Schedule        []ScheduleInput   `json:"schedule"`
 	UpstreamOK      *bool             `json:"upstreamOK"`
-	// AvailableModels 上游现在有哪些模型，节点探测后上报，控制台拿它当候选项。
-	// 刻意不叫 models：上面那个 Models 是 {allow,deny} 对象，同名会让反序列化直接失败。
+	// AvailableModels 上游现在有哪些模型，节点探测后上报。**只作标注**：
+	// 界面拿它说「这台机器上有没有这个模型」，不参与任何调度判定 ——
+	// 接哪些模型由主人加入的分组决定（Groups）。
+	//
+	// 名字里的 available 不能省成 models：老节点发的 hello 里 models 是
+	// 一个 {allow,deny} 对象（那份名单 2026-09-22 起不再有），改名要两端同时发版。
 	AvailableModels []string `json:"availableModels"`
 	// Available / UnavailableReason 是节点探测到的事实：这台机器现在能不能干这件事。
 	// 它和「主人愿不愿意共享」是两回事 —— 后者由控制台定，节点无权表态。
@@ -176,17 +176,17 @@ type ContributionInput struct {
 }
 
 // EnabledContribution 是 Hub 下发给节点的**生效配置**：主人在控制台开着、
-// 且节点报了可用的那些能力，连同额度、座位、模型范围和挂机时段。
+// 且节点报了可用的那些能力，连同额度、座位、加入的分组和挂机时段。
 //
 // 节点按它建通道。本机配置文件不再决定共享什么 —— 那是主人在控制台的事，
 // 「随时随地能调」这条要求就落在这里：改完下一次心跳（≤15s）节点就换过来了。
 type EnabledContribution struct {
-	CID             string            `json:"cid"`
-	Kind            string            `json:"kind"`
-	KindVersion     int               `json:"kindVersion"`
-	Provider        string            `json:"provider"`
-	ModelsAllow     []string          `json:"modelsAllow"`
-	ModelsDeny      []string          `json:"modelsDeny"`
+	CID         string `json:"cid"`
+	Kind        string `json:"kind"`
+	KindVersion int    `json:"kindVersion"`
+	Provider    string `json:"provider"`
+	// Groups 主人加入的模型分组（mg_…）。空 = 不限。
+	// 节点拿它做本机自校验（原则 8）：派下来的单元带着分组，不在这份名单里的不执行。
 	Groups          []string          `json:"groups"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
@@ -606,10 +606,11 @@ type ProviderModelView struct {
 	// GroupsUnrestricted 名下至少有一条贡献是「不限分组」（存量贡献，或主人就这么选的）。
 	// 这时 JoinedGroups 可能是空的，而机器照样什么单都接 —— 两件事界面上要分得开。
 	GroupsUnrestricted bool `json:"groupsUnrestricted,omitempty"`
-	// Allowed 这个人名下至少有一条贡献接这个模型（按各自的允许/拒绝名单算）。
+	// Allowed 这个人名下至少有一条贡献接这个模型 —— 也就是加入了它底下的某个分组，
+	// 或者那条贡献本来就不限分组。模型没有分组时恒为假：没有分组就没有人在卖它。
 	Allowed bool `json:"allowed"`
 	// Available 至少有一台机器的上游**真的**有这个模型。这是节点报上来的事实，
-	// 和 Allowed 那个「主人定的规则」是两回事：允许了但上游没有，照样接不到单。
+	// 和 Allowed 那个「主人定的规则」是两回事：加入了但上游没有，照样接不到单。
 	Available bool `json:"available"`
 	// Earned7d 最近 7 天这个模型给这个人记了多少微积分。
 	Earned7d  int64 `json:"earned7d"`
@@ -618,29 +619,21 @@ type ProviderModelView struct {
 
 // ---------- 模型候选 ----------
 
-// ModelOption 共享设置页那两个框（允许 / 拒绝）里的一个候选项。
+// ModelOption 共享设置页「接哪些分组」底下的一个模型。
 //
-// 只有名字：那两个框填的是**规则**，价钱、上下文长度是「模型」那一页的事，
-// 摆进来只会让一个正在填规则的人分神去比价。
+// 只有名字和它在卖的分组：这一屏填的是**规则**，价钱、上下文长度是「模型」那一页
+// 的事，摆进来只会让一个正在填规则的人分神去比价。
 type ModelOption struct {
 	ModelID     string `json:"modelId"`
 	DisplayName string `json:"displayName"`
-	// Groups 这个模型在卖的分组。共享设置那一屏要勾「加入哪些分组」——
-	// 它和上面那两个框是两件事：名单管「跑哪些模型」，分组管「以什么档次跑」。
+	// Groups 这个模型在卖的分组，**带结算价**（跑一百万 token 给这台机器记多少微积分）。
+	// 主人勾中哪几个，这台机器就提供哪几个的能力 —— 一个都不勾的模型，
+	// 它的单不会派到这台机器上。
 	//
-	// 不带价：这一屏填的是规则，价钱在「模型」那一页（那里给的是结算价）。
-	Groups []ModelGroupBrief `json:"groups,omitempty"`
-}
-
-// ModelGroupBrief 共享设置里一个可勾选的分组。只有认得出它是什么所需的最少信息。
-type ModelGroupBrief struct {
-	GroupID string `json:"groupId"`
-	Name    string `json:"name"`
-	Summary string `json:"summary,omitempty"`
-	// AllowFast 这个分组卖不卖快速。共享者要知道：开了快速的分组，
-	// 上游那边烧得更快，而他的订阅余量是有限的。
-	AllowFast bool `json:"allowFast"`
-	IsDefault bool `json:"isDefault,omitempty"`
+	// 价要跟着来：勾不勾一个分组本来就是「这一档值不值得我接」的决定，
+	// 让人先记住数字、再切到「模型」那一页去比，等于把决定拆成两步做。
+	// 和那一页同一个口径 —— 共享端只给**结算价**，对外价与抽成不是他要做的决定。
+	Groups []ModelGroupPrice `json:"groups,omitempty"`
 }
 
 // ModelOptionGroup 平台在卖的模型，按**厂商**分一组。
@@ -673,14 +666,15 @@ type ContributionView struct {
 	// Kind（llm.chat）分不开 Claude 和 Codex，Provider（claude_oauth / codex_chatgpt）
 	// 分得开但那是路由键，认它等于让每个前端各写一份「哪个键算哪一家」。
 	// 这里按和用量分类同一个函数算好给出去，控制台拿它去取这一族的模型候选。
-	Category    string   `json:"category"`
-	ModelsAllow []string `json:"modelsAllow"`
-	ModelsDeny  []string `json:"modelsDeny"`
+	Category string `json:"category"`
 	// Groups 主人确认加入的模型分组。空 = 不限（这台机器什么分组的单都接）。
-	// 它和模型名单不重复：名单管「跑哪些模型」，分组管「以什么档次跑」——
-	// 同一个模型的「标准」和「深度」是两份价、两种上游成本。
+	//
+	// 这是这条车道**唯一**的范围闸：加入了哪些分组，就提供那些分组的模型能力。
+	// 2026-09-22 之前还并排摆着一份模型通配名单（modelsAllow / modelsDeny），
+	// 已经撤掉 —— 两个维度各拦一半，主人勾了分组却被名单拦下时，
+	// 界面上看不出是哪一道闸拦的。
 	Groups []string `json:"groups"`
-	// 节点报的上游可用模型。给控制台当候选项，不参与任何调度判定。
+	// 节点报的上游可用模型。只作标注（「这台机器有」），不参与任何调度判定。
 	AvailableModels []string `json:"availableModels"`
 	Seats           int      `json:"seats"`
 	SeatConcurrency int      `json:"seatConcurrency"`
@@ -1045,13 +1039,10 @@ type WorkloadQuery struct {
 type SaveContributionLimitsRequest struct {
 	OwnerUserID string `json:"-"`
 	// NodeID 用来消歧：cid 是去掉节点前缀的短名，多台机器上会重名。
-	NodeID      string   `json:"nodeId"`
-	CID         string   `json:"cid" binding:"required"`
-	ModelsAllow []string `json:"modelsAllow"`
-	ModelsDeny  []string `json:"modelsDeny"`
+	NodeID string `json:"nodeId"`
+	CID    string `json:"cid" binding:"required"`
 	// Groups 加入哪些模型分组。**必须显式给**（可以是空数组 = 不限）：
-	// 这一项和模型名单一样是主人的规则，前端漏传会被当成「清空」，
-	// 所以共享设置那一屏一律整份提交。
+	// 它是主人的规则，前端漏传会被当成「清空」，所以共享设置那一屏一律整份提交。
 	Groups          []string          `json:"groups"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
@@ -1449,6 +1440,9 @@ type PortalFamilyView struct {
 
 // PortalModelView 门户上的一个模型。价格是「每百万 token 的微分」，与账单同口径。
 type PortalModelView struct {
+	// ID 是模型目录记录的数据库主键，只在运营管理接口里填。公开门户保持为 0，
+	// 配合 omitempty 不把内部记录标识暴露给消费者。
+	ID              int64  `json:"id,omitempty"`
 	ModelID         string `json:"modelId"`
 	DisplayName     string `json:"displayName"`
 	Vendor          string `json:"vendor,omitempty"`

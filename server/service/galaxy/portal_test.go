@@ -57,6 +57,23 @@ func TestPricedNeedsBothOwnPrices(t *testing.T) {
 	}
 }
 
+func TestAdminPortalModelViewIncludesRecordID(t *testing.T) {
+	row := &repository.GalaxyModel{ID: 42, ModelID: "gpt-5.6-terra", Listed: true}
+
+	publicView := portalModelView(row)
+	if publicView.ID != 0 {
+		t.Fatalf("公开目录不应带数据库主键，实际 %d", publicView.ID)
+	}
+
+	adminView := adminPortalModelView(row)
+	if adminView.ID != 42 {
+		t.Fatalf("管理目录 ID = %d，期望 42", adminView.ID)
+	}
+	if adminView.Listed == nil || !*adminView.Listed {
+		t.Fatal("管理目录应继续带上下架状态")
+	}
+}
+
 // TestCacheWriteBothTTLTiersReachTheCard 缓存写入的两档都要到卡片上。
 //
 // TTL 是调用方在请求体的 cache_control 里自己写的（不写 = 5 分钟），平台既控制不了

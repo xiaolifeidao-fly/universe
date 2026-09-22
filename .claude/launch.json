@@ -154,6 +154,24 @@
       ],
       "port": 17901,
       "autoPort": false
+    },
+    {
+      "name": "orbit-scratch-preview",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "/private/tmp/claude-501/-Users-fly-Documents-develop-project-private-universe/0a6d6186-107d-4642-98c7-91ab04fc5e9b/scratchpad/orbit-preview/client/galaxy/orbit/webview",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "17993"
+      ],
+      "port": 17993,
+      "autoPort": false
     }
   ]
 }

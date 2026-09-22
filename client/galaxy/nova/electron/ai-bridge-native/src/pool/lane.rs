@@ -17,8 +17,8 @@ pub struct LaneConfig {
     pub provider: String,
     pub seats: u32,
     pub seat_concurrency: u32,
-    pub models_allow: Vec<String>,
-    pub models_deny: Vec<String>,
+    /// 主人加入的模型分组。空 = 不限。节点侧的自校验拿它比对派下来的单元。
+    pub groups: Vec<String>,
 }
 
 #[derive(Default)]
@@ -32,7 +32,7 @@ struct LaneState {
 /// 这里的并发闸门与 core/queue.rs 的三层闸门是两回事：那一层管的是本机客户端，
 /// 这一层管的是共享池派下来的单元，两者的上限由主人分别配置。
 pub struct Lane {
-    // config 是可变的：主人在控制台改座位或模型范围时原地换掉，不重建通道 ——
+    // config 是可变的：主人在控制台改座位或分组时原地换掉，不重建通道 ——
     // 重建会把 inflight 计数清零，正在跑的请求就成了没人认领的并发。
     config: RwLock<LaneConfig>,
     state: Mutex<LaneState>,

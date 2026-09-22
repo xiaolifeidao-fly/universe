@@ -441,10 +441,8 @@ func (s *service) effectiveContributions(ctx context.Context, node *repository.G
 			// 下发给节点的是**本机短名**：cid 在 Hub 侧带了 nodeId 前缀消歧，
 			// 但节点只认自己起的那个名字（设计 2.7）。
 			CID: local, Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
-			ModelsAllow: orEmpty(decodeStrings(row.ModelsAllowJSON)),
-			ModelsDeny:  orEmpty(decodeStrings(row.ModelsDenyJSON)),
-			// 分组一并下发。节点侧不拿它做判断（派单在 Hub 这边过硬过滤），
-			// 但它要能在本机日志里说清楚「这台机器接的是哪几档」。
+			// 分组要下发：派单的硬过滤在 Hub 这边走，但「在我的机器上执行什么」
+			// 这条边界不信任 Hub（原则 8）—— 节点拿它比对派下来的单元。
 			Groups: orEmpty(decodeStrings(row.GroupsJSON)),
 			Seats:  row.Seats, SeatConcurrency: row.SeatConcurrency,
 			Quota: quota, Schedule: orEmpty(decodeSchedule(row.ScheduleJSON)),
@@ -815,7 +813,7 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 	}
 	plan := BuildQuotaPlan(grants, now)
 	floors := DecodeUpstreamFloors(row.UpstreamFloorJSON)
-	// 每一个列都过一遍 orEmpty：模型白名单、挂机时段、额度都可能是空的，
+	// 每一个列都过一遍 orEmpty：分组名单、挂机时段、额度都可能是空的，
 	// 而空的 Go 切片如果是 nil，序列化出去就是 null。
 	view := dto.ContributionView{
 		CID: unscopedCID(row.NodeID, row.CID), NodeID: row.NodeID,
@@ -824,8 +822,6 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		// 模型候选，而「claude_oauth 算 Claude」这件事只该在服务端写一次。
 		// 不传模型名 —— 一条车道不是一个模型，按路由键认就够。
 		Category:        usageCategory("", row.Provider, row.Kind),
-		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
-		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
 		Groups:          orEmpty(decodeStrings(row.GroupsJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
 		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status,
@@ -1286,7 +1282,6 @@ func (s *service) snapshotFromRow(row *repository.GalaxyContribution, grants []Q
 	return ContributionSnapshot{
 		CID: row.CID, NodeID: row.NodeID, OwnerUserID: row.OwnerUserID,
 		Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
-		ModelsAllow: decodeStrings(row.ModelsAllowJSON), ModelsDeny: decodeStrings(row.ModelsDenyJSON),
 		Groups: decodeStrings(row.GroupsJSON),
 		Seats:  row.Seats, SeatConcurrency: row.SeatConcurrency,
 		QuotaLimit: limits, QuotaUsed: contract.Metering{}, QuotaReserved: contract.Metering{},
@@ -1488,10 +1483,8 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 
 	// 分组名单原样落库，**不校验分组还在不在**：主人手上这份名单是他的选择，
 	// 平台下架一个分组不该悄悄改写它（下架的分组本来就不会有新单进来）。
-	// 名单为空是「不限」，也就是什么分组的单都接 —— 和模型名单同一套语义。
+	// 名单为空是「不限」，也就是什么分组的单都接。
 	if err := s.repository.SaveContributionLimits(ctx, bizLine, row.CID, map[string]any{
-		"models_allow_json":   encodeJSON(req.ModelsAllow),
-		"models_deny_json":    encodeJSON(req.ModelsDeny),
 		"groups_json":         encodeJSON(req.Groups),
 		"seats":               seats,
 		"seat_concurrency":    defaultInt(req.SeatConcurrency, row.SeatConcurrency),

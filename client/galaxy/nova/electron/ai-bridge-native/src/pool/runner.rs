@@ -13,7 +13,7 @@ use super::upgrade::{compare_versions, current_platform, UpgradeCommand, Upgrade
 use crate::business::llm_chat::RelayProvider;
 use crate::business::video_edit::FfmpegLocalProvider;
 use crate::business::{
-    local_resources, model_match, ArtifactRef, DoneEvent, ErrorClass, Metering, Provider,
+    group_joined, local_resources, ArtifactRef, DoneEvent, ErrorClass, Metering, Provider,
     UnitCallbacks, UnitError, UnitEvent, UnitIo, WorkUnit,
 };
 use crate::config::schema::{AccessMode, AppConfig, PoolConfig, PoolExportConfig};
@@ -1092,10 +1092,11 @@ impl RunnerInner {
             if config.provider != unit.provider {
                 continue;
             }
-            if let Some(model) = &unit.model {
-                if !model_match(model, &config.models_allow, &config.models_deny) {
-                    continue;
-                }
+            // 分组是范围上唯一的闸（2026-09-22 起，模型通配名单已撤）：名单为空是
+            // 「不限」，单元没带分组（没有模型的请求、还没建分组的模型）同样放行 ——
+            // 把「不知道」当成「不接」，会让这两类单在本机全部被判成能力不符。
+            if !group_joined(&config.groups, unit.group.as_deref()) {
+                continue;
             }
             return Some(Arc::clone(lane));
         }
@@ -1411,8 +1412,7 @@ fn lane_config(want: &EnabledContribution) -> LaneConfig {
         provider: want.provider.clone(),
         seats: want.seats,
         seat_concurrency: want.seat_concurrency,
-        models_allow: want.models_allow.clone(),
-        models_deny: want.models_deny.clone(),
+        groups: want.groups.clone(),
     }
 }
 

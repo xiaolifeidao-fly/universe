@@ -63,7 +63,7 @@ type FilterInput struct {
 	FallbackBurn contract.Metering
 }
 
-// Filter 硬过滤：kind/版本支持 ∧ provider 匹配 ∧ model ∈ allow∖deny ∧ 分组已加入 ∧ 在线 ∧ 未限流
+// Filter 硬过滤：kind/版本支持 ∧ provider 匹配 ∧ 分组已加入 ∧ 在线 ∧ 未限流
 // ∧ 上游余量高于主人划的线 ∧ 未排空 ∧ 在挂机时段内 ∧ seatsUsed < seatsEff
 // ∧ 各单位余量 > 预留 + 预估 ∧ inflight < conc。
 func Filter(snapshots []ContributionSnapshot, in FilterInput) []Candidate {
@@ -86,11 +86,11 @@ func admit(snapshot ContributionSnapshot, plan QuotaPlan, in FilterInput) (int, 
 	if snapshot.Provider != in.Route.Provider {
 		return 0, false
 	}
-	if in.Route.Model != "" && !contract.ModelMatch(in.Route.Model, snapshot.ModelsAllow, snapshot.ModelsDeny) {
-		return 0, false
-	}
-	// 分组：主人确认加入了才接得到这个分组的单。名单为空是「不限」，不是「一个都不接」——
-	// 存量贡献那一列本来就是空的，当成「都不接」会在迁移那一刻让全网机器一起掉出候选。
+	// 分组：主人确认加入了才接得到这个分组的单。分组属于某一个模型，所以这一条同时
+	// 就是「这台机器提供哪些模型能力」—— 模型名单那一维已经撤掉（见 ContributionSnapshot.Groups）。
+	//
+	// 名单为空是「不限」，不是「一个都不接」—— 存量贡献那一列本来就是空的，
+	// 当成「都不接」会在迁移那一刻让全网机器一起掉出候选。
 	if !groupJoined(snapshot.Groups, in.Route.Group) {
 		return 0, false
 	}
@@ -423,7 +423,8 @@ func clamp01(value float64) float64 {
 	return value
 }
 
-// groupJoined 这条贡献接不接这个分组的单。
+// groupJoined 这条贡献接不接这个分组的单。**它是范围上唯一的硬过滤**：
+// 分组属于某一个模型，加入了哪些分组就等于提供哪些模型的哪几档能力。
 //
 // 两种「不限」都为真：名单为空（主人没选，或者存量贡献），以及请求本身没有分组
 // （count_tokens 这类没有模型的请求、老密钥落在没建分组的模型上）。
