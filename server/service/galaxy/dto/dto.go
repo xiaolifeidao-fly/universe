@@ -625,6 +625,22 @@ type ProviderModelView struct {
 type ModelOption struct {
 	ModelID     string `json:"modelId"`
 	DisplayName string `json:"displayName"`
+	// Groups 这个模型在卖的分组。共享设置那一屏要勾「加入哪些分组」——
+	// 它和上面那两个框是两件事：名单管「跑哪些模型」，分组管「以什么档次跑」。
+	//
+	// 不带价：这一屏填的是规则，价钱在「模型」那一页（那里给的是结算价）。
+	Groups []ModelGroupBrief `json:"groups,omitempty"`
+}
+
+// ModelGroupBrief 共享设置里一个可勾选的分组。只有认得出它是什么所需的最少信息。
+type ModelGroupBrief struct {
+	GroupID string `json:"groupId"`
+	Name    string `json:"name"`
+	Summary string `json:"summary,omitempty"`
+	// AllowFast 这个分组卖不卖快速。共享者要知道：开了快速的分组，
+	// 上游那边烧得更快，而他的订阅余量是有限的。
+	AllowFast bool `json:"allowFast"`
+	IsDefault bool `json:"isDefault,omitempty"`
 }
 
 // ModelOptionGroup 平台在卖的模型，按**厂商**分一组。
@@ -758,10 +774,13 @@ type ExecutionRecord struct {
 	UnitID string `json:"unitId"`
 	Kind   string `json:"kind"`
 	Model  string `json:"model"`
-	// Effort 这一次跑的推理强度。它解释得了这一行为什么烧掉十倍的 token、
-	// 又记了比隔壁行多得多的积分 —— 结算单价本来就按它分档（见 zt_galaxy_price）。
-	// 老记录、以及不按强度分档的能力是空串。
-	Effort    string            `json:"effort,omitempty"`
+	// GroupID / GroupName 这一次落在哪个**模型分组**上。它解释得了这一行为什么
+	// 烧掉十倍的 token、又记了比隔壁行多得多的积分 —— 结算单价按分组定
+	// （见 zt_galaxy_price）。老记录、以及分组被删掉的，两个字段都是空串。
+	//
+	// 推理强度不给：档位名是上游的内部刻度，共享端和使用端都不露它（2026-09-22）。
+	GroupID   string            `json:"groupId,omitempty"`
+	GroupName string            `json:"groupName,omitempty"`
 	State     string            `json:"state"`
 	ErrorCode string            `json:"errorCode,omitempty"`
 	Usage     contract.Metering `json:"usage"`

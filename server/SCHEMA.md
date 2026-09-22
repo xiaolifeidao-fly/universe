@@ -70,7 +70,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_consumer_key` | 算力密钥：鉴权按 sha256 查；`secret_cipher` 是明文的 AES-GCM 密文（加密密钥在配置 `galaxy.key_cipher_secret`，不进库），给「一键使用」和运营转交取回；带有效期、冻结期与允许范围。**不带额度** —— 使用者自助签发，最多 5 把有效的，花的都是同一份账户余额 |
 | `zt_galaxy_consumer_balance` | **历史**：额度包时期按 `(密钥, 模型, 计量单位)` 记的 token 额度。改成按账户积分余额逐笔扣费之后，请求路径一行都不再读它；留着是因为那是买过的记录 |
 | `zt_galaxy_consent_record` | 提供者加入同意与消费者数据告知确认；两者都是硬前置 |
-| `zt_galaxy_price` | 「kind × 模型 × 单位 → 单价」表。两个价：`price` 向使用者收、`provider_price` 结给共享者，差额是平台毛利，都按每百万单位的微分存。`model_id` 空串是**该 kind 的兜底价**，取价先找模型自己的行、按单位找不到才回落。`provider_share` 是老口径，只在 `provider_price` 为 0 时回落。**除唯一键外没有别的索引**：取价靠 `uk_gx_price` 的前缀，所以计费路径一定要带 `kind`，`ORDER BY` 也一定要和索引同向（全升序）—— 见 `ListEffectivePrices` 的注释 |
+| `zt_galaxy_price` | 「kind × 模型 × **分组** × 单位 → 单价」表。两个价：`price` 向使用者收、`provider_price` 结给共享者，差额是平台毛利，都按每百万单位的微分存。取价是**三级回落**（`kind 兜底 → 模型通价 → 分组价`），每一层按单位分别盖：`model_id` 空串是该 kind 的兜底价，`group_id` 空串是该模型的通价 —— 都不是「叫空串的那一个」。`provider_share` 是老口径，只在 `provider_price` 为 0 时回落。**除唯一键外没有别的索引**：取价靠 `uk_gx_price` 的前缀，所以计费路径一定要带 `kind`，`ORDER BY` 也一定要和索引同向（全升序）—— 见 `ListEffectivePrices` 的注释 |
 | `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
 | `zt_galaxy_credit_account` | 提供者积分账户。存**微积分**（1,000,000 = 1 积分 = ¥1），和使用者那本 `points_account` 同一口径 |
 | `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
@@ -83,6 +83,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_ledger_checkpoint` | 节点侧 CLI 的高保真快照，绑 CLI 版本 |
 | `zt_galaxy_dispute` | 争议工单。`(unit_id, attempt)` 唯一，同一次执行只能有一张 |
 | `zt_galaxy_model` | 门户与模型广场的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时回落到 `galaxy.models` 声明的清单。**单价不在这张表里**：曾经有过四列展示价，和 `zt_galaxy_price` 是两份互不校验的数据，2026-09-20 删掉了（`migrations/20260920_galaxy_model_drop_display_price.sql`）；留下的 `list_*_price` 是官方参考价（别人家的价）。`referral_bps` 也不再读：分享返现改成按充值算，而充值不挑模型 |
+| `zt_galaxy_model_group` | **模型分组**：平台在一个模型上卖的那几个档次（「标准」「深度」「快速」）。价挂在它上面（`zt_galaxy_price.group_id`），密钥选中它才签得出来（`zt_galaxy_consumer_key.groups_json`），共享者加入它才接得到单（`zt_galaxy_contribution.groups_json`，派单硬过滤）。`efforts_json` 是这个分组卖哪几档推理强度（空 = 不限，不在表里的档会被夹到最浅的一档），`allow_fast` 是卖不卖快速。`is_default` 用 `1 / NULL` 表示 —— 「每个模型最多一个默认分组」靠 `uk_gx_model_group_default` 加上「NULL 不参与唯一性」实现，写 0 会让第二个非默认分组撞上唯一键。**分组名是对外的，不要写上游的档位名** |
 | `zt_galaxy_lead` | 门户「联系我们」线索。**全站唯一被未鉴权接口写入的表**，字段一律短、按 IP 限流、`ip`/`user_agent` 不进任何对外视图 |
 | `zt_galaxy_points_account` | 使用者积分余额（1 积分 = ¥1，存微积分）。**名下几把密钥花的是这一份钱**，调一次模型扣一次。和提供者的 `credit_account` 是两本账 |
 | `zt_galaxy_points_ledger` | 积分流水：运营充值 / 按量消费 / 申诉退款 / 分享返现（`purchase` 是额度包时期的历史）。和余额变动同一个事务写，`txn_id` 幂等（消费那一笔是 `usage:<单元>:<尝试>`）；`unit_id` 指回那一次请求，账单与申诉靠它接上 |
@@ -134,6 +135,24 @@ AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，�
 
 `20260920_galaxy_balance_model.sql` 给密钥余额加 `model_id` 并换唯一键，让额度能按模型分账。
 它属于额度包那一版，**新部署不需要**：那张表现在只剩历史数据。
+
+种子：`server/galaxy_model_group_seed.sql` 给 9 个模型各铺一组由浅到深的分组（连同它们的输出价），
+是按强度定价那一版种子的继任者 —— 同一批价，换成挂在分组上。它**跑在迁移之后**，
+group_id 和迁移算的是同一个值，两边都跑过也不会翻倍。
+
+`20260922_galaxy_model_group.sql` 建分组表，给价目表换上 `group_id`（并**删掉** `effort` 列），
+给密钥、贡献、单元行各加分组列。**必须先于发版跑**，硬度和 `model_id` 那条一样：
+新版的取价、保存、删除都带 `group_id`，缺列会让 `zt_galaxy_price` 上每一次读写都报 1054 ——
+也就是全站不计费、不结算；`zt_galaxy_unit` 缺列则让派单那一刻的 INSERT 整条失败，请求直接打不进来。
+
+它做三件有数据含义的事：给目录里每个模型建一个「标准」分组（不限强度、允许快速，
+也就是**和加分组之前完全一样**的行为）；把按强度定过价的行折成「待命名分组」并**下架**
+（档位名不能直接摆给使用者看，运营改完名字再上架，在那之前这些价躺着不生效，
+生效的是模型通价 —— 也正是这一档原先的回落目标）；删掉跨模型的强度行（`model_id` 为空、
+`effort` 非空），它们在分组模型里没有对应物，脚本会先报数再删，种子脚本从不产生这种行。
+
+存量密钥与存量贡献的分组列都是空，含义是**不限**：密钥落在各模型的默认分组上，
+贡献什么分组的单都接 —— 迁移那一刻没有任何一台在线机器会掉出候选。
 
 `20260919_galaxy_price_model.sql` 给价目表加 `model_id` 并把唯一键换成
 `(biz_line, kind, model_id, unit, effective_from)`，让同一个 kind 下每个模型能各自定价。

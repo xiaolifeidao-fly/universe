@@ -17,7 +17,13 @@
 -- 也就是全站不计费、不结算；zt_galaxy_unit 缺列则会让派单那一刻的 INSERT 整条失败，
 -- 请求直接打不进来。
 --
--- 幂等：每一步各自判一次存在性，重复执行不会报 1050 / 1060 / 1061。
+-- 幂等：每一步各自判一次存在性，中途失败后**从头再跑一遍**是安全的 ——
+-- 建表、加列、换索引都判过存在性，第 3、4 段的 INSERT 判过 NOT EXISTS，
+-- 第 5 段只写 group_id 还空着的行。
+--
+-- 唯一的例外在跑完之后：第 8 段把 effort 列丢掉了，再从头跑一遍会在第 4 段报
+-- 1054 Unknown column 'effort'。**那是「已经跑完了」的信号，不是故障** ——
+-- 那时候库里该有的东西都有了，从第 7 段往下核对一遍即可。
 
 -- 1) 分组表。
 --
@@ -114,16 +120,24 @@ SELECT s.`biz_line`,
           WHERE g.`biz_line` = s.`biz_line`
             AND g.`group_id` = CONCAT('mg_', UPPER(SUBSTRING(MD5(CONCAT(s.`biz_line`,'|',s.`model_id`,'|',s.`effort`)), 1, 24))));
 
--- 5) 把那些价搬进各自的分组，强度列清空。
+-- 5) 把那些价搬进各自的分组。
+--
+--    **只写 group_id，一个字都别碰 effort。** 这一刻 uk_gx_price 还是含 effort 的老键
+--    （换键在第 7 步），把 effort 清成空串就是让同一个模型的 5 个强度行一起撞到
+--    那行「不分强度」的价上 —— 1062 Duplicate entry，整条 UPDATE 回滚。
+--    踩过一次：连带第 7 步换不成键，第 8 步 DROP COLUMN 又让 MySQL 自动把 effort
+--    从唯一键里摘掉、重建索引，同一批行再撞一次（那条报错的键比这条少一段，
+--    就是因为它是摘掉 effort 之后的五列键）。
+--
+--    effort 的值不必清：第 8 步整列丢掉，值跟着一起没。
 UPDATE `zt_galaxy_price`
-   SET `group_id` = CONCAT('mg_', UPPER(SUBSTRING(MD5(CONCAT(`biz_line`,'|',`model_id`,'|',`effort`)), 1, 24))),
-       `effort` = ''
+   SET `group_id` = CONCAT('mg_', UPPER(SUBSTRING(MD5(CONCAT(`biz_line`,'|',`model_id`,'|',`effort`)), 1, 24)))
  WHERE `effort` <> '' AND `model_id` <> '' AND `group_id` = '';
 
 -- 6) 跨模型的强度行（model_id 为空、effort 非空，「所有模型的某一档统一加价」）没有对应物：
 --    分组属于某一个模型。它们在新的唯一键下会和同组的其它行撞成重复，所以这里删掉。
 --
---    先报数再删：种子脚本从来不产生这种行（galaxy_model_effort_seed.sql 全部带 model_id），
+--    先报数再删：种子脚本从来不产生这种行（按强度定价那一版的种子全部带 model_id），
 --    所以正常情况下这一句影响 0 行。真有行被删掉时，运营要按模型重新建分组把它们补回来。
 SELECT COUNT(*) AS `将删除的跨模型强度行` FROM `zt_galaxy_price` WHERE `effort` <> '' AND `model_id` = '';
 DELETE FROM `zt_galaxy_price` WHERE `effort` <> '' AND `model_id` = '';
@@ -134,7 +148,18 @@ DELETE FROM `zt_galaxy_price` WHERE `effort` <> '' AND `model_id` = '';
 --    group_id 排在 model_id 之后、unit 之前：取价的 ORDER BY 必须和索引同列序才走得上
 --    索引顺序（见 ListEffectivePrices），而回落是「模型比分组更粗」的顺序 —— 一致。
 --
---    跑到这里时 effort 已经全是 ''（第 5、6 步），新旧两个键在这批数据上等价，撞不出重复。
+--    跑到这里时每一行的 (model_id, group_id) 都是唯一的：模型通价的 group_id 是空串，
+--    每个强度行各自一个 group_id（第 5 步），跨模型的强度行已经删掉（第 6 步）。
+--    effort 还留着值，但它已经不在新键里了，撞不出重复。
+--
+--    换键之前先把「新键下会重复」的组列出来。不列的话，ALTER 只会甩一句
+--    1062 Duplicate entry + 一串被截断到 64 字符的值，连是哪个模型都看不全。
+--    正常情况下这条查询一行都不返回。
+SELECT `biz_line`, `kind`, `model_id`, `group_id`, `unit`, `effective_from`, COUNT(*) AS `重复行数`
+  FROM `zt_galaxy_price`
+ GROUP BY `biz_line`, `kind`, `model_id`, `group_id`, `unit`, `effective_from`
+HAVING COUNT(*) > 1;
+
 SET @indexed := (
   SELECT COUNT(*) FROM information_schema.statistics
    WHERE table_schema = DATABASE() AND table_name = 'zt_galaxy_price'
@@ -149,7 +174,8 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- 8) 价目表丢掉强度列。
+-- 8) 价目表丢掉强度列。**必须排在第 7 步之后**：effort 还在唯一键里时丢掉这一列，
+--    MySQL 会顺手把它从索引里摘掉并重建，而重建就是又一次「同一批行撞成一个键」。
 --
 --    留着它才是危险的：两个维度都在表上，而取价只看其中一个，库里就能躺下一行
 --    「填了强度、永远匹配不上」的价，且没有任何地方会报错 —— 这正是这次要消灭的那类故障。

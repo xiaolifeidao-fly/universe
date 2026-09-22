@@ -195,7 +195,13 @@ func (s *service) ProviderModelOptions(ctx context.Context) ([]dto.ModelOptionGr
 	if err != nil {
 		return nil, err
 	}
-	return modelOptionGroups(rows), nil
+	// 分组跟着候选项一起给：共享设置那一屏除了「跑哪些模型」，还要勾「加入哪些分组」。
+	// 分开两条接口取的话，两份数据会在不同时刻到达，界面得自己对齐模型与它的分组。
+	groups, err := s.repository.ListModelGroups(ctx, bizLine, "", true)
+	if err != nil {
+		return nil, err
+	}
+	return modelOptionGroups(rows, groups), nil
 }
 
 // modelOptionGroups 已上架的模型目录 → 按厂商分组的候选项。
@@ -206,9 +212,18 @@ func (s *service) ProviderModelOptions(ctx context.Context) ([]dto.ModelOptionGr
 //
 // 顺序一律跟着目录本身（仓储已按 sort_order, model_id 排过）：运营把主推的
 // 模型排在前面是有意的，替他排一次等于把这个决定抹掉。组的顺序按首次出现。
-func modelOptionGroups(rows []*repository.GalaxyModel) []dto.ModelOptionGroup {
+func modelOptionGroups(rows []*repository.GalaxyModel, groups []*repository.GalaxyModelGroup) []dto.ModelOptionGroup {
+	briefs := map[string][]dto.ModelGroupBrief{}
+	for _, row := range groups {
+		briefs[row.ModelID] = append(briefs[row.ModelID], dto.ModelGroupBrief{
+			GroupID: row.GroupID, Name: row.Name, Summary: row.Summary,
+			AllowFast: row.AllowFast, IsDefault: row.Default(),
+		})
+	}
 	order := make([]string, 0, 2)
-	groups := make(map[string]*dto.ModelOptionGroup, 2)
+	// byFamily 按厂商分栏。名字里带 family 是为了和上面那份「模型分组」分开 ——
+	// 这个文件里「组」有两个意思：界面上的厂商分栏，和平台在卖的模型分组。
+	byFamily := make(map[string]*dto.ModelOptionGroup, 2)
 	for _, row := range rows {
 		family, vendor := row.Family, row.Vendor
 		if family == "" || vendor == "" {
@@ -216,23 +231,24 @@ func modelOptionGroups(rows []*repository.GalaxyModel) []dto.ModelOptionGroup {
 			family = defaultString(family, inferredFamily)
 			vendor = defaultString(vendor, inferredVendor)
 		}
-		group, ok := groups[family]
+		group, ok := byFamily[family]
 		if !ok {
 			group = &dto.ModelOptionGroup{
 				Category: familyCategory(family), Vendor: vendor, Family: family,
 				Models: []dto.ModelOption{},
 			}
-			groups[family] = group
+			byFamily[family] = group
 			order = append(order, family)
 		}
 		group.Models = append(group.Models, dto.ModelOption{
 			ModelID: row.ModelID, DisplayName: defaultString(row.DisplayName, row.ModelID),
+			Groups: briefs[row.ModelID],
 		})
 	}
 	// 空目录回空切片而不是 nil：nil 序列化出去是 null，前端的 .find() 会崩。
 	out := make([]dto.ModelOptionGroup, 0, len(order))
 	for _, family := range order {
-		out = append(out, *groups[family])
+		out = append(out, *byFamily[family])
 	}
 	return out
 }

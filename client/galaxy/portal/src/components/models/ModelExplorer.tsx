@@ -3,7 +3,7 @@
 /**
  * 模型页：有哪些模型、每个多少钱。
  *
- * **列表，不是卡片墙。** 加上推理强度这一维之后，一个模型不再是一个价而是一小张
+ * **列表，不是卡片墙。** 加上分组这一维之后，一个模型不再是一个价而是一小张
  * 价目表（同一个模型最深那档能是最浅那档的十几倍），卡片里塞不下；而来访者在这一页
  * 真正在做的事是「在几个模型之间比价」—— 比价要求数字上下对齐，一排卡片做不到。
  *
@@ -19,13 +19,13 @@
  */
 
 import { useMemo, useState } from "react";
-import { effortLabel, familyLabel, useLocale } from "@/i18n/LocaleProvider";
+import { familyLabel, useLocale } from "@/i18n/LocaleProvider";
 import { BADGE_TONES, Btn, Card, Empty, Section, Tag, familyColor, useCopy } from "@/components/site/kit";
 import { IconCheck, IconChevron, IconCopy, IconSearch } from "@/components/site/icons";
 import { CtaBand, PageHero } from "@/components/home/HomeSections";
 import { VendorMark } from "@shared/brand/VendorMark";
 import { formatBps, formatContext, formatUnitPrice } from "@/utils/format";
-import type { PortalEffortPrice, PortalModel, PortalOverview } from "@/utils/portal";
+import type { PortalGroupPrice, PortalModel, PortalOverview } from "@/utils/portal";
 
 const ALL = "__all__";
 
@@ -134,7 +134,7 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
                   <span className="gp-list__right">{t("models.input")}</span>
                   <span className="gp-list__right">{t("models.output")}</span>
                   <span className="gp-list__right">{t("models.cache")}</span>
-                  <span>{t("models.col.effort")}</span>
+                  <span>{t("models.col.group")}</span>
                   <span />
                 </div>
                 {models.map((model) => (
@@ -173,8 +173,8 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
  *
  * 各档都一个价时返 null —— 「¥15.00 – ¥15.00」既占地方又读不出任何信息。
  */
-function outputRange(efforts: PortalEffortPrice[]): [number, number] | null {
-  const values = efforts.map((row) => row.outputPrice).filter((value) => value > 0);
+function outputRange(groups: PortalGroupPrice[]): [number, number] | null {
+  const values = groups.map((row) => row.outputPrice).filter((value) => value > 0);
   if (values.length === 0) return null;
   const low = Math.min(...values);
   const high = Math.max(...values);
@@ -195,7 +195,7 @@ function hasListPrice(model: PortalModel): boolean {
  */
 function hasDetail(model: PortalModel): boolean {
   return (
-    (model.efforts?.length ?? 0) > 0 ||
+    (model.groups?.length ?? 0) > 0 ||
     !!model.summary ||
     (model.tags?.length ?? 0) > 0 ||
     hasListPrice(model) ||
@@ -205,9 +205,9 @@ function hasDetail(model: PortalModel): boolean {
 
 function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean; onToggle: () => void }) {
   const { t } = useLocale();
-  const efforts = model.efforts ?? [];
+  const groups = model.groups ?? [];
   const context = formatContext(model.contextTokens ?? 0);
-  const range = outputRange(efforts);
+  const range = outputRange(groups);
   const detail = hasDetail(model);
 
   const cells = (
@@ -248,12 +248,11 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
       <span className="gp-list__num gp-list__num--soft" data-label={t("models.cache")}>
         {formatUnitPrice(model.cachePrice, model.currency)}
       </span>
-      <span className="gp-list__effort" data-label={t("models.col.effort")}>
-        {/* 分档了才说。没分档的写「不分强度」会让人以为这里本该有点什么，
-            而不分档的模型就是一个价走到底。 */}
-        {efforts.length > 0 ? (
+      <span className="gp-list__group" data-label={t("models.col.group")}>
+        {/* 有分组才说。一个分组都没有的模型是还没开卖的，那时写「—」比编一句话诚实。 */}
+        {groups.length > 0 ? (
           <>
-            <Tag tone="accent">{t("models.effortCount", { count: efforts.length })}</Tag>
+            <Tag tone="accent">{t("models.groupCount", { count: groups.length })}</Tag>
             {range ? (
               <span className="gp-mono gp-list__range">
                 {formatUnitPrice(range[0], model.currency)} – {formatUnitPrice(range[1], model.currency)}
@@ -286,10 +285,10 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
   );
 }
 
-/** 展开之后的那一块：介绍、标签、按推理强度分档的价，以及划线价那一行小字。 */
+/** 展开之后的那一块：介绍、标签、各个分组的价，以及划线价那一行小字。 */
 function ModelDetail({ model }: { model: PortalModel }) {
   const { t } = useLocale();
-  const efforts = model.efforts ?? [];
+  const groups = model.groups ?? [];
   const listed = hasListPrice(model);
   const discountBps = model.discountBps ?? 0;
 
@@ -323,7 +322,7 @@ function ModelDetail({ model }: { model: PortalModel }) {
         </div>
       ) : null}
 
-      {efforts.length > 0 ? <EffortTable efforts={efforts} currency={model.currency} /> : null}
+      {groups.length > 0 ? <GroupTable groups={groups} currency={model.currency} /> : null}
 
 
       <div className="gp-list__foot">
@@ -353,33 +352,42 @@ function ModelDetail({ model }: { model: PortalModel }) {
 }
 
 /**
- * 按推理强度分档的价。
+ * 这个模型在卖的分组。
  *
- * 只列真的单独定过价的档（服务端就是这么下发的）。回落之后每一档都等于上面那一行，
- * 把六档一律铺开说的是「分了档但都一样」—— 那会让人以为运营填漏了。
+ * 分组是平台真正在卖的单位：价挂在它上面，建密钥时选的也是它。
+ * 「快速」单独一列 —— 它不是价，是能力：买了不支持快速的分组，客户端开了快速也不算数。
  */
-function EffortTable({ efforts, currency }: { efforts: PortalEffortPrice[]; currency: string }) {
+function GroupTable({ groups, currency }: { groups: PortalGroupPrice[]; currency: string }) {
   const { t } = useLocale();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <span className="gp-list__caption">{t("models.effortTitle")}</span>
-      <div className="gp-efforts">
-        <div className="gp-efforts__head">
-          <span>{t("models.col.effort")}</span>
+      <span className="gp-list__caption">{t("models.groupTitle")}</span>
+      <div className="gp-groups">
+        <div className="gp-groups__head">
+          <span>{t("models.col.group")}</span>
           <span className="gp-list__right">{t("models.input")}</span>
           <span className="gp-list__right">{t("models.output")}</span>
           <span className="gp-list__right">{t("models.cache")}</span>
         </div>
-        {efforts.map((row) => (
-          <div className="gp-efforts__row" key={row.effort}>
-            <span>{effortLabel(row.effort, t)}</span>
+        {groups.map((row) => (
+          <div className="gp-groups__row" key={row.groupId}>
+            <span>
+              {row.name}
+              {row.allowFast ? (
+                <>
+                  {" "}
+                  <Tag tone="accent">{t("models.fastOn")}</Tag>
+                </>
+              ) : null}
+              {row.summary ? <span className="gp-groups__note">{row.summary}</span> : null}
+            </span>
             <span className="gp-mono gp-list__right">{formatUnitPrice(row.inputPrice, currency)}</span>
             <span className="gp-mono gp-list__right">{formatUnitPrice(row.outputPrice, currency)}</span>
             <span className="gp-mono gp-list__right gp-list__num--soft">{formatUnitPrice(row.cachePrice, currency)}</span>
           </div>
         ))}
       </div>
-      <span className="gp-list__hint">{t("models.effortHint")}</span>
+      <span className="gp-list__hint">{t("models.groupHint")}</span>
     </div>
   );
 }

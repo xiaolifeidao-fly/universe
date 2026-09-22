@@ -915,10 +915,13 @@ func (s *service) ListExecutionRecords(ctx context.Context, ownerUserID, cid str
 	if err != nil {
 		return nil, err
 	}
+	// 分组名一次解完：记录页要显示「标准 / 深度」，库里存的是 mg_…。
+	groupNames := s.groupNames(ctx)
 	nodeOf := nodeOfContribution(rows)
 	for _, unit := range kept {
 		records = append(records, dto.ExecutionRecord{
-			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model, Effort: unit.Effort, State: unit.State,
+			UnitID: unit.UnitID, Kind: unit.Kind, Model: unit.Model,
+			GroupID: unit.GroupID, GroupName: groupNames[unit.GroupID], State: unit.State,
 			ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Credits:   credits[unit.UnitID],
 			NodeID:    nodeOf[unit.CID],

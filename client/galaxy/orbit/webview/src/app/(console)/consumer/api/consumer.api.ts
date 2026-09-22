@@ -13,6 +13,27 @@ import { getData, getDataList, instance, unwrapApiResponse, type ApiResponse } f
 /** claude = 接 Claude Code；codex = 接 Codex；video / other 两个都不对口（other 是范围不限，两个都能接）。 */
 export type KeyCategory = "claude" | "codex" | "video" | "other";
 
+/**
+ * 一把密钥选中的一个分组，连同它属于哪个模型。
+ *
+ * 这是使用者手上几把密钥的真正区别：不是「名字不同」，是**买的档次不同**。
+ */
+export class KeyGroupView {
+  groupId = "";
+
+  modelId = "";
+
+  modelName = "";
+
+  name = "";
+
+  /** 这个分组支不支持快速。接进客户端之前就该知道 —— 不支持时客户端开了也不算数。 */
+  allowFast = false;
+
+  /** 分组已经被删掉或下架了。老密钥上会出现，界面要标出来。 */
+  missing = false;
+}
+
 export class ConsumerKeyView {
   keyId = "";
 
@@ -34,6 +55,14 @@ export class ConsumerKeyView {
   allowedProviders: string[] = [];
 
   modelTier: string[] = [];
+
+  /**
+   * 这把密钥能用的模型分组，服务端已经连同模型名、分组名解好。
+   *
+   * 空 = 老密钥（2026-09-22 之前签的）：每个模型走它的默认分组，照旧能用。
+   * 新建的密钥一律要选分组 —— 中转按分组走，价钱、强度、快不快速都由它定。
+   */
+  groups: KeyGroupView[] = [];
 
   concurrency = 0;
 
@@ -78,11 +107,13 @@ export class UsageLine {
   model = "";
 
   /**
-   * 这笔用量跑的是哪一档推理强度。单价也按它定，所以账单必须分行 ——
-   * 同一个模型的 max 档和 low 档收的是两个价，合成一行就只能显示其中一个。
-   * 老记录、以及不按强度分档的能力是空串。
+   * 这笔用量落在哪个分组上。单价按分组定，所以账单必须分行 ——
+   * 同一个模型的「标准」和「深度」收的是两个价，合成一行就只能显示其中一个。
+   * 老记录、以及分组已经被删掉的，两个字段都是空串。
    */
-  effort = "";
+  groupId = "";
+
+  groupName = "";
 
   unit = "";
 
@@ -182,12 +213,47 @@ export async function revealKey(keyId: string) {
  * 新建一把密钥。明文只在这一次响应里出现 —— 调用方拿到要立刻存进本机保险箱
  * （api/keyvault.api.ts），之后再要走 revealKey。最多 5 把有效的，超了服务端会拒。
  */
-export async function createKey(alias: string, noticeVersion: string) {
+/**
+ * 新建一把密钥。**分组必选**：中转按分组走 —— 选了哪个分组，这把密钥就按那个分组的
+ * 价钱、那个分组卖的思考深度、快不快速来跑。一个模型只能选一个分组。
+ */
+export async function createKey(alias: string, noticeVersion: string, groups: string[]) {
   const response = await instance.post<ApiResponse<IssuedKeyView>>("/galaxy/consumer/keys", {
     alias,
     noticeVersion,
+    groups,
   });
   return unwrapApiResponse(response.data);
+}
+
+/* ---------- 新建密钥时的分组候选 ---------- */
+
+/**
+ * 一个可选的分组：哪个模型、哪个档次、什么价。
+ *
+ * 带着价给是有意的：选分组就是选价钱，把价留在模型广场那一页，
+ * 人得开两个标签页对着看。
+ */
+export class ConsumerGroupOption {
+  modelId = "";
+
+  modelName = "";
+
+  vendor = "";
+
+  family = "";
+
+  category: KeyCategory = "other";
+
+  group: ModelGroupPrice = new ModelGroupPrice();
+}
+
+export class ConsumerGroupCatalog {
+  options: ConsumerGroupOption[] = [];
+}
+
+export async function fetchGroupOptions() {
+  return getData(ConsumerGroupCatalog, "/galaxy/consumer/groups");
 }
 
 /** 一个人最多几把有效密钥。和服务端的 maxConsumerKeys 对齐，界面据此提前禁用按钮。 */
@@ -488,8 +554,13 @@ export class UsageRecord {
 
   model = "";
 
-  /** 这一次的推理强度。单价按 (模型, 强度) 定，「为什么扣这么多」要靠它才答得完整。 */
-  effort = "";
+  /** 这一次落在哪个分组上。单价按 (模型, 分组) 定，「为什么扣这么多」要靠它才答得完整。 */
+  groupId = "";
+
+  groupName = "";
+
+  /** 这一次是不是按快速跑的。分组没开快速时恒为假 —— 界面据此解释「我开了快速但不是快速价」。 */
+  fast = false;
 
   state = "";
 
@@ -534,14 +605,26 @@ export async function fetchUsageRecords(params: {
 /* ---------- 模型广场、积分与分享 ---------- */
 
 /**
- * 一个模型在某一档推理强度上的单价。
+ * 一个模型底下的一个**分组**：平台在这个模型上卖的一个档次，以及它的价。
  *
- * 卡片上那几个数是**不分强度**那一档 —— 它是「没单独定价的强度都按它收」，
- * 也是绝大多数请求真正走的价。这个列表只列真的单独定过价的档，一档都没有时是空的。
+ * 卡片上那几个数是**模型通价** —— 没单独定价的分组都按它收。这个列表列的是
+ * 这个模型在卖的分组，一个都没有时是空的（那种模型建不出密钥来）。
+ *
+ * 分组取代了原先按「推理强度」分档的那张表（2026-09-22）：档位名是上游的内部刻度，
+ * 平台卖的是说得清楚的档次。
  */
-export class ModelEffortPrice {
-  /** 档位名，上游原生：Claude 是 low…max，Codex 是 minimal…high。 */
-  effort = "";
+export class ModelGroupPrice {
+  groupId = "";
+
+  name = "";
+
+  summary = "";
+
+  /** 这个分组支不支持快速。不支持时，客户端开了快速也会被改写成普通档。 */
+  allowFast = false;
+
+  /** 该模型的默认分组。没选分组的老密钥落在它上面。 */
+  isDefault = false;
 
   inputPrice = 0;
 
@@ -624,12 +707,12 @@ export class PortalModelView {
   priced = false;
 
   /**
-   * 这个模型按推理强度单独定过价的那几档，由浅到深。空 = 不分强度，上面那几个数就是全部。
+   * 这个模型在卖的分组。空 = 还没建分组（那种模型签不出能用它的密钥）。
    *
    * 和 NodeUpgrade 一样是嵌套对象：项目里没用 @Type，所以拿到的是服务端原样的普通对象，
-   * ModelEffortPrice 上的默认值在这里不生效。读的时候按可能缺字段处理。
+   * ModelGroupPrice 上的默认值在这里不生效。读的时候按可能缺字段处理。
    */
-  efforts: ModelEffortPrice[] = [];
+  groups: ModelGroupPrice[] = [];
 
   sortOrder = 0;
 }

@@ -117,6 +117,12 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	admin.POST("/prices/save", h.savePrice)
 	admin.POST("/prices/delete", h.deletePrice)
 
+	// 模型分组：平台在卖的那个单位。价挂在它上面，密钥选中它才签得出来，
+	// 共享者加入它才接得到单。清单跟着 /prices 一起返（定价那一屏要按分组摆价），
+	// 这里只给增删改。
+	admin.POST("/groups/save", h.saveModelGroup)
+	admin.POST("/groups/delete", h.deleteModelGroup)
+
 	// 订单。上面那条 /orders/pay 一直都在，但没有地方列得出订单 ——
 	// 补单时运营手上是一个渠道流水号，而那条接口要的是单号。这条按流水号也找得到。
 	admin.GET("/orders", h.orders)
@@ -409,6 +415,33 @@ func (h *Handler) savePrice(context *gin.Context) {
 		return
 	}
 	httpx.JSON(context, req.Kind+"/"+req.Unit, h.service.SaveAdminPrice(context.Request.Context(), req))
+}
+
+// saveModelGroup 新增或改一个分组。分组名、绑定的强度、快不快速，都在这里定。
+func (h *Handler) saveModelGroup(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.SaveModelGroupRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, req.ModelID+"/"+req.Name, h.service.SaveModelGroup(context.Request.Context(), req))
+}
+
+// deleteModelGroup 删一个分组，连同它名下的价目行。
+// 还有密钥选着它时服务端会先拦一道，运营确认后带 force 再来一次。
+func (h *Handler) deleteModelGroup(context *gin.Context) {
+	if !h.enabled(context) {
+		return
+	}
+	var req dto.DeleteModelGroupRequest
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, req.GroupID, h.service.DeleteModelGroup(context.Request.Context(), req))
 }
 
 func (h *Handler) deletePrice(context *gin.Context) {

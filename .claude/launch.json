@@ -120,6 +120,24 @@
       "port": 17900
     },
     {
+      "name": "galaxy-portal-stub",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; export SERVER_TARGET=\"http://127.0.0.1:18801\"; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/portal",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "17902"
+      ],
+      "port": 17902,
+      "autoPort": false
+    },
+    {
       "name": "galaxy-portal-preview",
       "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [

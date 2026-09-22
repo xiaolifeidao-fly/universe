@@ -253,7 +253,7 @@ export function ExecutionRecords() {
                       <span className="gx-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                         {row.model || row.kind}
                       </span>
-                      {row.effort ? <span className="gx-chip">{effortLabel(row.effort, t)}</span> : null}
+                      {row.groupName ? <span className="gx-chip">{row.groupName}</span> : null}
                     </span>
                   ),
                 },
@@ -366,12 +366,3 @@ function durationOf(record: ExecutionRecord): string {
   return formatMillis(new Date(record.finishedAt).getTime() - new Date(record.startedAt).getTime());
 }
 
-/**
- * 档位的中文名。认不出来的原样显示 —— 上游加了新档而我们还没跟上时，
- * 显示成空白会让这一行看起来是坏的，而它照常在结算。
- */
-function effortLabel(effort: string, t: (key: string) => string): string {
-  const key = `models.effort.${effort}`;
-  const label = t(key);
-  return label === key ? effort : label;
-}

@@ -128,11 +128,16 @@ func (s *service) AdminUnits(ctx context.Context, query dto.AdminUnitQuery) (dto
 		return dto.AdminUnitPage{}, err
 	}
 
+	// 分组名一次解完：工单页上要显示「标准 / 深度」，库里存的是 mg_…。
+	groupNames := s.groupNames(ctx)
+
 	page := dto.AdminUnitPage{Total: total, Counts: counts, Days: days, Units: make([]dto.AdminUnitView, 0, len(rows))}
 	for _, row := range rows {
 		view := dto.AdminUnitView{
 			UnitID: row.UnitID, Kind: row.Kind, Primitive: row.Primitive, Provider: row.Provider,
-			Model: row.Model, Effort: row.Effort, ConsumerKey: row.ConsumerKey, CID: row.CID, State: row.State,
+			Model: row.Model, GroupID: row.GroupID, GroupName: groupNames[row.GroupID],
+			Effort: row.Effort, Fast: row.Fast,
+			ConsumerKey: row.ConsumerKey, CID: row.CID, State: row.State,
 			ErrorClass: row.ErrorClass, ErrorCode: row.ErrorCode, ErrorMsg: row.ErrorMsg,
 			Instance: row.Instance, Attempt: row.Attempt,
 			StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, CreatedTime: row.CreatedTime,

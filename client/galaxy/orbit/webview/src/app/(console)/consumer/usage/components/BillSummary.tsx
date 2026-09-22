@@ -71,12 +71,12 @@ export function BillSummary({ keys, reloadToken }: { keys: ConsumerKeyView[]; re
               key: "model",
               title: t("usage.col.model"),
               width: "170px",
-              // 强度跟着模型走，不单开一列：单价按 (模型, 强度) 定，两个分开摆
+              // 分组跟着模型走，不单开一列：单价按 (模型, 分组) 定，两个分开摆
               // 就得让人自己把两列对起来才知道这一行的单价是怎么来的。
               render: (row: UsageLine) => (
                 <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
                   {row.model ? <span className="gx-mono">{row.model}</span> : <span className="gx-muted">{row.kind}</span>}
-                  {row.effort ? <span className="gx-chip">{effortLabel(row.effort, t)}</span> : null}
+                  {row.groupName ? <span className="gx-chip">{row.groupName}</span> : null}
                 </span>
               ),
             },
@@ -136,9 +136,9 @@ export function BillSummary({ keys, reloadToken }: { keys: ConsumerKeyView[]; re
             },
           ]}
           rows={report?.lines ?? []}
-          // 强度进了主键：同一个模型的两档是两行，少这一段会撞成一个 key，
+          // 分组进了主键：同一个模型的两个分组是两行，少这一段会撞成一个 key，
           // React 只画得出其中一行 —— 账单于是少一行，而合计还是对的。
-          rowKey={(row) => `${row.kind}:${row.provider}:${row.model}:${row.effort}:${row.unit}`}
+          rowKey={(row) => `${row.kind}:${row.provider}:${row.model}:${row.groupId}:${row.unit}`}
           empty={t("usage.empty")}
         />
       )}
@@ -146,12 +146,3 @@ export function BillSummary({ keys, reloadToken }: { keys: ConsumerKeyView[]; re
   );
 }
 
-/**
- * 档位的中文名。认不出来的原样显示 —— 上游加了新档而我们还没跟上时，
- * 显示成空白会让这一行看起来是坏的，而它照常在计价。
- */
-function effortLabel(effort: string, t: (key: string) => string): string {
-  const key = `models.effort.${effort}`;
-  const label = t(key);
-  return label === key ? effort : label;
-}

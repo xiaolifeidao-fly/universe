@@ -31,6 +31,7 @@ import {
   createKey,
   fetchConsumerEndpoint,
   fetchDashboard,
+  fetchGroupOptions,
   fetchKeys,
   fetchNotice,
   MAX_KEYS,
@@ -38,6 +39,7 @@ import {
   revealKey,
   revokeKey,
   type ConsumerDashboard,
+  type ConsumerGroupOption,
   type ConsumerKeyView,
   type IssuedKeyView,
   type NoticeStatus,
@@ -93,6 +95,18 @@ export function ConsumerKeys() {
   // 新建密钥的弹框与里面那个名字。名字是给人看的，用来区分「这把接在哪台机器上」。
   const [creating, setCreating] = useState(false);
   const [newAlias, setNewAlias] = useState("");
+  /**
+   * 能选的分组，以及这次选了哪些。
+   *
+   * **选分组是新建密钥的硬前置**（2026-09-22）：中转按分组走 —— 选了哪个分组，
+   * 这把密钥就按那个分组的价、那个分组卖的思考深度、支不支持快速来跑。
+   *
+   * 选中的存成「模型 → 分组」而不是一个数组：一个模型只能选一个分组（同一个模型选两个，
+   * 一次请求就答不出按哪份价收），用 map 存，点第二个分组自然替换掉第一个，
+   * 不必再写一遍互斥判断 —— 而那种判断漏了不会报错，只会在提交时被服务端拒掉。
+   */
+  const [groupOptions, setGroupOptions] = useState<ConsumerGroupOption[]>([]);
+  const [picked, setPicked] = useState<Record<string, string>>({});
   // SDK 要填的 base_url **由服务端给** —— 消费者路由挂在 galaxy-api 的 /v1 上，
   // 那个地址前端猜不出来（控制台和 API 可能不同域、不同端口）。
   const [baseUrl, setBaseUrl] = useState("");
@@ -252,6 +266,22 @@ export function ConsumerKeys() {
   };
 
   /**
+   * 打开新建弹框时取一次候选分组。
+   *
+   * 不在整页加载时取：这一页大多数时候是来复制密钥的，而分组候选只有新建那一刻用得上。
+   * 取失败不拦住弹框 —— 里面会显示「取不到分组」，比一个打不开的按钮说得清楚。
+   */
+  const openCreate = async () => {
+    setCreating(true);
+    try {
+      const catalog = await fetchGroupOptions();
+      setGroupOptions(catalog.options ?? []);
+    } catch (error) {
+      message.error((error as Error).message || t("common.actionFailed"));
+    }
+  };
+
+  /**
    * 新建一把密钥。
    *
    * 明文只在这一次响应里出现，所以顺序是死的：先存进本机保险箱，再摆给人看。
@@ -261,11 +291,12 @@ export function ConsumerKeys() {
   const create = async () => {
     setBusy(true);
     try {
-      const fresh = await createKey(newAlias.trim(), notice?.version ?? "");
+      const fresh = await createKey(newAlias.trim(), notice?.version ?? "", Object.values(picked));
       setIssuedSaved(await rememberKeySecret(fresh.keyId, fresh.alias, fresh.secret));
       setIssued(fresh);
       setCreating(false);
       setNewAlias("");
+      setPicked({});
       setTab("valid");
       message.success(t("keys.createdOk"));
       await load();
@@ -347,7 +378,7 @@ export function ConsumerKeys() {
             icon={<IconPlus size={16} />}
             disabled={busy || valid.length >= MAX_KEYS}
             title={valid.length >= MAX_KEYS ? t("keys.full", { max: MAX_KEYS }) : undefined}
-            onClick={() => setCreating(true)}
+            onClick={() => void openCreate()}
           >
             {t("keys.new")}
           </Btn>
@@ -425,7 +456,7 @@ export function ConsumerKeys() {
                 title={t("keys.emptyTitle")}
                 hint={t("keys.emptyHint")}
                 action={
-                  <Btn tone="accent" disabled={busy} onClick={() => setCreating(true)}>
+                  <Btn tone="accent" disabled={busy} onClick={() => void openCreate()}>
                     {t("keys.new")}
                   </Btn>
                 }
@@ -539,6 +570,9 @@ export function ConsumerKeys() {
         okText={t("keys.createOk")}
         cancelText={t("common.cancel")}
         confirmLoading={busy}
+        // 一个分组都没选就发不出去。服务端也会拒，但在这里拦住的好处是
+        // 人不会先填完名字、点了确定，才被告知还差一步。
+        okButtonProps={{ disabled: Object.keys(picked).length === 0 }}
         onOk={() => void create()}
         onCancel={() => setCreating(false)}
         destroyOnClose
@@ -550,8 +584,8 @@ export function ConsumerKeys() {
             maxLength={64}
             placeholder={t("keys.aliasPlaceholder")}
             onChange={(event) => setNewAlias(event.target.value)}
-            onPressEnter={() => void create()}
           />
+          <GroupPicker options={groupOptions} picked={picked} onPick={setPicked} />
           <span className="gx-card__hint">{t("keys.createSecretHint")}</span>
         </div>
       </Modal>
@@ -606,6 +640,11 @@ function KeyCard({
   action: React.ReactNode;
 }) {
   const { t } = useLocale();
+  // 服务端给的是 Go 的切片：一个分组都没有时序列化成 null 而不是 []，而
+  // class-transformer 会把这个 null 原样盖到字段上（类上写的 `= []` 只在字段
+  // 整个缺席时才留得住）。直接 .length 的话，任何一把存量密钥都会让整页崩成
+  // 「Application error」。allowedKinds / modelTier 也是同一种东西，见上面。
+  const groups = item.groups ?? [];
   return (
     // 选中和「使用」是两件事：外层用 div，选中的热区是里面那个按钮 —— 按钮里再套按钮是非法的 HTML。
     <div
@@ -649,6 +688,31 @@ function KeyCard({
             sk-galaxy-••••••••••••••••
           </span>
           <span className="gx-chip">{t(`keys.category.${item.category}`)}</span>
+        </span>
+        {/* 这把密钥买的是哪几个分组。它才是几把密钥之间真正的区别 —— 不摆出来的话，
+            一屏卡片只有名字不同，而名字是人自己起的。
+            老密钥（2026-09-22 之前签的）没有分组，那一行说清楚它按默认分组跑。 */}
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {groups.length === 0 ? (
+            <span className="gx-chip" style={{ color: "var(--gx-faint)" }}>{t("keys.groupsLegacy")}</span>
+          ) : (
+            groups.map((group) => (
+              <span
+                key={group.groupId}
+                className="gx-chip"
+                // 分组被删或下架时，这把密钥调那个模型会直接失败 —— 标出来，
+                // 否则使用者只会看到一句「模型不允许」而不知道为什么。
+                style={group.missing ? { color: "var(--gx-warn)" } : undefined}
+                title={group.modelName || group.modelId}
+              >
+                {/* 分组被删掉之后服务端只给得出 groupId（模型名、分组名都没了），
+                    拼一个「 · 」在前面会变成一条以分隔符开头的碎句子。 */}
+                {[group.modelName || group.modelId, group.name || group.groupId, group.missing ? t("keys.groupMissing") : ""]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            ))
+          )}
         </span>
         {/* 卡片上没有数字可摆了 —— 额度在账户上，一把密钥本身只有「是哪把、什么时候到期」。
             硬凑一个数（比如这把花了多少）只会让人以为那是它自己的额度。 */}
@@ -971,5 +1035,100 @@ function ConnectCard({
         </span>
       </div>
     </Card>
+  );
+}
+
+/**
+ * 新建密钥时挑分组。
+ *
+ * 一个模型一行，行里几颗分组胶囊，**一个模型最多选一个**：一次请求只认模型，
+ * 同一个模型选两个分组就答不出「按哪份价收」。点第二颗自动换掉第一颗。
+ *
+ * 一颗都不选就建不出密钥 —— 这不是界面上的洁癖：中转按分组走，没有分组的密钥
+ * 回答不了「这一次按哪份价收、共享者该不该接」。
+ *
+ * 胶囊上摆的是**输出价**和「支不支持快速」：这两样是分组之间真正的区别，
+ * 而输入价、缓存价在同一个模型的几个分组之间往往只差一点。完整的价在模型广场上。
+ */
+function GroupPicker({
+  options,
+  picked,
+  onPick,
+}: {
+  options: ConsumerGroupOption[];
+  picked: Record<string, string>;
+  onPick: (next: Record<string, string>) => void;
+}) {
+  const { t } = useLocale();
+  // 按模型归组，顺序跟着服务端给的（运营排过的目录顺序）。
+  const byModel = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, ConsumerGroupOption[]>();
+    for (const option of options) {
+      const bucket = map.get(option.modelId);
+      if (bucket) bucket.push(option);
+      else {
+        map.set(option.modelId, [option]);
+        order.push(option.modelId);
+      }
+    }
+    return order.map((modelId) => ({ modelId, items: map.get(modelId) ?? [] }));
+  }, [options]);
+
+  if (options.length === 0) {
+    // 平台一个分组都没上架时，这里是空的 —— 直说，而不是留一片空白让人以为在加载。
+    return <span className="gx-card__hint">{t("keys.groupsEmpty")}</span>;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <span className="gx-label">{t("keys.groups")}</span>
+      <span className="gx-card__hint">{t("keys.groupsHint")}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 280, overflowY: "auto", paddingRight: 4 }}>
+        {byModel.map(({ modelId, items }) => (
+          <div key={modelId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span className="gx-mono" style={{ fontSize: 12, color: "var(--gx-soft)" }}>
+              {items[0]?.modelName || modelId}
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {items.map((option) => {
+                const active = picked[modelId] === option.group.groupId;
+                return (
+                  <button
+                    key={option.group.groupId}
+                    type="button"
+                    onClick={() => {
+                      const next = { ...picked };
+                      // 再点一次 = 取消这个模型的选择。没有这一下，选错了就只能关掉重来。
+                      if (active) delete next[modelId];
+                      else next[modelId] = option.group.groupId;
+                      onPick(next);
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      fontSize: 12.5,
+                      cursor: "pointer",
+                      border: `1px solid ${active ? "var(--gx-accent)" : "var(--gx-line)"}`,
+                      background: active ? "var(--gx-accent-soft, var(--gx-muted))" : "var(--gx-card, transparent)",
+                      color: active ? "var(--gx-accent)" : "inherit",
+                    }}
+                  >
+                    <span style={{ fontWeight: active ? 600 : 500 }}>{option.group.name}</span>
+                    <span className="gx-mono" style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>
+                      {formatPoints(option.group.outputPrice)}
+                    </span>
+                    {option.group.allowFast ? <Pill tone="accent">{t("keys.groupFast")}</Pill> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

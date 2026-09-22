@@ -58,6 +58,7 @@ import {
   visibleContributions,
   visibleNodes,
   type ContributionView,
+  type ModelGroupBrief,
   type ModelOptionGroup,
   type UpstreamFloor,
   type NodeView,
@@ -95,6 +96,13 @@ const REFRESH_MS = 20_000;
 interface Draft {
   modelsAllow: string[];
   modelsDeny: string[];
+  /**
+   * 加入了哪些模型分组。**空数组 = 不限**，什么分组的单都接（存量车道就是这样）。
+   *
+   * 它和上面两个名单是两件事：名单管「跑哪些模型」，分组管「以什么档次跑」——
+   * 同一个模型的「标准」和「深度」是两份结算价、两种上游消耗。
+   */
+  groups: string[];
   seats: number;
   seatConcurrency: number;
   quota: QuotaGrantInput[];
@@ -106,6 +114,7 @@ function toDraft(row: ContributionView): Draft {
   return {
     modelsAllow: [...(row.modelsAllow ?? [])],
     modelsDeny: [...(row.modelsDeny ?? [])],
+    groups: [...(row.groups ?? [])],
     seats: row.seats || 3,
     seatConcurrency: row.seatConcurrency || 2,
     quota: (row.quota ?? []).map((item) => ({ unit: item.unit, limit: item.limit, window: item.window || "day" })),
@@ -124,6 +133,7 @@ function countChanges(draft: Draft, row: ContributionView): number {
   let changes = 0;
   if (draft.modelsAllow.join() !== base.modelsAllow.join()) changes += 1;
   if (draft.modelsDeny.join() !== base.modelsDeny.join()) changes += 1;
+  if (draft.groups.join() !== base.groups.join()) changes += 1;
   if (draft.seats !== base.seats) changes += 1;
   if (draft.seatConcurrency !== base.seatConcurrency) changes += 1;
   if (JSON.stringify(draft.quota) !== JSON.stringify(base.quota)) changes += 1;
@@ -264,6 +274,23 @@ export function ShareSettings() {
     return options;
   }, [current, modelGroups]);
   /**
+   * 这条车道能加入哪些分组：本族模型底下的全部上架分组。
+   *
+   * 按模型分组摆（一个模型一行），因为主人要做的决定就是「这个模型我接哪几档」。
+   * 清单同样来自平台目录 —— 分组是平台定义的商品，节点那边没有这个概念。
+   */
+  const groupChoices = useMemo(() => {
+    if (!current) return [] as { modelId: string; modelName: string; groups: ModelGroupBrief[] }[];
+    const catalog = modelGroups.find((group) => group.category === current.category)?.models ?? [];
+    return catalog
+      .filter((model) => (model.groups ?? []).length > 0)
+      .map((model) => ({
+        modelId: model.modelId,
+        modelName: model.displayName || model.modelId,
+        groups: model.groups ?? [],
+      }));
+  }, [current, modelGroups]);
+  /**
    * 这台机器此刻各窗口还剩百分之多少（节点五分钟一轮探来的）。
    *
    * 只用来在每条下限旁边写一句「当前剩 83%」—— **判定不在这里**：真正决定
@@ -381,6 +408,7 @@ export function ShareSettings() {
         cid: current.cid,
         modelsAllow: form.modelsAllow,
         modelsDeny: form.modelsDeny,
+        groups: form.groups,
         seats: form.seats,
         seatConcurrency: form.seatConcurrency,
         quota: form.quota.filter((item) => item.unit && item.limit > 0),
@@ -587,6 +615,12 @@ export function ShareSettings() {
                 onChange={(next) => edit({ ...form, modelsDeny: next })}
               />
             </div>
+
+            <GroupJoin
+              choices={groupChoices}
+              picked={form.groups}
+              onChange={(next) => edit({ ...form, groups: next })}
+            />
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
               <Field label={t("share.seats")} hint={t("share.seatsHint", { value: form.seats })}>
@@ -1079,4 +1113,88 @@ function formatObserved(at: string): string {
   const time = new Date(at);
   if (Number.isNaN(time.getTime())) return "—";
   return time.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/**
+ * 加入哪些分组。
+ *
+ * 分组是平台在一个模型上卖的档次（「标准」「深度」「快速」），价、思考深度、
+ * 支不支持快速都挂在它上面。**加入了才接得到那个分组的单** —— 所以这一块和
+ * 上面的模型名单是两件事：名单管「跑哪些模型」，这里管「以什么档次跑」。
+ *
+ * 一个都不勾 = **不限**：什么分组的单都接，也包括以后新加的分组。这是存量车道的状态，
+ * 也是绝大多数人想要的 —— 所以它是默认，而不是「一个都没选、什么都接不到」。
+ * 那种默认会在迁移那一刻让全网机器一起停摆，而界面上每台都还显示着共享中。
+ */
+function GroupJoin({
+  choices,
+  picked,
+  onChange,
+}: {
+  choices: { modelId: string; modelName: string; groups: ModelGroupBrief[] }[];
+  picked: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const { t } = useLocale();
+  const unrestricted = picked.length === 0;
+  const all = useMemo(() => choices.flatMap((row) => row.groups.map((group) => group.groupId)), [choices]);
+
+  if (choices.length === 0) return null;
+
+  const toggle = (groupId: string) => {
+    // 从「不限」点第一下：把全部分组先铺上，再去掉点中的那个 —— 直接只留一个的话，
+    // 主人点一下「深度」就从「什么都接」变成了「只接深度」，那不是他要表达的意思。
+    const base = unrestricted ? all : picked;
+    const next = base.includes(groupId) ? base.filter((id) => id !== groupId) : [...base, groupId];
+    // 全都勾上等于不限。存成空数组，这样平台以后新加的分组会自动接上 ——
+    // 存一份当时的全量名单，新分组永远进不来，而主人以为自己什么都接。
+    onChange(next.length === all.length ? [] : next);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{t("share.groups")}</span>
+        <span className="gx-card__hint">{unrestricted ? t("share.groupsAll") : t("share.groupsHint")}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {choices.map((row) => (
+          <div key={row.modelId} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span className="gx-mono" style={{ fontSize: 12, color: "var(--gx-soft)" }}>
+              {row.modelName}
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {row.groups.map((group) => {
+                const active = unrestricted || picked.includes(group.groupId);
+                return (
+                  <button
+                    key={group.groupId}
+                    type="button"
+                    onClick={() => toggle(group.groupId)}
+                    title={group.summary || undefined}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 10px",
+                      borderRadius: 999,
+                      fontSize: 12.5,
+                      cursor: "pointer",
+                      border: `1px solid ${active ? "var(--gx-accent)" : "var(--gx-line)"}`,
+                      background: active ? "var(--gx-accent-soft, var(--gx-muted))" : "var(--gx-card, transparent)",
+                      color: active ? "var(--gx-accent)" : "inherit",
+                    }}
+                  >
+                    <span style={{ fontWeight: active ? 600 : 500 }}>{group.name}</span>
+                    {/* 快速档上游烧得更快：接不接由你定，但得先看得见。 */}
+                    {group.allowFast ? <Pill tone="warn">{t("share.groupFast")}</Pill> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

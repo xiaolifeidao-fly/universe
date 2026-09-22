@@ -143,7 +143,7 @@ func TestModelOptionGroupsKeepCatalogOrder(t *testing.T) {
 		{ModelID: "claude-sonnet-5", DisplayName: "Sonnet 5", Family: "claude", Vendor: "anthropic"},
 		{ModelID: "gpt-5.6-terra", DisplayName: "GPT-5.6", Family: "gpt", Vendor: "openai"},
 		{ModelID: "claude-opus-5", DisplayName: "Opus 5", Family: "claude", Vendor: "anthropic"},
-	})
+	}, nil)
 	if len(groups) != 2 {
 		t.Fatalf("两家厂商应当分成两组，实际 %d 组", len(groups))
 	}
@@ -166,7 +166,7 @@ func TestModelOptionGroupsCategoryMatchesLane(t *testing.T) {
 	groups := modelOptionGroups([]*repository.GalaxyModel{
 		{ModelID: "claude-sonnet-5", Family: "claude", Vendor: "anthropic"},
 		{ModelID: "gpt-5.6-terra", Family: "gpt", Vendor: "openai"},
-	})
+	}, nil)
 	byCategory := map[string]string{}
 	for _, group := range groups {
 		byCategory[group.Category] = group.Family
@@ -185,7 +185,7 @@ func TestModelOptionGroupsCategoryMatchesLane(t *testing.T) {
 // 堆进去的后果是这个模型在共享设置里选不到：它不属于任何一条车道认得的那一组，
 // 而主人并不知道原因出在运营没填 vendor 那一列。
 func TestModelOptionGroupsInferMissingVendor(t *testing.T) {
-	groups := modelOptionGroups([]*repository.GalaxyModel{{ModelID: "claude-haiku-4-5"}})
+	groups := modelOptionGroups([]*repository.GalaxyModel{{ModelID: "claude-haiku-4-5"}}, nil)
 	if len(groups) != 1 {
 		t.Fatalf("应当只有一组，实际 %d", len(groups))
 	}
@@ -199,7 +199,7 @@ func TestModelOptionGroupsInferMissingVendor(t *testing.T) {
 
 // 空目录回空切片，不是 nil：nil 序列化出去是 null，前端那一侧要多一处判空。
 func TestModelOptionGroupsEmptyCatalog(t *testing.T) {
-	groups := modelOptionGroups(nil)
+	groups := modelOptionGroups(nil, nil)
 	if groups == nil {
 		t.Fatal("空目录也要回空切片")
 	}

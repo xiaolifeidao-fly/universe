@@ -422,8 +422,12 @@ func (s *service) ConsumerGroupOptions(ctx context.Context) (dto.ConsumerGroupCa
 // 而静默丢掉这一条，界面上会显示成「这把密钥没选任何分组」——那是另一回事（存量密钥），
 // 处置方式完全不同。
 func (s *service) keyGroupViews(ctx context.Context, ids []string) []dto.KeyGroupView {
+	// 空的也要给一个空切片，不能是 nil：nil 序列化出去是 null 而不是 []，
+	// 而界面那边是 class-transformer 把响应灌进类里的 —— 它会把 null 原样盖上去，
+	// 类字段上写的 `= []` 只在字段整个缺席时才留得住。存量密钥全都没有分组，
+	// 一个 null 就够让密钥页整页崩掉。
 	if len(ids) == 0 {
-		return nil
+		return []dto.KeyGroupView{}
 	}
 	rows, err := s.groups(ctx)
 	if err != nil {

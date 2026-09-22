@@ -138,6 +138,14 @@ export class ContributionView {
   modelsDeny: string[] = [];
 
   /**
+   * 这条车道加入了哪些**模型分组**（mg_…）。空 = 不限，什么分组的单都接。
+   *
+   * 它和上面两个名单不重复：名单管「跑哪些模型」，分组管「以什么档次跑」——
+   * 同一个模型的「标准」和「深度」是两份价、两种上游消耗，你可以只接前者。
+   */
+  groups: string[] = [];
+
+  /**
    * 节点探测到的上游可用模型，随 hello 报上来。**只是候选项**，不参与调度。
    *
    * 和 modelsAllow/modelsDeny 是两回事：那两个是主人定的规则，而且支持通配
@@ -474,10 +482,12 @@ export class ExecutionRecord {
   model = "";
 
   /**
-   * 这一次跑的推理强度。结算单价按它分档，所以它解释得了「同一个模型，
-   * 这一行为什么记了比隔壁行多得多的积分」。老记录是空串。
+   * 这一次落在哪个**分组**上。结算单价按分组定，所以它解释得了「同一个模型，
+   * 这一行为什么记了比隔壁行多得多的积分」。老记录、分组被删掉的都是空串。
    */
-  effort = "";
+  groupId = "";
+
+  groupName = "";
 
   state = "";
 
@@ -518,6 +528,11 @@ export interface SaveLimitsPayload {
   cid: string;
   modelsAllow: string[];
   modelsDeny: string[];
+  /**
+   * 加入哪些模型分组。**整份提交**（空数组 = 不限，什么都接）——
+   * 漏传会被服务端当成「清空」，而清空的意思正是「不限」，两者恰好相反。
+   */
+  groups: string[];
   seats: number;
   seatConcurrency: number;
   quota: QuotaGrantInput[];
@@ -555,14 +570,25 @@ export async function issuePairingCode() {
 }
 
 /**
- * 一个模型在某一档推理强度上的单价。
+ * 一个模型底下的一个**分组**：平台在这个模型上卖的一个档次，以及它的**结算价**。
  *
- * 卡片上那几个数是**不分强度**那一档 —— 它是「没单独定价的强度都按它收」，
- * 也是绝大多数请求真正走的价。这个列表只列真的单独定过价的档，一档都没有时是空的。
+ * 卡片上那几个数是模型通价 —— 没单独定价的分组都按它结。这个列表列的是
+ * 这个模型在卖的分组，一个都没有时是空的。
  */
-export class ModelEffortPrice {
-  /** 档位名，上游原生：Claude 是 low…max，Codex 是 minimal…high。 */
-  effort = "";
+export class ModelGroupPrice {
+  groupId = "";
+
+  name = "";
+
+  summary = "";
+
+  /**
+   * 这个分组卖不卖「快速」。它值得你看一眼：快速档上游烧得更快，
+   * 而你的订阅余量是有限的 —— 只接普通档的话，同样的余量能接更多单。
+   */
+  allowFast = false;
+
+  isDefault = false;
 
   inputPrice = 0;
 
@@ -630,14 +656,20 @@ export class ProviderModelView {
   priced = false;
 
   /**
-   * 按推理强度单独定过**结算价**的那几档，由浅到深。空 = 不分强度。
+   * 这个模型在卖的分组，价是**结算价**。空 = 这个模型还没建分组。
    *
-   * 深思考那一档烧掉的推理 token 多一个量级，往往也单独加过价 ——
-   * 「跑哪个模型的哪一档更赚」这个问题要靠它才答得了。
+   * 深档那个分组烧掉的推理 token 多一个量级，往往也单独加过价 ——
+   * 「跑哪个模型的哪个分组更赚」这个问题要靠它才答得了。
    *
    * 嵌套对象不经过 class-transformer（项目里没用 @Type），拿到的是普通对象。
    */
-  efforts: ModelEffortPrice[] = [];
+  groups: ModelGroupPrice[] = [];
+
+  /** 你名下至少有一条车道加入了的分组。 */
+  joinedGroups: string[] = [];
+
+  /** 你名下至少有一条车道是「不限分组」—— 那种车道什么分组的单都接。 */
+  groupsUnrestricted = false;
 
   /** 你的允许/拒绝名单放不放它过。和「机器上有没有」是两回事。 */
   allowed = false;
@@ -655,11 +687,28 @@ export async function fetchProviderModels() {
   return getDataList(ProviderModelView, "/galaxy/provider/models");
 }
 
-/** 候选项里的一个模型。只有名字 —— 填规则的时候用不上价。 */
+/** 候选项里的一个模型。只有名字和它底下的分组 —— 填规则的时候用不上价。 */
 export class ModelOption {
   modelId = "";
 
   displayName = "";
+
+  /** 这个模型在卖的分组。共享设置里勾「加入哪些分组」用的就是它。 */
+  groups: ModelGroupBrief[] = [];
+}
+
+/** 共享设置里一个可勾选的分组。只有认得出它是什么所需的最少信息。 */
+export class ModelGroupBrief {
+  groupId = "";
+
+  name = "";
+
+  summary = "";
+
+  /** 卖不卖快速。开了快速的分组，上游烧得更快。 */
+  allowFast = false;
+
+  isDefault = false;
 }
 
 /**

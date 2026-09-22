@@ -166,24 +166,17 @@ const messages = {
     "models.cacheWriteHint": "用哪一档由你的客户端在请求体的 cache_control 里写 ttl 决定，不写就是 5 分钟。Claude Code 走 API 密钥接入时默认 5 分钟。",
 
     "models.priceNoteBase":
-      "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。标着「统一价」的那几行，用的是这一类能力的通用单价，不是这个模型自己的价。点开一行能看到它按推理强度分的那几档价。",
+      "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。标着「统一价」的那几行，用的是这一类能力的通用单价，不是这个模型自己的价。点开一行能看到它各个分组的价。",
     "models.priceNoteFlat":
       "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。当前计费按 token 统一定价，与具体模型无关 —— 每一行上那个「统一价」就是这个意思。",
     "models.col.model": "模型",
-    "models.col.effort": "推理强度",
-    "models.effortCount": "{count} 档",
-    "models.effortTitle": "按推理强度计价",
-    "models.effortHint":
-      "这几档单独定了价，其余强度按上面那一行的价收。强度由客户端在请求里带上（Claude 是 output_config.effort，Codex 是 reasoning.effort），不带就按各自上游的默认档算。",
-    "models.effort.none": "关闭思考",
-    "models.effort.minimal": "极简",
-    "models.effort.low": "低",
-    "models.effort.medium": "中",
-    "models.effort.high": "高",
-    "models.effort.xhigh": "极高",
-    "models.effort.max": "最深",
-    "models.effort.ultra": "极限",
-    "models.expand": "展开看这个模型的分档价与说明",
+    "models.col.group": "分组",
+    "models.groupCount": "{count} 组",
+    "models.groupTitle": "分组与价格",
+    "models.groupHint":
+      "分组是这个模型在卖的几个档次：买哪个分组，就按哪个分组的价、它卖的思考深度、支不支持快速来跑。上面那几个数是没单独定价的分组共用的价。",
+    "models.fastOn": "支持快速",
+    "models.expand": "展开看这个模型的分组价与说明",
     "models.priceUnit": "单价都是每百万 token",
     "models.endpointTitle": "填进客户端的就是这一行",
 
@@ -406,24 +399,17 @@ const messages = {
     "models.cacheWriteHint": "Which tier applies is set by your client in the request body's cache_control ttl; omit it and you get 5 minutes. Claude Code defaults to 5 minutes when connected with an API key.",
 
     "models.priceNoteBase":
-      "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. The two buckets never overlap. A row marked \"Flat rate\" is showing the rate for that capability, not a rate set for that model. Open a row to see the rates it charges per reasoning effort.",
+      "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. The two buckets never overlap. A row marked \"Flat rate\" is showing the rate for that capability, not a rate set for that model. Open a row to see the rate each group charges.",
     "models.priceNoteFlat":
       "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. Billing is currently a flat per-token rate that does not vary by model — that is what the \"Flat rate\" mark on every row means.",
     "models.col.model": "Model",
-    "models.col.effort": "Effort",
-    "models.effortCount": "{count} levels",
-    "models.effortTitle": "Priced by reasoning effort",
-    "models.effortHint":
-      "These levels have a rate of their own; every other level is charged at the rate on the row above. Your client sets the level on each request (output_config.effort on Claude, reasoning.effort on Codex); leave it out and the upstream's own default applies.",
-    "models.effort.none": "Thinking off",
-    "models.effort.minimal": "Minimal",
-    "models.effort.low": "Low",
-    "models.effort.medium": "Medium",
-    "models.effort.high": "High",
-    "models.effort.xhigh": "Extra high",
-    "models.effort.max": "Max",
-    "models.effort.ultra": "Ultra",
-    "models.expand": "Open this model for per-effort rates and details",
+    "models.col.group": "Group",
+    "models.groupCount": "{count} groups",
+    "models.groupTitle": "Groups and pricing",
+    "models.groupHint":
+      "A group is one of the tiers this model is sold as: the group you buy decides the price, how deeply it thinks, and whether fast mode counts. The rates above are shared by every group without one of its own.",
+    "models.fastOn": "Fast",
+    "models.expand": "Open this model for its group rates and details",
     "models.priceUnit": "All rates are per 1M tokens",
     "models.endpointTitle": "This is the line your client needs",
 
@@ -583,16 +569,6 @@ export function kindLabel(kind: string, t: LocaleContextValue["t"]): string {
   const key = `kind.${kind}` as TranslationKey;
   const label = t(key);
   return label === key ? kind : label;
-}
-
-/**
- * 推理强度档位的人话名。字典里没有的原样显示档位名 —— 上游加了新档而我们还没跟上时，
- * 显示成空白会让那一行看起来是坏的，而它照常在计价。
- */
-export function effortLabel(effort: string, t: LocaleContextValue["t"]): string {
-  const key = `models.effort.${effort}` as TranslationKey;
-  const label = t(key);
-  return label === key ? effort : label;
 }
 
 /** 模型族的人话名。认不出来的一律归「其他」，不猜。 */

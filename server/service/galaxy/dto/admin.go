@@ -290,9 +290,17 @@ type AdminUnitView struct {
 	Primitive string `json:"primitive"`
 	Provider  string `json:"provider"`
 	Model     string `json:"model,omitempty"`
-	// Effort 这一次的推理强度，计价键的一部分。运营排查「这笔怎么收这么多」时，
-	// 模型对得上而金额对不上，差的通常就是这一档。
+	// GroupID / GroupName 这一次落在哪个模型分组上 —— 它才是计价键。
+	// 运营排查「这笔怎么收这么多」时，模型对得上而金额对不上，差的通常就是分组。
+	GroupID   string `json:"groupId,omitempty"`
+	GroupName string `json:"groupName,omitempty"`
+	// Effort / Fast 上游这一次实际按多深、快不快跑的（都已经过分组那道闸）。
+	//
+	// 只有**管理端**看得到这两个：档位名是上游的内部刻度，对外三个端一律不露它。
+	// 它们回答的是另一类问题 ——「这个人买的是标准分组，而他的客户端一直在要 max」，
+	// 只有把请求里要的和分组卖的摆在一起才看得出来。
 	Effort      string `json:"effort,omitempty"`
+	Fast        bool   `json:"fast,omitempty"`
 	ConsumerKey string `json:"consumerKey"`
 	KeyAlias    string `json:"keyAlias,omitempty"`
 	CID         string `json:"cid,omitempty"`

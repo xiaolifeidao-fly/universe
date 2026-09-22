@@ -58,6 +58,12 @@ func newFakeGalaxy() *fakeGalaxy {
 
 func (f *fakeGalaxy) Config() galaxy.Config { return galaxy.DefaultConfig() }
 
+// ResolveGroupPolicy 桩：这条联调不验分组，一律回「不约束」。
+// 通用层每次请求都要调它，靠内嵌接口的 nil 兜底会当场 panic。
+func (f *fakeGalaxy) ResolveGroupPolicy(context.Context, dto.Caller, contract.RouteKey) (contract.GroupPolicy, error) {
+	return contract.UnconstrainedPolicy(), nil
+}
+
 func (f *fakeGalaxy) AuthenticateKey(context.Context, string) (dto.Caller, error) {
 	return dto.Caller{KeyID: "ck_test", Alias: "test"}, nil
 }

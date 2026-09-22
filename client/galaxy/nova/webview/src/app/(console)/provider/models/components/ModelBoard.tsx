@@ -9,7 +9,7 @@
  * **没有对外价，也没有平台毛利。** 那两个数摆上来，一相除就是平台抽成，
  * 而抽成不是这里要做的决定。要改开放范围去「共享设置」，这一页只管看。
  *
- * **先选厂商，再看列表。** 卡片墙换成列表的理由和使用端一样：加上推理强度这一维之后，
+ * **先选厂商，再看列表。** 卡片墙换成列表的理由和使用端一样：加上分组这一维之后，
  * 一个模型不再是一个数而是一小张价目表，卡片里塞不下；而这一页的用法本来就是
  * 「在同一家的几个模型之间比一比哪个更值得开」—— 比较要求几个数上下对齐。
  *
@@ -26,7 +26,7 @@ import { Card, EmptyState, IconBtn, Loading, Note, Pill, Tabs } from "@/componen
 import { VendorMark, vendorLabel } from "@shared/brand/VendorMark";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { formatCompact, formatPoints } from "@/utils/format";
-import { fetchProviderModels, type ModelEffortPrice, type ProviderModelView } from "../../api/provider.api";
+import { fetchProviderModels, type ModelGroupPrice, type ProviderModelView } from "../../api/provider.api";
 
 type Tab = "all" | "on" | "off";
 
@@ -134,7 +134,7 @@ export function ModelBoard() {
                 <span style={{ textAlign: "right" }}>{t("models.price.input")}</span>
                 <span style={{ textAlign: "right" }}>{t("models.price.output")}</span>
                 <span style={{ textAlign: "right" }}>{t("models.price.cache")}</span>
-                <span style={{ textAlign: "right" }}>{t("models.col.effort")}</span>
+                <span style={{ textAlign: "right" }}>{t("models.col.group")}</span>
                 <span style={{ textAlign: "right" }}>{t("models.col.status")}</span>
                 <span />
               </div>
@@ -268,7 +268,7 @@ function VendorChip({
 
 function ModelRow({ model, open, onToggle }: { model: ProviderModelView; open: boolean; onToggle: () => void }) {
   const { t } = useLocale();
-  const efforts = model.efforts ?? [];
+  const groups = model.groups ?? [];
   return (
     <>
       <button
@@ -303,10 +303,14 @@ function ModelRow({ model, open, onToggle }: { model: ProviderModelView; open: b
         <span className="gx-mono" style={{ textAlign: "right" }}>{points(model.outputPrice)}</span>
         <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>{points(model.cachePrice)}</span>
         <span style={{ textAlign: "right", fontSize: 12 }}>
-          {/* 分档了才说。没分档的写「不分强度」会让人以为这里本来该有点什么，
-              而绝大多数模型本来就是一个价走到底。 */}
-          {efforts.length > 0 ? (
-            <Pill tone="accent">{t("models.effortCount", { count: efforts.length })}</Pill>
+          {/* 加入了几个分组 / 一共几个。分组是平台在卖的档次，你加入了哪些就接哪些的单 ——
+              「不限」的车道什么都接，那时不必数数（数出来反而像是只接了这几个）。 */}
+          {model.groupsUnrestricted ? (
+            <Pill tone="ok">{t("models.groupsAll")}</Pill>
+          ) : groups.length > 0 ? (
+            <Pill tone={(model.joinedGroups ?? []).length > 0 ? "accent" : "default"}>
+              {t("models.groupJoined", { joined: (model.joinedGroups ?? []).length, total: groups.length })}
+            </Pill>
           ) : (
             <span style={{ color: "var(--gx-faint)" }}>—</span>
           )}
@@ -327,14 +331,15 @@ function ModelRow({ model, open, onToggle }: { model: ProviderModelView; open: b
 }
 
 /**
- * 展开之后的那一块：介绍、标签、最近赚了多少，以及按推理强度分档的结算价。
+ * 展开之后的那一块：介绍、标签、最近赚了多少，以及这个模型各个**分组**的结算价。
  *
- * 强度这一小张表只在真的分过档时出现。一档都没有的模型摆一张「所有档都一样」的表，
- * 是把「不分档」说成了「分了档但都一样」—— 后者会让人以为运营填漏了。
+ * 分组那一小张表是这一页最该看的东西：接哪个分组的单，记多少积分，差别就在这里。
+ * 「已加入」标在行上 —— 共享设置里勾的就是它，两页说的是同一件事。
  */
 function ModelDetail({ model }: { model: ProviderModelView }) {
   const { t } = useLocale();
-  const efforts = model.efforts ?? [];
+  const groups = model.groups ?? [];
+  const joined = new Set(model.joinedGroups ?? []);
   return (
     <div style={{ padding: "4px 16px 18px 42px", display: "flex", flexDirection: "column", gap: 12, borderTop: "1px solid var(--gx-line)" }}>
       {model.summary ? <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: "var(--gx-soft)" }}>{model.summary}</p> : null}
@@ -362,27 +367,42 @@ function ModelDetail({ model }: { model: ProviderModelView }) {
         </div>
       ) : null}
 
-      {efforts.length > 0 ? (
+      {groups.length > 0 ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span className="gx-label">{t("models.effortTitle")}</span>
+          <span className="gx-label">{t("models.groupTitle")}</span>
 
           <div style={{ borderRadius: 10, background: "var(--gx-muted)", padding: "4px 12px" }}>
-            <div className="gx-th" style={{ gridTemplateColumns: "minmax(0, 1fr) 96px 96px 96px", padding: "8px 0" }}>
-              <span>{t("models.col.effort")}</span>
+            <div className="gx-th" style={{ gridTemplateColumns: "minmax(0, 1fr) 84px 96px 96px 96px", padding: "8px 0" }}>
+              <span>{t("models.col.group")}</span>
+              <span style={{ textAlign: "center" }}>{t("models.col.joined")}</span>
               <span style={{ textAlign: "right" }}>{t("models.price.input")}</span>
               <span style={{ textAlign: "right" }}>{t("models.price.output")}</span>
               <span style={{ textAlign: "right" }}>{t("models.price.cache")}</span>
             </div>
-            {efforts.map((row: ModelEffortPrice) => (
-              <div key={row.effort} className="gx-row" style={{ gridTemplateColumns: "minmax(0, 1fr) 96px 96px 96px", padding: "9px 0" }}>
-                <span>{effortLabel(row.effort, t)}</span>
+            {groups.map((row: ModelGroupPrice) => (
+              <div key={row.groupId} className="gx-row" style={{ gridTemplateColumns: "minmax(0, 1fr) 84px 96px 96px 96px", padding: "9px 0" }}>
+                <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontWeight: 600 }}>{row.name}</span>
+                    {/* 快速档上游烧得更快，而你的订阅余量有限 —— 这件事要看得见。 */}
+                    {row.allowFast ? <Pill tone="warn">{t("models.fastOn")}</Pill> : null}
+                  </span>
+                  {row.summary ? <span style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>{row.summary}</span> : null}
+                </span>
+                <span style={{ textAlign: "center", fontSize: 12 }}>
+                  {model.groupsUnrestricted || joined.has(row.groupId) ? (
+                    <Pill tone="ok">{t("models.joinedYes")}</Pill>
+                  ) : (
+                    <span style={{ color: "var(--gx-faint)" }}>—</span>
+                  )}
+                </span>
                 <span className="gx-mono" style={{ textAlign: "right" }}>{points(row.inputPrice)}</span>
                 <span className="gx-mono" style={{ textAlign: "right" }}>{points(row.outputPrice)}</span>
                 <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>{points(row.cachePrice)}</span>
               </div>
             ))}
           </div>
-          <span className="gx-card__hint">{t("models.effortHint")}</span>
+          <span className="gx-card__hint">{t("models.groupHint")}</span>
         </div>
       ) : null}
 
@@ -395,12 +415,4 @@ function ModelDetail({ model }: { model: ProviderModelView }) {
   );
 }
 
-/**
- * 档位的中文名。认不出来的原样显示 —— 上游加了新档而我们还没跟上时，
- * 显示成空白会让这一行看起来是坏的，而它照常在结算。
- */
-function effortLabel(effort: string, t: (key: string) => string): string {
-  const key = `models.effort.${effort}`;
-  const label = t(key);
-  return label === key ? effort : label;
-}
+

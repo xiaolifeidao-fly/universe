@@ -1003,7 +1003,7 @@ svg {
 }
 
 /* ---------- 模型列表 ----------
-   卡片墙换成列表是因为这一页的用法变了：加上推理强度这一维之后，一个模型是一小张
+   卡片墙换成列表是因为这一页的用法变了：加上分组这一维之后，一个模型是一小张
    价目表而不是一个价，而来访者在做的事是横向比价 —— 比价要求数字上下对齐。 */
 
 .gp-list {
@@ -1141,7 +1141,7 @@ svg {
   text-align: right;
 }
 
-.gp-list__effort {
+.gp-list__group {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1149,7 +1149,7 @@ svg {
   font-size: 12px;
 }
 
-/* 分档的输出价区间。收起来的行上只写「6 档」的话，有没有必要点开得一个个试。 */
+/* 各分组的输出价区间。收起来的行上只写「3 组」的话，有没有必要点开得一个个试。 */
 .gp-list__range {
   font-size: 11px;
   color: var(--gp-faint);
@@ -1202,15 +1202,15 @@ svg {
   gap: 8px;
 }
 
-.gp-efforts {
+.gp-groups {
   border: 1px solid var(--gp-line);
   border-radius: 12px;
   background: var(--gp-surface-2);
   padding: 2px 14px;
 }
 
-.gp-efforts__head,
-.gp-efforts__row {
+.gp-groups__head,
+.gp-groups__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 98px 98px 98px;
   gap: 12px;
@@ -1218,7 +1218,7 @@ svg {
   font-size: 12.5px;
 }
 
-.gp-efforts__head {
+.gp-groups__head {
   padding: 9px 0;
   font-size: 11px;
   font-weight: 600;
@@ -1228,14 +1228,23 @@ svg {
   border-bottom: 1px solid var(--gp-line);
 }
 
-.gp-efforts__row {
+.gp-groups__row {
   padding: 9px 0;
   font-variant-numeric: tabular-nums;
   color: var(--gp-ink);
 }
 
-.gp-efforts__row + .gp-efforts__row {
+.gp-groups__row + .gp-groups__row {
   border-top: 1px solid var(--gp-line);
+}
+
+/* 分组的一句话说明。跟在名字下面，小一号、淡一档 —— 它解释「这一档卖的是什么」，
+   而不该和价钱抢同一眼。 */
+.gp-groups__note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--gp-faint);
 }
 
 /* 窄屏：表头整条撤掉，每个数字自己带上列名（data-label）。
@@ -1261,7 +1270,7 @@ svg {
   }
 
   .gp-list__num::before,
-  .gp-list__effort::before {
+  .gp-list__group::before {
     content: attr(data-label);
     display: block;
     font-family: var(--gp-sans);
@@ -1280,17 +1289,17 @@ svg {
     padding-left: 16px;
   }
 
-  /* 分档表四列等分。给价格列写死宽度的话，剩给「推理强度」那一列的就只有二十来像素，
+  /* 分组表四列等分。给价格列写死宽度的话，剩给「分组」那一列的就只有二十来像素，
      表头会一个字一行竖着排下来。 */
-  .gp-efforts__head,
-  .gp-efforts__row {
+  .gp-groups__head,
+  .gp-groups__row {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
     font-size: 12px;
     white-space: nowrap;
   }
 
-  .gp-efforts {
+  .gp-groups {
     padding-inline: 12px;
   }
 }

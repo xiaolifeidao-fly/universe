@@ -66,6 +66,9 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	// 模型广场与余额。**这一端不卖任何东西**：积分只能由运营在 manager-api 里充进来，
 	// 调模型时按单价逐笔从余额里扣。所以没有商品、没有下单、没有支付。
 	console.GET("/catalog", h.catalog)
+	// 新建密钥那一屏的候选分组（带对外价）。和模型广场分开：广场按模型讲故事，
+	// 这一条按「一个模型一个分组」摊平 —— 那一屏要做的选择就是这个形状。
+	console.GET("/groups", h.groupOptions)
 	console.GET("/points", h.pointsSummary)
 	console.GET("/points/ledger", h.pointsLedger)
 	// 分享：自己的邀请码、邀请来的人。返现不用调接口，被邀请人充值到账时服务端自己记。
@@ -83,6 +86,12 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 
 func (h *Handler) catalog(context *gin.Context) {
 	view, err := h.service.ConsumerCatalog(context.Request.Context(), h.options.Models)
+	httpx.JSON(context, view, err)
+}
+
+// groupOptions 能选的模型分组。选分组就是选价钱，所以带着价一起给。
+func (h *Handler) groupOptions(context *gin.Context) {
+	view, err := h.service.ConsumerGroupOptions(context.Request.Context())
 	httpx.JSON(context, view, err)
 }
 

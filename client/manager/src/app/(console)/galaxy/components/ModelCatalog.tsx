@@ -27,18 +27,21 @@ import { ManagerDatePicker } from "@/components/date/DatePickers";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import {
   deleteGalaxyModel,
+  deleteModelGroup,
   fetchGalaxyModels,
   fetchPrices,
   fetchReferralSettings,
   saveGalaxyModel,
+  saveModelGroup,
   savePrice,
   saveReferralSettings,
   type GalaxyModelView,
+  type ModelGroupView,
   type PriceTableView,
   type PriceView,
   type ReferralSettingsView,
 } from "../api/galaxy.api";
-import { effortLabel, familyName, HIDDEN_UNITS, kindLabel, optionMatches, unitLabel } from "./labels";
+import { effortLabel, HIDDEN_UNITS, kindLabel, optionMatches, unitLabel } from "./labels";
 
 /** 单价在库里是「每百万 token 的微元」；表单里填元。 */
 const MICRO = 1_000_000;
@@ -225,12 +228,12 @@ type PriceTarget = {
   family?: string;
   vendor?: string;
   /**
-   * 打开时落在哪一档推理强度上。不填 = 不分强度那一档。
+   * 打开时落在哪个**分组**上。不填 = 这个模型的通价（没单独定价的分组都按它收）。
    *
-   * 有它才能从列表上那几个胶囊直接点进对应的档 —— 否则运营得先点「定价」、
-   * 再在弹框里把档位切一遍，而那一步正是最容易切错的地方（一屏四个桶长得一样）。
+   * 有它才能从列表上那几个分组胶囊直接点进对应的分组 —— 否则运营得先点「定价」、
+   * 再在弹框里把分组切一遍，而那一步正是最容易切错的地方（一屏四个桶长得一样）。
    */
-  effort?: string;
+  groupId?: string;
 };
 
 /**
@@ -267,6 +270,8 @@ export function ModelCatalog() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pricing, setPricing] = useState<PriceTarget | null>(null);
+  /** 正在管分组的那个模型。分组是平台在卖的单位，所以入口在模型行上，而不是另开一页。 */
+  const [grouping, setGrouping] = useState<GalaxyModelView | null>(null);
   /** 只按厂商筛。空串 = 全部厂商（见 ALL_VENDORS）。 */
   const [vendorFilter, setVendorFilter] = useState(ALL_VENDORS);
   const [form] = Form.useForm<ModelForm>();
@@ -297,51 +302,20 @@ export function ModelCatalog() {
   }, [load]);
 
   /**
-   * 每个 (模型, 能力) 真的单独定过价的强度档，按族的词表由浅到深。
+   * 每个模型底下的分组，按运营排的顺序。
    *
-   * 一次把整张表折出来，而不是每行各扫一遍价目行：价目表是 `能力 × 模型 × 强度 × 单位
-   * × 生效时间` 五维展开的，几十个模型各扫一遍就是几十趟全表。
-   *
-   * 兜底行（modelId 为空）的强度档对每个模型都成立 —— 「所有模型的 max 档加价」
-   * 是一条合法的定价，漏掉它这些模型会全部显示成「不分强度」，而它们其实分了档。
+   * 一次把整张表折出来，而不是每行各扫一遍分组清单：这一页会逐行渲染几十个模型，
+   * 每行都 filter 一遍整份分组等于几十趟全表。
    */
-  const effortsByModel = useMemo(() => {
-    /**
-     * 排序用**这个模型自己那一族**的词表，不是两族并起来的那一张。
-     *
-     * 并起来会撞：两族都有 none / low / medium / high，而 Map 后写的覆盖先写的，
-     * 于是 anthropic 的 low 拿到 openai 那张表里的下标（8），排到了 max（5）后面 ——
-     * 界面上就是「最深」排在「低」前面。而这一列的全部意义就是让人一眼看出深浅。
-     */
-    const rankOf = (family: string, vendor: string) => {
-      const ladders = table?.efforts ?? {};
-      const ladder = ladders[effortFamilyOf(family, vendor, ladders)] ?? [];
-      return new Map(ladder.map((effort, index) => [effort, index]));
-    };
-    const shared = new Map<string, Set<string>>();
-    const own = new Map<string, Set<string>>();
-    for (const row of table?.prices ?? []) {
-      if (row.effort === "" || !row.effective) continue;
-      const bucket = row.modelId === "" ? shared : own;
-      const key = row.modelId === "" ? row.kind : `${row.kind}\u0000${row.modelId}`;
-      if (!bucket.has(key)) bucket.set(key, new Set());
-      bucket.get(key)?.add(row.effort);
+  const groupsByModel = useMemo(() => {
+    const index = new Map<string, ModelGroupView[]>();
+    for (const group of table?.groups ?? []) {
+      const bucket = index.get(group.modelId);
+      if (bucket) bucket.push(group);
+      else index.set(group.modelId, [group]);
     }
-    return (modelId: string, kind: string, family: string, vendor: string) => {
-      const merged = new Set([
-        ...Array.from(shared.get(kind) ?? []),
-        ...Array.from(own.get(`${kind}\u0000${modelId}`) ?? []),
-      ]);
-      const rank = rankOf(family, vendor);
-      // 词表里没有的档（历史上填错、上游加了新档而我们还没跟上、或者这个模型的族
-      // 根本不认这一档）排在最后按字典序。丢掉它们会让运营看着库里有价、列表上没有，
-      // 而那种不一致没有任何地方会报错。
-      return Array.from(merged).sort(
-        (left, right) => (rank.get(left) ?? 999) - (rank.get(right) ?? 999) || left.localeCompare(right),
-      );
-    };
+    return index;
   }, [table]);
-  const pricedEffortsOf = effortsByModel;
 
   const saveDefault = async () => {
     setSavingDefault(true);
@@ -542,32 +516,32 @@ export function ModelCatalog() {
         ),
     },
     {
-      // 这个模型按推理强度单独定过价的那几档。
+      // 这个模型底下的分组：平台在这个模型上真正在卖的几个档次。
       //
-      // 必须摆在列表上，不能只藏在「定价」弹框里：深思考那一档的输出价可以是常规档的
-      // 两三倍，而这一页是运营唯一会逐行扫的地方 —— 看不见的话，「哪些模型分了档、
-      // 哪些还没分」只能一个一个点开弹框去数，而漏掉一个的代价是那一档一直按常规价在收。
+      // 必须摆在列表上，不能只藏在弹框里：分组之间的输出价可以差两三倍，而这一页是
+      // 运营唯一会逐行扫的地方 —— 看不见的话，「哪些模型分了档、哪些还没建分组」
+      // 只能一个一个点开去数，而**一个分组都没有的模型，使用端根本签不出能用它的密钥**。
       //
-      // 胶囊可以直接点进对应的档，省掉「先点定价、再切档」这一步 —— 那一步切错不报错。
-      title: t("galaxy.price.effort"),
-      key: "efforts",
-      width: 190,
+      // 胶囊直接点进这个分组的定价，省掉「先点定价、再切分组」这一步 —— 那一步切错不报错。
+      title: t("galaxy.group.column"),
+      key: "groups",
+      width: 240,
       render: (_, row) => {
-        const efforts = pricedEffortsOf(row.modelId, row.kind || DEFAULT_KIND, row.family, row.vendor);
-        if (efforts.length === 0) {
-          // 「没分档」是绝大多数模型的常态，不是缺了什么，所以用灰字而不是红字。
+        const groups = groupsByModel.get(row.modelId) ?? [];
+        if (groups.length === 0) {
+          // 这不是「常态」，是**卖不出去**：使用端建密钥要选分组，一个都没有就选不到它。
           return (
-            <Tooltip title={t("galaxy.model.effortNoneHint")}>
-              <Typography.Text type="secondary">{t("galaxy.price.anyEffort")}</Typography.Text>
+            <Tooltip title={t("galaxy.group.noneHint")}>
+              <Typography.Text type="danger">{t("galaxy.group.none")}</Typography.Text>
             </Tooltip>
           );
         }
         return (
           <Space size={4} wrap>
-            {efforts.map((effort) => (
+            {groups.map((group) => (
               <Tag
-                key={effort}
-                color={EFFORT_TONE[effort] ?? "default"}
+                key={group.groupId}
+                color={group.listed ? (group.priced ? "blue" : "default") : "warning"}
                 style={canWrite ? { cursor: "pointer", marginInlineEnd: 0 } : { marginInlineEnd: 0 }}
                 onClick={
                   canWrite
@@ -578,12 +552,22 @@ export function ModelCatalog() {
                           title: row.displayName || row.modelId,
                           family: row.family,
                           vendor: row.vendor,
-                          effort,
+                          groupId: group.groupId,
                         })
                     : undefined
                 }
+                title={[
+                  group.summary,
+                  group.listed ? "" : t("galaxy.group.unlisted"),
+                  group.priced ? "" : t("galaxy.group.inherits"),
+                  group.allowFast ? t("galaxy.group.fastOn") : t("galaxy.group.fastOff"),
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               >
-                {effortLabel(effort, t)}
+                {group.name}
+                {group.isDefault ? ` ${t("galaxy.group.defaultMark")}` : ""}
+                {group.allowFast ? " ⚡" : ""}
               </Tag>
             ))}
           </Space>
@@ -640,7 +624,7 @@ export function ModelCatalog() {
     {
       title: t("galaxy.actions"),
       key: "actions",
-      width: 220,
+      width: 300,
       fixed: "right",
       render: (_, row) =>
         canWrite ? (
@@ -660,6 +644,9 @@ export function ModelCatalog() {
               }
             >
               {t("galaxy.model.pricing")}
+            </Button>
+            <Button size="small" onClick={() => setGrouping(row)}>
+              {t("galaxy.group.manage")}
             </Button>
             <Button size="small" onClick={() => edit(row)}>
               {t("galaxy.model.basics")}
@@ -813,8 +800,8 @@ export function ModelCatalog() {
         // 在只是筛掉了的时候念出来，是在报一个并不存在的故障。
         locale={{ emptyText: rows.length > 0 ? t("galaxy.model.vendorEmpty") : t("galaxy.model.empty") }}
         pagination={false}
-        // 加了 190px 的强度列，横向总宽跟着走；不跟的话最后几列会被挤成两行。
-        scroll={{ x: 1880 }}
+        // 分组列 240px + 操作列宽了 80px，横向总宽跟着走；不跟的话最后几列会被挤成两行。
+        scroll={{ x: 2010 }}
       />
 
       <ModelPricing
@@ -822,9 +809,29 @@ export function ModelCatalog() {
         prices={prices}
         kinds={kinds}
         unitCandidates={table?.units ?? []}
-        efforts={table?.efforts ?? {}}
+        groups={pricing ? (groupsByModel.get(pricing.modelId) ?? []) : []}
         onClose={() => setPricing(null)}
         onSaved={() => void load()}
+      />
+
+      <ModelGroups
+        model={grouping}
+        groups={grouping ? (groupsByModel.get(grouping.modelId) ?? []) : []}
+        efforts={table?.efforts ?? {}}
+        onClose={() => setGrouping(null)}
+        onSaved={() => void load()}
+        onPrice={(group) =>
+          grouping
+            ? setPricing({
+                kind: grouping.kind || DEFAULT_KIND,
+                modelId: grouping.modelId,
+                title: grouping.displayName || grouping.modelId,
+                family: grouping.family,
+                vendor: grouping.vendor,
+                groupId: group.groupId,
+              })
+            : undefined
+        }
       />
 
       <Modal
@@ -963,7 +970,7 @@ function ModelPricing({
   prices,
   kinds,
   unitCandidates,
-  efforts,
+  groups,
   onClose,
   onSaved,
 }: {
@@ -972,8 +979,8 @@ function ModelPricing({
   kinds: string[];
   /** 服务端给的计量单位候选：已有的价加上真实跑过的用量。是提示，不是白名单。 */
   unitCandidates: string[];
-  /** 协议族 → 它认识的推理强度档位，由浅到深。服务端给的，前端不自己维护一份。 */
-  efforts: Record<string, string[]>;
+  /** 这个模型底下的分组。价挂在分组上，这一屏就是给分组填价的地方。 */
+  groups: ModelGroupView[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -984,13 +991,13 @@ function ModelPricing({
   const fallback = target?.modelId === "";
   const [kind, setKind] = useState(DEFAULT_KIND);
   /**
-   * 这一屏此刻在改哪一档推理强度。空串 = 不分强度，也就是「没单独定价的强度都按它收」。
+   * 这一屏此刻在改哪个分组。空串 = 这个模型的**通价**，也就是「没单独定价的分组都按它收」。
    *
-   * 做成这一屏里的一个切换，而不是另开一页：一档的内容和不分强度那一档是同一张表
+   * 做成这一屏里的一个切换，而不是另开一页：一个分组的内容和通价那一档是同一张表
    * （同样四个桶、同样两个价），只是键多了一维。分两处填，运营就得自己记住
-   * 「我刚才在哪一档填的」，而填错档不报错 —— 那行价只是永远匹配不上任何一次请求。
+   * 「我刚才在哪个分组填的」，而填错分组不报错 —— 那行价只是永远匹配不上任何一次请求。
    */
-  const [effort, setEffort] = useState("");
+  const [groupId, setGroupId] = useState("");
   /**
    * 运营手工加进来的计量单位。
    *
@@ -1004,12 +1011,12 @@ function ModelPricing({
   useEffect(() => {
     if (target) setKind(target.kind || DEFAULT_KIND);
     setExtraUnits([]);
-    // 落在点进来的那一档：从列表上的强度胶囊点进来时它带着档位，从「定价」按钮
-    // 进来时是空的，也就是「不分强度」—— 绝大多数改价要动的那一档。
+    // 落在点进来的那个分组：从列表上的分组胶囊点进来时它带着分组，从「定价」按钮
+    // 进来时是空的，也就是「模型通价」—— 绝大多数改价要动的那一档。
     //
-    // 不能留着上一次选的档：那样运营会在没注意的情况下改到 max 上去，而一屏四个桶
-    // 长得一模一样，只有标题说得出自己在改哪一档。
-    setEffort(target?.effort ?? "");
+    // 不能留着上一次选的分组：那样运营会在没注意的情况下改到「深度」上去，而一屏四个桶
+    // 长得一模一样，只有标题说得出自己在改哪一个。
+    setGroupId(target?.groupId ?? "");
   }, [target]);
 
   /**
@@ -1037,128 +1044,77 @@ function ModelPricing({
 
 
   /**
-   * 这个模型自己此刻生效的那条价，按单位索引。没有就是它没单独定过价。
+   * 此刻这一屏这个键（模型 + 分组）上生效的那条价，按单位索引。没有就是它没单独定过价。
    *
-   * **只认不分强度那一行（effort 为空）。** 这一屏改的就是它 —— 按推理强度分档的价
-   * 在「单价」那一页上改，那里一行一档看得见。不筛的话，同一个模型同一个单位的
-   * max 档行会按遍历顺序盖掉这一行，于是运营打开看到的是 max 档的数字，
-   * 保存出去却写进了「不分强度」那一行：两档的价一次操作全错，而且不报错。
+   * **分组这一维要筛准。** 不筛的话，同一个模型同一个单位的「深度」分组行会按遍历顺序
+   * 盖掉通价那一行，于是运营打开看到的是深度的数字，保存出去却写进了通价那一行：
+   * 两档的价一次操作全错，而且不报错。
    */
   const own = useMemo(() => {
     const index: Record<string, PriceView> = {};
     if (!target) return index;
     for (const row of prices) {
-      if (row.kind !== kind || row.modelId !== target.modelId || row.effort !== effort || !row.effective) continue;
+      if (row.kind !== kind || row.modelId !== target.modelId || row.groupId !== groupId || !row.effective) continue;
       index[row.unit] = row;
     }
     return index;
-  }, [prices, kind, target, effort]);
+  }, [prices, kind, target, groupId]);
 
   /**
    * 没填的那行此刻按什么算。
    *
-   * 改的是某一档强度时，它「继承」的是**这个模型不分强度的价**而不是 kind 的兜底价 ——
-   * 取价的回落是四级的（kind 兜底 → 强度通价 → 模型不分强度 → 模型这一档），
-   * 越具体越晚盖。这里显示得和取价不一致的话，运营会按一个不会发生的数做决定。
+   * 改的是某个分组时，它「继承」的是**这个模型的通价**而不是 kind 的兜底价 ——
+   * 取价的回落是三级的（kind 兜底 → 模型通价 → 分组价），越具体越晚盖。
+   * 这里显示得和取价不一致的话，运营会按一个不会发生的数做决定。
    */
   const inherited = useMemo(() => {
     const index: Record<string, PriceView> = {};
-    const layers = effort === "" ? [""] : ["", effort];
-    for (const layer of layers) {
+    for (const row of prices) {
+      if (row.kind !== kind || !row.effective) continue;
+      // 先铺 kind 兜底（modelId 与 groupId 都空）。
+      if (row.modelId === "" && row.groupId === "") index[row.unit] = row;
+    }
+    if (groupId !== "") {
+      // 再盖这个模型的通价那一层 —— 只有在改某个分组时它才是「上一层」。
       for (const row of prices) {
         if (row.kind !== kind || !row.effective) continue;
-        // 第一遍铺 kind 兜底（modelId 与 effort 都空），第二遍盖这个模型不分强度那一层。
-        const isFallback = row.modelId === "" && row.effort === layer;
-        const isModelWide = effort !== "" && row.modelId === (target?.modelId ?? "") && row.effort === "";
-        if (!isFallback && !isModelWide) continue;
-        index[row.unit] = row;
+        if (row.modelId === (target?.modelId ?? "") && row.groupId === "") index[row.unit] = row;
       }
     }
     return index;
-  }, [prices, kind, effort, target]);
+  }, [prices, kind, groupId, target]);
 
   /**
-   * 这个模型已经单独定过价的强度档。摆在切换器旁边 ——
-   * 不摆的话，「这个模型到底分没分档」得一档一档点过去才知道。
-   */
-  const pricedEfforts = useMemo(() => {
-    const seen = new Set<string>();
-    for (const row of prices) {
-      if (row.kind !== kind || row.effort === "" || !row.effective) continue;
-      if (row.modelId !== "" && row.modelId !== (target?.modelId ?? "")) continue;
-      seen.add(row.effort);
-    }
-    return seen;
-  }, [prices, kind, target]);
-
-  /**
-   * 这一屏的模型属于哪一族 —— 强度下拉摆哪张词表由它定。
+   * 分组候选：这个模型底下的分组，外加「模型通价」那一项。
    *
-   * 兜底价那一行回空串：它跨模型，不属于任何一族，两族的档都可能落在它上面。
-   */
-  const family = useMemo(
-    () => (target && !fallback ? effortFamilyOf(target.family ?? "", target.vendor ?? "", efforts) : ""),
-    [target, fallback, efforts],
-  );
-
-  /**
-   * 这个模型**自己**定过价的强度档。
+   * 已经单独定过价的分组标一下：一眼看出这个模型有几个分组是自己定了价的、
+   * 哪几个还跟着通价走 —— 后者改通价会连它们一起改，那正是最容易误伤的地方。
    *
-   * 和上面的 pricedEfforts 不是一回事：那个含着跨模型的兜底行，用来给下拉打标；
-   * 这个只认这个模型自己的行，用来决定「哪些词表以外的档必须留在下拉里」——
-   * 别人家的兜底行不该把一个别族的档带进这个模型的下拉。
+   * 兜底价那一屏（modelId 为空）没有分组可选：分组属于某一个模型，
+   * 跨模型的分组价落不到任何一层取价上（见服务端 resolvePrices）。
    */
-  const ownEfforts = useMemo(() => {
-    const seen = new Set<string>();
-    if (!target?.modelId) return seen;
-    for (const row of prices) {
-      if (row.kind !== kind || row.effort === "" || !row.effective) continue;
-      if (row.modelId !== target.modelId) continue;
-      seen.add(row.effort);
-    }
-    return seen;
-  }, [prices, kind, target]);
-
-  /**
-   * 强度候选，按族分组。
-   *
-   * 认得出这个模型是哪一族，就**只摆那一族**的档。两族的档位名只是长得像：
-   * none / minimal / ultra 只有 Codex 有，xhigh 只有 Claude 有。给一个 Claude 模型
-   * 配上 minimal 档，服务端拦不住（它只校验档位名是不是上游真有的），而那行价
-   * 永远匹配不上任何一次请求 —— 运营以为自己给这个模型加过价，账上照常按
-   * 不分强度的价在收，两边都不报错。
-   *
-   * 族认不出来（新接的上游，族和厂商都对不上词表），以及兜底价那一行，照旧摆两族的
-   * 全集并分组：这时候收窄等于替一个我们并不了解的上游宣布它的计价刻度。
-   */
-  const effortOptions = useMemo(() => {
-    const groups = Object.entries(efforts).filter(([, levels]) => levels.length > 0);
-    const scoped = family ? groups.filter(([key]) => key === family) : groups;
-    const listed = new Set(scoped.flatMap(([, levels]) => levels));
-    // 词表以外、但这个模型库里真有一行价的档（历史上填错、上游加了新档而我们还没跟上、
-    // 或者这个模型的族后来改过），外加此刻选中的这一档，都得留在下拉里：
-    // 收窄不能把一档已经在收钱的价从界面上抹掉 —— 抹掉之后它照常计价，却再没有入口改它。
-    const extras = Array.from(
-      new Set([...Array.from(ownEfforts), effort].filter((level) => level && !listed.has(level))),
-    ).sort();
-    // 已经定过价的档标一下：一眼看出这个模型分了哪几档。
-    const label = (level: string) => (pricedEfforts.has(level) ? `${effortLabel(level, t)} ·` : effortLabel(level, t));
+  const groupOptions = useMemo(() => {
+    const mine = fallback ? [] : groups;
     return [
-      { value: "", label: t("galaxy.price.anyEffort") },
-      ...scoped.map(([key, levels]) => ({
-        label: t(`galaxy.price.family.${key}`),
-        options: levels.map((level) => ({ value: level, label: label(level) })),
+      { value: "", label: t("galaxy.group.modelWide") },
+      ...mine.map((group) => ({
+        value: group.groupId,
+        label: [
+          group.name,
+          group.priced ? "·" : "",
+          group.listed ? "" : `(${t("galaxy.group.unlisted")})`,
+        ]
+          .filter(Boolean)
+          .join(" "),
       })),
-      ...(extras.length > 0
-        ? [
-            {
-              label: t("galaxy.price.effortOther"),
-              options: extras.map((level) => ({ value: level, label: label(level) })),
-            },
-          ]
-        : []),
     ];
-  }, [efforts, family, ownEfforts, effort, pricedEfforts, t]);
+  }, [groups, fallback, t]);
+
+  /** 当前这一屏改的是哪个分组（用来拼标题）。空 = 模型通价。 */
+  const currentGroup = useMemo(
+    () => groups.find((group) => group.groupId === groupId),
+    [groups, groupId],
+  );
 
   useEffect(() => {
     if (!target) return;
@@ -1201,7 +1157,7 @@ function ModelPricing({
         await savePrice({
           kind,
           modelId: target.modelId,
-          effort,
+          groupId,
           unit,
           // 界面按元填，库里存微元。中间这一步乘法漏掉的话价格会差一百万倍。
           price: Math.round((row.price ?? 0) * MICRO),
@@ -1227,14 +1183,14 @@ function ModelPricing({
       // 兜底那一版的标题自己就说全了（「统一价（兜底）· 对话与代码」），再套一层
       // 「定价 · 」读起来是两个标题叠在一起。它跟着**当前选中的能力**现拼，
       // 不用打开时那份 —— 换过能力之后标题还写着上一个，是在说错自己在改什么。
-      // 标题要带上当前这一档：一屏四个桶长得一模一样，只有标题说得出
-      // 「我现在填的是 max 那一档」。不带的话，改完 max 保存，运营以为自己改的是常规价。
+      // 标题要带上当前这个分组：一屏四个桶长得一模一样，只有标题说得出
+      // 「我现在填的是深度那一组」。不带的话，改完深度保存，运营以为自己改的是通价。
       title={
         target
           ? (fallback
               ? t("galaxy.model.fallbackTitle").replace("{kind}", kindLabel(kind, t))
               : t("galaxy.model.pricingTitle").replace("{model}", target.title)) +
-            (effort ? ` · ${effortLabel(effort, t)}` : "")
+            (currentGroup ? ` · ${currentGroup.name}` : "")
           : ""
       }
       okText={t("galaxy.package.save")}
@@ -1263,18 +1219,20 @@ function ModelPricing({
               <Input value={kind} disabled className="manager-mono" />
             )}
           </Form.Item>
-          {/* 提示分两句：认出族之后要说清「这里只摆这一族的档」，否则运营会以为
-              另一族那几档是漏了。 */}
+          {/* 分组是平台在卖的那个单位：价挂在它上面。选「模型通价」时改的是
+              所有没单独定价的分组共用的那一份。 */}
           <Form.Item
-            label={t("galaxy.price.effort")}
-            extra={
-              family
-                ? t("galaxy.price.effortScopedHint", { family: familyName(family, t) })
-                : t("galaxy.price.effortHint")
-            }
-            style={{ minWidth: 220 }}
+            label={t("galaxy.group.label")}
+            extra={fallback ? t("galaxy.group.fallbackNoGroup") : t("galaxy.group.pricingHint")}
+            style={{ minWidth: 240 }}
           >
-            <Select value={effort} onChange={setEffort} options={effortOptions} style={{ width: "100%" }} />
+            <Select
+              value={groupId}
+              onChange={setGroupId}
+              options={groupOptions}
+              disabled={fallback}
+              style={{ width: "100%" }}
+            />
           </Form.Item>
           <Form.Item
             name="effectiveFrom"
@@ -1303,11 +1261,14 @@ function ModelPricing({
               form={form}
               own={own[unit]}
               inherited={inherited[unit]}
-              // fallback 的意思是「这一行底下没有别的了」，所以选了某一档强度时它就不成立：
-              // 那一档没填的单位会回落到这个 kind 不分强度的价，而不是按 0 计费。
-              // 不收窄的话，改 max 档时每一行都红字写着「没单独定价的模型都按 0 计费」——
+              // fallback 的意思是「这一行底下没有别的了」，所以选了某个分组时它就不成立：
+              // 那个分组没填的单位会回落到这个模型的通价，而不是按 0 计费。
+              // 不收窄的话，改分组时每一行都红字写着「没单独定价的模型都按 0 计费」——
               // 那句话是错的，而它恰恰会吓得运营去把四个桶都填一遍。
-              fallback={fallback && effort === ""}
+              fallback={fallback && groupId === ""}
+              // 这一屏改的是分组还是模型：两者的「此刻按什么算」要说两句不同的话，
+              // 都写成「这个模型自己的价」的话，运营会以为自己在改整个模型。
+              scope={groupId === "" ? "model" : "group"}
             />
           ))
         )}
@@ -1342,12 +1303,15 @@ function PricingRow({
   own,
   inherited,
   fallback,
+  scope,
 }: {
   unit: string;
   form: ReturnType<typeof Form.useForm<PricingForm>>[0];
   own?: PriceView;
   inherited?: PriceView;
   fallback: boolean;
+  /** 这一行此刻在改谁的价：这个模型的通价，还是某一个分组的价。 */
+  scope: "model" | "group";
 }) {
   const { t } = useLocale();
   const price = Form.useWatch([unit, "price"], form);
@@ -1358,14 +1322,20 @@ function PricingRow({
   // 「这个模型自己定过价」「在用兜底价」「根本没有价（静默算 0）」看起来一模一样。
   const state = own ? (
     <Typography.Text type="secondary">
-      {t(fallback ? "galaxy.model.pricingCurrent" : "galaxy.model.pricingOwn").replace(
+      {t(
+        fallback
+          ? "galaxy.model.pricingCurrent"
+          : scope === "group"
+            ? "galaxy.model.pricingOwnGroup"
+            : "galaxy.model.pricingOwn",
+      ).replace(
         "{price}",
         `¥${(own.price / MICRO).toLocaleString("en-US", { maximumFractionDigits: 6 })}`,
       )}
     </Typography.Text>
   ) : inherited && !fallback ? (
     <Typography.Text type="secondary">
-      {t("galaxy.model.pricingInherit").replace(
+      {t(scope === "group" ? "galaxy.model.pricingInheritGroup" : "galaxy.model.pricingInherit").replace(
         "{price}",
         `¥${(inherited.price / MICRO).toLocaleString("en-US", { maximumFractionDigits: 6 })}`,
       )}
@@ -1430,3 +1400,346 @@ function PricingRow({
     </div>
   );
 }
+
+/**
+ * 一个模型底下的**分组**：平台在这个模型上真正在卖的几个档次。
+ *
+ * 为什么要有这一层（2026-09-22）：同一个模型可以用得很不一样 —— 想得浅一点、深一点、
+ * 要不要走快速通道 —— 而这几种用法在上游那边的成本能差好几倍。原先这两个旋钮由客户端
+ * 在请求体里自己拨，平台按一份价收，差额全由平台垫。
+ *
+ * 分组把它翻过来：**旋钮是商品的属性，不是调用方的自由**。这一屏定的就是那几条属性：
+ *
+ *   · 绑定哪几档推理强度 —— 请求带来的档不在表里，就夹到表里**最浅**的一档再打上游。
+ *     一档都不绑 = 不限，请求带什么就按什么跑。
+ *   · 卖不卖「快速」—— 不卖时，客户端开了快速也会被改写掉。
+ *   · 价（在「定价」那一屏填，键是 模型 + 分组）。
+ *
+ * 两件必须说清楚的事：
+ *
+ *   · **档位名只在这一页出现**。使用端、共享端、官网一律不显示它 —— 那是上游的内部刻度，
+ *     摆给外面看，等于让上游的字段名替平台解释自己在卖什么。所以分组名要自己说清楚
+ *     卖的是什么（「标准」「深度思考」「快速」），别写成「max 档」。
+ *   · **一个分组都没有的模型卖不出去**：使用端建密钥要选分组，选不到就用不了这个模型。
+ */
+function ModelGroups({
+  model,
+  groups,
+  efforts,
+  onClose,
+  onSaved,
+  onPrice,
+}: {
+  model: GalaxyModelView | null;
+  groups: ModelGroupView[];
+  /** 协议族 → 它认识的推理强度档位，由浅到深。服务端给的，前端不自己维护一份。 */
+  efforts: Record<string, string[]>;
+  onClose: () => void;
+  onSaved: () => void;
+  onPrice: (group: ModelGroupView) => void;
+}) {
+  const { t } = useLocale();
+  const canWrite = useCanWrite();
+  const [form] = Form.useForm<GroupForm>();
+  const [editing, setEditing] = useState<ModelGroupView | null>(null);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  /** 这个模型的强度词表按哪一族给。认不出来就摆两族的全集，让运营自己挑。 */
+  const family = useMemo(
+    () => effortFamilyOf(model?.family ?? "", model?.vendor ?? "", efforts),
+    [model, efforts],
+  );
+
+  /**
+   * 强度候选。认得出族就**只摆那一族**：两族的档位名只是长得像 ——
+   * none / minimal / ultra 只有 Codex 有，xhigh 只有 Claude 有。给一个 Claude 模型
+   * 绑上 minimal，服务端会直接拒（它按族校验），但运营要到点保存才知道。
+   */
+  const effortOptions = useMemo(() => {
+    const ladders = Object.entries(efforts).filter(([, levels]) => levels.length > 0);
+    const scoped = family ? ladders.filter(([key]) => key === family) : ladders;
+    return scoped.map(([key, levels]) => ({
+      label: t(`galaxy.price.family.${key}`),
+      options: levels.map((level) => ({ value: level, label: effortLabel(level, t) })),
+    }));
+  }, [efforts, family, t]);
+
+  const edit = (row: ModelGroupView | null) => {
+    setEditing(row);
+    form.setFieldsValue({
+      name: row?.name ?? "",
+      summary: row?.summary ?? "",
+      efforts: row?.efforts ?? [],
+      allowFast: row?.allowFast ?? false,
+      listed: row?.listed ?? true,
+      isDefault: row?.isDefault ?? false,
+      sortOrder: row?.sortOrder ?? 0,
+    });
+    setOpen(true);
+  };
+
+  const submit = async () => {
+    if (!model) return;
+    const values = await form.validateFields();
+    setSaving(true);
+    try {
+      await saveModelGroup({
+        groupId: editing?.groupId,
+        modelId: model.modelId,
+        name: values.name.trim(),
+        summary: values.summary?.trim() ?? "",
+        efforts: values.efforts ?? [],
+        allowFast: values.allowFast,
+        listed: values.listed,
+        isDefault: values.isDefault,
+        sortOrder: values.sortOrder ?? 0,
+      });
+      message.success(t("galaxy.model.saved"));
+      setOpen(false);
+      onSaved();
+    } catch (error) {
+      message.error((error as Error).message || t("galaxy.actionFailed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /**
+   * 删分组。还有密钥选着它时服务端先拦一道 —— 那不是一个可以「再点一次」糊过去的提示：
+   * 删掉之后那些密钥的每一次请求都会报「模型不允许」，而使用者看不出为什么。
+   * 所以强删要单独确认一次，并且把「有几把」原样说出来。
+   */
+  const remove = async (row: ModelGroupView, force: boolean) => {
+    try {
+      await deleteModelGroup({ groupId: row.groupId, force });
+      message.success(t("galaxy.model.deleted"));
+      onSaved();
+    } catch (error) {
+      message.error((error as Error).message || t("galaxy.actionFailed"));
+    }
+  };
+
+  const price = (value: number) => (value > 0 ? `¥${(value / MICRO).toFixed(2)}` : "-");
+
+  const columns: ColumnsType<ModelGroupView> = [
+    {
+      title: t("galaxy.group.name"),
+      dataIndex: "name",
+      width: 200,
+      render: (name: string, row) => (
+        <Space direction="vertical" size={0}>
+          <Space size={4} wrap>
+            <span style={{ fontWeight: 600 }}>{name}</span>
+            {row.isDefault ? <Tag color="blue">{t("galaxy.group.default")}</Tag> : null}
+            {row.listed ? null : <Tag>{t("galaxy.group.unlisted")}</Tag>}
+          </Space>
+          {row.summary ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {row.summary}
+            </Typography.Text>
+          ) : null}
+        </Space>
+      ),
+    },
+    {
+      // 绑定的强度。空 = 不限：请求带什么档就按什么打上游 —— 这和「一档都不卖」
+      // 不是一回事，所以不能显示成「-」。
+      title: t("galaxy.group.efforts"),
+      dataIndex: "efforts",
+      width: 240,
+      render: (levels: string[]) =>
+        levels.length === 0 ? (
+          <Tooltip title={t("galaxy.group.anyEffortHint")}>
+            <Typography.Text type="secondary">{t("galaxy.group.anyEffort")}</Typography.Text>
+          </Tooltip>
+        ) : (
+          <Space size={4} wrap>
+            {levels.map((level, index) => (
+              <Tooltip key={level} title={index === 0 ? t("galaxy.group.lowestHint") : undefined}>
+                <Tag color={EFFORT_TONE[level] ?? "default"} style={{ marginInlineEnd: 0 }}>
+                  {effortLabel(level, t)}
+                </Tag>
+              </Tooltip>
+            ))}
+          </Space>
+        ),
+    },
+    {
+      title: t("galaxy.group.fast"),
+      dataIndex: "allowFast",
+      width: 100,
+      render: (allow: boolean) =>
+        allow ? <Tag color="gold">{t("galaxy.group.fastOn")}</Tag> : <Tag>{t("galaxy.group.fastOff")}</Tag>,
+    },
+    {
+      // 这个分组收多少。没自己的价就跟着模型通价走 —— 要说出来，
+      // 否则一屏分组显示同一个数，看起来像页面坏了。
+      title: t("galaxy.group.price"),
+      key: "price",
+      width: 220,
+      render: (_, row) => (
+        <Space size={6} wrap>
+          <span className="manager-mono">
+            {price(row.inputPrice)} / {price(row.outputPrice)} / {price(row.cachePrice)}
+          </span>
+          {row.priced ? null : (
+            <Tooltip title={t("galaxy.group.inheritsHint")}>
+              <Tag color="blue">{t("galaxy.group.inherits")}</Tag>
+            </Tooltip>
+          )}
+        </Space>
+      ),
+    },
+    {
+      // 毛利按输出价算。负数是平台在倒贴 —— 标红让它自己跳出来。
+      title: t("galaxy.price.margin"),
+      dataIndex: "marginBps",
+      width: 100,
+      align: "right",
+      render: (bps: number) =>
+        bps < 0 ? (
+          <Typography.Text type="danger" className="manager-mono">
+            {marginText(bps)}
+          </Typography.Text>
+        ) : (
+          <span className="manager-mono">{marginText(bps)}</span>
+        ),
+    },
+    {
+      title: t("galaxy.group.keys"),
+      dataIndex: "keys",
+      width: 90,
+      align: "right",
+      render: (keys: number) => <span className="manager-mono">{keys}</span>,
+    },
+    {
+      title: t("galaxy.actions"),
+      key: "actions",
+      width: 200,
+      render: (_, row) =>
+        canWrite ? (
+          <Space size={8}>
+            <Button size="small" type="primary" ghost onClick={() => onPrice(row)}>
+              {t("galaxy.model.pricing")}
+            </Button>
+            <Button size="small" onClick={() => edit(row)}>
+              {t("galaxy.group.edit")}
+            </Button>
+            <Popconfirm
+              title={t("galaxy.group.delete")}
+              description={
+                <div style={{ maxWidth: 320 }}>
+                  {row.keys > 0
+                    ? t("galaxy.group.deleteInUse", { count: row.keys })
+                    : t("galaxy.group.deleteHint")}
+                </div>
+              }
+              okText={t("galaxy.confirm")}
+              cancelText={t("galaxy.cancel")}
+              onConfirm={() => void remove(row, row.keys > 0)}
+            >
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Space>
+        ) : null,
+    },
+  ];
+
+  return (
+    <>
+      <Modal
+        open={model !== null}
+        title={t("galaxy.group.title", { model: model?.displayName || model?.modelId || "" })}
+        footer={null}
+        width={1080}
+        onCancel={onClose}
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Alert type="info" showIcon message={t("galaxy.group.hint")} />
+          {groups.length === 0 ? (
+            // 一个分组都没有 = 这个模型在使用端选不到，也就卖不出去。红字，不是灰字。
+            <Alert type="error" showIcon message={t("galaxy.group.none")} description={t("galaxy.group.noneHint")} />
+          ) : null}
+          {canWrite ? (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => edit(null)}>
+              {t("galaxy.group.new")}
+            </Button>
+          ) : null}
+          <Table<ModelGroupView>
+            rowKey="groupId"
+            size="small"
+            columns={columns}
+            dataSource={groups}
+            pagination={false}
+            scroll={{ x: 1150 }}
+          />
+        </Space>
+      </Modal>
+
+      <Modal
+        open={open}
+        title={editing ? t("galaxy.group.edit") : t("galaxy.group.new")}
+        okText={t("galaxy.package.save")}
+        cancelText={t("galaxy.cancel")}
+        confirmLoading={saving}
+        width={640}
+        onCancel={() => setOpen(false)}
+        onOk={() => void submit()}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="name"
+            label={t("galaxy.group.name")}
+            rules={[{ required: true }]}
+            extra={t("galaxy.group.nameHint")}
+          >
+            <Input placeholder={t("galaxy.group.namePlaceholder")} />
+          </Form.Item>
+          <Form.Item name="summary" label={t("galaxy.group.summary")} extra={t("galaxy.group.summaryHint")}>
+            <Input.TextArea rows={2} maxLength={256} showCount />
+          </Form.Item>
+          <Form.Item name="efforts" label={t("galaxy.group.efforts")} extra={t("galaxy.group.effortsHint")}>
+            <Select mode="multiple" allowClear options={effortOptions} placeholder={t("galaxy.group.anyEffort")} />
+          </Form.Item>
+          <Space size={16} wrap>
+            <Form.Item
+              name="allowFast"
+              label={t("galaxy.group.fast")}
+              valuePropName="checked"
+              extra={t("galaxy.group.fastHint")}
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item name="listed" label={t("galaxy.group.listed")} valuePropName="checked" extra={t("galaxy.group.listedHint")}>
+              <Switch />
+            </Form.Item>
+            <Form.Item
+              name="isDefault"
+              label={t("galaxy.group.default")}
+              valuePropName="checked"
+              extra={t("galaxy.group.defaultHint")}
+            >
+              <Switch />
+            </Form.Item>
+            <Form.Item name="sortOrder" label={t("galaxy.package.sortOrder")}>
+              <InputNumber min={0} style={{ width: 120 }} />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Modal>
+    </>
+  );
+}
+
+type GroupForm = {
+  name: string;
+  summary: string;
+  efforts: string[];
+  allowFast: boolean;
+  listed: boolean;
+  isDefault: boolean;
+  sortOrder: number | null;
+};

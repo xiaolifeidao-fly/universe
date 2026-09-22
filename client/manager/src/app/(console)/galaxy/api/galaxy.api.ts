@@ -1079,10 +1079,15 @@ export class PriceView {
   modelId = "";
 
   /**
-   * 这一行管哪一档推理强度。空串 = **不分强度**，这个模型的所有强度都按它算。
-   * 档位名是上游原生的，两族不通用（Claude 的 low…max、Codex 的 minimal…high）。
+   * 这一行管哪个**模型分组**。空串 = **该模型的通价**，没单独定价的分组都按它算。
+   *
+   * 它取代了原先的 effort（2026-09-22）：推理强度不再是计价维度，
+   * 而是分组的属性 —— 一个分组卖哪几档、卖不卖快速，价钱按分组收一份。
    */
-  effort = "";
+  groupId = "";
+
+  /** 分组名，服务端解好给的。分组被删掉之后是空串，而 groupId 还在。 */
+  groupName = "";
 
   unit = "";
 
@@ -1125,13 +1130,19 @@ export class PriceTableView {
   models: string[] = [];
 
   /**
-   * 协议族 → 它认识的推理强度档位，由浅到深。
+   * 协议族 → 它认识的推理强度档位，由浅到深。给分组那一屏的「绑定强度」多选用。
+   *
+   * **这是全站唯一还出现档位名的地方**：管理端。使用端、共享端、官网一律不显示它 ——
+   * 档位名是上游的内部刻度，摆给外面看，等于让上游的字段名替平台解释自己在卖什么。
    *
    * 按族分开给而不是并成一张扁平清单：Claude 的 xhigh / max 在 Codex 不存在，
-   * Codex 的 minimal 在 Claude 不存在 —— 并起来运营迟早给某个模型填上一个
-   * 它永远不会出现的档，而那行价只会安静地躺在表里，匹配不上任何用量。
+   * Codex 的 minimal 在 Claude 不存在 —— 并起来运营迟早给某个模型绑上一个
+   * 它永远不会出现的档，而那一档只会安静地躺在分组里，匹配不上任何请求。
    */
   efforts: Record<string, string[]> = {};
+
+  /** 全部模型分组（含下架的）。定价按分组摆，删分组前也要看它。 */
+  groups: ModelGroupView[] = [];
 
   /**
    * 近 30 天产生过用量、却查不到价的 (kind, unit)。
@@ -1148,8 +1159,8 @@ export async function savePrice(payload: {
   kind: string;
   /** 留空 = 改该 kind 的兜底价。 */
   modelId: string;
-  /** 留空 = 这个模型不分强度的价。服务端只认上游真实存在的档，编出来的会被拒。 */
-  effort: string;
+  /** 留空 = 这个模型的通价。给分组定价必须同时带 modelId，服务端会校验两者对得上。 */
+  groupId: string;
   unit: string;
   price: number;
   /** 结算单价。一律显式带上 —— 不带就是把这一行的结算价清成 0。 */
@@ -1161,15 +1172,106 @@ export async function savePrice(payload: {
   return unwrapApiResponse(response.data);
 }
 
-/** modelId 与 effort 都在唯一键里，删除**一定要带**：少带一个就会去删另一行。 */
+/** modelId 与 groupId 都在唯一键里，删除**一定要带**：少带一个就会去删另一行。 */
 export async function deletePrice(payload: {
   kind: string;
   modelId: string;
-  effort: string;
+  groupId: string;
   unit: string;
   effectiveFrom: string;
 }) {
   const response = await instance.post<ApiResponse<string>>("/galaxy/admin/prices/delete", payload);
+  return unwrapApiResponse(response.data);
+}
+
+/* ---------- 模型分组 ---------- */
+
+/**
+ * 一个模型底下的分组：平台真正在卖的那个单位。
+ *
+ * 价挂在分组上，使用端建密钥时选分组，共享端共享时选分组，请求进来先落到一个分组上，
+ * 然后**一切按这个分组的属性决策**：强度不在它卖的档里就夹到最浅的一档，
+ * 没开快速就把请求体里的快速标记改写掉。
+ *
+ * 分组名是**对外的**，所以别把上游的档位名（low/high/max）写进去 ——
+ * 那正是这次改造要从对外界面上去掉的东西。
+ */
+export class ModelGroupView {
+  groupId = "";
+
+  modelId = "";
+
+  modelName = "";
+
+  name = "";
+
+  summary = "";
+
+  /** 协议族（anthropic / openai）。界面按它决定「绑定强度」那个多选给哪张词表。 */
+  family = "";
+
+  /** 绑定的推理强度。空数组 = 不限：请求带什么档就按什么档打上游。 */
+  efforts: string[] = [];
+
+  allowFast = false;
+
+  listed = true;
+
+  /** 该模型的默认分组：没选分组的老密钥落在它上面。每个模型最多一个。 */
+  isDefault = false;
+
+  sortOrder = 0;
+
+  /** 这个分组有没有自己的价。没有就是跟着模型通价走。 */
+  priced = false;
+
+  inputPrice = 0;
+
+  outputPrice = 0;
+
+  cachePrice = 0;
+
+  cacheWritePrice = 0;
+
+  cacheWrite1hPrice = 0;
+
+  settleInputPrice = 0;
+
+  settleOutputPrice = 0;
+
+  settleCachePrice = 0;
+
+  settleCacheWritePrice = 0;
+
+  settleCacheWrite1hPrice = 0;
+
+  /** 按输出价算的平台毛利率，万分之一。负数是平台在倒贴。 */
+  marginBps = 0;
+
+  /** 还有几把有效密钥选着它。删之前看这个数。 */
+  keys = 0;
+}
+
+export async function saveModelGroup(payload: {
+  /** 留空 = 新建。 */
+  groupId?: string;
+  modelId: string;
+  name: string;
+  summary?: string;
+  /** 绑定的推理强度，空数组 = 不限。服务端只认上游真实存在的档。 */
+  efforts: string[];
+  allowFast: boolean;
+  listed?: boolean;
+  isDefault?: boolean;
+  sortOrder?: number;
+}) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/groups/save", payload);
+  return unwrapApiResponse(response.data);
+}
+
+/** 删分组会连带删掉它名下的价。还有密钥在用时服务端先拦一道，确认后带 force 再来。 */
+export async function deleteModelGroup(payload: { groupId: string; force?: boolean }) {
+  const response = await instance.post<ApiResponse<string>>("/galaxy/admin/groups/delete", payload);
   return unwrapApiResponse(response.data);
 }
 

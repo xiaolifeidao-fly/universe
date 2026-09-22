@@ -37,15 +37,19 @@ export interface PortalFamily {
 }
 
 /**
- * 一个模型在某一档推理强度上的单价，口径与模型那一行的单价完全一致。
+ * 一个模型底下的一个**分组**：平台在这个模型上卖的一个档次，以及它的单价，
+ * 口径与模型那一行的单价完全一致。
  *
- * 服务端只下发**真的单独定过价**的那几档，由浅到深；没在这张表里的强度按模型
- * 那一行的价收。一档都不列的模型就是不分强度 —— 把六档一律铺开、每档都等于
- * 那一行的数，说的是「分了档但都一样」，而那会让人以为运营填漏了价。
+ * 分组是平台真正在卖的单位：买哪个分组，就按那个分组的价、它卖的思考深度、
+ * 支不支持快速来跑。没单独定价的分组按模型那一行的价收。
  */
-export interface PortalEffortPrice {
-  /** 档位名，上游原生：Claude 是 low…max，Codex 是 minimal…high。 */
-  effort: string;
+export interface PortalGroupPrice {
+  groupId: string;
+  name: string;
+  summary?: string;
+  /** 支不支持「快速」。不支持时，客户端开了快速也不算数。 */
+  allowFast?: boolean;
+  isDefault?: boolean;
   inputPrice: number;
   outputPrice: number;
   cachePrice: number;
@@ -93,11 +97,11 @@ export interface PortalModel {
   /** false 表示这几个价来自 kind 的统一价，不是这个模型自己的。 */
   priced: boolean;
   /**
-   * 按推理强度单独定过价的那几档，由浅到深。空 = 不分强度，上面那几个数就是全部。
+   * 这个模型在卖的分组。空 = 还没建分组，上面那几个数就是全部。
    *
    * 服务端可能整个键都不给（omitempty），所以读的时候一律当可能缺。
    */
-  efforts?: PortalEffortPrice[];
+  groups?: PortalGroupPrice[];
   sortOrder: number;
 }
 

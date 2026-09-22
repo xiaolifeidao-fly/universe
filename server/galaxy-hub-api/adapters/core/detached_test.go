@@ -42,6 +42,12 @@ func (s *stubGalaxy) Submit(_ context.Context, unit contract.WorkUnit) (galaxy.P
 
 func (s *stubGalaxy) FirstByte(context.Context, string) error { return nil }
 
+// ResolveGroupPolicy 桩：这些用例不验分组，一律回「不约束」。
+// 不能靠内嵌接口的 nil 兜底 —— 通用层每次请求都要调它，nil 会当场 panic。
+func (s *stubGalaxy) ResolveGroupPolicy(context.Context, dto.Caller, contract.RouteKey) (contract.GroupPolicy, error) {
+	return contract.UnconstrainedPolicy(), nil
+}
+
 func (s *stubGalaxy) Abandon(_ context.Context, unitID, _ string) error {
 	s.abandoned <- unitID
 	return nil
