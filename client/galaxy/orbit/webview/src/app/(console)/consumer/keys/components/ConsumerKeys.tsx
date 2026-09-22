@@ -44,7 +44,7 @@ import {
   type IssuedKeyView,
   type NoticeStatus,
 } from "../../api/consumer.api";
-import { GroupPicker } from "./GroupPicker";
+import { GroupPicker, type PickedGroup } from "./GroupPicker";
 import {
   canApplyLocally,
   clientConfigApi,
@@ -97,17 +97,17 @@ export function ConsumerKeys() {
   const [creating, setCreating] = useState(false);
   const [newAlias, setNewAlias] = useState("");
   /**
-   * 能选的分组，以及这次选了哪些。
+   * 能选的档次，以及这次挑中的那一个。
    *
-   * **选分组是新建密钥的硬前置**（2026-09-22）：中转按分组走 —— 选了哪个分组，
-   * 这把密钥就按那个分组的价、那个分组卖的思考深度、支不支持快速来跑。
+   * **选档次是新建密钥的硬前置**（2026-09-22）：中转按档次走 —— 选了哪一档，
+   * 这把密钥就按那一档的价、那一档卖的思考深度来跑。
    *
-   * 选中的存成「模型 → 分组」而不是一个数组：一个模型只能选一个分组（同一个模型选两个，
-   * 一次请求就答不出按哪份价收），用 map 存，点第二个分组自然替换掉第一个，
-   * 不必再写一遍互斥判断 —— 而那种判断漏了不会报错，只会在提交时被服务端拒掉。
+   * **一把密钥只认一个模型的一档**：存一条，不存数组也不存 map —— 多选的界面能勾出
+   * 一套组合，事后却没人记得住哪把能调什么；而密钥本来就可以随手再建一把（额度在
+   * 账户上，最多 5 把）。接口收的仍然是数组（存量密钥有挂着好几档的），这里发一条进去。
    */
   const [groupOptions, setGroupOptions] = useState<ConsumerGroupOption[]>([]);
-  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [picked, setPicked] = useState<PickedGroup | null>(null);
   // SDK 要填的 base_url **由服务端给** —— 消费者路由挂在 galaxy-api 的 /v1 上，
   // 那个地址前端猜不出来（控制台和 API 可能不同域、不同端口）。
   const [baseUrl, setBaseUrl] = useState("");
@@ -267,10 +267,10 @@ export function ConsumerKeys() {
   };
 
   /**
-   * 打开新建弹框时取一次候选分组。
+   * 打开新建弹框时取一次候选档次。
    *
-   * 不在整页加载时取：这一页大多数时候是来复制密钥的，而分组候选只有新建那一刻用得上。
-   * 取失败不拦住弹框 —— 里面会显示「取不到分组」，比一个打不开的按钮说得清楚。
+   * 不在整页加载时取：这一页大多数时候是来复制密钥的，而候选档次只有新建那一刻用得上。
+   * 取失败不拦住弹框 —— 里面会显示「取不到档次」，比一个打不开的按钮说得清楚。
    */
   const openCreate = async () => {
     setCreating(true);
@@ -292,12 +292,12 @@ export function ConsumerKeys() {
   const create = async () => {
     setBusy(true);
     try {
-      const fresh = await createKey(newAlias.trim(), notice?.version ?? "", Object.values(picked));
+      const fresh = await createKey(newAlias.trim(), notice?.version ?? "", picked ? [picked.groupId] : []);
       setIssuedSaved(await rememberKeySecret(fresh.keyId, fresh.alias, fresh.secret));
       setIssued(fresh);
       setCreating(false);
       setNewAlias("");
-      setPicked({});
+      setPicked(null);
       setTab("valid");
       message.success(t("keys.createdOk"));
       await load();
@@ -568,14 +568,14 @@ export function ConsumerKeys() {
       <Modal
         open={creating}
         title={t("keys.new")}
-        // 比默认的 520 宽：分组那三级要左右摆两栏，520 宽里模型名和价会各占一行。
+        // 比默认的 520 宽：档次那三级要左右摆两栏，520 宽里模型名和价会各占一行。
         width={720}
         okText={t("keys.createOk")}
         cancelText={t("common.cancel")}
         confirmLoading={busy}
-        // 一个分组都没选就发不出去。服务端也会拒，但在这里拦住的好处是
+        // 一档都没选就发不出去。服务端也会拒，但在这里拦住的好处是
         // 人不会先填完名字、点了确定，才被告知还差一步。
-        okButtonProps={{ disabled: Object.keys(picked).length === 0 }}
+        okButtonProps={{ disabled: !picked }}
         onOk={() => void create()}
         onCancel={() => setCreating(false)}
         destroyOnClose
@@ -643,7 +643,7 @@ function KeyCard({
   action: React.ReactNode;
 }) {
   const { t } = useLocale();
-  // 服务端给的是 Go 的切片：一个分组都没有时序列化成 null 而不是 []，而
+  // 服务端给的是 Go 的切片：一档都没有时序列化成 null 而不是 []，而
   // class-transformer 会把这个 null 原样盖到字段上（类上写的 `= []` 只在字段
   // 整个缺席时才留得住）。直接 .length 的话，任何一把存量密钥都会让整页崩成
   // 「Application error」。allowedKinds / modelTier 也是同一种东西，见上面。
@@ -692,9 +692,9 @@ function KeyCard({
           </span>
           <span className="gx-chip">{t(`keys.category.${item.category}`)}</span>
         </span>
-        {/* 这把密钥买的是哪几个分组。它才是几把密钥之间真正的区别 —— 不摆出来的话，
+        {/* 这把密钥买的是哪几档。它才是几把密钥之间真正的区别 —— 不摆出来的话，
             一屏卡片只有名字不同，而名字是人自己起的。
-            老密钥（2026-09-22 之前签的）没有分组，那一行说清楚它按默认分组跑。 */}
+            老密钥（2026-09-22 之前签的）没有档次，那一行说清楚它按默认档跑。 */}
         <span style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {groups.length === 0 ? (
             <span className="gx-chip" style={{ color: "var(--gx-faint)" }}>{t("keys.groupsLegacy")}</span>
@@ -703,12 +703,12 @@ function KeyCard({
               <span
                 key={group.groupId}
                 className="gx-chip"
-                // 分组被删或下架时，这把密钥调那个模型会直接失败 —— 标出来，
+                // 那一档被删或下架时，这把密钥调那个模型会直接失败 —— 标出来，
                 // 否则使用者只会看到一句「模型不允许」而不知道为什么。
                 style={group.missing ? { color: "var(--gx-warn)" } : undefined}
                 title={group.modelName || group.modelId}
               >
-                {/* 分组被删掉之后服务端只给得出 groupId（模型名、分组名都没了），
+                {/* 那一档被删掉之后服务端只给得出 groupId（模型名、档次名都没了），
                     拼一个「 · 」在前面会变成一条以分隔符开头的碎句子。 */}
                 {[group.modelName || group.modelId, group.name || group.groupId, group.missing ? t("keys.groupMissing") : ""]
                   .filter(Boolean)

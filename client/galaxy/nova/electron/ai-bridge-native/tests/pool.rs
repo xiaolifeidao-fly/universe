@@ -5,7 +5,7 @@ use ai_bridge_native::pool::lane::{Lane, LaneConfig};
 use ai_bridge_native::pool::models::{parse_codex_cache, parse_models};
 use ai_bridge_native::pool::runner::health_signature;
 use ai_bridge_native::pool::setup::{hub_needs_rebind, shell_quote};
-use ai_bridge_native::pool::tools::{parse_version, resolve_in};
+use ai_bridge_native::pool::tools::{parse_version, resolve_in, Progress};
 use base64::Engine;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -233,6 +233,92 @@ fn cli_version_output_is_parsed_for_every_tool() {
     for junk in ["", "unknown", "命令未找到", "codex-cli"] {
         assert_eq!(parse_version(junk), "", "不该从 {junk:?} 解析出版本");
     }
+}
+
+// ---------- 安装 / 升级的进度 ----------
+
+/// 把一段 npm 输出喂完，看停在哪一步。
+fn feed(lines: &[&str]) -> Progress {
+    let mut progress = Progress::starting();
+    for line in lines {
+        progress.feed(line);
+    }
+    progress
+}
+
+#[test]
+fn npm_output_walks_the_progress_forward() {
+    let started = Progress::starting();
+    assert_eq!(started.phase, "starting");
+    assert!(started.percent > 0, "一格不动的进度条分不出「在跑」和「没点上」");
+
+    // 先问 registry 要元数据，再取 tarball —— 两件事在界面上是两个阶段。
+    let meta = feed(&["npm http fetch GET 200 https://registry.npmjs.org/@openai%2fcodex 231ms (cache miss)"]);
+    assert_eq!(meta.phase, "resolving");
+
+    let fetching = feed(&[
+        "npm http fetch GET 200 https://registry.npmjs.org/@openai%2fcodex 231ms (cache miss)",
+        "npm http fetch GET 200 https://registry.npmjs.org/@openai/codex/-/codex-0.155.2.tgz 1503ms",
+        "npm http fetch GET 200 https://registry.npmjs.org/undici/-/undici-6.0.0.tgz 88ms",
+    ]);
+    assert_eq!(fetching.phase, "downloading");
+    assert!(fetching.percent > meta.percent, "取到包了就该往前走");
+
+    // 包自己的安装脚本（claude 在这一段下原生构建，最花时间），以及 npm 的收尾那一句。
+    let installing = feed(&[
+        "npm http fetch GET 200 https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.280.tgz 900ms",
+        "> @anthropic-ai/claude-code@2.1.280 postinstall",
+        "downloading native build for darwin-arm64",
+    ]);
+    assert_eq!(installing.phase, "installing");
+    assert_eq!(installing.detail, "downloading native build for darwin-arm64");
+    assert!(installing.percent > fetching.percent);
+
+    let finished = feed(&["added 1 package in 6s"]);
+    assert_eq!(finished.phase, "installing");
+    assert_eq!(finished.detail, "added 1 package in 6s");
+    // 100 只有进程真的退干净了才给，不由输出定。
+    assert!(finished.percent < 100);
+}
+
+#[test]
+fn progress_never_walks_backwards_and_ignores_noise() {
+    // 两条流合在一个日志文件里，后面又冒出一行早期的取包记录时不能把进度拽回去。
+    let mixed = feed(&[
+        "npm http fetch GET 200 https://registry.npmjs.org/@openai/codex/-/codex-0.155.2.tgz 1503ms",
+        "> @openai/codex@0.155.2 postinstall",
+        "npm http fetch GET 200 https://registry.npmjs.org/semver 12ms",
+    ]);
+    assert_eq!(mixed.phase, "installing");
+
+    // 弃用警告和捐助提示不是进度，也不该成为界面上那一句。
+    let noisy = feed(&[
+        "npm warn deprecated inflight@1.0.6: This module is not supported",
+        "npm notice New major version of npm available!",
+        "",
+    ]);
+    assert_eq!(noisy.phase, "starting");
+    assert_eq!(noisy.detail, "");
+}
+
+#[test]
+fn failure_reason_is_stitched_from_npm_error_lines() {
+    let failed = feed(&[
+        "npm http fetch GET 404 https://registry.npmjs.org/@openai%2fcodex 120ms",
+        "npm error code E404",
+        "npm error 404 Not Found - GET https://registry.npmjs.org/@openai%2fcodex",
+        "npm error 404  '@openai/codex@latest' is not in this registry.",
+        "npm error 404 Note that you can also install from a tarball",
+        "npm error A complete log of this run can be found in: /Users/me/.npm/_logs/x.log",
+    ]);
+    let reason = failed.reason();
+    assert!(reason.contains("E404"), "第一行 code 要留着：{reason}");
+    assert!(reason.contains("is not in this registry"), "光有 code 说不明白：{reason}");
+    assert!(!reason.contains("_logs"), "日志路径对用户没用：{reason}");
+    // npm 9 的老前缀也认。
+    assert!(feed(&["npm ERR! code EACCES"]).reason().contains("EACCES"));
+    // 一个字没说就挂了：也得给一句人话，不能是空白。
+    assert!(!Progress::starting().reason().is_empty());
 }
 
 // ---------- Hub 地址校验 ----------

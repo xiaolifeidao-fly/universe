@@ -1118,13 +1118,13 @@ function formatObserved(at: string): string {
  * 接哪些模型、每个模型接哪几档。
  *
  * 厂商由车道自己定死了（relay_claude 就是 Claude），所以这里从模型开始：一个模型一行，
- * 点开才露出它在卖的**分组**。分组是平台在一个模型上卖的档次（「标准」「深度」「快速」），
- * 价、思考深度、支不支持快速都挂在它上面 —— **加入了才接得到那一档的单**。
+ * 点开才露出它在卖的**档次**。档次是平台在一个模型上卖的档（「标准」「深度」……），
+ * 价和思考深度都挂在它上面 —— **加入了才接得到那一档的单**。
  *
- * 分组是这一页唯一的范围设置：勾中哪几个，这台机器就提供哪几个的能力。
+ * 档次是这一页唯一的范围设置：勾中哪几档，这台机器就提供哪几档的能力。
  * 一个模型一档都不勾，它的单就不会派到这台机器上。
  *
- * 一个都不勾 = **不限**：什么分组的单都接，也包括以后新加的分组。这是存量车道的状态，
+ * 一个都不勾 = **不限**：什么档的单都接，也包括以后新加的档。这是存量车道的状态，
  * 也是绝大多数人想要的 —— 所以它是默认，而不是「一个都没选、什么都接不到」。
  * 那种默认会在迁移那一刻让全网机器一起停摆，而界面上每台都还显示着共享中。
  *
@@ -1255,7 +1255,7 @@ function GroupJoin({
                     </LinkBtn>
                   </div>
                   {/* 一档一行，右边是**结算价**：这一档跑一百万 token 给这台机器记多少积分。
-                      列和「模型」那一页的分组表一一对应（ModelDetail），两页看同一件事
+                      列和「模型」那一页的档次表一一对应（ModelDetail），两页看同一件事
                       就该长得一样；那一页只读，这一页点一下就是加入或退出。 */}
                   <div>
                     <div className="gx-th" style={{ gridTemplateColumns: GROUP_COLUMNS, padding: "6px 0" }}>
@@ -1281,8 +1281,6 @@ function GroupJoin({
                               <span style={{ fontWeight: active ? 600 : 500, color: active ? "var(--gx-accent)" : "inherit" }}>
                                 {group.name}
                               </span>
-                              {/* 快速档上游烧得更快，而你的订阅余量有限：接不接由你定，但得先看得见。 */}
-                              {group.allowFast ? <Pill tone="warn">{t("share.groupFast")}</Pill> : null}
                             </span>
                             {group.summary ? (
                               <span style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>{group.summary}</span>

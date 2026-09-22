@@ -52,9 +52,9 @@ export class NativeBridge {
   /** `{ command, launched, alreadyAuthorized? }` */
   startUpstreamLogin(provider: string): Promise<string>;
 
-  /** ToolStatus[] 的 JSON。 */
+  /** ToolStatus[] 的 JSON。正在装 / 刚装完的工具上挂着一条 job（进度）。 */
   getTools(): Promise<string>;
-  /** `{ command }` */
+  /** `{ command, job }`。拉起就返回，进度看 getTools 里的 job。 */
   upgradeTool(tool: string): Promise<string>;
 
   /** TokenSummary[] 的 JSON。 */

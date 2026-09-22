@@ -166,15 +166,14 @@ const messages = {
     "models.cacheWriteHint": "用哪一档由你的客户端在请求体的 cache_control 里写 ttl 决定，不写就是 5 分钟。Claude Code 走 API 密钥接入时默认 5 分钟。",
 
     "models.priceNoteBase":
-      "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。标着「统一价」的那几行，用的是这一类能力的通用单价，不是这个模型自己的价。点开一行能看到它各个分组的价。",
+      "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。标着「统一价」的那几行，用的是这一类能力的通用单价，不是这个模型自己的价。点开一行能看到它各个档次的价。",
     "models.priceNoteFlat":
       "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。当前计费按 token 统一定价，与具体模型无关 —— 每一行上那个「统一价」就是这个意思。",
     "models.col.model": "模型",
-    "models.col.group": "分组",
-    "models.groupCount": "{count} 组",
-    "models.groupTitle": "分组与价格",
-    "models.fastOn": "支持快速",
-    "models.expand": "展开看这个模型的分组价与说明",
+    "models.col.group": "档次",
+    "models.groupCount": "{count} 档",
+    "models.groupTitle": "档次与价格",
+    "models.expand": "展开看这个模型的档次价与说明",
     "models.endpointTitle": "填进客户端的就是这一行",
 
     "pricing.title": "定价",
@@ -396,15 +395,14 @@ const messages = {
     "models.cacheWriteHint": "Which tier applies is set by your client in the request body's cache_control ttl; omit it and you get 5 minutes. Claude Code defaults to 5 minutes when connected with an API key.",
 
     "models.priceNoteBase":
-      "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. The two buckets never overlap. A row marked \"Flat rate\" is showing the rate for that capability, not a rate set for that model. Open a row to see the rate each group charges.",
+      "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. The two buckets never overlap. A row marked \"Flat rate\" is showing the rate for that capability, not a rate set for that model. Open a row to see the rate each tier charges.",
     "models.priceNoteFlat":
       "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. Billing is currently a flat per-token rate that does not vary by model — that is what the \"Flat rate\" mark on every row means.",
     "models.col.model": "Model",
-    "models.col.group": "Group",
-    "models.groupCount": "{count} groups",
-    "models.groupTitle": "Groups and pricing",
-    "models.fastOn": "Fast",
-    "models.expand": "Open this model for its group rates and details",
+    "models.col.group": "Tier",
+    "models.groupCount": "{count} tiers",
+    "models.groupTitle": "Tiers and pricing",
+    "models.expand": "Open this model for its tier rates and details",
     "models.endpointTitle": "This is the line your client needs",
 
     "pricing.title": "Pricing",

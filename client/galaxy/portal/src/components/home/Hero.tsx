@@ -49,9 +49,6 @@ export function Hero({ overview }: { overview: PortalOverview }) {
                 {t("home.hero.primary")}
                 <IconArrowRight size={17} />
               </LinkBtn>
-              <LinkBtn href="/pricing" tone="ghost" size="lg">
-                {t("home.hero.secondary")}
-              </LinkBtn>
             </div>
 
             <ul className="gp-hero__points">

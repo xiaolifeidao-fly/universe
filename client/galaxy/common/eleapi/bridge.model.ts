@@ -86,6 +86,33 @@ export interface ToolStatus {
   /** 只有两边都拿得到、且不相等才为 true —— 拿不到时不催人升级。 */
   upgradable: boolean;
   installed: boolean;
+  /** 正在装 / 刚装完的那一次。没有就是这会儿没人动它。 */
+  job?: ToolJob;
+}
+
+/**
+ * 本机装一个工具、或者把它升一版，从起到落。
+ *
+ * npm 全局装一次动辄几十秒，而 upgradeTool 是拉起就返回的 —— 没有这条记录的话，
+ * 点完按钮界面上什么都不会变，只能提示「装完自己刷新一下」。
+ */
+export interface ToolJob {
+  name: string;
+  /** 本来没装（install）还是装了旧版（upgrade）。界面上是两句话。 */
+  action: 'install' | 'upgrade';
+  state: 'running' | 'succeeded' | 'failed';
+  /** starting | resolving | downloading | installing | done | failed。界面按它取文案。 */
+  phase: string;
+  /**
+   * 0-100，只进不退。npm 不报百分比（非 TTY 下连进度条都不画），这是按它真的
+   * 取了几个包、有没有跑到安装脚本推出来的估算 —— 所以界面上还得有阶段和秒数。
+   */
+  percent: number;
+  /** 最后一行有信息量的输出；失败时是 npm 说的原因。 */
+  detail: string;
+  elapsedMs: number;
+  /** 真正跑的那条命令，失败时摆出来让人自己去终端跑一遍。 */
+  command: string;
 }
 
 export interface BridgePingOptions { hubUrl?: string }

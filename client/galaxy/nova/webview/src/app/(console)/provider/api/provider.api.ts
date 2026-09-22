@@ -578,12 +578,6 @@ export class ModelGroupPrice {
 
   summary = "";
 
-  /**
-   * 这个分组卖不卖「快速」。它值得你看一眼：快速档上游烧得更快，
-   * 而你的订阅余量是有限的 —— 只接普通档的话，同样的余量能接更多单。
-   */
-  allowFast = false;
-
   isDefault = false;
 
   inputPrice = 0;

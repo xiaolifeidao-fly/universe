@@ -57,6 +57,5 @@ export function orPlaceholder(value: string): string {
 export const NAV_ITEMS = [
   { href: "/", key: "nav.home" },
   { href: "/models", key: "nav.models" },
-  { href: "/pricing", key: "nav.pricing" },
   { href: "/contact", key: "nav.contact" },
 ] as const;

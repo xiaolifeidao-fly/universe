@@ -71,7 +71,7 @@ export function BillSummary({ keys, reloadToken }: { keys: ConsumerKeyView[]; re
               key: "model",
               title: t("usage.col.model"),
               width: "170px",
-              // 分组跟着模型走，不单开一列：单价按 (模型, 分组) 定，两个分开摆
+              // 档次跟着模型走，不单开一列：单价按 (模型, 档次) 定，两个分开摆
               // 就得让人自己把两列对起来才知道这一行的单价是怎么来的。
               render: (row: UsageLine) => (
                 <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
@@ -136,7 +136,7 @@ export function BillSummary({ keys, reloadToken }: { keys: ConsumerKeyView[]; re
             },
           ]}
           rows={report?.lines ?? []}
-          // 分组进了主键：同一个模型的两个分组是两行，少这一段会撞成一个 key，
+          // 档次进了主键：同一个模型的两档是两行，少这一段会撞成一个 key，
           // React 只画得出其中一行 —— 账单于是少一行，而合计还是对的。
           rowKey={(row) => `${row.kind}:${row.provider}:${row.model}:${row.groupId}:${row.unit}`}
           empty={t("usage.empty")}

@@ -7,7 +7,7 @@
  * 由运营充进来，调一次扣一次。所以读它的方式是「我这些余额大概能跑多久」，
  * 而不是「我该买哪个包」。
  *
- * **先选厂商，再看列表。** 卡片墙换成列表是因为这一页的用法变了：加上分组这一维之后，
+ * **先选厂商，再看列表。** 卡片墙换成列表是因为这一页的用法变了：加上档次这一维之后，
  * 一个模型不再是一个价而是一小张价目表，卡片里塞不下；而使用者真正在做的事是
  * 「在同一家的几个模型之间比价」—— 比价要求几个数上下对齐，卡片做不到这件事。
  * 厂商摆在最上面而不是做成下拉：一共就两三家，摊开来点一下，比先展开再选快。
@@ -337,7 +337,7 @@ function ModelRow({ model, open, onToggle }: { model: ConsumerModelView; open: b
         <span className="gx-mono" style={{ textAlign: "right" }}>{points(model.outputPrice)}</span>
         <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>{points(model.cachePrice)}</span>
         <span style={{ textAlign: "right", fontSize: 12 }}>
-          {/* 有几个分组就说几个。一个都没有的模型是**建不出密钥**的（新建密钥必须选分组），
+          {/* 有几档就说几档。一档都没有的模型是**建不出密钥**的（新建密钥必须选一档），
               所以那不是「没什么可说」，展开里会把这句话写清楚。 */}
           {groups.length > 0 ? (
             <Pill tone="accent">{t("models.groupCount", { count: groups.length })}</Pill>
@@ -355,10 +355,10 @@ function ModelRow({ model, open, onToggle }: { model: ConsumerModelView; open: b
 }
 
 /**
- * 展开之后的那一块：介绍、标签、划线价，以及这个模型在卖的**分组**。
+ * 展开之后的那一块：介绍、标签、划线价，以及这个模型在卖的**档次**。
  *
- * 分组那一小张表是这一页最该看的东西：新建密钥要选的就是它，而不同分组之间
- * 差的不只是价 —— 还有思考深度和支不支持快速。一个分组都没有的模型建不出密钥来，
+ * 档次那一小张表是这一页最该看的东西：新建密钥要选的就是它，而不同档之间
+ * 差的不只是价，还有思考深度。一档都没有的模型建不出密钥来，
  * 那时要直说，而不是留一片空白让人以为页面坏了。
  */
 function ModelDetail({ model }: { model: ConsumerModelView }) {
@@ -422,12 +422,9 @@ function ModelDetail({ model }: { model: ConsumerModelView }) {
 }
 
 /**
- * 这个模型在卖的分组。两个端共用同一种形状（Nova 那边是结算价），
+ * 这个模型在卖的档次。两个端共用同一种形状（Nova 那边是结算价），
  * 但各自放在自己的文件里 —— 两端的单价口径不同，合成一个组件只会让
  * 「这张表说的是哪个数」变成一个要翻代码才能回答的问题。
- *
- * 「快速」单独一格：它不是价，是能力。买了不支持快速的分组，客户端开了快速也不算数
- * （请求会被改写成普通档），这件事必须在买之前就说清楚。
  */
 export function GroupTable({ groups, caption }: { groups: ModelGroupPrice[]; caption: string }) {
   const { t } = useLocale();
@@ -437,10 +434,9 @@ export function GroupTable({ groups, caption }: { groups: ModelGroupPrice[]; cap
       <div style={{ borderRadius: 10, background: "var(--gx-muted)", padding: "4px 12px" }}>
         <div
           className="gx-th"
-          style={{ gridTemplateColumns: "minmax(0, 1fr) 72px 104px 104px 104px", padding: "8px 0" }}
+          style={{ gridTemplateColumns: "minmax(0, 1fr) 104px 104px 104px", padding: "8px 0" }}
         >
           <span>{t("models.col.group")}</span>
-          <span style={{ textAlign: "center" }}>{t("models.col.fast")}</span>
           <span style={{ textAlign: "right" }}>{t("models.price.input")}</span>
           <span style={{ textAlign: "right" }}>{t("models.price.output")}</span>
           <span style={{ textAlign: "right" }}>{t("models.price.cache")}</span>
@@ -449,20 +445,13 @@ export function GroupTable({ groups, caption }: { groups: ModelGroupPrice[]; cap
           <div
             key={row.groupId}
             className="gx-row"
-            style={{ gridTemplateColumns: "minmax(0, 1fr) 72px 104px 104px 104px", padding: "9px 0" }}
+            style={{ gridTemplateColumns: "minmax(0, 1fr) 104px 104px 104px", padding: "9px 0" }}
           >
             <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ fontWeight: 600 }}>{row.name}</span>
               {row.summary ? (
                 <span style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>{row.summary}</span>
               ) : null}
-            </span>
-            <span style={{ textAlign: "center", fontSize: 12 }}>
-              {row.allowFast ? (
-                <Pill tone="accent">{t("models.fastOn")}</Pill>
-              ) : (
-                <span style={{ color: "var(--gx-faint)" }}>—</span>
-              )}
             </span>
             <span className="gx-mono" style={{ textAlign: "right" }}>{points(row.inputPrice)}</span>
             <span className="gx-mono" style={{ textAlign: "right" }}>{points(row.outputPrice)}</span>

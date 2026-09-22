@@ -3,7 +3,7 @@
 /**
  * 模型页：有哪些模型、每个多少钱。
  *
- * **列表，不是卡片墙。** 加上分组这一维之后，一个模型不再是一个价而是一小张
+ * **列表，不是卡片墙。** 加上档次这一维之后，一个模型不再是一个价而是一小张
  * 价目表（同一个模型最深那档能是最浅那档的十几倍），卡片里塞不下；而来访者在这一页
  * 真正在做的事是「在几个模型之间比价」—— 比价要求数字上下对齐，一排卡片做不到。
  *
@@ -20,9 +20,9 @@
 
 import { useMemo, useState } from "react";
 import { familyLabel, useLocale } from "@/i18n/LocaleProvider";
-import { BADGE_TONES, Btn, Card, Empty, Section, Tag, familyColor, useCopy } from "@/components/site/kit";
-import { IconCheck, IconChevron, IconCopy, IconSearch } from "@/components/site/icons";
-import { CtaBand, PageHero } from "@/components/home/HomeSections";
+import { BADGE_TONES, Card, Empty, Section, Tag, familyColor } from "@/components/site/kit";
+import { IconChevron, IconSearch } from "@/components/site/icons";
+import { CtaBand } from "@/components/home/HomeSections";
 import { VendorMark } from "@shared/brand/VendorMark";
 import { formatBps, formatContext, formatUnitPrice } from "@/utils/format";
 import type { PortalGroupPrice, PortalModel, PortalOverview } from "@/utils/portal";
@@ -39,7 +39,6 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
   const [keyword, setKeyword] = useState("");
   /** 展开的那一行，一次只开一个：同时摊开几张分档表，上下相邻的价就又对不齐了。 */
   const [open, setOpen] = useState("");
-  const copier = useCopy();
 
   const models = useMemo(() => {
     const needle = keyword.trim().toLowerCase();
@@ -57,34 +56,6 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
 
   return (
     <>
-      <PageHero
-        eyebrow={t("nav.models")}
-        title={t("models.title")}
-        lead={t("models.lead")}
-        aside={
-          overview.endpoint ? (
-            <Card style={{ padding: 16, minWidth: 280 }}>
-              <div style={{ fontSize: 12, color: "var(--gp-faint)", fontWeight: 600, marginBottom: 8 }}>
-                {t("models.endpointTitle")}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <code className="gp-mono" style={{ fontSize: 12.5, wordBreak: "break-all" }}>
-                  {overview.endpoint}
-                </code>
-                <Btn
-                  tone="quiet"
-                  size="sm"
-                  title={copier.state === "fail" ? t("common.copyFailed") : t("common.copy")}
-                  onClick={() => copier.copy(overview.endpoint)}
-                >
-                  {copier.state === "ok" ? <IconCheck /> : <IconCopy />}
-                </Btn>
-              </div>
-            </Card>
-          ) : null
-        }
-      />
-
       <Section>
         <div className="gp-filters">
           <div className="gp-chips">
@@ -249,7 +220,7 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
         {formatUnitPrice(model.cachePrice, model.currency)}
       </span>
       <span className="gp-list__group" data-label={t("models.col.group")}>
-        {/* 有分组才说。一个分组都没有的模型是还没开卖的，那时写「—」比编一句话诚实。 */}
+        {/* 有档次才说。一档都没有的模型是还没开卖的，那时写「—」比编一句话诚实。 */}
         {groups.length > 0 ? (
           <>
             <Tag tone="accent">{t("models.groupCount", { count: groups.length })}</Tag>
@@ -285,7 +256,7 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
   );
 }
 
-/** 展开之后的那一块：介绍、标签、各个分组的价，以及划线价那一行小字。 */
+/** 展开之后的那一块：介绍、标签、各档的价，以及划线价那一行小字。 */
 function ModelDetail({ model }: { model: PortalModel }) {
   const { t } = useLocale();
   const groups = model.groups ?? [];
@@ -349,10 +320,10 @@ function ModelDetail({ model }: { model: PortalModel }) {
 }
 
 /**
- * 这个模型在卖的分组。
+ * 这个模型在卖的档次。
  *
- * 分组是平台真正在卖的单位：价挂在它上面，建密钥时选的也是它。
- * 「快速」单独一列 —— 它不是价，是能力：买了不支持快速的分组，客户端开了快速也不算数。
+ * 档次是平台真正在卖的单位：价挂在它上面，建密钥时选的也是它。
+ * 服务端仍叫 group，门户上一律叫档次。
  */
 function GroupTable({ groups, currency }: { groups: PortalGroupPrice[]; currency: string }) {
   const { t } = useLocale();
@@ -370,12 +341,6 @@ function GroupTable({ groups, currency }: { groups: PortalGroupPrice[]; currency
           <div className="gp-groups__row" key={row.groupId}>
             <span>
               {row.name}
-              {row.allowFast ? (
-                <>
-                  {" "}
-                  <Tag tone="accent">{t("models.fastOn")}</Tag>
-                </>
-              ) : null}
               {row.summary ? <span className="gp-groups__note">{row.summary}</span> : null}
             </span>
             <span className="gp-mono gp-list__right">{formatUnitPrice(row.inputPrice, currency)}</span>

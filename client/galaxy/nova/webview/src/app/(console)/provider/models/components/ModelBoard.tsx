@@ -303,7 +303,7 @@ function ModelRow({ model, open, onToggle }: { model: ProviderModelView; open: b
         <span className="gx-mono" style={{ textAlign: "right" }}>{points(model.outputPrice)}</span>
         <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>{points(model.cachePrice)}</span>
         <span style={{ textAlign: "right", fontSize: 12 }}>
-          {/* 加入了几个分组 / 一共几个。分组是平台在卖的档次，你加入了哪些就接哪些的单 ——
+          {/* 加入了几档 / 一共几档。档次是平台在卖的档，你加入了哪些就接哪些的单 ——
               「不限」的车道什么都接，那时不必数数（数出来反而像是只接了这几个）。 */}
           {model.groupsUnrestricted ? (
             <Pill tone="ok">{t("models.groupsAll")}</Pill>
@@ -331,9 +331,9 @@ function ModelRow({ model, open, onToggle }: { model: ProviderModelView; open: b
 }
 
 /**
- * 展开之后的那一块：介绍、标签、最近赚了多少，以及这个模型各个**分组**的结算价。
+ * 展开之后的那一块：介绍、标签、最近赚了多少，以及这个模型各**档**的结算价。
  *
- * 分组那一小张表是这一页最该看的东西：接哪个分组的单，记多少积分，差别就在这里。
+ * 档次那一小张表是这一页最该看的东西：接哪一档的单，记多少积分，差别就在这里。
  * 「已加入」标在行上 —— 共享设置里勾的就是它，两页说的是同一件事。
  */
 function ModelDetail({ model }: { model: ProviderModelView }) {
@@ -384,8 +384,6 @@ function ModelDetail({ model }: { model: ProviderModelView }) {
                 <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ fontWeight: 600 }}>{row.name}</span>
-                    {/* 快速档上游烧得更快，而你的订阅余量有限 —— 这件事要看得见。 */}
-                    {row.allowFast ? <Pill tone="warn">{t("models.fastOn")}</Pill> : null}
                   </span>
                   {row.summary ? <span style={{ fontSize: 11.5, color: "var(--gx-faint)" }}>{row.summary}</span> : null}
                 </span>

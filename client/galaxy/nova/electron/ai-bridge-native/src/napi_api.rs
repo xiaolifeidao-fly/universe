@@ -337,10 +337,11 @@ impl NativeBridge {
         to_json(&tool_statuses(&self.bridge_version).await)
     }
 
+    /// 拉起一次安装或升级，返回那条进度记录。真正跑到哪了由 get_tools 里的 job 报。
     #[napi]
     pub async fn upgrade_tool(&self, name: String) -> Result<String> {
-        let command = upgrade_tool(&name).map_err(err)?;
-        to_json(&json!({ "command": command }))
+        let job = upgrade_tool(&name).await.map_err(err)?;
+        to_json(&json!({ "command": job.command.clone(), "job": job }))
     }
 
     // ---------- token ----------

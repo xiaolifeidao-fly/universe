@@ -114,15 +114,14 @@ export function UsageBoard() {
   const exportCsv = () => {
     // input 是**未命中缓存的新增输入**，缓存命中单独一列 —— 两个数互不重叠，
     // 加起来才是这次请求读进模型的全部输入。导出的表拿去对账时这点必须写清楚。
-    // 分组也要导出：单价按 (模型, 分组) 定，只有模型名的话，同一个模型两笔金额差一倍
+    // 档次也要导出：单价按 (模型, 档次) 定，只有模型名的话，同一个模型两笔金额差一倍
     // 在表里就成了一件没法解释的事 —— 而对账要的恰恰是那个解释。
-    const header = ["time", "key", "model", "group", "fast", "input", "output", "cacheRead", "durationMs", "cost", "state", "unitId"];
+    const header = ["time", "key", "model", "tier", "input", "output", "cacheRead", "durationMs", "cost", "state", "unitId"];
     const lines = rows.map((row) => [
       row.startedAt ?? "",
       alias.get(row.keyId) ?? row.keyId,
       row.model,
       row.groupName || row.groupId,
-      row.fast ? "1" : "",
       String(row.usage["llm.input_tokens"] ?? 0),
       String(row.usage["llm.output_tokens"] ?? 0),
       String(row.usage["llm.cache_read_tokens"] ?? 0),
@@ -267,16 +266,14 @@ export function UsageBoard() {
                     key: "model",
                     title: t("usage.col.model"),
                     width: "1fr",
-                    // 分组跟着模型走：单价按 (模型, 分组) 定，两个分开摆就得让人自己
+                    // 档次跟着模型走：单价按 (模型, 档次) 定，两个分开摆就得让人自己
                     // 把两列对起来，才知道这一笔的金额是怎么来的。
-                    // 快速也挂在这里：它同样是「这一笔为什么是这个价」的一部分。
                     render: (row: UsageRecord) => (
                       <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
                         <span className="gx-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                           {row.model || row.kind}
                         </span>
                         {row.groupName ? <span className="gx-chip">{row.groupName}</span> : null}
-                        {row.fast ? <span className="gx-chip">{t("usage.fast")}</span> : null}
                       </span>
                     ),
                   },
