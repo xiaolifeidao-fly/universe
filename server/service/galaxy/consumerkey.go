@@ -2,6 +2,7 @@ package galaxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,7 +12,10 @@ import (
 	"service/galaxy/internal/repository"
 )
 
-// 算力密钥：使用者自助签发，绑定有效期与允许范围（C-01）。
+// 算力密钥：使用者自助签发，绑定有效期、允许范围与**模型分组**（C-01）。
+//
+// 分组是 2026-09-22 加的，也是自助签发唯一的新硬前置：中转按分组走，
+// 一把没选分组的密钥回答不了「这次请求按哪份价收、共享者该不该接」。
 //
 // 密钥**不带额度**。额度是账户里的积分余额，名下几把密钥花的是同一份钱 ——
 // 所以新建一把不会多出任何额度，吊销一把也不会损失额度，换一把只是换一串凭证。
@@ -62,8 +66,20 @@ func (s *service) CreateConsumerKey(ctx context.Context, req dto.CreateConsumerK
 	if live >= maxConsumerKeys {
 		return dto.IssuedKeyView{}, fmt.Errorf("最多只能有 %d 把有效密钥，先让一把失效再新建", maxConsumerKeys)
 	}
+	// 分组必选。中转按分组走：没选分组的密钥调任何模型都答不上「按哪份价收」，
+	// 只能落到默认分组 —— 而那是迁移期给存量密钥留的退路，不该继续签出新的来。
+	//
+	// 拦在这里而不是只在界面上拦：签发有三条路（自助、运营代签、注册即送），
+	// 界面拦一道，另外两条照样能发出没有分组的密钥。
+	if len(req.Groups) == 0 {
+		return dto.IssuedKeyView{}, errors.New("先选好要用的模型分组再创建密钥")
+	}
+	groups, err := s.validateKeyGroups(ctx, req.Groups)
+	if err != nil {
+		return dto.IssuedKeyView{}, err
+	}
 	return s.IssueKey(ctx, dto.IssueKeyRequest{
-		OwnerUserID: userID, Alias: req.Alias, NoticeVersion: req.NoticeVersion,
+		OwnerUserID: userID, Alias: req.Alias, NoticeVersion: req.NoticeVersion, Groups: groups,
 	})
 }
 
@@ -80,6 +96,13 @@ func (s *service) IssueKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Is
 	if !agreed {
 		return dto.IssuedKeyView{}, contract.ErrConsentRequired
 	}
+	// 运营代签可以不选分组（那时每个模型走默认分组），但选了就必须是真的分组：
+	// 一个拼错的 mg_… 会让这把密钥调不动任何模型，而报出来的只有「模型不允许」。
+	groups, err := s.validateKeyGroups(ctx, req.Groups)
+	if err != nil {
+		return dto.IssuedKeyView{}, err
+	}
+	req.Groups = groups
 	return s.signKey(ctx, req)
 }
 
@@ -103,6 +126,10 @@ func (s *service) IssueRegistrationKey(ctx context.Context, ownerUserID string) 
 	}
 	// 范围留空 = 不限：注册送的这把要能直接接 Claude Code 或 Codex，
 	// 挑一边写死，另一边的人第一次用就撞墙。
+	//
+	// 分组同样留空 —— 注册那一刻没人选得了分组，而每个模型都有默认分组兜着。
+	// 这是**第二条**不选分组的路径，和数据告知那道闸一样是有意绕过的：
+	// 新账号一进控制台就该有一把能用的密钥。想换档次就自己新建一把（那条路必选分组）。
 	return s.signKey(ctx, dto.IssueKeyRequest{OwnerUserID: owner, Alias: registrationKeyAlias})
 }
 
@@ -126,6 +153,7 @@ func (s *service) signKey(ctx context.Context, req dto.IssueKeyRequest) (dto.Iss
 		AllowedKindsJSON:     encodeJSON(req.AllowedKinds),
 		AllowedProvidersJSON: encodeJSON(req.AllowedProviders),
 		ModelTierJSON:        encodeJSON(req.ModelTier),
+		GroupsJSON:           encodeJSON(req.Groups),
 		Concurrency:          defaultInt(req.Concurrency, s.cfg().KeyConcurrency),
 		RPM:                  defaultInt(req.RPM, s.cfg().KeyRPM),
 		Status:               keyStatusActive,
@@ -175,6 +203,7 @@ func (s *service) AuthenticateKey(ctx context.Context, secret string) (dto.Calle
 		KeyID: row.KeyID, OwnerUserID: row.OwnerUserID, Alias: row.Alias,
 		AllowedKinds: decodeStrings(row.AllowedKindsJSON), AllowedProviders: decodeStrings(row.AllowedProvidersJSON),
 		ModelTier:   decodeStrings(row.ModelTierJSON),
+		Groups:      decodeStrings(row.GroupsJSON),
 		Concurrency: row.Concurrency, RPM: row.RPM, ExpiresAt: row.ExpiresAt,
 	}, nil
 }
@@ -222,7 +251,7 @@ func (s *service) DescribeKey(ctx context.Context, keyID string) (dto.ConsumerKe
 	if err != nil {
 		return dto.ConsumerKeyView{}, err
 	}
-	return s.keyView(row), nil
+	return s.keyView(ctx, row), nil
 }
 
 func (s *service) ListKeys(ctx context.Context, ownerUserID string) ([]dto.ConsumerKeyView, error) {
@@ -232,19 +261,20 @@ func (s *service) ListKeys(ctx context.Context, ownerUserID string) ([]dto.Consu
 	}
 	views := make([]dto.ConsumerKeyView, 0, len(rows))
 	for _, row := range rows {
-		views = append(views, s.keyView(row))
+		views = append(views, s.keyView(ctx, row))
 	}
 	return views, nil
 }
 
-func (s *service) keyView(row *repository.GalaxyConsumerKey) dto.ConsumerKeyView {
+func (s *service) keyView(ctx context.Context, row *repository.GalaxyConsumerKey) dto.ConsumerKeyView {
 	kinds, tiers := decodeStrings(row.AllowedKindsJSON), decodeStrings(row.ModelTierJSON)
 	return dto.ConsumerKeyView{
 		KeyID: row.KeyID, Alias: row.Alias, Status: row.Status,
 		Category: scopeCategory(kinds, tiers, row.ModelID), ModelID: row.ModelID,
 		Revealable:   row.SecretCipher != "" && s.cipher != nil,
 		AllowedKinds: kinds, AllowedProviders: decodeStrings(row.AllowedProvidersJSON),
-		ModelTier: tiers, Concurrency: row.Concurrency, RPM: row.RPM,
+		ModelTier: tiers, Groups: s.keyGroupViews(ctx, decodeStrings(row.GroupsJSON)),
+		Concurrency: row.Concurrency, RPM: row.RPM,
 		IssuedAt: row.IssuedAt, ExpiresAt: row.ExpiresAt, FrozenUntil: row.FrozenUntil,
 	}
 }
@@ -341,7 +371,7 @@ func (s *service) AdminKeys(ctx context.Context, query dto.AdminKeyQuery) (dto.A
 	page := dto.AdminKeyPage{Total: total, Keys: make([]dto.AdminKeyView, 0, len(rows))}
 	for _, row := range rows {
 		page.Keys = append(page.Keys, dto.AdminKeyView{
-			ConsumerKeyView: s.keyView(row), OwnerUserID: row.OwnerUserID,
+			ConsumerKeyView: s.keyView(ctx, row), OwnerUserID: row.OwnerUserID,
 			OwnerName: names[row.OwnerUserID], Balance: balances[row.OwnerUserID], OrderID: row.OrderID,
 		})
 	}
@@ -380,7 +410,8 @@ func (s *service) RenewKey(ctx context.Context, req dto.RenewKeyRequest) (dto.Is
 		BizLine: bizLine, KeyID: keyID, KeyHash: HashSecret(secret), SecretCipher: s.sealSecret(secret),
 		Alias: old.Alias, OwnerUserID: old.OwnerUserID, OrderID: old.OrderID, ModelID: old.ModelID,
 		AllowedKindsJSON: old.AllowedKindsJSON, AllowedProvidersJSON: old.AllowedProvidersJSON,
-		ModelTierJSON: old.ModelTierJSON, Concurrency: old.Concurrency, RPM: old.RPM,
+		ModelTierJSON: old.ModelTierJSON, GroupsJSON: old.GroupsJSON,
+		Concurrency: old.Concurrency, RPM: old.RPM,
 		Status: keyStatusActive, IssuedAt: now, ExpiresAt: now.Add(ttl),
 		RenewedFrom: old.KeyID,
 		// 告知版本跟着走：同意的是同一个人、同一份告知，不必重新确认。

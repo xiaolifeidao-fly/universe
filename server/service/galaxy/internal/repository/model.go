@@ -160,6 +160,41 @@ type GalaxyConsumerUser GalaxyUser
 func (r *GalaxyConsumerUser) TableName() string { return "zt_galaxy_consumer_user" }
 func (r *GalaxyConsumerUser) Init()             {}
 
+// GalaxyLoginRecord 两端的登录留痕，成功与失败都记。
+//
+// 它是**证据**，不是闸门：连续失败的判定在 Redis 上（见 service/galaxy/account
+// 的 LoginGuard），那边只留一个会自己过期的计数。谁在什么时候、从哪儿试了多少次
+// 这件事只有这张表答得上来 —— 没有它，被爆破过一轮之后，库里和日志里都不会留下
+// 任何痕迹。
+//
+// 和账号表不一样，这张表**不按端分**：端只是一列。分表是为了「不带端的查询捞不到
+// 另一端的人」，那条理由在账号表上成立（漏写 side 会把别人的账号当成本人），
+// 在流水上不成立 —— 漏写 side 最多是多看到几行，而追一个人在两端都被试过什么，
+// 恰恰需要一次查两端。
+//
+// Username 记的是**用户输进来的那个名字**（规范化之后），账号不存在时照样记：
+// 「有人拿着一串不存在的用户名在扫」本身就是要留下来的事实。UserID 那时是空的。
+type GalaxyLoginRecord struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);index:idx_gx_login_name,priority:1;index:idx_gx_login_ip,priority:1"`
+	Side    string `gorm:"column:side;type:varchar(16);index:idx_gx_login_name,priority:2" description:"provider=共享端；consumer=使用端"`
+
+	UserID   string `gorm:"column:user_id;type:varchar(40)" description:"账号业务键，用户名不存在时为空"`
+	Username string `gorm:"column:username;type:varchar(64);index:idx_gx_login_name,priority:3" description:"用户输入的登录名，已小写"`
+	// IP 取 X-Forwarded-For 的第一跳，**可以伪造**（见 httpx.ClientIP）。
+	// 只作线索，不作判定依据。
+	IP        string `gorm:"column:ip;type:varchar(64);index:idx_gx_login_ip,priority:2"`
+	UserAgent string `gorm:"column:user_agent;type:varchar(256)"`
+
+	Success bool   `gorm:"column:success;default:false"`
+	Reason  string `gorm:"column:reason;type:varchar(128)" description:"失败原因，只给运营看，不回给客户端"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime;index:idx_gx_login_name,priority:4,sort:desc;index:idx_gx_login_ip,priority:3,sort:desc"`
+}
+
+func (r *GalaxyLoginRecord) TableName() string { return "zt_galaxy_login_record" }
+func (r *GalaxyLoginRecord) Init()             {}
+
 // GalaxyProvider 共享端账号的身份：散户 / 工作室。OwnerUserID 是 GalaxyUser.UserID（pu_…）。
 //
 // 没有行就是散户 —— 注册出来默认是散户，不必预先插一条。只有管理端把账号设成工作室
@@ -301,6 +336,13 @@ type GalaxyContribution struct {
 	// 通配），这个只是给控制台当候选项，免得主人得自己记住上游有什么。
 	ModelsAvailableJSON string `gorm:"column:models_available_json;type:varchar(4096)" description:"节点上报的上游可用模型名"`
 	ModelsDenyJSON      string `gorm:"column:models_deny_json;type:varchar(1024)" description:"模型黑名单模式数组"`
+	// GroupsJSON 主人确认加入的**模型分组**（mg_…）数组。派单的硬过滤看它：
+	// 分组不在名单里，这台机器就接不到那个分组的单。
+	//
+	// 它和 ModelsAllow/Deny 不重复：那两个回答「跑哪些模型」，这个回答「以什么档次跑」——
+	// 同一个模型的「标准」与「深度」是两份价、两种体验，主人可以只接前者。
+	// 空 = 不限（存量贡献），迁移那一刻没有任何机器会掉出候选。
+	GroupsJSON string `gorm:"column:groups_json;type:varchar(4096)" description:"加入的模型分组数组，空=不限"`
 	// UpstreamUsageJSON 节点自报的**上游订阅余量**（Claude / Codex 自己的 5 小时、
 	// 周限额）。和 zt_galaxy_quota_grant 是两回事：那张表是主人打算放多少出去，
 	// 这一列是上游实际还让跑多少。
@@ -433,10 +475,16 @@ type GalaxyUnit struct {
 	Family      string `gorm:"column:family;type:varchar(32)"`
 	Provider    string `gorm:"column:provider;type:varchar(64)"`
 	Model       string `gorm:"column:model;type:varchar(96)"`
-	// Effort 这一次请求的推理强度。它和 Model 一样是**计价键**，所以必须落在单元行上：
-	// 账单（Usage）、争议追回（dispute）都在事后重新取价，那时唯一能回答「当初是哪一档」
-	// 的就是这一列。Redis 里那份信封活不过保留期，老单元只剩这张表。
-	Effort string `gorm:"column:effort;type:varchar(16)" description:"推理强度，计价键的一部分"`
+	// Effort 这一次上游实际跑的推理强度（已按分组的档位表夹过）。
+	// 它**不再是计价键**（价钱按 GroupID 收），只作记录与排障：
+	// 「这个人买的是标准分组，而客户端一直在要 max 档」这件事只有这一列答得出来。
+	Effort string `gorm:"column:effort;type:varchar(16)" description:"上游实际跑的推理强度，只作记录"`
+	// GroupID 这一次落在哪个模型分组上。它和 Model 一样是**计价键**，所以必须落在单元行上：
+	// 账单（Usage）、争议追回（dispute）都在事后重新取价，那时唯一能回答「当初按哪个分组收的」
+	// 就是这一列。Redis 里那份信封活不过保留期，老单元只剩这张表。
+	GroupID string `gorm:"column:group_id;type:varchar(64)" description:"模型分组，计价键的一部分"`
+	// Fast 这一次是不是按快速跑的。分组没开快速时恒为 false —— 客户端要了也不算数。
+	Fast bool `gorm:"column:fast;default:false" description:"是否按快速跑"`
 
 	ConsumerKey string `gorm:"column:consumer_key;type:varchar(64);index:idx_gx_unit_consumer,priority:2"`
 	// Space 是业务自己的空间。池内 biz_line 固定 galaxy，业务空间单独一列：
@@ -541,8 +589,13 @@ type GalaxyConsumerKey struct {
 	AllowedKindsJSON     string `gorm:"column:allowed_kinds_json;type:varchar(512)" description:"空数组表示不限"`
 	AllowedProvidersJSON string `gorm:"column:allowed_providers_json;type:varchar(512)"`
 	ModelTierJSON        string `gorm:"column:model_tier_json;type:varchar(1024)" description:"允许的模型模式"`
-	Concurrency          int    `gorm:"column:concurrency;default:4"`
-	RPM                  int    `gorm:"column:rpm;default:120"`
+	// GroupsJSON 这把密钥选中的模型分组（mg_…）数组。**签发时必选**（见 CreateConsumerKey），
+	// 一个模型最多选一个分组 —— 同一个模型选两个分组，一次请求就没法回答「按哪份价收」。
+	//
+	// 空 = 存量密钥：每个模型落在它的默认分组上，行为和加分组之前一样。
+	GroupsJSON  string `gorm:"column:groups_json;type:varchar(1024)" description:"选中的模型分组数组，空=不限"`
+	Concurrency int    `gorm:"column:concurrency;default:4"`
+	RPM         int    `gorm:"column:rpm;default:120"`
 
 	Status      string     `gorm:"column:status;type:varchar(16);index:idx_gx_consumer_key_owner,priority:3" description:"active/expired/frozen/revoked"`
 	IssuedAt    time.Time  `gorm:"column:issued_at;type:timestamp null default null"`
@@ -612,8 +665,8 @@ func (r *GalaxyConsentRecord) Init()             {}
 // 函数 —— 调一次下游价就自动改了所有共享者的收入，而共享者拿自己的积分一除
 // 就能反推出平台抽了几成。两个价各存各的之后，这两件事互不牵连。
 //
-// ModelID 空串是**该 kind 的兜底价**，不是「某个叫空串的模型」。取价先找这个模型
-// 自己的行，找不到才回落到兜底行。原先整张表只按 kind 定价：opus 和 haiku 都是
+// ModelID 空串是**该 kind 的兜底价**，不是「某个叫空串的模型」；GroupID 空串同理，
+// 是「该模型的通价」。取价由粗到细三级盖：kind 兜底 → 模型通价 → 分组价。原先整张表只按 kind 定价：opus 和 haiku 都是
 // llm.chat，同样的 token 给共享者的钱一模一样，而门户上两者的标价能差几十倍 ——
 // 平台毛利于是随使用者调哪个模型剧烈漂移，且没有任何地方拦得住。
 type GalaxyPrice struct {
@@ -625,16 +678,19 @@ type GalaxyPrice struct {
 	// 这一列要是可空，两行「同 kind 同单位同生效时刻、model_id 都是 NULL」能一起插进去，
 	// 取价时先拿到哪行全看运气。加列的迁移也靠这个默认值把存量行落成兜底价。
 	ModelID string `gorm:"column:model_id;type:varchar(96);not null;default:'';uniqueIndex:uk_gx_price,priority:3" description:"模型名，空=该 kind 的兜底价"`
-	// Effort 这一行管哪一档推理强度。空串 = 不分强度，该模型（或该 kind）的所有强度都按它算。
+	// GroupID 这一行管哪个**模型分组**。空串 = 该模型的通价，没单独定价的分组都按它算。
 	//
 	// 和 ModelID 完全同构，连「为什么必须 NOT NULL DEFAULT ''」的理由都一样：
 	// MySQL 的唯一索引不拦 NULL，可空会让两行「同 kind 同模型同单位同生效时刻、
-	// effort 都是 NULL」一起插进去，取价时先拿到哪行全看运气。
+	// group_id 都是 NULL」一起插进去，取价时先拿到哪行全看运气。
 	//
-	// 档位名是**上游原生**的那一套，两族各不相同（见 contract.FamilyEfforts）。
-	// 这一列不校验「这个档属不属于这个模型的族」：价目表是账，模型换族、上游加档
-	// 都不该让老账行读不出来。
-	Effort        string    `gorm:"column:effort;type:varchar(16);not null;default:'';uniqueIndex:uk_gx_price,priority:4" description:"推理强度，空=不分强度"`
+	// 这一列**取代了原先的 effort**（20260922_galaxy_model_group.sql）。推理强度不再是
+	// 计价维度，而是分组的属性：一个分组卖哪几档、卖不卖快速，价钱按分组收一份。
+	// 两个维度都留在表上是危险的 —— 取价只看其中一个，另一个就能躺下一行永远匹配不上的价。
+	//
+	// 这一列不校验「这个分组属不属于这个模型」：价目表是账，分组删了、模型下架了，
+	// 老账行都还要读得出来。
+	GroupID       string    `gorm:"column:group_id;type:varchar(64);not null;default:'';uniqueIndex:uk_gx_price,priority:4" description:"模型分组，空=该模型的通价"`
 	Unit          string    `gorm:"column:unit;type:varchar(48);uniqueIndex:uk_gx_price,priority:5"`
 	EffectiveFrom time.Time `gorm:"column:effective_from;type:timestamp null default null;uniqueIndex:uk_gx_price,priority:6"`
 	// Price 是每百万单位的价格（微分），避免浮点累积误差。
@@ -1090,6 +1146,51 @@ type GalaxyModel struct {
 
 func (r *GalaxyModel) TableName() string { return "zt_galaxy_model" }
 func (r *GalaxyModel) Init()             {}
+
+// GalaxyModelGroup 一个模型底下的**分组**：平台真正在卖的那个单位。
+//
+// 为什么在「模型」之下再分一层（2026-09-22）：同一个模型可以用得很不一样 ——
+// 想得浅一点、想得深一点、要不要走快速通道 —— 而这几种用法在上游那边的成本能差好几倍。
+// 原先这两个旋钮由客户端在请求体里自己拨（output_config.effort / reasoning.effort、
+// 快速开关），平台按一份价收，差额全由平台垫。
+//
+// 分组把这件事翻过来：**旋钮是商品的属性，不是调用方的自由**。
+// 运营给同一个模型开「标准」「深度」「快速」几个分组，各自一套价；
+// 使用者建密钥时选分组，共享者共享时选分组；请求带上来的强度与快速标记一律先过这道闸。
+//
+// 分组名是对外的，所以**不要把上游的档位名写进去**（low/high/max 这些是上游的内部刻度，
+// 把它摆给使用者看，等于让上游的字段名替平台解释自己在卖什么 —— 那正是这次要去掉的东西）。
+type GalaxyModelGroup struct {
+	ID      int64  `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_model_group,priority:1;uniqueIndex:uk_gx_model_group_name,priority:1;uniqueIndex:uk_gx_model_group_default,priority:1;index:idx_gx_model_group_model,priority:1"`
+	GroupID string `gorm:"column:group_id;type:varchar(64);uniqueIndex:uk_gx_model_group,priority:2" description:"业务键 mg_…，对外只露它"`
+	ModelID string `gorm:"column:model_id;type:varchar(96);uniqueIndex:uk_gx_model_group_name,priority:2;uniqueIndex:uk_gx_model_group_default,priority:2;index:idx_gx_model_group_model,priority:2"`
+	// Name 同一个模型下不重名（uk_gx_model_group_name）。重名的两个分组在任何一处界面上
+	// 都分不出来，而它们背后是两套价。
+	Name    string `gorm:"column:name;type:varchar(64);uniqueIndex:uk_gx_model_group_name,priority:3"`
+	Summary string `gorm:"column:summary;type:varchar(256)"`
+	// EffortsJSON 这个分组卖哪几档推理强度。空数组 = 不限（请求带什么就按什么打上游）。
+	// 非空时，不在表里的档会被夹到表里**最浅**的一档 —— 夹而不是拒绝，理由见
+	// contract.GroupPolicy。
+	EffortsJSON string `gorm:"column:efforts_json;type:varchar(512)" description:"绑定的推理强度数组，空=不限"`
+	// AllowFast 卖不卖快速。关着的时候，客户端开了快速也不算数：请求体里的标记会被改写掉。
+	AllowFast bool `gorm:"column:allow_fast;default:false" description:"是否支持快速"`
+	Listed    bool `gorm:"column:listed;default:true;index:idx_gx_model_group_model,priority:3"`
+	// IsDefault 该模型的默认分组：老密钥（没选分组）与所有「没指明分组」的路径落在它上面。
+	//
+	// 指针而不是 bool：唯一索引 uk_gx_model_group_default 靠「NULL 不参与唯一性」
+	// 来实现「每个模型最多一个默认分组」，写 0 会让第二个非默认分组撞上唯一键。
+	IsDefault   *bool     `gorm:"column:is_default;type:tinyint(1)" description:"1=该模型的默认分组；NULL=不是"`
+	SortOrder   int       `gorm:"column:sort_order;default:0;index:idx_gx_model_group_model,priority:4"`
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyModelGroup) TableName() string { return "zt_galaxy_model_group" }
+func (r *GalaxyModelGroup) Init()             {}
+
+// Default 这一行是不是默认分组。指针解引用收在这里，调用方不必每次判空。
+func (r *GalaxyModelGroup) Default() bool { return r != nil && r.IsDefault != nil && *r.IsDefault }
 
 // GalaxyLead 门户「联系我们」留下的线索。
 //

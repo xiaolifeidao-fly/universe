@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -21,22 +22,37 @@ var selfServicePaths = map[string]bool{
 	"/api/auth/logout":   true,
 }
 
+// Login 用户名 + 密码换一张令牌。
+//
+// 闸排在查库和 bcrypt **之前**：被锁之后的每一次尝试仍要算一遍 bcrypt 的话，
+// 这道闸自己就成了一条放大 CPU 消耗的路。
 func (s *service) Login(ctx context.Context, req dto.LoginRequest) (dto.LoginResult, error) {
 	username := strings.TrimSpace(req.Username)
+	userKey, ipKey := loginKeys(username, req.IP)
+	if retryAfter, blocked := s.loginBlocked(ctx, userKey, ipKey); blocked {
+		// 被闸挡下的这次也留痕，但不再加计数 —— 加了就成了「越试锁越久」。
+		s.recordLogin(ctx, "", username, req, false, "失败次数过多，已暂时锁定")
+		return dto.LoginResult{}, lockedUntil(retryAfter)
+	}
 	user, err := s.repository.FindUserByUsername(ctx, username)
 	if repository.IsNotFound(err) {
+		s.penalizeLogin(ctx, userKey, ipKey)
 		s.recordLogin(ctx, "", username, req, false, "用户不存在")
 		return dto.LoginResult{}, ErrLoginFailed
 	}
 	if err != nil {
+		// 库挂了不是这个人的错，不计数。
 		return dto.LoginResult{}, err
 	}
 	// 账号被禁用和密码错返回同一句话：分开说等于把「这个用户名存在」告诉试探者。
+	// 两种都计数：只计密码错的话，拿一串用户名扫过去的那种打法一次都不会被计上。
 	if user.Status != StatusActive {
+		s.penalizeLogin(ctx, userKey, ipKey)
 		s.recordLogin(ctx, user.UserID, username, req, false, "账号已禁用")
 		return dto.LoginResult{}, ErrLoginFailed
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)) != nil {
+		s.penalizeLogin(ctx, userKey, ipKey)
 		s.recordLogin(ctx, user.UserID, username, req, false, "密码不正确")
 		return dto.LoginResult{}, ErrLoginFailed
 	}
@@ -58,6 +74,7 @@ func (s *service) Login(ctx context.Context, req dto.LoginRequest) (dto.LoginRes
 	if err := s.tokens.Save(ctx, token, session, s.config.TokenTTL); err != nil {
 		return dto.LoginResult{}, err
 	}
+	s.clearLoginFailures(ctx, userKey)
 	now := time.Now()
 	_ = s.repository.TouchLogin(ctx, user.UserID, now)
 	s.recordLogin(ctx, user.UserID, username, req, true, "")
@@ -200,7 +217,7 @@ func (s *service) ChangeOwnPassword(ctx context.Context, userID string, req dto.
 func (s *service) recordLogin(ctx context.Context, userID, username string, req dto.LoginRequest, success bool, reason string) {
 	// 登录留痕失败不该挡住登录本身。
 	_ = s.repository.SaveLoginRecord(ctx, &repository.ManagerLoginRecord{
-		UserID: userID, Username: username, IP: req.IP,
+		UserID: userID, Username: truncate(username, 64), IP: truncate(req.IP, 64),
 		UserAgent: truncate(req.UserAgent, 256), Success: success, Reason: reason,
 	})
 }
@@ -243,9 +260,16 @@ func newToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buffer), nil
 }
 
+// truncate 截到列宽以内。max 数的是**字节**（列宽就是按字节算的），但不切断一个
+// 多字节字符 —— 截出半个字符存进 utf8mb4 列会被 MySQL 拒，而这是在留痕路径上，
+// 一行写不进去就再也补不回来（调用方一律忽略它的错误）。
 func truncate(value string, max int) string {
 	if len(value) <= max {
 		return value
 	}
-	return value[:max]
+	cut := max
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut]
 }

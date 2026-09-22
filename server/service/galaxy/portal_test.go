@@ -29,15 +29,15 @@ func TestPricedNeedsBothOwnPrices(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		own        map[contract.MeterUnit]bool
+		own        map[contract.MeterUnit]int
 		wantPriced bool
 	}{
-		{"两档都是模型自己的行", map[contract.MeterUnit]bool{
-			contract.UnitInputTokens: true, contract.UnitOutputTokens: true}, true},
-		{"只有输入是自己的，输出还是统一价", map[contract.MeterUnit]bool{
-			contract.UnitInputTokens: true}, false},
-		{"只有输出是自己的", map[contract.MeterUnit]bool{
-			contract.UnitOutputTokens: true}, false},
+		{"两档都是模型自己的行", map[contract.MeterUnit]int{
+			contract.UnitInputTokens: priceLayerModel, contract.UnitOutputTokens: priceLayerModel}, true},
+		{"只有输入是自己的，输出还是统一价", map[contract.MeterUnit]int{
+			contract.UnitInputTokens: priceLayerModel}, false},
+		{"只有输出是自己的", map[contract.MeterUnit]int{
+			contract.UnitOutputTokens: priceLayerGroup}, false},
 		{"整个能力一个统一价", nil, false},
 	}
 
@@ -57,8 +57,37 @@ func TestPricedNeedsBothOwnPrices(t *testing.T) {
 	}
 }
 
-// TestPortalKindsOnlyCoversWhatIsOnOffer 单价表只列门户上真能用到的能力。
+// TestCacheWriteBothTTLTiersReachTheCard 缓存写入的两档都要到卡片上。
 //
+// TTL 是调用方在请求体的 cache_control 里自己写的（不写 = 5 分钟），平台既控制不了
+// 也预测不了。只标 5 分钟那一档的话，设了 1h 的人按卡片算出来的成本比他真会付的
+// 少六成 —— 而那笔钱照收，账单上才露面。
+//
+// 顺带钉住合计那一档不许漏进来：llm.cache_write_tokens 是 5m + 1h 的和，
+// billing 的 derivedUnits 永远不让它进账本，拿它填卡片就是标一个不会被收的价。
+func TestCacheWriteBothTTLTiersReachTheCard(t *testing.T) {
+	table := map[contract.MeterUnit]priceRow{
+		contract.UnitInputTokens:        {Price: 3_000_000, Currency: "CNY"},
+		contract.UnitOutputTokens:       {Price: 15_000_000, Currency: "CNY"},
+		contract.UnitCacheWrite5mTokens: {Price: 3_750_000, Currency: "CNY"},
+		contract.UnitCacheWrite1hTokens: {Price: 6_000_000, Currency: "CNY"},
+		// 合计：库里真有这么一行时（运营手填过）也不许被取到。
+		contract.UnitCacheWriteTokens: {Price: 9_750_000, Currency: "CNY"},
+	}
+
+	view := portalModelView(&repository.GalaxyModel{ModelID: "claude-opus-5"})
+	applyKindPrice(&view, table, nil)
+
+	if view.CacheWritePrice != 3_750_000 {
+		t.Errorf("CacheWritePrice = %d，期望 5 分钟档的 3,750,000", view.CacheWritePrice)
+	}
+	if view.CacheWrite1hPrice != 6_000_000 {
+		t.Errorf("CacheWrite1hPrice = %d，期望 1 小时档的 6,000,000", view.CacheWrite1hPrice)
+	}
+}
+
+// TestPortalKindsOnlyCoversWhatIsOnOffer 单价表只列门户上真能用到的能力。
+
 // 价格表里还有 delivery.task 这种没有对外文案、门户上也用不上的能力，
 // 摆上去只会让人问「这个怎么用」而我们答不上来。
 func TestPortalKindsOnlyCoversWhatIsOnOffer(t *testing.T) {

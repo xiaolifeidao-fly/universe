@@ -289,6 +289,111 @@ func NormalizeEffort(family, value string) Effort {
 	return ""
 }
 
+// ---------- 模型分组 ----------
+
+// GroupPolicy 一个模型分组对一次请求的全部约束。
+//
+// 分组是 2026-09-22 起**中转的基本单位**：价目挂在分组上，密钥选中分组才签得出来，
+// 共享者把分组加进车道才接得到单。推理强度与快速开关都收进它 —— 它们原先是
+// 请求体里客户端说了算的两个旋钮，现在一律先过这一道。
+//
+// 为什么不让客户端自己决定：两个旋钮都直接换算成钱。深思考那一档烧掉的推理 token
+// 比浅档多一个量级，快速档上游自己就按更贵的价收 —— 客户端拨到最深最快、
+// 平台按一个分组的价收，差额全由平台垫。反过来，把它们做成「分组的属性」之后，
+// 运营卖的是一个个定义清楚的档次：同一个模型可以有「标准」「深度」「快速」三个分组，
+// 各自一套价，使用者买哪个分组就按哪个分组跑。
+//
+// **一切以分组为准**（Apply 做的就是这件事）：
+//
+//	强度不在分组的档位表里 → 夹到表里最浅的那一档，按夹过之后的值打上游。
+//	分组没开快速         → 这一次就不是快速，请求体里的快速标记也一并改写掉。
+//
+// 夹而不是拒绝，是因为拒绝的代价落在一个没做错事的人身上：Claude Code 的默认档是
+// high，而运营卖的「标准」分组可能只到 medium —— 拒绝的话这个人的每一次请求都是 400，
+// 他既看不懂也改不了（那是客户端内置的默认值）。夹到最浅一档则是「你买的这档就这么深」，
+// 请求照常跑完，账单也照这个分组收。
+type GroupPolicy struct {
+	// GroupID 分组业务键 mg_…。空串表示**没有分组约束**：这一路照旧（老密钥、
+	// 还没建分组的模型），强度与快速原样透传。
+	GroupID string `json:"groupId,omitempty"`
+	ModelID string `json:"modelId,omitempty"`
+	Name    string `json:"name,omitempty"`
+	// Family 协议族（anthropic / openai），只用来给档位排序 —— 「最浅的一档」
+	// 要按该族的词表定，字典序会把 max 排在 medium 前面。
+	Family string `json:"family,omitempty"`
+	// Efforts 这个分组卖的强度档。空 = 不限，请求带什么就是什么。
+	Efforts []Effort `json:"efforts,omitempty"`
+	// AllowFast 这个分组卖不卖快速。
+	AllowFast bool `json:"allowFast,omitempty"`
+}
+
+// UnconstrainedPolicy 没有分组约束时的那份策略：强度原样透传，快速照旧放行。
+//
+// AllowFast 必须是 true —— 零值 GroupPolicy 的 AllowFast 是 false，拿零值当
+// 「不限」会把每一个没落到分组上的请求都从快速降级回普通，而那条路正是
+// 存量密钥走的路（迁移那一刻全站都在上面）。
+func UnconstrainedPolicy() GroupPolicy { return GroupPolicy{AllowFast: true} }
+
+// Allows 这一档在不在分组的档位表里。表为空一律为真（不限）。
+func (p GroupPolicy) Allows(effort Effort) bool {
+	if len(p.Efforts) == 0 {
+		return true
+	}
+	for _, level := range p.Efforts {
+		if level == effort {
+			return true
+		}
+	}
+	return false
+}
+
+// LowestEffort 分组里最浅的那一档，按该族的词表（由浅到深）判。
+//
+// 词表里没有的档位（历史上填错、或上游新加了一档而我们还没跟上）排在最后按字典序 ——
+// 丢掉它们会让一个只配了这类档位的分组算出空串，也就是「不夹」，而那正是要防的事。
+func (p GroupPolicy) LowestEffort() Effort {
+	if len(p.Efforts) == 0 {
+		return ""
+	}
+	known := map[Effort]bool{}
+	for _, level := range p.Efforts {
+		known[level] = true
+	}
+	for _, level := range FamilyEfforts(p.Family) {
+		if known[level] {
+			return level
+		}
+	}
+	lowest := ""
+	for _, level := range p.Efforts {
+		if lowest == "" || level < lowest {
+			lowest = level
+		}
+	}
+	return lowest
+}
+
+// Apply 把一次请求的强度与快速开关收敛到这个分组允许的范围内。
+//
+// 第三个返回值说的是「改过没有」：改过就要回头把请求体也改掉（见 relay 的 applyPolicy），
+// 否则上游照着请求体里那一档跑，而平台按夹过之后的那一档记账 —— 那是实打实的亏损，
+// 且两边都不会报错。
+//
+// effort 为空串时不夹：空串是「这一族我们不认识、或者这个请求没有强度这回事」，
+// 替它挑一档等于替一个我们并不了解的上游宣布了它的计价刻度。
+func (p GroupPolicy) Apply(effort Effort, fast bool) (Effort, bool, bool) {
+	outEffort, outFast := effort, fast
+	if effort != "" && !p.Allows(effort) {
+		if lowest := p.LowestEffort(); lowest != "" {
+			outEffort = lowest
+		}
+	}
+	if fast && !p.AllowFast {
+		outFast = false
+	}
+	return outEffort, outFast, outEffort != effort || outFast != fast
+}
+
 // ---------- 路由 ----------
 
 // RouteKey 适配器 Route() 的产物，是放置算法唯一的输入形状。
@@ -299,9 +404,20 @@ type RouteKey struct {
 	Family   string `json:"family,omitempty"`
 	Provider string `json:"provider"`
 	Model    string `json:"model,omitempty"`
-	// Effort 这次请求的推理强度，已按 Family 收敛过（见 NormalizeEffort / DefaultEffort）。
-	// 它进计价键，所以一路要带到单元行上 —— 账单与结算事后都按它重新取价。
+	// Group 这次请求落在哪个**模型分组**上（mg_…）。它是计价键，也是放置的硬过滤条件：
+	// 共享者要先把这个分组加进自己的车道，才接得到它的单。
+	//
+	// 由密钥决定，不由请求体决定：适配器在 Route() 里填不了它（请求体里没有这个概念），
+	// 由通用层在鉴权之后按「密钥选中的分组 ∩ 这次请求的模型」定下来，再盖回路由键。
+	Group string `json:"group,omitempty"`
+	// Effort 这次请求的推理强度，已按 Family 收敛过（见 NormalizeEffort / DefaultEffort），
+	// 并且**已经按分组的档位表夹过**（见 GroupPolicy.Apply）。它不再单独进计价键 ——
+	// 价钱由分组定 —— 但仍然一路带到单元行上：它是「上游这一次真的按哪一档跑的」，
+	// 排障与对账要它，界面不展示它。
 	Effort Effort `json:"effort,omitempty"`
+	// Fast 这次请求是否按「快速」跑。同样已经按分组的开关夹过：分组没开快速时恒为 false，
+	// 而且请求体里的快速标记会被改写掉（见 GroupPolicy.Apply 的说明）。
+	Fast bool `json:"fast,omitempty"`
 	// AffinityKey 决定回不回同一个贡献；relay 默认 consumerKey + x-galaxy-session。
 	AffinityKey string `json:"affinityKey,omitempty"`
 	// HardPin 非空时跳过打分直接钉住该贡献：Responses 链式请求与 session 硬亲和。
@@ -541,12 +657,17 @@ type WorkUnit struct {
 	Family      string    `json:"family,omitempty"`
 	Provider    string    `json:"provider"`
 	Model       string    `json:"model,omitempty"`
-	// Effort 推理强度，计价键的一部分（见 Effort 的说明）。
+	// Group 模型分组（mg_…），计价键的一部分。
 	//
 	// 它必须留在信封里：结算发生在请求跑完之后，那时 Hub 手上只有 Redis 里这份 JSON，
-	// 而取价要 (kind, model, effort) 三样齐全。少了它，同一次请求下单时按 max 档预估、
-	// 结算时按不分强度价扣，两个数对不上且没有任何地方会报错。
+	// 而取价要 (kind, model, group) 三样齐全。少了它，同一次请求下单时按「深度」分组
+	// 预估、结算时按模型的通价扣，两个数对不上且没有任何地方会报错。
+	Group string `json:"group,omitempty"`
+	// Effort 推理强度，已按分组夹过的那一档（见 Effort 与 GroupPolicy 的说明）。
+	// 只作记录与排障，不参与取价 —— 价钱由 Group 决定。
 	Effort Effort `json:"effort,omitempty"`
+	// Fast 这一次是否按快速跑（分组没开快速时恒为 false）。同样只作记录。
+	Fast bool `json:"fast,omitempty"`
 
 	// ConsumerKey 是密钥的匿名标识（ck_…），不是 sk- 明文；节点只看得到它。
 	ConsumerKey string `json:"consumerKey"`

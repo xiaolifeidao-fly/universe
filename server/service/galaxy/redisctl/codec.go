@@ -130,7 +130,8 @@ func decodeSnapshot(cid string, values map[string]string) galaxy.ContributionSna
 		CID: cid, NodeID: values["nodeId"], OwnerUserID: values["ownerUserId"],
 		Kind: values["kind"], KindVersion: int(parseInt(values["kindVersion"])), Provider: values["provider"],
 		ModelsAllow: decodeStrings(values["modelsAllow"]), ModelsDeny: decodeStrings(values["modelsDeny"]),
-		Seats: int(parseInt(values["seats"])), SeatConcurrency: int(parseInt(values["seatConc"])),
+		Groups: decodeStrings(values["groups"]),
+		Seats:  int(parseInt(values["seats"])), SeatConcurrency: int(parseInt(values["seatConc"])),
 		Inflight: int(parseInt(values["inflight"])),
 		Schedule: decodeSchedule(values["schedule"]),
 		// 余量下限解不动时回的是**默认那条**（剩 0% 才停），不是空 ——

@@ -99,6 +99,18 @@ type SelfRegistering interface {
 	RegisterExtra(group *gin.RouterGroup, deps Deps)
 }
 
+// PolicyApplying 让适配器按**模型分组**把请求体改到位。
+//
+// 通用层在鉴权之后解出这一次落在哪个分组上（ResolveGroupPolicy），但请求体的形状
+// 只有适配器认识 —— 两族的强度字段名不一样，老模型还得改 thinking 预算。
+// 所以判定在通用层、改写在适配器，返回值是夹过之后的强度与快速标记。
+//
+// 不实现这个接口的适配器（session / job / videofarm）不受分组约束：
+// 它们的请求体里本来就没有强度与快速这两个旋钮。
+type PolicyApplying interface {
+	ApplyPolicy(in Input, policy contract.GroupPolicy) (contract.Effort, bool)
+}
+
 // Intercepting 让适配器在放置之前直接接管一次请求：幂等重放、缓存命中都走它。
 // 返回 true 表示响应已经写完，通道层不再派单。
 type Intercepting interface {

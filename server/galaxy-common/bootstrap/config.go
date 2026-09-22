@@ -162,6 +162,19 @@ func IntProperty(key string, fallback int) int {
 	return value
 }
 
+// signedProperty 读一个**允许为负**的整数配置，没配或写不成数就返回 0。
+//
+// 不能用 IntProperty：它把 <= 0 一律当成「没配」。而登录失败上限那几个键要区分
+// 三种情况 —— 没配（0，用领域层的默认值）、配了个正数（就用它）、配了负数
+// （这一维不限制）。混起来的话，「关掉限制」这件事根本写不出来。
+func signedProperty(key string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(httpx.Property(key)))
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
 func DurationProperty(key string, fallbackMillis int) time.Duration {
 	return time.Duration(IntProperty(key, fallbackMillis)) * time.Millisecond
 }

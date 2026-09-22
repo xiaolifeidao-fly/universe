@@ -46,6 +46,11 @@ func (s *service) ProviderModels(ctx context.Context, ownerUserID string) ([]dto
 	if err != nil {
 		return nil, err
 	}
+	// 分组：共享者要回答的是「跑哪个模型的哪个分组更赚」，以及「我加入了哪些」。
+	groups, err := s.repository.ListModelGroups(ctx, bizLine, "", true)
+	if err != nil {
+		return nil, err
+	}
 
 	// 这个人名下的全部贡献。**不按状态过滤**：允许/拒绝名单是主人定的规则，
 	// 暂停只是此刻不接单，不代表他不想要这个模型。「此刻接不接得到单」
@@ -62,7 +67,7 @@ func (s *service) ProviderModels(ctx context.Context, ownerUserID string) ([]dto
 
 	views := make([]dto.ProviderModelView, 0, len(rows))
 	for _, row := range rows {
-		views = append(views, providerModelView(row, priceRows, contributions, earned))
+		views = append(views, providerModelView(row, priceRows, groups, contributions, earned))
 	}
 	sort.SliceStable(views, func(i, j int) bool {
 		if views[i].SortOrder != views[j].SortOrder {
@@ -78,6 +83,7 @@ func (s *service) ProviderModels(ctx context.Context, ownerUserID string) ([]dto
 func providerModelView(
 	row *repository.GalaxyModel,
 	priceRows []*repository.GalaxyPrice,
+	groups []*repository.GalaxyModelGroup,
 	contributions []*repository.GalaxyContribution,
 	earned map[string]int64,
 ) dto.ProviderModelView {
@@ -101,24 +107,28 @@ func providerModelView(
 		InputPrice:  settleUnitPrice(table[contract.UnitInputTokens]),
 		OutputPrice: settleUnitPrice(table[contract.UnitOutputTokens]),
 		CachePrice:  settleUnitPrice(table[contract.UnitCacheReadTokens]),
-		// 缓存写入卡片上只有一格，取 5 分钟那一档 —— 绝大多数请求命中的就是它，
-		// 和使用端模型广场（portal 的 applyKindPrice）取的是同一档，两端说的话一致。
+		// 缓存写入两格：5 分钟与 1 小时，和使用端模型广场（portal 的 applyKindPrice）
+		// 取的是同一对单位，两端说的话一致。TTL 由调用方在请求体里自己写，
+		// 共享者这边只是照单记账 —— 两档都摆出来他才知道接到 1h 的那笔多记了多少。
 		//
-		// 原先这里取的是合计（llm.cache_write_tokens）。那个单位是 5m + 1h 的和、
-		// **永远不进账本**（billing 的 derivedUnits），因此价目表里通常压根没有它的价 ——
-		// 于是这一格恒为 0，共享者看到「缓存写入 0 积分」，以为跑缓存白干。
-		// 他实际是按 5m / 1h 两档分别拿钱的。
-		CacheWritePrice: settleUnitPrice(table[contract.UnitCacheWrite5mTokens]),
-		// 要「输入和输出都是这个模型自己的行」才算它有专属价。只有一档是专属的
+		// 不能取合计（llm.cache_write_tokens）：那个单位是 5m + 1h 的和、
+		// **永远不进账本**（billing 的 derivedUnits），价目表里通常压根没有它的价 ——
+		// 取它这一格恒为 0，共享者看到「缓存写入 0 积分」，以为跑缓存白干。
+		CacheWritePrice:   settleUnitPrice(table[contract.UnitCacheWrite5mTokens]),
+		CacheWrite1hPrice: settleUnitPrice(table[contract.UnitCacheWrite1hTokens]),
+
+		// 要「输入和输出都落在这个模型自己的行上」才算它有专属价。只有一档是专属的
 		// 那些模型，另一档其实还是兜底价，说成专属会让人按错的数做决定。
-		Priced:    own[contract.UnitInputTokens] && own[contract.UnitOutputTokens],
+		Priced: own[contract.UnitInputTokens] >= priceLayerModel &&
+			own[contract.UnitOutputTokens] >= priceLayerModel,
 		Earned7d:  earned[row.ModelID],
 		SortOrder: row.SortOrder,
-		// 按强度分档的结算价。共享者要回答的是「跑哪个模型的哪一档更赚」——
-		// 深思考那一档烧掉的推理 token 多一个量级，往往也单独加过价，
-		// 只给一个不分强度的数字，这一页就答不了那个问题。
-		Efforts: effortSettlePrices(priceRows, kind, row.ModelID, protocolFamily(family)),
+		// 按分组的结算价。共享者要回答的是「跑哪个模型的哪个分组更赚」——
+		// 深档那个分组烧掉的推理 token 多一个量级，往往也单独加过价，
+		// 只给一个模型通价，这一页就答不了那个问题。
+		Groups: modelGroupPrices(groups, priceRows, kind, row.ModelID, settlePrice),
 	}
+	joined := map[string]bool{}
 	for _, contribution := range contributions {
 		if contract.ModelMatch(row.ModelID, decodeStrings(contribution.ModelsAllowJSON), decodeStrings(contribution.ModelsDenyJSON)) {
 			view.Allowed = true
@@ -126,32 +136,23 @@ func providerModelView(
 		if containsString(decodeStrings(contribution.ModelsAvailableJSON), row.ModelID) {
 			view.Available = true
 		}
+		// 分组名单为空 = 这条车道不限分组，什么单都接。它和「加入了全部分组」
+		// 在界面上是两句话：前者会自动接上新建的分组，后者不会。
+		lanes := decodeStrings(contribution.GroupsJSON)
+		if len(lanes) == 0 {
+			view.GroupsUnrestricted = true
+			continue
+		}
+		for _, id := range lanes {
+			joined[id] = true
+		}
+	}
+	for _, price := range view.Groups {
+		if joined[price.GroupID] {
+			view.JoinedGroups = append(view.JoinedGroups, price.GroupID)
+		}
 	}
 	return view
-}
-
-// effortSettlePrices 这个模型按强度单独定过价的那几档，换算成**结算价**。
-//
-// 和门户那份（applyEffortPrices）是同一批行、同一道回落，只差最后一步取的是哪个数：
-// 那边给对外价，这边给 settleUnitPrice —— 两个数一相除就是平台抽成，
-// 而抽成不是共享者要做的决定（见本文件开头）。
-func effortSettlePrices(priceRows []*repository.GalaxyPrice, kind, modelID, family string) []dto.ModelEffortPrice {
-	efforts := pricedEfforts(priceRows, kind, modelID, family)
-	if len(efforts) == 0 {
-		return nil
-	}
-	out := make([]dto.ModelEffortPrice, 0, len(efforts))
-	for _, effort := range efforts {
-		table, _ := resolvePrices(priceRows, kind, modelID, effort)
-		out = append(out, dto.ModelEffortPrice{
-			Effort:          effort,
-			InputPrice:      settleUnitPrice(table[contract.UnitInputTokens]),
-			OutputPrice:     settleUnitPrice(table[contract.UnitOutputTokens]),
-			CachePrice:      settleUnitPrice(table[contract.UnitCacheReadTokens]),
-			CacheWritePrice: settleUnitPrice(table[contract.UnitCacheWrite5mTokens]),
-		})
-	}
-	return out
 }
 
 // earningsByModel 最近几天每个模型给这个人记了多少积分。

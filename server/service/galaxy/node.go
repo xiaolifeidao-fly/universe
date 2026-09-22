@@ -443,7 +443,10 @@ func (s *service) effectiveContributions(ctx context.Context, node *repository.G
 			CID: local, Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
 			ModelsAllow: orEmpty(decodeStrings(row.ModelsAllowJSON)),
 			ModelsDeny:  orEmpty(decodeStrings(row.ModelsDenyJSON)),
-			Seats:       row.Seats, SeatConcurrency: row.SeatConcurrency,
+			// 分组一并下发。节点侧不拿它做判断（派单在 Hub 这边过硬过滤），
+			// 但它要能在本机日志里说清楚「这台机器接的是哪几档」。
+			Groups: orEmpty(decodeStrings(row.GroupsJSON)),
+			Seats:  row.Seats, SeatConcurrency: row.SeatConcurrency,
 			Quota: quota, Schedule: orEmpty(decodeSchedule(row.ScheduleJSON)),
 		})
 	}
@@ -823,6 +826,7 @@ func (s *service) contributionView(ctx context.Context, row *repository.GalaxyCo
 		Category:        usageCategory("", row.Provider, row.Kind),
 		ModelsAllow:     orEmpty(decodeStrings(row.ModelsAllowJSON)),
 		ModelsDeny:      orEmpty(decodeStrings(row.ModelsDenyJSON)),
+		Groups:          orEmpty(decodeStrings(row.GroupsJSON)),
 		AvailableModels: orEmpty(decodeStrings(row.ModelsAvailableJSON)),
 		Seats:           row.Seats, SeatConcurrency: row.SeatConcurrency, Status: row.Status,
 		PendingStatus: row.PendingStatus, Reputation: reputation,
@@ -1280,7 +1284,8 @@ func (s *service) snapshotFromRow(row *repository.GalaxyContribution, grants []Q
 		CID: row.CID, NodeID: row.NodeID, OwnerUserID: row.OwnerUserID,
 		Kind: row.Kind, KindVersion: row.KindVersion, Provider: row.Provider,
 		ModelsAllow: decodeStrings(row.ModelsAllowJSON), ModelsDeny: decodeStrings(row.ModelsDenyJSON),
-		Seats: row.Seats, SeatConcurrency: row.SeatConcurrency,
+		Groups: decodeStrings(row.GroupsJSON),
+		Seats:  row.Seats, SeatConcurrency: row.SeatConcurrency,
 		QuotaLimit: limits, QuotaUsed: contract.Metering{}, QuotaReserved: contract.Metering{},
 		Schedule:   decodeScheduleWindows(row.ScheduleJSON),
 		Reputation: reputation, LastBeatAt: beat,
@@ -1478,9 +1483,13 @@ func (s *service) SaveContributionLimits(ctx context.Context, req dto.SaveContri
 		return fmt.Errorf("座位数 %d 超过平台上限 %d", seats, s.cfg().PlatformSeatLimit)
 	}
 
+	// 分组名单原样落库，**不校验分组还在不在**：主人手上这份名单是他的选择，
+	// 平台下架一个分组不该悄悄改写它（下架的分组本来就不会有新单进来）。
+	// 名单为空是「不限」，也就是什么分组的单都接 —— 和模型名单同一套语义。
 	if err := s.repository.SaveContributionLimits(ctx, bizLine, row.CID, map[string]any{
 		"models_allow_json":   encodeJSON(req.ModelsAllow),
 		"models_deny_json":    encodeJSON(req.ModelsDeny),
+		"groups_json":         encodeJSON(req.Groups),
 		"seats":               seats,
 		"seat_concurrency":    defaultInt(req.SeatConcurrency, row.SeatConcurrency),
 		"schedule_json":       encodeJSON(req.Schedule),

@@ -71,10 +71,7 @@ func TestProviderModelCacheWritePriceComesFromTheRealBucket(t *testing.T) {
 		priceAt("llm.chat", "claude-opus-5", contract.UnitOutputTokens, 90_000_000, 0),
 		priceAt("llm.chat", "claude-opus-5", contract.UnitCacheWrite5mTokens, 22_500_000, 0),
 	}
-	view := providerModelView(
-		&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"},
-		rows, nil, map[string]int64{},
-	)
+	view := providerModelView(&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"}, rows, nil, nil, map[string]int64{})
 	// priceAt 的结算价是对外价的一半。
 	if view.CacheWritePrice != 11_250_000 {
 		t.Fatalf("缓存写入应当按 5 分钟那一档的结算价 11,250,000，实际 %d", view.CacheWritePrice)

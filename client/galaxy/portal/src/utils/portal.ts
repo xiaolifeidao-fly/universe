@@ -49,10 +49,14 @@ export interface PortalEffortPrice {
   inputPrice: number;
   outputPrice: number;
   cachePrice: number;
+  /** 缓存写入 5 分钟档。名字不带 5m 是历史包袱，别改：桌面端独立发版，旧版本还在读它。 */
   cacheWritePrice: number;
+  /** 缓存写入 1 小时档。只有 Claude 一族有这个数，Codex 一族恒为 0。 */
+  cacheWrite1hPrice: number;
 }
 
 export interface PortalModel {
+
   modelId: string;
   displayName: string;
   vendor?: string;
@@ -63,8 +67,17 @@ export interface PortalModel {
   inputPrice: number;
   outputPrice: number;
   cachePrice: number;
+  /**
+   * 缓存写入两档：5 分钟与 1 小时，单价差 1.6 倍。
+   *
+   * 用哪一档由调用方在请求体的 cache_control 里自己写（不写 = 5 分钟），
+   * 平台控制不了也预测不了，所以两档都要标。只有 Claude 一族会按 TTL 分档报
+   * cache_creation，Codex 一族这两个恒为 0 —— 卡片上按 family 决定摆不摆。
+   */
   cacheWritePrice: number;
+  cacheWrite1hPrice: number;
   /** 官方参考价，同口径同币种。0 = 运营没声明，那一档不划线。 */
+
   listInputPrice?: number;
   listOutputPrice?: number;
   listCachePrice?: number;

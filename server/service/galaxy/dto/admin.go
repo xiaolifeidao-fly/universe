@@ -70,10 +70,13 @@ type PriceView struct {
 	Kind string `json:"kind"`
 	// ModelID 这一行管哪个模型。空串 = 该 kind 的兜底价，模型没单独定价时按它算。
 	ModelID string `json:"modelId"`
-	// Effort 这一行管哪一档推理强度。空串 = 不分强度，这个模型的所有强度都按它算。
-	// 档位名是上游原生的（Claude 的 low…max、Codex 的 minimal…high），两族不通用。
-	Effort string `json:"effort"`
-	Unit   string `json:"unit"`
+	// GroupID 这一行管哪个**模型分组**。空串 = 该模型的通价，没单独定价的分组按它算。
+	// 它取代了原先的 effort：强度是分组的属性（分组卖哪几档），不是价目的一维。
+	GroupID string `json:"groupId"`
+	// GroupName 分组名，给界面用。分组被删掉之后这里是空串，而 GroupID 还在 ——
+	// 那种行已经匹配不上任何请求，界面要能把它和「兜底价」区分开。
+	GroupName string `json:"groupName,omitempty"`
+	Unit      string `json:"unit"`
 	// Price 对外单价：每百万单位多少微分（1,000,000 微分 = ¥1）。
 	Price    int64  `json:"price"`
 	Currency string `json:"currency"`
@@ -90,7 +93,7 @@ type PriceView struct {
 	// 留在返回里是为了让运营看得见「这行还没迁过来」。
 	ProviderShare float64   `json:"providerShare"`
 	EffectiveFrom time.Time `json:"effectiveFrom"`
-	// Effective 这一行此刻是不是正在生效的那一条。同一个 (kind, model, effort, unit) 下
+	// Effective 这一行此刻是不是正在生效的那一条。同一个 (kind, model, group, unit) 下
 	// effective_from 最新且已经到点的那行为真，其余（历史价、未来价）为假。
 	Effective bool `json:"effective"`
 }
@@ -107,25 +110,28 @@ type PriceTableView struct {
 	// 和 Kinds / Units 一样是候选提示不是白名单：目录里还没建的模型照样能手填，
 	// 否则接一个新模型就得先去建目录才能给它定价。
 	Models []string `json:"models"`
-	// Efforts 协议族 → 它认识的推理强度档位，**由浅到深**。给「给某一档单独定价」
-	// 那个下拉用。按族分开给而不是并成一张扁平清单：Claude 的 xhigh / max 在 Codex
-	// 不存在，Codex 的 minimal 在 Claude 不存在，并起来运营就会给某个模型填上一个
-	// 它永远不会出现的档 —— 那行价从此躺在表里，谁也不会发现它匹配不上任何用量。
+	// Efforts 协议族 → 它认识的推理强度档位，**由浅到深**。给分组那一屏的「绑定强度」
+	// 多选用 —— 这是全站唯一还出现档位名的地方（管理端），对外的三个端一律不露它。
+	// 按族分开给而不是并成一张扁平清单：Claude 的 xhigh / max 在 Codex 不存在，
+	// Codex 的 minimal 在 Claude 不存在，并起来运营就会给某个模型绑上一个它永远
+	// 不会出现的档 —— 那一档从此躺在分组里，谁也不会发现它匹配不上任何请求。
 	Efforts map[string][]string `json:"efforts"`
+	// Groups 全部模型分组（含下架的）。定价那一屏要按分组摆价，删分组前也要看它。
+	Groups []ModelGroupView `json:"groups"`
 	// UsedUnits 最近 30 天真实产生过用量、却没有价可查的 (kind, unit)。
 	// 价目表是空的时候账单永远是 0，而系统不会报错 —— 这一列就是那个告警。
 	Unpriced []PriceView `json:"unpriced"`
 }
 
 // SavePriceRequest 新增或改一行价目。
-// (kind, modelId, effort, unit, effectiveFrom) 定位，撞上已有的就覆盖两个价。
+// (kind, modelId, groupId, unit, effectiveFrom) 定位，撞上已有的就覆盖两个价。
 type SavePriceRequest struct {
 	Kind string `json:"kind" binding:"required"`
 	// ModelID 留空就是改该 kind 的兜底价。
 	ModelID string `json:"modelId"`
-	// Effort 留空就是这个模型不分强度的价。
-	Effort string `json:"effort"`
-	Unit   string `json:"unit" binding:"required"`
+	// GroupID 留空就是这个模型的通价（所有没单独定价的分组按它算）。
+	GroupID string `json:"groupId"`
+	Unit    string `json:"unit" binding:"required"`
 	// Price 对外单价，ProviderPrice 结算单价。两个数各填各的 ——
 	// 上游价不再是下游价的一个百分比。
 	Price         int64      `json:"price"`
@@ -138,10 +144,10 @@ type SavePriceRequest struct {
 // DeletePriceRequest 删一行价目。
 type DeletePriceRequest struct {
 	Kind string `json:"kind" binding:"required"`
-	// ModelID / Effort 空串删的是兜底价那一行 —— 两者都在唯一键里，
-	// 不带就会删错行（少带 effort 时删掉的是「不分强度」那条，而运营点的是 max 那条）。
+	// ModelID / GroupID 空串删的是兜底价那一行 —— 两者都在唯一键里，
+	// 不带就会删错行（少带 groupId 时删掉的是这个模型的通价，而运营点的是某个分组那条）。
 	ModelID       string    `json:"modelId"`
-	Effort        string    `json:"effort"`
+	GroupID       string    `json:"groupId"`
 	Unit          string    `json:"unit" binding:"required"`
 	EffectiveFrom time.Time `json:"effectiveFrom" binding:"required"`
 }

@@ -146,8 +146,10 @@ export function PriceTable() {
   // 没选过就落在默认能力上；这批价目里压根没有它（比如只接了视频业务），退回「全部」——
   // 不退的话首屏是一张空表，运营看到的是「价目表没了」。
   const kind = kindFilter ?? (kinds.includes(DEFAULT_KIND) ? DEFAULT_KIND : ALL_KINDS);
-  // 缓存写入那几行整个不露出（见 labels.tsx 的 HIDDEN_UNITS）。过滤的是**行**不是列：
-  // 只把列删掉，行还在，只是看不出它是哪个单位的价。
+  // 只滤掉缓存写入的**合计**那一行（见 labels.tsx 的 HIDDEN_UNITS）：它不进账本，
+  // 填了价也收不到钱。5m / 1h 两个分项照常在表里，它们是真正计价的那一层。
+  // 过滤的是**行**不是列：只把列删掉，行还在，只是看不出它是哪个单位的价。
+
   const rows = useMemo(
     () => (kind ? prices.filter((row) => row.kind === kind) : prices).filter((row) => !HIDDEN_UNITS.has(row.unit)),
     [kind, prices],

@@ -12,7 +12,7 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { formatDateTime, formatInt, unitLabel } from "@/utils/format";
 import { fetchDisputes, withdrawDispute, type DisputeView } from "../../api/consumer.api";
 
-export function DisputeList() {
+export function DisputeList({ reloadToken }: { reloadToken?: number }) {
   const { t } = useLocale();
   // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
   const [modal, modalHolder] = Modal.useModal();
@@ -30,9 +30,10 @@ export function DisputeList() {
     }
   }, [t]);
 
+  // reloadToken 不进 load 的函数体，只当触发器：页头那个刷新按钮按一下它就换个数，这一栏跟着重拉。
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   const withdraw = (row: DisputeView) => {
     void modal.confirm({

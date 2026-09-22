@@ -27,7 +27,7 @@ func providerModelRows() []*repository.GalaxyPrice {
 func TestProviderModelViewShowsSettlePriceNotRetail(t *testing.T) {
 	view := providerModelView(
 		&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"},
-		providerModelRows(), nil, nil,
+		providerModelRows(), nil, nil, nil,
 	)
 	if view.OutputPrice != 45_000_000 {
 		t.Fatalf("应当给结算价 45,000,000，实际 %d", view.OutputPrice)
@@ -48,7 +48,7 @@ func TestProviderModelViewShowsSettlePriceNotRetail(t *testing.T) {
 func TestProviderModelViewFallsBackAndSaysSo(t *testing.T) {
 	view := providerModelView(
 		&repository.GalaxyModel{ModelID: "claude-haiku-4-5", Kind: "llm.chat"},
-		providerModelRows(), nil, nil,
+		providerModelRows(), nil, nil, nil,
 	)
 	if view.OutputPrice != 7_500_000 {
 		t.Fatalf("应当回落到兜底的结算价 7,500,000，实际 %d", view.OutputPrice)
@@ -69,12 +69,12 @@ func TestProviderModelViewSeparatesAllowedFromAvailable(t *testing.T) {
 	}}
 	rows := providerModelRows()
 
-	sonnet := providerModelView(&repository.GalaxyModel{ModelID: "claude-sonnet-5", Kind: "llm.chat"}, rows, contributions, nil)
+	sonnet := providerModelView(&repository.GalaxyModel{ModelID: "claude-sonnet-5", Kind: "llm.chat"}, rows, nil, contributions, nil)
 	if !sonnet.Allowed || !sonnet.Available {
 		t.Fatalf("名单放过且机器上有：allowed=%v available=%v", sonnet.Allowed, sonnet.Available)
 	}
 
-	opus := providerModelView(&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"}, rows, contributions, nil)
+	opus := providerModelView(&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"}, rows, nil, contributions, nil)
 	if !opus.Allowed {
 		t.Fatal("claude-* 通配应当放 opus 过")
 	}
@@ -82,7 +82,7 @@ func TestProviderModelViewSeparatesAllowedFromAvailable(t *testing.T) {
 		t.Fatal("上游没报 opus，Available 该是 false —— 这不是设置错了，是机器上没有")
 	}
 
-	gpt := providerModelView(&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"}, rows, contributions, nil)
+	gpt := providerModelView(&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"}, rows, nil, contributions, nil)
 	if gpt.Allowed {
 		t.Fatal("白名单只写了 claude-*，gpt-5 不该算接单中")
 	}
@@ -93,7 +93,7 @@ func TestProviderModelViewSeparatesAllowedFromAvailable(t *testing.T) {
 func TestProviderModelViewAllowedIsAnyContribution(t *testing.T) {
 	view := providerModelView(
 		&repository.GalaxyModel{ModelID: "gpt-5", Kind: "llm.chat"},
-		providerModelRows(),
+		providerModelRows(), nil,
 		[]*repository.GalaxyContribution{
 			{ModelsAllowJSON: `["claude-*"]`},
 			{ModelsAllowJSON: `["gpt-*"]`},
@@ -109,7 +109,7 @@ func TestProviderModelViewAllowedIsAnyContribution(t *testing.T) {
 func TestProviderModelViewDenyBeatsAllow(t *testing.T) {
 	view := providerModelView(
 		&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"},
-		providerModelRows(),
+		providerModelRows(), nil,
 		[]*repository.GalaxyContribution{{
 			ModelsAllowJSON: `["claude-*"]`,
 			ModelsDenyJSON:  `["claude-opus-*"]`,
@@ -124,7 +124,7 @@ func TestProviderModelViewDenyBeatsAllow(t *testing.T) {
 func TestProviderModelViewCarriesEarnings(t *testing.T) {
 	view := providerModelView(
 		&repository.GalaxyModel{ModelID: "claude-opus-5", Kind: "llm.chat"},
-		providerModelRows(), nil,
+		providerModelRows(), nil, nil,
 		map[string]int64{"claude-opus-5": 12_345_678},
 	)
 	if view.Earned7d != 12_345_678 {

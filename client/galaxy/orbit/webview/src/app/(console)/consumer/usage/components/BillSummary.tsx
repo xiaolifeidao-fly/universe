@@ -17,7 +17,7 @@ import { fetchUsage, type ConsumerKeyView, type UsageLine, type UsageReport } fr
 
 const RANGES = [7, 30, 90];
 
-export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
+export function BillSummary({ keys, reloadToken }: { keys: ConsumerKeyView[]; reloadToken?: number }) {
   const { t } = useLocale();
   const [report, setReport] = useState<UsageReport | null>(null);
   const [keyId, setKeyId] = useState("");
@@ -37,9 +37,10 @@ export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
     }
   }, [days, keyId, t]);
 
+  // reloadToken 不进 load 的函数体，只当触发器：页头那个刷新按钮按一下它就换个数，这一栏跟着重拉。
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   return (
     <Card className="gx-rise gx-rise--2" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -114,6 +115,11 @@ export function BillSummary({ keys }: { keys: ConsumerKeyView[] }) {
               title: t("usage.unitPrice"),
               width: "120px",
               align: "right",
+              // 「不计价」这一支正常见不到：服务端只把有单价的行放进这张表 ——
+              // 它是账单，每一行都该是一笔钱，而不计价的单位（llm.calls、
+              // time.seconds、llm.total_tokens）两列全是「-」，只会把收了钱的
+              // 那几行挤下去。量在逐笔那一页点开明细还看得到。
+              // 分支留着是兜底：真漏过来一行，得看得出它没收钱。
               render: (row: UsageLine) =>
                 row.unitPrice > 0 ? (
                   <span className="gx-mono gx-soft">{formatUnitPrice(row.unitPrice, report?.currency)}</span>

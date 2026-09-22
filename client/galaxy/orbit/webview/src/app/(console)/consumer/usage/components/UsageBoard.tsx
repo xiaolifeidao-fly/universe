@@ -60,6 +60,14 @@ export function UsageBoard() {
   const [keyword, setKeyword] = useState("");
   const [detail, setDetail] = useState<UsageRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  /**
+   * 刷新按钮按到第几次。
+   *
+   * 页头那一下只重拉得动这一页自己的数（页头四格 + 逐笔记录）——
+   * 账单、会话、任务、申诉各在各的组件里取数，父组件够不着。把这个数传下去，
+   * 它变一次那一栏就重拉一次；筛选条件还留在各自手里，不像换 key 重挂载那样被一起刷掉。
+   */
+  const [reloadToken, setReloadToken] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -137,7 +145,13 @@ export function UsageBoard() {
         title={t("usage.title")}
         meta={t("usage.subtitle")}
         actions={
-          <IconBtn label={t("common.refresh")} onClick={() => void load()}>
+          <IconBtn
+            label={t("common.refresh")}
+            onClick={() => {
+              void load();
+              setReloadToken((count) => count + 1);
+            }}
+          >
             <IconRefresh size={17} />
           </IconBtn>
         }
@@ -310,6 +324,11 @@ export function UsageBoard() {
                     key: "state",
                     title: t("usage.col.state"),
                     width: "112px",
+                    // 失败那一档正常见不到：服务端不把失败的请求算进逐笔扣费 ——
+                    // 没扣钱的一行摆在扣费明细里，只会让人怀疑那次到底扣没扣。
+                    // 分支留着是因为状态是服务端给的字符串：真漏过来一行，
+                    // 也要看得出它是失败，而不是顶着「进行中」永远跑不完。
+                    // 失败次数没消失，页头那格调用次数里还在报（成功 X · 失败 Y）。
                     render: (row: UsageRecord) =>
                       row.state === "completed" ? (
                         <Pill tone="ok">{t("usage.state.completed")}</Pill>
@@ -344,10 +363,10 @@ export function UsageBoard() {
           </Card>
         ) : null}
 
-        {tab === "bill" ? <BillSummary keys={keys} /> : null}
-        {tab === "sessions" ? <SessionList keys={keys} /> : null}
-        {tab === "jobs" ? <JobList keys={keys} /> : null}
-        {tab === "disputes" ? <DisputeList /> : null}
+        {tab === "bill" ? <BillSummary keys={keys} reloadToken={reloadToken} /> : null}
+        {tab === "sessions" ? <SessionList keys={keys} reloadToken={reloadToken} /> : null}
+        {tab === "jobs" ? <JobList keys={keys} reloadToken={reloadToken} /> : null}
+        {tab === "disputes" ? <DisputeList reloadToken={reloadToken} /> : null}
       </div>
 
       <RecordDetail record={detail} alias={alias} onClose={() => setDetail(null)} onFiled={() => void load()} />

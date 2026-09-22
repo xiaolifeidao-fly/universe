@@ -51,6 +51,27 @@ bridge 直接连接 Hub，galaxy-api 不代理机器协议。SDK 请求和 bridg
 
 各服务独有的键：galaxy-api 有 `galaxy.platform_seat_limit`、`galaxy.payout_*`、`galaxy.referral.register_url`；galaxy-consumer-api 有 `galaxy.consumer_base_url`、`galaxy.consumer_client_download_url`（使用端桌面客户端的**通用下载页**，只在密钥页展示；不配就是那一块不显示。它只是**默认值** —— 管理端「ai-bridge 版本」页上的「客户端安装包下载地址」改的是数据库里的 `client.consumer_download_url`，盖过这里。分系统的三条地址 `client.consumer_download_url.windows` / `.mac-x64` / `.mac-arm64` 只在后台改，没有配置项；某个系统没填就退回通用那条。共享端 Nova 的四条 `client.provider_download_url[.平台]` 同样只在那张卡片上）、`galaxy.portal.*`；galaxy-hub-api 有 `galaxy.instance`、`galaxy.contract_version`、`galaxy.redis_pool_size`、派单与超时参数、`galaxy.audit.*`、`galaxy.bridge_release.download_base_url`。
 
+### 有人被登录失败闸锁在门外
+
+两端控制台的登录都有一道「连续失败就暂时拒绝」的闸：同一个用户名 5 次、同一个来源
+30 次，窗口 15 分钟（`galaxy.max_login_fail` / `_per_ip` / `galaxy.login_fail_window_ms`，
+填负数关掉某一维）。计数在 Redis 上，会自己过期，**等 15 分钟就好**；要当场解锁就删键，
+不必重启任何进程：
+
+```
+DEL <galaxy.redis_namespace>:login:consumer:u:<用户名>   # 使用端，用户名小写
+DEL <galaxy.redis_namespace>:login:provider:u:<用户名>   # 共享端
+DEL <galaxy.redis_namespace>:login:consumer:ip:<地址>    # 来源那一维
+```
+
+谁在什么时候、从哪儿试了多少次，查 `zt_galaxy_login_record`（成功与失败都记，
+用户名不存在时也记，那时 `user_id` 是空的）。管理端那一侧是同一套，前缀换成
+`<manager.redis_namespace>:login:u:<用户名>`，留痕在 `zt_manager_login_record`。
+
+按来源那一维**不是安全边界**：地址取自 `X-Forwarded-For`，经 nginx 转发过来，实际上
+是访问者自己填的。它拦的是老实的批量扫号；真要按来源封，得在 nginx 上按 `remote_addr`
+加 `limit_req`，那个值伪造不了。
+
 ### 三个「对外地址」必须和 nginx 上那条 location 对齐
 
 `galaxy.provider_hub_url`（节点打哪儿）、`galaxy.consumer_base_url`（SDK 打哪儿）、

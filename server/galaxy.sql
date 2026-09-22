@@ -82,6 +82,31 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_user` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
+-- 登录留痕。两端共用一张表，端只是一列 —— 分表是为了「不带端的查询捞不到另一端的
+-- 人」，那条理由在账号表上成立，在流水上不成立（漏写 side 最多是多看到几行，而追一
+-- 个人在两端都被试过什么，恰恰需要一次查两端）。
+--
+-- 它是**证据**，不是闸门：连续失败的判定在 Redis 上（`galaxy:login:*`，会自己过期），
+-- 谁在什么时候、从哪儿试了多少次这件事只有这张表答得上来。
+--
+-- username 记的是用户输进来的那个名字（已小写），账号不存在时照样记 —— 「有人拿着
+-- 一串不存在的用户名在扫」本身就是要留下来的事实，那时 user_id 是空的。
+CREATE TABLE IF NOT EXISTS `zt_galaxy_login_record` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),                                     -- 业务线，池内固定 galaxy
+  `side`         varchar(16),                                     -- provider=共享端；consumer=使用端
+  `user_id`      varchar(40),                                     -- 账号业务键，用户名不存在时为空
+  `username`     varchar(64),                                     -- 用户输入的登录名，已小写
+  `ip`           varchar(64),                                     -- X-Forwarded-For 第一跳，可伪造，只作线索
+  `user_agent`   varchar(256),
+  `success`      boolean DEFAULT false,
+  `reason`       varchar(128),                                    -- 失败原因，只给运营看，不回给客户端
+  `created_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  INDEX `idx_gx_login_name` (`biz_line`,`side`,`username`,`created_time` desc),
+  INDEX `idx_gx_login_ip` (`biz_line`,`ip`,`created_time` desc)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- -------------------------------------------------------------------------
 -- 1. 供给：机器 → 贡献 → 授权 → 座位
 -- 贡献 = 一台机器上的一种能力（kind + provider）。额度以 Hub 为权威：
@@ -229,6 +254,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_contribution` (
   `models_allow_json` varchar(1024),                                -- 模型白名单模式数组
   `models_available_json` varchar(4096) DEFAULT NULL,               -- 节点上报的上游可用模型名，仅作控制台候选项
   `models_deny_json`  varchar(1024),                                -- 模型黑名单模式数组
+  `groups_json`       varchar(4096),                                -- 主人确认加入的模型分组（mg_…）数组，空=不限；派单硬过滤看它
   `upstream_usage_json` varchar(4096),                              -- 节点自报的上游订阅余量（Claude / Codex 自己的 5 小时、周限额），节点每 5 分钟问本机 CLI 探来
   `upstream_usage_at` timestamp NULL DEFAULT NULL,                  -- 上面那份数的观测时刻。探针可能连着几轮没采到，界面必须显示它
   `upstream_floor_json` varchar(512),                               -- 余量下限：某个窗口剩到这个百分比就不再接单。空按 [{"window":"","percent":0}] 解
@@ -308,7 +334,9 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_unit` (
   `family`        varchar(32),
   `provider`      varchar(64),
   `model`         varchar(96),
-  `effort`        varchar(16),                                                    -- 推理强度，计价键的一部分；结算与账单事后按它重新取价
+  `effort`        varchar(16),                                                    -- 这一次上游实际跑的推理强度（已按分组的档位表夹过）。只作记录与排障，不进计价键
+  `group_id`      varchar(64),                                                    -- 模型分组，计价键的一部分；结算与账单事后按它重新取价
+  `fast`          boolean DEFAULT false,                                          -- 这一次是否按快速跑（只有分组开了快速才可能为真）
   `consumer_key`  varchar(64),
   `space`         varchar(64),
   `sid`           varchar(40),                                                    -- session 原语的会话 id
@@ -407,6 +435,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_consumer_key` (
   `allowed_kinds_json`     varchar(512),                                   -- 空数组表示不限
   `allowed_providers_json` varchar(512),
   `model_tier_json`        varchar(1024),                                  -- 允许的模型模式
+  `groups_json`            varchar(1024),                                  -- 选中的模型分组（mg_…）数组，空=不限，按各模型的默认分组走
   `concurrency`            bigint DEFAULT 4,
   `rpm`                    bigint DEFAULT 120,
   `status`                 varchar(16),                                    -- active/expired/frozen/revoked
@@ -456,7 +485,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_price` (
   `biz_line`       varchar(32),
   `kind`           varchar(64),
   `model_id`       varchar(96) NOT NULL DEFAULT '',                       -- 模型名，空=该 kind 的兜底价（不是「叫空串的模型」）；唯一索引不拦 NULL，所以这列不能可空
-  `effort`         varchar(16) NOT NULL DEFAULT '',                       -- 推理强度，空=不分强度；档位名是上游原生的（Claude low…max / Codex minimal…high），两族不通用
+  `group_id`       varchar(64) NOT NULL DEFAULT '',                       -- 模型分组（mg_…），空=该模型的通价（不是「叫空串的分组」）；取价三级回落：kind 兜底 → 模型通价 → 分组价
   `unit`           varchar(48),
   `effective_from` timestamp NULL DEFAULT NULL,
   `price`          bigint,                                                -- 对外单价：每百万单位微分
@@ -464,7 +493,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_price` (
   `provider_price` bigint DEFAULT 0,                                      -- 结算单价：每百万单位微分，0=回落到 provider_share
   `provider_share` double DEFAULT 0.700000,                               -- 旧口径分成比例，仅当 provider_price=0 时回落使用
   PRIMARY KEY (`id`),
-  UNIQUE INDEX `uk_gx_price` (`biz_line`,`kind`,`model_id`,`effort`,`unit`,`effective_from`)
+  UNIQUE INDEX `uk_gx_price` (`biz_line`,`kind`,`model_id`,`group_id`,`unit`,`effective_from`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_artifact` (
@@ -778,6 +807,27 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_model` (
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_model` (`biz_line`,`model_id`),
   INDEX `idx_gx_model_listed` (`biz_line`,`listed`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_model_group` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `group_id`     varchar(64),                                        -- 业务键 mg_…，对外只露它
+  `model_id`     varchar(96),                                        -- 所属模型
+  `name`         varchar(64),                                        -- 分组名，使用者看到的就是它；**不要写上游的档位名**
+  `summary`      varchar(256),                                       -- 一句话说明
+  `efforts_json` varchar(512),                                       -- 绑定的推理强度数组，空=不限；请求带来的档不在表里就夹到表里最浅的一档
+  `allow_fast`   boolean DEFAULT false,                              -- 卖不卖「快速」；不卖时请求体里的快速标记会被改写掉
+  `listed`       boolean DEFAULT true,                               -- 下架的分组不进候选，已经选中它的老密钥照旧能用
+  `is_default`   tinyint(1) DEFAULT NULL,                            -- 1=该模型的默认分组；NULL=不是（唯一索引不拦 NULL，所以不用 0）
+  `sort_order`   bigint DEFAULT 0,
+  `created_time` datetime(3) NULL,
+  `updated_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_model_group` (`biz_line`,`group_id`),
+  UNIQUE INDEX `uk_gx_model_group_name` (`biz_line`,`model_id`,`name`),
+  UNIQUE INDEX `uk_gx_model_group_default` (`biz_line`,`model_id`,`is_default`),
+  INDEX `idx_gx_model_group_model` (`biz_line`,`model_id`,`listed`,`sort_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS `zt_galaxy_lead` (

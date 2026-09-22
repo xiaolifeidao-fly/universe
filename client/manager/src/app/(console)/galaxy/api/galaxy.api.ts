@@ -395,8 +395,8 @@ export class GalaxyModelView {
   maxOutputTokens = 0;
 
   /**
-   * 我们自己此刻对外收的单价，每百万 token 微元。四个桶互不重叠：inputPrice 只算
-   * **未命中缓存的新增输入**，命中的走 cachePrice，缓存写入取 5 分钟那一档。
+   * 我们自己此刻对外收的单价，每百万 token 微元。几个桶互不重叠：inputPrice 只算
+   * **未命中缓存的新增输入**，命中的走 cachePrice，写入的走 cacheWrite*。
    *
    * **库里不存这几个数**，服务端按「能力 × 模型 × 计量单位」从价目表现算了下发，
    * 和门户卡片、使用端模型广场走的是同一段代码 —— 运营台是用来核对门户标了多少的，
@@ -409,7 +409,16 @@ export class GalaxyModelView {
 
   cachePrice = 0;
 
+  /**
+   * 缓存写入两档：5 分钟（不带后缀的这个）与 1 小时，单价差 1.6 倍。
+   *
+   * 只有 Claude 一族会按 TTL 分档报 cache_creation，Codex 一族这两个恒为 0 ——
+   * 界面上按族决定摆不摆，别把「上游没有这个概念」显示成「这一档免费」。
+   */
   cacheWritePrice = 0;
+
+  cacheWrite1hPrice = 0;
+
 
   /**
    * 官方参考价（别人家的价），每百万 token 微元。0 = 那一档不划线。

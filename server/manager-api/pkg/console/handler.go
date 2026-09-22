@@ -64,8 +64,13 @@ func (h *Handler) login(context *gin.Context) {
 		httpx.Fail(context, err.Error())
 		return
 	}
-	// IP 与 UA 取自请求本身，不接受请求体传入 —— 让调用方自报等于没记。
-	req.IP = context.ClientIP()
+	// IP 与 UA 取自请求本身，不接受请求体传入 —— 让调用方自报等于没记，
+	// 而且按来源计数的那道闸每次换一个值就绕过去了。
+	//
+	// 用 httpx.ClientIP 而不是 gin 的 ClientIP()：引擎 SetTrustedProxies(nil)，
+	// 后者只认 RemoteAddr，而管理端前面站着 nginx —— 记下来的会永远是 nginx
+	// 自己的地址，那样这一列一点线索都提供不了。
+	req.IP = httpx.ClientIP(context)
 	req.UserAgent = context.GetHeader("User-Agent")
 	result, err := h.service.Login(context.Request.Context(), req)
 	httpx.JSON(context, result, err)

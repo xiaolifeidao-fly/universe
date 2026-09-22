@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -140,5 +142,113 @@ func TestRetrieveModel(t *testing.T) {
 	}
 	if failure["type"] != "not_found_error" {
 		t.Fatalf("错误类型 = %v，期望 not_found_error", failure["type"])
+	}
+}
+
+// Codex 的模型发现走的是另一套形状，而且只在部署方交出一份清单时才开。
+// 这几条钉的是「什么时候换形状」和「换了之后条目有没有被我们动过」。
+
+func writeManifest(t *testing.T, document string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "codex-models.json")
+	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
+		t.Fatalf("写清单文件失败: %v", err)
+	}
+	return path
+}
+
+// 清单里的条目要原样出去：那三十来个字段是 Codex 自己的协议，我们插一层结构体
+// 就会把没认出来的字段吃掉，客户端一升级就解析失败。
+func TestCodexManifestServedVerbatimForCodexProbe(t *testing.T) {
+	path := writeManifest(t, `{"fetched_at":"2026-09-18T10:17:44Z","models":[
+		{"slug":"gpt-5.6-terra","display_name":"GPT-5.6 Terra","base_instructions":"probe","future_field":{"kept":true}},
+		{"slug":"gpt-5.6-sol","display_name":"GPT-5.6 Sol","base_instructions":"probe"},
+		{"slug":"gpt-4o-not-declared","display_name":"没在 galaxy.models 里"}]}`)
+	options := Options{Models: []string{"gpt-5.6-sol", "claude-opus-5", "gpt-5.6-terra"}, CodexManifest: path}
+
+	status, raw := modelsProbe(t, options, "/v1/models?client_version=0.154.0")
+	if status != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", status)
+	}
+	body := decodeCatalog(t, raw)
+	if _, ok := body["data"]; ok {
+		t.Fatalf("Codex 那一路不该再带两族的 data: %s", raw)
+	}
+	rows, ok := body["models"].([]any)
+	if !ok {
+		t.Fatalf("models 不是数组: %#v", body["models"])
+	}
+	// 只给 galaxy.models 声明过的，且按它的书写顺序 —— 清单的语义仍归 galaxy.models 管。
+	if len(rows) != 2 {
+		t.Fatalf("条目数 = %d，期望 2（清单里第三条没被声明）", len(rows))
+	}
+	first, _ := rows[0].(map[string]any)
+	second, _ := rows[1].(map[string]any)
+	if first["slug"] != "gpt-5.6-sol" || second["slug"] != "gpt-5.6-terra" {
+		t.Fatalf("顺序没跟着 galaxy.models: %#v", rows)
+	}
+	if _, ok := second["future_field"]; !ok {
+		t.Fatalf("条目被我们动过，没认出来的字段丢了: %#v", second)
+	}
+}
+
+// 同一条路由上还有两族的官方 SDK。它们不带 client_version，拿到的必须还是老形状，
+// 否则「为 Codex 修一个」会把另外两家一起改坏。
+func TestCodexManifestLeavesClassicClientsAlone(t *testing.T) {
+	path := writeManifest(t, `{"models":[{"slug":"gpt-5.6-terra","display_name":"GPT-5.6 Terra"}]}`)
+	options := Options{Models: []string{"gpt-5.6-terra"}, CodexManifest: path}
+
+	status, raw := modelsProbe(t, options, "/v1/models")
+	if status != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", status)
+	}
+	body := decodeCatalog(t, raw)
+	if body["object"] != "list" {
+		t.Fatalf("不带 client_version 时形状不该变: %s", raw)
+	}
+	if ids := catalogIDs(t, body); len(ids) != 1 || ids[0] != "gpt-5.6-terra" {
+		t.Fatalf("经典形状的清单 = %v", ids)
+	}
+}
+
+// 没配清单是默认状态：Codex 照样拿到老形状，它自己回落到内置清单。
+// 这条钉的是「默认不接管客户端的提示词」。
+func TestCodexProbeFallsBackToClassicShapeWithoutManifest(t *testing.T) {
+	status, raw := modelsProbe(t, Options{Models: []string{"gpt-5.6-terra"}}, "/v1/models?client_version=0.154.0")
+	if status != http.StatusOK {
+		t.Fatalf("状态码 = %d，期望 200", status)
+	}
+	if _, ok := decodeCatalog(t, raw)["models"]; ok {
+		t.Fatalf("没配清单却给了 Codex 形状: %s", raw)
+	}
+}
+
+// 清单配岔了（和 galaxy.models 一条都对不上、文件读不出、根本不是 JSON）都不能把
+// Hub 带崩，也不能给 Codex 一个空 models —— 那等于说「这儿没有模型」，比回落更糟。
+func TestCodexManifestDegradesInsteadOfServingNothing(t *testing.T) {
+	cases := map[string]Options{
+		"一条都没对上": {Models: []string{"claude-opus-5"},
+			CodexManifest: writeManifest(t, `{"models":[{"slug":"gpt-5.6-terra"}]}`)},
+		"条目没有 slug": {Models: []string{"gpt-5.6-terra"},
+			CodexManifest: writeManifest(t, `{"models":[{"display_name":"没有 slug"}]}`)},
+		"不是 JSON": {Models: []string{"gpt-5.6-terra"},
+			CodexManifest: writeManifest(t, `这不是 JSON`)},
+		"文件不存在": {Models: []string{"gpt-5.6-terra"},
+			CodexManifest: filepath.Join(t.TempDir(), "缺席.json")},
+	}
+	for name, options := range cases {
+		t.Run(name, func(t *testing.T) {
+			status, raw := modelsProbe(t, options, "/v1/models?client_version=0.154.0")
+			if status != http.StatusOK {
+				t.Fatalf("状态码 = %d，期望 200", status)
+			}
+			body := decodeCatalog(t, raw)
+			if _, ok := body["models"]; ok {
+				t.Fatalf("清单不可用却仍给了 Codex 形状: %s", raw)
+			}
+			if len(catalogIDs(t, body)) == 0 {
+				t.Fatalf("退回经典形状后清单是空的: %s", raw)
+			}
+		})
 	}
 }

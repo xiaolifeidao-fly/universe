@@ -125,6 +125,22 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 			writeError(context, adapter, in, err)
 			return
 		}
+		// 这一次落在哪个**模型分组**上，由密钥选中的分组与请求的模型一起定。
+		// 它是计价键、也是派单的硬过滤条件，所以必须在构造单元之前定下来。
+		//
+		// 解不出来（密钥没买这个模型的分组）是一次明确的拒绝，不是回落 ——
+		// 悄悄按默认分组跑，等于把一个人没付钱的档次送给他，而账单上看不出异常。
+		policy, err := deps.Galaxy.ResolveGroupPolicy(context.Request.Context(), caller, route)
+		if err != nil {
+			writeError(context, adapter, in, err)
+			return
+		}
+		route.Group = policy.GroupID
+		// 强度与快速一律按分组夹，并且**同步改写请求体**：只改记账不改字节的话，
+		// 上游照着客户端要的深档跑，平台按分组卖的浅档收钱，差额全由平台垫。
+		if applier, ok := adapter.(PolicyApplying); ok {
+			route.Effort, route.Fast = applier.ApplyPolicy(in, policy)
+		}
 		// 幂等重放这类「不用派单就能答」的情况在这里收口。
 		if intercepting, ok := adapter.(Intercepting); ok && intercepting.Intercept(context, in) {
 			return
@@ -137,10 +153,12 @@ func makeHandler(adapter Adapter, deps Deps) gin.HandlerFunc {
 		unit.Provider = route.Provider
 		unit.Model = route.Model
 		unit.Family = route.Family
-		// 推理强度跟着路由键走，和 model 一样是计价键的一部分 —— 适配器在 ToUnit 里
-		// 也填了一份，这里再盖一次是为了「路由键说了算」：Route() 有机会改写它
-		// （例如硬钉到某条贡献时按那台机器实际能跑的档降级），而 ToUnit 看不到那一步。
+		// 分组、强度、快速三样都跟着路由键走 —— 适配器在 ToUnit 里也填了一份，
+		// 这里再盖一次是为了「路由键说了算」：分组由通用层解出来（适配器看不到密钥），
+		// 强度与快速则已经被分组夹过一道，而 ToUnit 拿到的是夹之前的那份入参。
+		unit.Group = route.Group
 		unit.Effort = route.Effort
+		unit.Fast = route.Fast
 		unit.AffinityKey = route.AffinityKey
 		unit.HardPin = route.HardPin
 		unit.ConsumerKey = caller.KeyID

@@ -18,19 +18,19 @@ import (
 
 // priceRows 造一批已经按仓储顺序排好的行。
 //
-// 顺序是 (kind, model_id, effort, unit, effective_from) **升序** —— 和 ListEffectivePrices
+// 顺序是 (kind, model_id, group_id, unit, effective_from) **升序** —— 和 ListEffectivePrices
 // 一致（升序才走得上唯一键，见那边的注释）。也就是说同一组里**最后**一条才是
 // 最新生效的。写反了用例照样过，但验的是另一回事。
 func priceRows(rows ...*repository.GalaxyPrice) []*repository.GalaxyPrice { return rows }
 
-// priceAt 一行不分强度的价（effort 留空）。绝大多数用例只关心模型这一维。
+// priceAt 一行该模型的通价（group 留空）。绝大多数用例只关心模型这一维。
 func priceAt(kind, model, unit string, price int64, ago time.Duration) *repository.GalaxyPrice {
-	return priceAtEffort(kind, model, "", unit, price, ago)
+	return priceAtGroup(kind, model, "", unit, price, ago)
 }
 
-func priceAtEffort(kind, model, effort, unit string, price int64, ago time.Duration) *repository.GalaxyPrice {
+func priceAtGroup(kind, model, group, unit string, price int64, ago time.Duration) *repository.GalaxyPrice {
 	return &repository.GalaxyPrice{
-		Kind: kind, ModelID: model, Effort: effort, Unit: unit, Price: price, Currency: "CNY",
+		Kind: kind, ModelID: model, GroupID: group, Unit: unit, Price: price, Currency: "CNY",
 		ProviderPrice: price / 2, EffectiveFrom: time.Now().Add(-ago),
 	}
 }
@@ -44,8 +44,8 @@ func TestResolvePricesPrefersTheModelRow(t *testing.T) {
 	if got := table[contract.UnitOutputTokens].Price; got != 90_000_000 {
 		t.Fatalf("应当用这个模型自己的价 90,000,000，实际 %d", got)
 	}
-	if !own[contract.UnitOutputTokens] {
-		t.Fatal("这一档是模型自己的，own 该是 true —— 门户靠它区分「统一价」")
+	if own[contract.UnitOutputTokens] < priceLayerModel {
+		t.Fatal("这一档落在模型自己的行上，层号该 ≥ 模型层 —— 门户靠它区分「统一价」")
 	}
 }
 
@@ -61,8 +61,8 @@ func TestResolvePricesFallsBackPerUnit(t *testing.T) {
 	if got := table[contract.UnitInputTokens].Price; got != 3_000_000 {
 		t.Fatalf("模型没给 input 定价，应当回落到兜底的 3,000,000，实际 %d", got)
 	}
-	if own[contract.UnitInputTokens] {
-		t.Fatal("input 是回落来的，own 该是 false")
+	if own[contract.UnitInputTokens] != priceLayerKind {
+		t.Fatal("input 是回落来的，该停在 kind 兜底层")
 	}
 	if got := table[contract.UnitOutputTokens].Price; got != 90_000_000 {
 		t.Fatalf("output 应当用模型自己的价，实际 %d", got)
@@ -79,8 +79,8 @@ func TestResolvePricesIgnoresOtherModels(t *testing.T) {
 	if got := table[contract.UnitOutputTokens].Price; got != 15_000_000 {
 		t.Fatalf("haiku 没单独定价，应当走兜底的 15,000,000，实际 %d", got)
 	}
-	if own[contract.UnitOutputTokens] {
-		t.Fatal("走的是兜底价，own 该是 false")
+	if own[contract.UnitOutputTokens] != priceLayerKind {
+		t.Fatal("走的是兜底价，该停在 kind 兜底层")
 	}
 }
 
@@ -94,8 +94,10 @@ func TestResolvePricesWithoutModelUsesFallbackOnly(t *testing.T) {
 	if got := table[contract.UnitOutputTokens].Price; got != 15_000_000 {
 		t.Fatalf("没有模型就只能走兜底价，实际 %d", got)
 	}
-	if len(own) != 0 {
-		t.Fatalf("没有模型就没有「模型自己的价」，实际 %v", own)
+	for unit, layer := range own {
+		if layer != priceLayerKind {
+			t.Fatalf("没有模型就只该落在兜底层，%s 落在了第 %d 层", unit, layer)
+		}
 	}
 }
 
@@ -168,8 +170,8 @@ func TestApplyKindPriceKeepsPricedWhenTheRowIsTheModelsOwn(t *testing.T) {
 		contract.UnitInputTokens:  {Price: 18_000_000, Currency: "CNY"},
 		contract.UnitOutputTokens: {Price: 90_000_000},
 	}
-	own := map[contract.MeterUnit]bool{
-		contract.UnitInputTokens: true, contract.UnitOutputTokens: true,
+	own := map[contract.MeterUnit]int{
+		contract.UnitInputTokens: priceLayerModel, contract.UnitOutputTokens: priceLayerModel,
 	}
 
 	model := dto.PortalModelView{}
@@ -183,7 +185,7 @@ func TestApplyKindPriceKeepsPricedWhenTheRowIsTheModelsOwn(t *testing.T) {
 
 	// 只有一档是模型自己的，另一档还是统一价 —— 那就不能说整份都是专属的。
 	half := dto.PortalModelView{}
-	applyKindPrice(&half, table, map[contract.MeterUnit]bool{contract.UnitOutputTokens: true})
+	applyKindPrice(&half, table, map[contract.MeterUnit]int{contract.UnitOutputTokens: priceLayerModel})
 	if half.Priced {
 		t.Fatal("input 走的是兜底价，Priced 该是 false")
 	}

@@ -47,7 +47,7 @@ func (s *service) record(ctx context.Context, runtime UnitRuntime, spec contract
 	if len(actual) == 0 {
 		return nil
 	}
-	prices, err := s.priceTable(ctx, runtime.Kind, runtime.Model, runtime.Effort, time.Now())
+	prices, err := s.priceTable(ctx, runtime.Kind, runtime.Model, runtime.Group, time.Now())
 	if err != nil {
 		return err
 	}
@@ -239,22 +239,32 @@ type priceRow struct {
 	ProviderShare float64
 }
 
-// priceTable 取某个 kind + 模型 + 推理强度当前生效的单价。
+// priceTable 取某个 kind + 模型 + 分组当前生效的单价。
 //
-// 回落是**按单位**的，不是按行的：模型只给 output 单独定了价，input 仍然走该 kind
-// 的兜底价。按行回落（「这个模型有价就整张表用它的」）会让只填了一档的模型
-// 把其余几档静默归零 —— 而归零不报错，只是账单少算一笔。
+// 回落是**按单位**的，不是按行的：分组只给 output 单独定了价，input 仍然走该模型的通价、
+// cache 仍然走该 kind 的兜底价。按行回落（「这个分组有价就整张表用它的」）会让只填了
+// 一格的分组把其余几格静默归零 —— 而归零不报错，只是账单少算一笔。
 //
-// 同一 (kind, model, effort, unit) 取 effective_from 最新的那条。
-func (s *service) priceTable(ctx context.Context, kind, model, effort string, at time.Time) (map[contract.MeterUnit]priceRow, error) {
+// 同一 (kind, model, group, unit) 取 effective_from 最新的那条。
+func (s *service) priceTable(ctx context.Context, kind, model, group string, at time.Time) (map[contract.MeterUnit]priceRow, error) {
 	// 带上 kind：这是每笔计费都走的路径，不收窄就是每次全表扫一遍。
 	rows, err := s.repository.ListEffectivePrices(ctx, bizLine, kind, at)
 	if err != nil {
 		return nil, err
 	}
-	table, _ := resolvePrices(rows, kind, model, effort)
+	table, _ := resolvePrices(rows, kind, model, group)
 	return table, nil
 }
+
+// 取价的三层，由粗到细。层号同时是 resolvePrices 第二个返回值的取值。
+const (
+	// priceLayerKind (model='', group='') 该 kind 的兜底价。
+	priceLayerKind = 0
+	// priceLayerModel (model=M, group='') 这个模型的通价，所有没单独定价的分组按它算。
+	priceLayerModel = 1
+	// priceLayerGroup (model=M, group=G) 这个分组自己的价，最精确，最后落下。
+	priceLayerGroup = 2
+)
 
 // resolvePrices 是 priceTable 去掉取数之后剩下的那一半。
 //
@@ -262,24 +272,23 @@ func (s *service) priceTable(ctx context.Context, kind, model, effort string, at
 // 就是把同一批行查几十遍。拆开之后取一次数、在内存里挑几十回，
 // 顺带这段逻辑也能直接拿数据验。
 //
-// 取价是一道**四级回落**，由粗到细逐层盖，每一层都按单位分别盖：
+// 取价是一道**三级回落**，由粗到细逐层盖，每一层都按单位分别盖：
 //
-//	1  (model='', effort='')   该 kind 的兜底价
-//	2  (model='', effort=E)    这一档强度的通价 —— 「所有模型的 max 档都加价」
-//	3  (model=M,  effort='')   这个模型不分强度的价
-//	4  (model=M,  effort=E)    这个模型这一档的价，最精确，最后落下
+//	0  (model='', group='')   该 kind 的兜底价
+//	1  (model=M,  group='')    这个模型的通价
+//	2  (model=M,  group=G)     这个分组的价，最精确，最后落下
 //
-// 层级按「越具体越晚盖」排，而不是「找到一层就停」：只给 max 档的 output 定了价的
-// 模型，它的 input 仍然要走第 3 层、cache 仍然要走第 1 层。找到就停会让那两档
+// 层级按「越具体越晚盖」排，而不是「找到一层就停」：只给某个分组的 output 定了价的
+// 模型，它的 input 仍然要走第 1 层、cache 仍然要走第 0 层。找到就停会让那两档
 // 静默归零，而归零不报错，只是账单少算一笔。
 //
-// 第二个返回值说的是每个单位的价「是不是这个模型自己的」（第 3、4 层）。计价不关心它，
-// 门户关心：回落到 kind 的兜底价时卡片要标「统一价」，而回落到这个模型
-// 自己的计价行时标的就是它真会被收的价，两者不能都说成统一价。
-func resolvePrices(rows []*repository.GalaxyPrice, kind, model, effort string) (map[contract.MeterUnit]priceRow, map[contract.MeterUnit]bool) {
-	// 四层各装一张表，最后按由粗到细的顺序合并。一边遍历一边盖是不行的：
-	// 行是按 (model_id, effort) 排序回来的，同一单位的四层不会相邻出现。
-	layers := [4]map[contract.MeterUnit]priceRow{}
+// 第二个返回值是每个单位**落在了哪一层**。计价不关心它，界面关心：
+// 回落到 kind 兜底价时门户要标「统一价」，回落到模型通价时标的是这个模型真会被收的价，
+// 而分组那一屏要分得出「这个分组自己定过价」和「它跟着模型通价走」—— 三件事不能混成一个布尔。
+func resolvePrices(rows []*repository.GalaxyPrice, kind, model, group string) (map[contract.MeterUnit]priceRow, map[contract.MeterUnit]int) {
+	// 三层各装一张表，最后按由粗到细的顺序合并。一边遍历一边盖是不行的：
+	// 行是按 (model_id, group_id) 排序回来的，同一单位的三层不会相邻出现。
+	layers := [3]map[contract.MeterUnit]priceRow{}
 	for index := range layers {
 		layers[index] = map[contract.MeterUnit]priceRow{}
 	}
@@ -288,19 +297,24 @@ func resolvePrices(rows []*repository.GalaxyPrice, kind, model, effort string) (
 			continue
 		}
 		// 别的模型的价与本次无关。model 为空（单元行没了 / 不按模型区分的 kind）时
-		// 这一条会把所有模型行都滤掉，只剩兜底 —— 正是想要的。强度同理。
+		// 这一条会把所有模型行都滤掉，只剩兜底 —— 正是想要的。分组同理。
 		if row.ModelID != "" && row.ModelID != model {
 			continue
 		}
-		if row.Effort != "" && row.Effort != effort {
+		if row.GroupID != "" && row.GroupID != group {
 			continue
 		}
-		layer := 0
-		if row.Effort != "" {
-			layer++
-		}
-		if row.ModelID != "" {
-			layer += 2
+		// 分组行必须跟着模型行走：库里不该有 (model='', group=G) 这种行
+		// （迁移时删干净了，保存接口也拦着），真有也当它不存在 ——
+		// 一个不属于任何模型的分组价，落到哪个模型上都是猜的。
+		layer := priceLayerKind
+		switch {
+		case row.ModelID != "" && row.GroupID != "":
+			layer = priceLayerGroup
+		case row.ModelID != "":
+			layer = priceLayerModel
+		case row.GroupID != "":
+			continue
 		}
 		// 行按 effective_from **升序**回来（见 ListEffectivePrices：升序才走得上索引），
 		// 所以是后来的盖掉先来的，同组最后落下的那条就是最新生效的。
@@ -310,60 +324,16 @@ func resolvePrices(rows []*repository.GalaxyPrice, kind, model, effort string) (
 		}
 	}
 	out := map[contract.MeterUnit]priceRow{}
-	own := map[contract.MeterUnit]bool{}
+	at := map[contract.MeterUnit]int{}
 	for layer, table := range layers {
 		for unit, row := range table {
 			out[unit] = row
-			// 第 2、3 层才是「这个模型自己的行」。强度通价（第 1 层）仍然是全模型
-			// 共享的，算不上专属。只写 true 不写 false：层是由粗到细走的，
-			// 一个单位一旦落到模型行上就不会再被更粗的层盖回去，而写一串 false
-			// 会让「这个模型一档专属价都没有」和「有」在 len(own) 上分不出来。
-			if layer >= 2 {
-				own[unit] = true
-			}
+			// 层是由粗到细走的，一个单位一旦落到更细的层上就不会再被粗层盖回去，
+			// 所以这里直接记当前层号。
+			at[unit] = layer
 		}
 	}
-	return out, own
-}
-
-// pricedEfforts 这个 (kind, model) 下，价目表里**真的单独定过价**的强度档。
-//
-// 三个模型页（门户、使用端、共享端）都要回答同一个问题：这个模型按强度分档收费吗、
-// 分几档。答案只有价目表一个出处 —— 拿 contract 的词表把六档一律列出来，
-// 回落之后每一档都等于卡片上那四个数，一屏重复的数字说不清任何事。
-//
-// 顺序按该族的词表（由浅到深），让「越深越贵」在界面上一眼看得出来。词表里没有的档
-// （历史上填错、或上游新加了一档而我们还没跟上）排在最后按字典序 ——
-// 丢掉它们会让运营看着库里有价、页面上没有，而那种不一致没有任何地方会报错。
-func pricedEfforts(rows []*repository.GalaxyPrice, kind, model, family string) []contract.Effort {
-	present := map[string]bool{}
-	for _, row := range rows {
-		if row.Kind != kind || row.Effort == "" {
-			continue
-		}
-		// 兜底行（model_id 为空）的强度档对每个模型都成立：「所有模型的 max 档加价」
-		// 是一条合法的定价，漏掉它这些模型就都显示成不分强度。
-		if row.ModelID != "" && row.ModelID != model {
-			continue
-		}
-		present[row.Effort] = true
-	}
-	if len(present) == 0 {
-		return nil
-	}
-	ordered := make([]contract.Effort, 0, len(present))
-	for _, effort := range contract.FamilyEfforts(family) {
-		if present[effort] {
-			ordered = append(ordered, effort)
-			delete(present, effort)
-		}
-	}
-	rest := make([]contract.Effort, 0, len(present))
-	for effort := range present {
-		rest = append(rest, effort)
-	}
-	sort.Strings(rest)
-	return append(ordered, rest...)
+	return out, at
 }
 
 // Usage 用量与扣费明细。input 与 output token 分行列出、按各自单价计算（验收标准）。
@@ -383,21 +353,25 @@ func (s *service) Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageRep
 		return dto.UsageReport{}, err
 	}
 	report := dto.UsageReport{From: query.From, To: query.To, Currency: "CNY"}
-	// 按 kind **、模型和推理强度**缓存取价表：计价已经按这三维走了，这里合并任何一维，
+	// 分组名一次解完：账单上要显示「标准 / 深度」，而库里存的是 mg_…。
+	// 解不出来的（分组已删）留空，那一行照旧按它当初的价显示 —— 账是账，目录是目录。
+	groupNames := s.groupNames(ctx)
+	// 按 kind **、模型和分组**缓存取价表：计价已经按这三维走了，这里合并任何一维，
 	// 账单上那个 Cost 都会拿一个更粗的价去乘一笔按更细的价收过的量。
 	tables := map[string]map[contract.MeterUnit]priceRow{}
 	for _, row := range rows {
-		cacheKey := row.Kind + "\x00" + row.Model + "\x00" + row.Effort
+		cacheKey := row.Kind + "\x00" + row.Model + "\x00" + row.GroupID
 		table, ok := tables[cacheKey]
 		if !ok {
-			table, err = s.priceTable(ctx, row.Kind, row.Model, row.Effort, now)
+			table, err = s.priceTable(ctx, row.Kind, row.Model, row.GroupID, now)
 			if err != nil {
 				return dto.UsageReport{}, err
 			}
 			tables[cacheKey] = table
 		}
 		line := dto.UsageLine{
-			Kind: row.Kind, Provider: row.Provider, Model: row.Model, Effort: row.Effort,
+			Kind: row.Kind, Provider: row.Provider, Model: row.Model,
+			GroupID: row.GroupID, GroupName: groupNames[row.GroupID],
 			Unit: row.Unit, Amount: row.Amount, Calls: row.Calls,
 		}
 		if price, ok := table[row.Unit]; ok {
@@ -419,12 +393,26 @@ func (s *service) Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageRep
 		if left.Model != right.Model {
 			return left.Model < right.Model
 		}
-		if left.Effort != right.Effort {
-			return left.Effort < right.Effort
+		if left.GroupID != right.GroupID {
+			return left.GroupID < right.GroupID
 		}
 		return left.Unit < right.Unit
 	})
 	return report, nil
+}
+
+// groupNames 分组 id → 分组名。取不到就是一张空表：账单上那一列留空，
+// 而不是让整页查询失败 —— 名字是装饰，钱不是。
+func (s *service) groupNames(ctx context.Context) map[string]string {
+	rows, err := s.groups(ctx)
+	if err != nil {
+		return map[string]string{}
+	}
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		names[row.GroupID] = row.Name
+	}
+	return names
 }
 
 // SeedPrices 写入中转站的默认定价（D-02 / D-03）：token 分单位定价，
@@ -435,8 +423,8 @@ func (s *service) Usage(ctx context.Context, query dto.UsageQuery) (dto.UsageRep
 // 否则第一批种子行一落库就又把上游价钉成了下游价的函数。
 // providerPrices 里没有的单位按 0 播，那一行的结算价要运营自己去价目表上填。
 //
-// 播的是**兜底价**（model_id 与 effort 都留空）：默认值不该替运营决定「哪个模型贵、
-// 哪一档强度贵」，但必须保证每个单位都至少有一行可查 —— 查不到价是静默算 0，不是报错。
+// 播的是**兜底价**（model_id 与 group_id 都留空）：默认值不该替运营决定「哪个模型贵、
+// 哪个分组贵」，但必须保证每个单位都至少有一行可查 —— 查不到价是静默算 0，不是报错。
 func (s *service) SeedPrices(ctx context.Context, kind string, prices, providerPrices map[contract.MeterUnit]int64) error {
 	// 时区是 Local 而不是 UTC，因为这个时刻在唯一键 uk_gx_price 里。
 	//

@@ -25,6 +25,8 @@ func models() []any {
 	return []any{
 		// 账号：共享端与使用端两张表，两批人在库里没有交集，和任务宇宙的账号体系也无关
 		&GalaxyProviderUser{}, &GalaxyConsumerUser{},
+		// 登录留痕：两端共用一张，端只是一列
+		&GalaxyLoginRecord{},
 		// 供给：机器 → 贡献 → 授权 → 座位
 		&GalaxyNode{}, &GalaxyProvider{}, &GalaxyReputation{}, &GalaxyMachineBan{}, &GalaxyPairingCode{}, &GalaxyProviderKey{}, &GalaxyContribution{},
 		&GalaxyQuotaGrant{}, &GalaxyQuotaWindow{}, &GalaxySeatBinding{},
@@ -39,7 +41,7 @@ func models() []any {
 		&GalaxyCreditAccount{}, &GalaxyConsumerLedger{}, &GalaxyProviderLedger{},
 		&GalaxyPlatformLedger{}, &GalaxyPayout{}, &GalaxyAuditProbe{}, &GalaxyDispute{},
 		// 门户：对外的模型目录与「联系我们」线索
-		&GalaxyModel{}, &GalaxyLead{},
+		&GalaxyModel{}, &GalaxyModelGroup{}, &GalaxyLead{},
 		// 使用者积分与分享
 		&GalaxyPointsAccount{}, &GalaxyPointsLedger{}, &GalaxyReferral{}, &GalaxySetting{},
 		// ai-bridge 与桌面客户端的版本分发，以及共享端的邀请返现

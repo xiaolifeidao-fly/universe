@@ -218,12 +218,13 @@ Bearer 头解析）。`client/manager` typecheck 与 build 通过。
    仍进得去页面，但接口 403（前端守卫只挡菜单点击，**后端才是真正的门**）；
 5. 撤掉某角色对 `/galaxy` 页面的授权 → 该用户菜单里 galaxy 消失；
 6. 禁用某账号 → 它已登录的会话**立刻**失效；
-7. 用 web 控制台的业务账号登管理端 → 登不进去。
+7. 用 web 控制台的业务账号登管理端 → 登不进去；
+8. 同一个用户名连错 10 次 → 第 11 次起换成「连续登录失败次数过多，请 N 分钟后再试」，
+   并且**这一次不再验密码**（用对的密码也进不去）；等窗口过去，或者
+   `DEL <manager.redis_namespace>:login:u:<用户名>`，立刻又能登。
 
 ## TODO
 
 - [ ] 项目管理目前只有核心的 list/get/create/update；`delivery-api/pkg/programs` 还有的 Git 配置、云同步配置、迁移项目、里程碑/模块 CRUD、成员分配没有对应路由，需要时照 `delivery-api/pkg/programs/handler.go` 的形状加
 - [ ] 资源表里的菜单/页面目前由 `managerinit` 写死；后台的资源 CRUD 接口已经有了，
       但还没有一个像样的「新建菜单」表单（现在得直接调接口）
-- [ ] 登录失败次数限制的字段已经在 `Config` 里（`MaxLoginFail` / `LoginFailWindow`），
-      但还没接上——`zt_manager_login_record` 已经在记失败了，缺的是读它的那一步

@@ -32,6 +32,10 @@ type ContributionSnapshot struct {
 
 	ModelsAllow []string
 	ModelsDeny  []string
+	// Groups 这条贡献加入的模型分组。空 = 不限（存量贡献、或者主人就这么选的）。
+	// 硬过滤看它：分组不在名单里，这台机器就接不到那个分组的单 —— 同一个模型的
+	// 「标准」和「深度」是两份价、两种上游成本，主人可以只接前者。
+	Groups []string
 
 	Seats           int
 	SeatConcurrency int
@@ -197,8 +201,10 @@ type UnitRuntime struct {
 	KindVersion int
 	Provider    string
 	Model       string
-	// Effort 推理强度，和 Model 一样是计价键。它从信封里解出来（LoadUnit），
-	// 结算时按 (kind, model, effort) 取价。
+	// Group 模型分组，和 Model 一样是计价键。它从信封里解出来（LoadUnit），
+	// 结算时按 (kind, model, group) 取价。
+	Group string
+	// Effort 上游实际跑的那一档推理强度（已按分组夹过）。只作记录与排障，不取价。
 	Effort   string
 	SID      string
 	CID      string

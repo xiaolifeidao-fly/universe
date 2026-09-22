@@ -100,7 +100,13 @@ func (s *service) OwnedUsageRecords(ctx context.Context, query dto.UsageRecordQu
 
 	units, total, err := s.repository.ListUnits(ctx, repository.UnitQuery{
 		BizLine: bizLine, ConsumerKeys: keys, Kind: query.Kind, State: query.State,
-		From: query.From, To: query.To,
+		// 失败的一笔都不摆进来：这一页是**扣费**明细，而失败不扣费 ——
+		// 「0 token、0 元、没有耗时」的行回答不了任何问题，只会让人怀疑
+		// 那次到底扣没扣钱，还把真正花了钱的几行挤到下一页去。
+		// 失败没有被藏掉：页头那排数字里的「成功 X · 失败 Y」照旧在报它，
+		// 而失败也不会有申诉 —— 没扣的钱没什么可争。
+		ExcludeStates: []string{string(contract.UnitFailed)},
+		From:          query.From, To: query.To,
 		Offset: query.Offset, Limit: pageLimit(query.Limit, 20, 200),
 	})
 	if err != nil {
@@ -116,11 +122,17 @@ func (s *service) OwnedUsageRecords(ctx context.Context, query dto.UsageRecordQu
 		return dto.UsageRecordPage{}, err
 	}
 
+	// 分组名一次解完：逐笔记录上要显示「标准 / 深度」，库里存的是 mg_…。
+	// 推理强度那一列**不往外给**（它是上游的内部刻度），排障时由运营台去看单元表。
+	groupNames := s.groupNames(ctx)
+
 	page := dto.UsageRecordPage{Total: total, Records: make([]dto.UsageRecord, 0, len(units))}
 	for _, unit := range units {
 		record := dto.UsageRecord{
 			UnitID: unit.UnitID, KeyID: unit.ConsumerKey, KeyAlias: alias[unit.ConsumerKey],
-			Kind: unit.Kind, Provider: unit.Provider, Model: unit.Model, Effort: unit.Effort, State: unit.State,
+			Kind: unit.Kind, Provider: unit.Provider, Model: unit.Model,
+			GroupID: unit.GroupID, GroupName: groupNames[unit.GroupID], Fast: unit.Fast,
+			State:   unit.State,
 			Attempt: unit.Attempt, ErrorCode: unit.ErrorCode, Usage: decodeMetering(unit.ActualJSON),
 			Cost: costs[unit.UnitID], Currency: "CNY",
 			StartedAt: unit.StartedAt, FinishedAt: unit.FinishedAt,

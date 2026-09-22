@@ -63,13 +63,28 @@ const NO_VENDOR = "\u0000";
  * 在界面上长得一模一样。摆出来才看得见「这里是空的」。
  *
  * 三个桶互不重叠：input 只算未命中缓存的新增输入，命中的走 cache_read。
- * 缓存写入不在其中，见下面的 HIDDEN_UNITS。
+ * 缓存写入是另一回事，见下面的 CACHE_WRITE_UNITS。
  */
 const LLM_UNITS = [
   "llm.input_tokens",
   "llm.output_tokens",
   "llm.cache_read_tokens",
 ] as const;
+
+/**
+ * 缓存写入的两个计价桶，按 TTL 分：5 分钟与 1 小时，单价差 1.6 倍
+ * （输入价的 1.25 倍 vs 2 倍）。真正进账本的是它们，不是那个合计。
+ *
+ * 和 LLM_UNITS 分开列，因为它们**只对 Anthropic 一族成立**：按 TTL 分档报
+ * cache_creation 的只有 Claude，Codex 一族的 usage 里压根没有这个数。
+ * 给 Codex 的模型摆这两行，运营填进去的价永远匹配不到任何一次请求 ——
+ * 而匹配不上不报错，只是那两行永远是 0。
+ *
+ * TTL 是调用方在请求体的 cache_control 里自己写的（不写 = 5 分钟），
+ * 平台这边既控制不了也预测不了，所以两档都得有价。
+ */
+const CACHE_WRITE_UNITS = ["llm.cache_write_5m_tokens", "llm.cache_write_1h_tokens"] as const;
+
 
 
 /** 返现比例存万分之一：1000 = 10%。表单里填百分数。折扣也是万分之一，同一个函数。 */
@@ -394,10 +409,14 @@ export function ModelCatalog() {
   const price = (value: number) => (value > 0 ? `¥${(value / MICRO).toFixed(2)}` : "-");
 
   const prices = useMemo(() => table?.prices ?? [], [table]);
-  // 「有量无价」告警也要跟着藏：藏掉缓存写入的定价入口之后，还留着一条
-  // 「缓存写入 token 有用量、没有价 · 去定价」的橙色胶囊，点过去却找不到那一行，
+  // 「有量无价」告警跟着 HIDDEN_UNITS 走：藏起来的单位没有定价入口，
+  // 留着一条「有用量、没有价 · 去定价」的橙色胶囊，点过去却找不到那一行，
   // 是把「我们不收这笔钱」说成了「你忘了填」。
+  //
+  // 现在只藏合计。缓存写入的 5m / 1h 两档会在这里告警，而那正是要的 ——
+  // 它们真有量也真该有价，静默按 0 收才是问题。
   const unpriced = (table?.unpriced ?? []).filter((row) => !HIDDEN_UNITS.has(row.unit));
+
 
   /**
    * 兜底价能改哪些能力：价目表里出现过的，加上模型目录里声明过的。
@@ -442,6 +461,21 @@ export function ModelCatalog() {
     return rows.filter((row) => (row.vendor?.trim() ? row.vendor.trim() === vendor : vendor === NO_VENDOR));
   }, [rows, vendor]);
 
+  /**
+   * 当前筛出来的这批模型是不是**清一色 Claude**。
+   *
+   * 缓存写入那两档只对 Anthropic 一族成立，而这张表是各厂商混排的。逐行判断的话，
+   * 同一列在 Claude 行有两个数、在 Codex 行是破折号，一列三种形态比看不见还难读。
+   * 所以按**视图**给：把厂商筛到只剩 Claude，这一列才多出那两格。
+   *
+   * 空表不算 —— 筛出零行时列跟着变宽，看起来像是筛选器把列也改了。
+   */
+  const claudeView = useMemo(
+    () => visibleRows.length > 0 && visibleRows.every((row) => protocolFamily(row.family ?? "") === "anthropic"),
+    [visibleRows],
+  );
+
+
   const columns: ColumnsType<GalaxyModelView> = [
     {
       title: t("galaxy.model.model"),
@@ -468,17 +502,30 @@ export function ModelCatalog() {
       ),
     },
     {
-      // 我们自己收的价。三档并排，顺序和模型卡片上那三格一致 ——
+      // 我们自己收的价。几档并排，顺序和模型卡片上那几格一致 ——
       // 运营在这一页核对的就是「门户上会标成多少」，两处顺序不同就得逐个认。
-      title: t("galaxy.model.ourPrices"),
+      //
+      // 筛到只剩 Claude 时多出缓存写入两档（5 分钟 / 1 小时），见 claudeView。
+      // 那一档的 tooltip 要把 TTL 是谁定的说清楚：五个数并排，光看表头认不出
+      // 后两个为什么有两档，更认不出它由调用方决定、运营这边只能两档都备着价。
+      title: claudeView ? (
+        <Tooltip title={t("galaxy.model.ourPricesClaudeHint")}>
+          <span>{t("galaxy.model.ourPricesClaude")}</span>
+        </Tooltip>
+      ) : (
+        t("galaxy.model.ourPrices")
+      ),
+
       key: "ourPrices",
-      width: 230,
+      width: claudeView ? 320 : 230,
       render: (_, row) =>
         row.inputPrice > 0 || row.outputPrice > 0 || row.cachePrice > 0 ? (
           <Space size={6} wrap>
             <span className="manager-mono">
               {price(row.inputPrice)} / {price(row.outputPrice)} / {price(row.cachePrice)}
+              {claudeView ? ` / ${price(row.cacheWritePrice)} / ${price(row.cacheWrite1hPrice)}` : ""}
             </span>
+
             {/* 回落到兜底价时必须说出来：不说的话，一屏模型显示同一个数看起来像页面坏了，
                 而运营会以为这些模型都单独定过价。 */}
             {!row.priced ? (
@@ -965,15 +1012,29 @@ function ModelPricing({
     setEffort(target?.effort ?? "");
   }, [target]);
 
-  /** 这个能力下要摆出来的计量单位。对话类固定四个桶，别的能力照价目表里已有的来。 */
+  /**
+   * 这个能力下要摆出来的计量单位。对话类固定三个桶，别的能力照价目表里已有的来。
+   *
+   * 缓存写入那两档只在 **Claude 一族**和**兜底价**上多摆出来（见 CACHE_WRITE_UNITS）：
+   * 兜底价跨模型、也管着 Claude，它那一行不摆，Claude 就只能一个个单独定价。
+   *
+   * 这里只管「默认摆哪几行」。价目表里真有的行照常并进来 —— 历史上给 Codex 模型
+   * 填过的缓存写入价不会因为这条规则凭空消失，运营还得看得见才能把它清掉。
+   */
   const units = useMemo(() => {
     const seen = new Set<string>();
-    if (kind.startsWith("llm.")) for (const unit of LLM_UNITS) seen.add(unit);
+    if (kind.startsWith("llm.")) {
+      for (const unit of LLM_UNITS) seen.add(unit);
+      if (fallback || protocolFamily(target?.family ?? "") === "anthropic") {
+        for (const unit of CACHE_WRITE_UNITS) seen.add(unit);
+      }
+    }
     for (const row of prices) if (row.kind === kind) seen.add(row.unit);
     for (const unit of extraUnits) seen.add(unit);
-    // 藏起来的那几个即使价目表里已经有行，也不摆出来（见 HIDDEN_UNITS）。
+    // 藏起来的那个（缓存写入的合计）即使价目表里已经有行，也不摆出来（见 HIDDEN_UNITS）。
     return Array.from(seen).filter((unit) => !HIDDEN_UNITS.has(unit));
-  }, [kind, prices, extraUnits]);
+  }, [kind, prices, extraUnits, fallback, target?.family]);
+
 
   /**
    * 这个模型自己此刻生效的那条价，按单位索引。没有就是它没单独定过价。

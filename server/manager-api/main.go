@@ -49,8 +49,14 @@ func main() {
 	cancelPing()
 
 	tokenTTL, _ := strconv.Atoi(httpx.Property("auth.token_ttl_seconds"))
-	managerService, err := manager.New(database, manager.Ports{Tokens: tokens}, manager.Config{
-		TokenTTL: time.Duration(tokenTTL) * time.Second,
+	// 连续登录失败的计数和令牌共用同一个 Redis 客户端（tokens 同时实现了 LoginGuard）。
+	// 三个上限都留空就用领域层的默认值：10 次 / 60 次（按来源）/ 15 分钟。
+	// 填负数才是「这一维不限制」—— 那是一次明写的决定，不该由漏配达成。
+	managerService, err := manager.New(database, manager.Ports{Tokens: tokens, Guard: tokens}, manager.Config{
+		TokenTTL:          time.Duration(tokenTTL) * time.Second,
+		MaxLoginFail:      signedProperty("manager.max_login_fail"),
+		MaxLoginFailPerIP: signedProperty("manager.max_login_fail_per_ip"),
+		LoginFailWindow:   time.Duration(signedProperty("manager.login_fail_window_seconds")) * time.Second,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -172,6 +178,19 @@ func splitList(raw string) []string {
 		}
 	}
 	return values
+}
+
+// signedProperty 读一个**允许为负**的整数配置，没配或写不成数就返回 0。
+//
+// 要区分三种情况：没配（0，用领域层的默认值）、正数（就用它）、负数（这一维
+// 不限制）。用 strconv.Atoi 的零值直接顶上会把「配了个 0」和「没配」混成一件事，
+// 这里无所谓 —— 两者本来就是同一个意思。
+func signedProperty(key string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(httpx.Property(key)))
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 func defaultString(value, fallback string) string {

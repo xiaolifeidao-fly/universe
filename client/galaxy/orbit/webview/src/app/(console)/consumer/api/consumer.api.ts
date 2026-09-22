@@ -549,11 +549,16 @@ export class ModelEffortPrice {
 
   cachePrice = 0;
 
+  /** 缓存写入 5 分钟档。名字不带 5m 是历史包袱，别改：旧版本桌面端还在读它。 */
   cacheWritePrice = 0;
+
+  /** 缓存写入 1 小时档。只有 Claude 一族有这个数。 */
+  cacheWrite1hPrice = 0;
 }
 
 /**
  * 1 积分 = ¥1。积分字段和金额一样是「微」（÷1_000_000 得到积分），套餐标价直接就是积分价。
+
  * 积分只能由平台运营充值；这一端只有看和花。
  */
 
@@ -579,7 +584,17 @@ export class PortalModelView {
 
   cachePrice = 0;
 
+  /**
+   * 缓存写入两档：5 分钟与 1 小时，单价差 1.6 倍。
+   *
+   * 用哪一档由**你自己的客户端**在请求体的 cache_control 里写（不写 = 5 分钟）。
+   * Claude Code 拿 API 密钥接进来时默认就是 5 分钟，想走 1 小时要自己设
+   * CLAUDE_CODE_PROMPT_CACHE_TTL。只有 Claude 一族分这两档，Codex 一族恒为 0。
+   */
   cacheWritePrice = 0;
+
+  cacheWrite1hPrice = 0;
+
 
   /** 官方参考价，同口径同币种。0 = 运营没声明，卡片上不划线也不标折扣。 */
   listInputPrice = 0;

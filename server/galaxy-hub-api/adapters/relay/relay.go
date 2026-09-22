@@ -62,6 +62,10 @@ type Options struct {
 	// Models 对外声明的模型清单（GET /v1/models）。来自 galaxy.models，
 	// 不配走 DefaultModels。见 models.go 开头关于「为什么不从节点汇总」的说明。
 	Models []string
+	// CodexManifest 是 Codex 那份模型清单文件的路径（galaxy.codex_manifest）。
+	// 不配就不生效，/v1/models 仍只给两族的经典形状。为什么要它、为什么默认不开，
+	// 见 models.go 里 codexCatalog 上面的说明。
+	CodexManifest string
 }
 
 func (o Options) withDefaults() Options {
@@ -86,10 +90,15 @@ type Adapter struct {
 	// KindSpec 才能建起来。装配层拿这个指针在环建好之后回填 Galaxy。
 	deps    *corepkg.Deps
 	options Options
+	// codexManifest slug → 那一条的原始 JSON。启动时读一次：清单是部署方给的静态
+	// 文件，改了跟着重启，不值得为它在请求路径上加一次磁盘读。没配或读不出就是 nil。
+	codexManifest map[string]json.RawMessage
 }
 
 func New(deps *corepkg.Deps, options Options) *Adapter {
-	return &Adapter{deps: deps, options: options.withDefaults()}
+	adapter := &Adapter{deps: deps, options: options.withDefaults()}
+	adapter.codexManifest = loadCodexManifest(adapter.options.CodexManifest)
+	return adapter
 }
 
 // Kind 能力注册（对应设计文档 10.3 的 llm-chat/kind.yaml）。
@@ -114,8 +123,16 @@ type input struct {
 	body   []byte
 	model  string
 	stream bool
-	// effort 这次请求的推理强度，已按协议族收敛（见 parseEffort）。它进计价键。
+	// effort 这次请求的推理强度，已按协议族收敛（见 parseEffort），
+	// 并且在 applyPolicy 之后是**夹过分组档位表**的那一档。
 	effort contract.Effort
+	// effortFromBudget 这一档是从老式的 thinking.budget_tokens 折出来的，
+	// 而不是 output_config.effort。夹档要改回请求体时得知道改哪个字段 ——
+	// 给一个只认预算的老模型塞 output_config，它会原样忽略，于是上游照旧按深档跑。
+	effortFromBudget bool
+	// fast 客户端要的是不是「快速」。同样在 applyPolicy 之后是夹过分组开关的值：
+	// 分组没开快速时恒为 false，而且请求体里那个标记已经被改写掉了。
+	fast bool
 	// maxTokens 预估输出用；countTokens 路径没有它。
 	maxTokens int64
 	// previousResponseID 触发硬钉。
@@ -196,6 +213,8 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 		Reasoning *struct {
 			Effort string `json:"effort"`
 		} `json:"reasoning"`
+		// ServiceTier 「快速」的出处，两族同名字段不同取值（见 policy.go）。
+		ServiceTier string `json:"service_tier"`
 	}
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return &input{path: path, spec: spec}, contract.NewUnitError(contract.ErrorClassInput, contract.CodeInvalidBody, false, "请求体不是合法 JSON")
@@ -221,6 +240,8 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 			effort = envelope.OutputConfig.Effort
 		}
 		parsed.effort = anthropicEffort(effort, budget)
+		// 正主没写、只有老式预算时，这一档是折出来的 —— 夹档要改回预算那个字段。
+		parsed.effortFromBudget = contract.NormalizeEffort(FamilyAnthropic, effort) == "" && budget > 0
 	case FamilyOpenAI:
 		effort := ""
 		if envelope.Reasoning != nil {
@@ -228,6 +249,7 @@ func (a *Adapter) Parse(ginContext *gin.Context) (corepkg.Input, error) {
 		}
 		parsed.effort = openaiEffort(effort)
 	}
+	parsed.fast = parseFast(envelope.ServiceTier)
 	switch {
 	case envelope.MaxTokens != nil:
 		parsed.maxTokens = *envelope.MaxTokens
@@ -327,6 +349,20 @@ func injectIncludeUsage(raw []byte) ([]byte, bool) {
 	return out, true
 }
 
+// ApplyPolicy 通用层解出这一次的分组之后调它，把强度与快速夹到分组卖的范围内，
+// 并**同步改写请求体**。返回夹过之后的值，通用层拿它盖回路由键与单元行。
+//
+// 为什么是适配器的事：请求体的形状只有它认识（两族的强度字段名都不一样，
+// 老模型还得改预算）。通用层只知道「这次落在哪个分组、那个分组卖哪几档」。
+func (a *Adapter) ApplyPolicy(raw corepkg.Input, policy contract.GroupPolicy) (contract.Effort, bool) {
+	in, ok := raw.(*input)
+	if !ok {
+		return "", false
+	}
+	a.applyPolicy(in, policy)
+	return in.effort, in.fast
+}
+
 func (a *Adapter) Route(ctx context.Context, raw corepkg.Input) (contract.RouteKey, error) {
 	in, ok := raw.(*input)
 	if !ok {
@@ -334,8 +370,11 @@ func (a *Adapter) Route(ctx context.Context, raw corepkg.Input) (contract.RouteK
 	}
 	route := contract.RouteKey{
 		Kind: Kind, KindVersion: Version, Family: in.spec.family,
-		Provider: a.options.Providers[in.spec.family], Model: in.model, Effort: in.effort,
+		Provider: a.options.Providers[in.spec.family], Model: in.model,
+		Effort: in.effort, Fast: in.fast,
 	}
+	// Group 不在这里填：请求体里没有分组这个概念，它由密钥决定。
+	// 通用层鉴权之后解出来，再调 ApplyPolicy 让这个适配器把请求体改到位。
 	if in.previousResponseID != "" {
 		cid, found := a.deps.Galaxy.LookupResponseContribution(ctx, in.previousResponseID)
 		if !found {
@@ -386,6 +425,7 @@ func (a *Adapter) ToUnit(raw corepkg.Input, caller corepkg.Caller) contract.Work
 		Kind: Kind, KindVersion: Version, Primitive: contract.PrimitiveRelay,
 		Family: in.spec.family, Provider: a.options.Providers[in.spec.family], Model: in.model,
 		Effort:      in.effort,
+		Fast:        in.fast,
 		ConsumerKey: caller.KeyID,
 		Inputs: []contract.Payload{{
 			Name: "body", Inline: in.body, ContentType: "application/json",

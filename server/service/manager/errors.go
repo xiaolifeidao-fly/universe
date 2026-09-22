@@ -13,8 +13,15 @@ var (
 	// 换掉它，会话过期就只会弹一个红条，用户卡在一个点什么都失败的页面上。
 	ErrNotLogin = errors.New("登录凭证已失效，请重新登录")
 	// ErrLoginFailed 用户名不存在、密码错、账号被禁用共用一句话，防账号枚举。
-	ErrLoginFailed       = errors.New("用户名或密码不正确")
-	ErrLoginLocked       = errors.New("连续登录失败次数过多，请稍后再试")
+	ErrLoginFailed = errors.New("用户名或密码不正确")
+	// ErrLoginLocked 连续失败太多次，闸门还没到期。
+	//
+	// 和 ErrLoginFailed 分开说是刻意的：合成一句的话，被锁住的人会一直以为是
+	// 自己记错了密码，而这时候每一次尝试都不会走到 bcrypt，也就永远不会成功。
+	//
+	// 它不泄露「这个用户名存在」：计数按**输进来的用户名**记，账号在不在都一样
+	// 记、一样锁。调用方用 %w 包一句「还要等多久」再返回。
+	ErrLoginLocked       = errors.New("连续登录失败次数过多")
 	ErrNoPermission      = errors.New("没有访问该功能的权限")
 	ErrReadOnlyRole      = errors.New("当前角色没有写入权限")
 	ErrMustChangePasswd  = errors.New("请先修改初始密码")

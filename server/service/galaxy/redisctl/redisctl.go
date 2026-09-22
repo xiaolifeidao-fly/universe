@@ -260,7 +260,8 @@ func (c *ControlPlane) ReplaceContributions(ctx context.Context, nodeID string, 
 			"nodeId": snapshot.NodeID, "ownerUserId": snapshot.OwnerUserID,
 			"kind": snapshot.Kind, "kindVersion": snapshot.KindVersion, "provider": snapshot.Provider,
 			"lane": lane, "modelsAllow": encode(snapshot.ModelsAllow), "modelsDeny": encode(snapshot.ModelsDeny),
-			"seats": snapshot.Seats, "seatConc": snapshot.SeatConcurrency,
+			"groups": encode(snapshot.Groups),
+			"seats":  snapshot.Seats, "seatConc": snapshot.SeatConcurrency,
 			"schedule": encode(snapshot.Schedule), "reputation": snapshot.Reputation,
 			// 余量下限是**配置**，跟着这条全量替换写。此刻剩多少是运行态，
 			// 由心跳的 UpdateLaneRuntime 维护 —— 不过重建时也顺手带一份进来
@@ -647,6 +648,7 @@ func (c *ControlPlane) LoadUnit(ctx context.Context, rid string) (galaxy.UnitRun
 			runtime.KindVersion = unit.KindVersion
 			runtime.Provider = unit.Provider
 			runtime.Model = unit.Model
+			runtime.Group = unit.Group
 			runtime.Effort = unit.Effort
 			runtime.SID = unit.SID
 			runtime.Attempt = unit.Attempt

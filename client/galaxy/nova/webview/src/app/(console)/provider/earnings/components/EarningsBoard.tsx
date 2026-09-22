@@ -13,8 +13,8 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { WeekBars } from "@/components/galaxy/charts";
 import { PageHeader } from "@/components/shell/GalaxyShell";
-import { IconDownload, IconWallet } from "@/components/ui/icons";
-import { Btn, Card, CardHead, DataTable, Figure, Loading, Note, Pager, Pill, Seg } from "@/components/ui/kit";
+import { IconDownload, IconRefresh, IconWallet } from "@/components/ui/icons";
+import { Btn, Card, CardHead, DataTable, Figure, IconBtn, Loading, Note, Pager, Pill, Seg } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { formatCny, formatDay, formatPoints, formatSignedPoints } from "@/utils/format";
 import {
@@ -101,10 +101,37 @@ export function EarningsBoard() {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * 页头连加载态一起渲染，为的是刷新按钮一直在：这一页要等三个接口，
+   * 慢的那个卡住时整页只剩一个转圈，按钮摆在那儿至少还能自己再试一次。
+   * 提现按钮这时还不知道有多少可提，先禁着 —— 点开一个空的提现框更糟。
+   */
+  const header = (
+    <PageHeader
+      title={t("earnings.title")}
+      meta={t("earnings.subtitle")}
+      actions={
+        <>
+          <IconBtn label={t("common.refresh")} onClick={() => void load()}>
+            <IconRefresh size={17} />
+          </IconBtn>
+          <Btn
+            tone="accent"
+            icon={<IconWallet size={16} />}
+            disabled={(dashboard?.credits.available ?? 0) <= 0}
+            onClick={() => setWithdrawing(true)}
+          >
+            {t("earnings.withdraw")}
+          </Btn>
+        </>
+      }
+    />
+  );
+
   if (loading || !dashboard) {
     return (
       <>
-        <PageHeader title={t("earnings.title")} meta={t("earnings.subtitle")} />
+        {header}
         <div className="gx-body">
           <Loading />
         </div>
@@ -120,15 +147,7 @@ export function EarningsBoard() {
 
   return (
     <>
-      <PageHeader
-        title={t("earnings.title")}
-        meta={t("earnings.subtitle")}
-        actions={
-          <Btn tone="accent" icon={<IconWallet size={16} />} disabled={credits.available <= 0} onClick={() => setWithdrawing(true)}>
-            {t("earnings.withdraw")}
-          </Btn>
-        }
-      />
+      {header}
       <div className="gx-body">
         <div style={{ display: "grid", gridTemplateColumns: "1.15fr 1fr", gap: 14 }}>
           <Card className="gx-rise" style={{ padding: "22px 24px", display: "flex", flexDirection: "column", gap: 16 }}>

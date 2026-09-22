@@ -191,29 +191,64 @@ func (s *service) resolveInviter(ctx context.Context, side, code string) (string
 	return "", nil
 }
 
+// Login 用户名 + 密码换一张令牌。
+//
+// 三件事按这个顺序发生，顺序本身是设计的一部分：
+//
+//	先过闸    连续失败太多次就当场拒绝，**不查库、不算 bcrypt**。否则被锁之后
+//	          的每一次尝试仍要烧掉一次 bcrypt，这道闸自己就成了放大器。
+//	再验密码  用户名不存在、账号停用、密码不对，对外都是同一句 ErrLoginFailed，
+//	          分开说等于把用户名枚举的能力送出去；三种都各记一次失败，只记
+//	          密码不对的话，拿一串用户名扫过去的那种打法一次都不会被计上。
+//	都留痕    成功与失败都往 zt_galaxy_login_record 落一行。闸上的计数会自己
+//	          过期，事后能答出「谁在什么时候试过什么」的只有这张表。
 func (s *service) Login(ctx context.Context, req dto.LoginAccountRequest) (dto.AccountLoginResult, error) {
 	if !validSide(req.Side) {
 		return dto.AccountLoginResult{}, fmt.Errorf("未知的账号端: %s", req.Side)
 	}
 	username := strings.ToLower(strings.TrimSpace(req.Username))
 	if username == "" || req.Password == "" {
+		// 空表单不计数也不留痕：它连一次尝试都算不上，计上去只会让用户误触
+		// 几下就把自己锁了。
 		return dto.AccountLoginResult{}, errors.New("请输入用户名和密码")
 	}
+
+	userKey, ipKey := loginKeys(req.Side, username, req.IP)
+	if retryAfter, blocked := s.loginBlocked(ctx, userKey, ipKey); blocked {
+		// 被闸挡下的这次也留痕（但不再加计数 —— 加了就成了「越试锁越久」）：
+		// 事后要能看出爆破是从哪一刻开始撞墙的。
+		s.recordLogin(ctx, req, "", username, false, "失败次数过多，已暂时锁定")
+		return dto.AccountLoginResult{}, tooManyAttempts(retryAfter)
+	}
+
 	row, err := s.repository.FindUserByName(ctx, bizLine, req.Side, username)
 	if repository.IsNotFound(err) {
+		s.penalizeLogin(ctx, userKey, ipKey)
+		s.recordLogin(ctx, req, "", username, false, "用户名不存在")
 		return dto.AccountLoginResult{}, ErrLoginFailed
 	}
 	if err != nil {
+		// 库挂了不是这个人的错：不计数，也不留痕（那一路同样要库）。
 		return dto.AccountLoginResult{}, fmt.Errorf("认证服务不可用: %w", err)
 	}
-	if row.Status != dto.AccountActive || bcrypt.CompareHashAndPassword([]byte(row.PasswordHash), []byte(req.Password)) != nil {
+	if row.Status != dto.AccountActive {
+		s.penalizeLogin(ctx, userKey, ipKey)
+		s.recordLogin(ctx, req, row.UserID, username, false, "账号已停用")
 		return dto.AccountLoginResult{}, ErrLoginFailed
 	}
+	if bcrypt.CompareHashAndPassword([]byte(row.PasswordHash), []byte(req.Password)) != nil {
+		s.penalizeLogin(ctx, userKey, ipKey)
+		s.recordLogin(ctx, req, row.UserID, username, false, "密码不正确")
+		return dto.AccountLoginResult{}, ErrLoginFailed
+	}
+
+	s.clearLoginFailures(ctx, userKey)
 	now := time.Now()
 	// 登录时间写不进去不该挡住登录本身。
 	if err := s.repository.TouchUserLogin(ctx, bizLine, row.Side, row.UserID, now); err == nil {
 		row.LastLoginAt = &now
 	}
+	s.recordLogin(ctx, req, row.UserID, username, true, "")
 	return s.loginResult(ctx, row)
 }
 

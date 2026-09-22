@@ -5,10 +5,12 @@
  * 这里只负责把「什么时候加哪个 class」固定下来 —— 和两个控制台的 kit.tsx 同一个思路。
  */
 
+import { message } from "antd";
 import Link from "next/link";
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, CSSProperties, PropsWithChildren, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IconArrowRight, IconPlus } from "./icons";
+import { useLocale } from "@/i18n/LocaleProvider";
 import { copyText } from "@/utils/format";
 
 /* ---------- 版面 ---------- */
@@ -212,13 +214,17 @@ export function Faq({ items }: { items: FaqEntry[] }) {
 export type CopyState = "idle" | "ok" | "fail";
 
 /**
- * 复制到剪贴板的三态。
+ * 复制到剪贴板的三态，外加一条浮层提示。
  *
  * 失败必须看得见：门户如果部署在明文 http 上（或任何非安全上下文），
  * `navigator.clipboard` 根本不存在，按钮会一声不响什么都不做 ——
  * 而它复制的正好是首屏那行「照着填就能用」的服务地址。
+ *
+ * 成功也要说一声：按钮上的文案变化就在指针底下，点完那一下多半没看见。
+ * 提示收在这个 hook 里而不是各个调用点 —— 它得对每一个复制按钮都成立。
  */
 export function useCopy(resetMs = 1800): { state: CopyState; copy: (value: string) => void } {
+  const { t } = useLocale();
   const [state, setState] = useState<CopyState>("idle");
   const timer = useRef<number | null>(null);
 
@@ -230,12 +236,14 @@ export function useCopy(resetMs = 1800): { state: CopyState; copy: (value: strin
     (value: string) => {
       if (!value) return;
       void copyText(value).then((ok) => {
+        if (ok) message.success(t("common.copySuccess"));
+        else message.error(t("common.copyFailed"));
         setState(ok ? "ok" : "fail");
         if (timer.current !== null) window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => setState("idle"), resetMs);
       });
     },
-    [resetMs],
+    [resetMs, t],
   );
 
   return { state, copy };

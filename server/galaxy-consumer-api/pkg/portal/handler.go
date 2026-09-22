@@ -187,22 +187,13 @@ func (h *Handler) allowLead() bool {
 
 // clientIP 取一个**限流用**的来访者标识。
 //
-// gin 的 ClientIP() 在 SetTrustedProxies(nil) 之下只认 RemoteAddr，而这套部署
-// 前面站着 nginx、门户自己还有一层 Next.js 代理 —— 所有请求看起来都来自同一台
-// 机器，按它限流等于全站共用一个额度。所以这里显式读 X-Forwarded-For 的第一跳。
+// 取值规则收在 httpx.ClientIP 里，三个服务的登录留痕、登录失败计数和这里的留资
+// 限流用的是同一份 —— 各写一遍的话，改了其中一处的取值顺序，另外几处会安静地
+// 按老规则继续跑。
 //
-// 它是可以伪造的 —— 门户那层 Next.js 代理把浏览器的请求头原样转发过来，所以这个值
-// 实际上是**访问者自己填的**。因此它**只**用于限流键，不参与任何鉴权或归属判断；
-// 换着 IP 刷的代价由整站每小时上限那道闸兜住（而那道闸只由会写库的请求消耗）。
+// 对留资这条路要多记一句：这个值是可以伪造的（门户那层 Next.js 代理把浏览器的
+// 请求头原样转发过来），换着 IP 刷的代价由整站每小时上限那道闸兜住 ——
+// 而那道闸只由会写库的请求消耗。
 func clientIP(context *gin.Context) string {
-	forwarded := context.GetHeader("X-Forwarded-For")
-	if first, _, found := strings.Cut(forwarded, ","); found || strings.TrimSpace(first) != "" {
-		if value := strings.TrimSpace(first); value != "" {
-			return value
-		}
-	}
-	if real := strings.TrimSpace(context.GetHeader("X-Real-IP")); real != "" {
-		return real
-	}
-	return context.ClientIP()
+	return httpx.ClientIP(context)
 }

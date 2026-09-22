@@ -34,6 +34,11 @@ type LoginAccountRequest struct {
 	Side     string `json:"-"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+
+	// IP / UserAgent 由接口层从请求本身填，**不从 JSON 绑**（所以是 json:"-"）。
+	// 让调用方自报的话，按来源计数的那道闸每次换一个值就绕过去了，留痕也等于没记。
+	IP        string `json:"-"`
+	UserAgent string `json:"-"`
 }
 
 type ChangeAccountPasswordRequest struct {

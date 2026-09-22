@@ -75,10 +75,22 @@ func Build(database *gorm.DB, registry *galaxy.KindRegistry, replayer galaxy.Sha
 
 // Accounts 装配账号服务。keys 是使用端「注册即送一把密钥」的签发方，传 Assembly.Galaxy；
 // 传 nil 就只建账号不送密钥。
-func Accounts(database *gorm.DB, keys account.KeyIssuer) (account.Service, *auth.Gate) {
-	accounts := account.New(database, account.Options{
+//
+// control 是连续登录失败那道闸的计数面，传 Assembly.Control。参数类型写成具体的
+// *ControlPlane 而不是 account.LoginGuard，是为了躲开「装着 nil 指针的非 nil 接口」——
+// 那种值会让 account 里每一处 `guard == nil` 的判断都落空，闸看起来装上了，
+// 一调就是空指针。
+func Accounts(database *gorm.DB, keys account.KeyIssuer, control *redisctl.ControlPlane) (account.Service, *auth.Gate) {
+	options := account.Options{
 		TokenSecret: TokenSecret(), TokenTTL: TokenTTL(), Keys: keys,
-	})
+		MaxLoginFail:      signedProperty("galaxy.max_login_fail"),
+		MaxLoginFailPerIP: signedProperty("galaxy.max_login_fail_per_ip"),
+		LoginFailWindow:   DurationProperty("galaxy.login_fail_window_ms", 0),
+	}
+	if control != nil {
+		options.Guard = control
+	}
+	accounts := account.New(database, options)
 	return accounts, auth.NewGate(accounts)
 }
 

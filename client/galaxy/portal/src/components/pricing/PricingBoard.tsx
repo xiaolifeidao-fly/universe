@@ -22,17 +22,26 @@ import type { PortalOverview } from "@/utils/portal";
 const HOW_ICONS = [<IconGauge key="1" />, <IconReceipt key="2" />, <IconShield key="3" />];
 
 /**
- * 公开单价表上一律不露出的计量单位：缓存写入的三个桶。
+ * 公开单价表上一律不露出的计量单位：缓存写入的**合计**。
  *
- * 真按 TTL 分档报这一项的只有 Anthropic（cache_creation 拆成 5m / 1h 两档），
- * OpenAI 一族只有缓存**读取**。在一张对所有模型通用的单价表上摆两行只对一半模型
- * 成立的价，比不摆更容易让人算错自己的成本。量照常计，只是不在这里标价。
+ * 它是 5m 与 1h 两档加出来的数，服务端的 derivedUnits 永远不让它进账本 ——
+ * 标一个不会被收的价，等于在价目表上多报一笔钱。
+ *
+ * 两个 TTL 分项照常标价：它们是真正进账本的那一层，而且金额不小
+ * （5 分钟档是输入价的 1.25 倍，1 小时档是 2 倍）。不标的话，一个大量用缓存的人
+ * 按这张表算出来的成本会明显低于他真会付的数 —— 那比多两行更容易让人算错。
  */
-const HIDDEN_UNITS = new Set([
-  "llm.cache_write_tokens",
-  "llm.cache_write_5m_tokens",
-  "llm.cache_write_1h_tokens",
-]);
+const HIDDEN_UNITS = new Set(["llm.cache_write_tokens"]);
+
+/**
+ * 只对 Claude 一族成立的计量单位：按 TTL 分档报 cache_creation 的只有 Anthropic，
+ * Codex 一族的 usage 里压根没有这个数。
+ *
+ * 这张表是跨模型的一张通用表，没有「按族筛」这回事，所以行照摆、旁边标一句
+ * 「仅 Claude」。不标的话，用 Codex 的人会以为自己也要付这两笔。
+ */
+const CLAUDE_ONLY_UNITS = new Set(["llm.cache_write_5m_tokens", "llm.cache_write_1h_tokens"]);
+
 
 export function PricingBoard({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
@@ -93,7 +102,15 @@ export function PricingBoard({ overview }: { overview: PortalOverview }) {
                           {line.kind}
                         </span>
                       </td>
-                      <td>{unitLabel(line.unit, t)}</td>
+                      <td>
+                        {unitLabel(line.unit, t)}
+                        {CLAUDE_ONLY_UNITS.has(line.unit) ? (
+                          <span style={{ display: "block", fontSize: 11, color: "var(--gp-faint)", fontWeight: 400 }}>
+                            {t("pricing.claudeOnly")}
+                          </span>
+                        ) : null}
+                      </td>
+
                       <td className="num">{formatUnitPrice(line.price, line.currency)}</td>
                     </tr>
                   ))}

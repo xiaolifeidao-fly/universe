@@ -55,6 +55,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 |---|---|
 | `zt_galaxy_provider_user` | 共享端账号。用户名在本端内唯一；`token_version` 签进令牌，改密码、重置、停用都加一 |
 | `zt_galaxy_consumer_user` | 使用端账号。列与共享端那张相同；积分余额、密钥、邀请码都挂在这批账号上 |
+| `zt_galaxy_login_record` | 两端的登录留痕，成功与失败都记，**不按端分表**（`side` 只是一列）。它是证据不是闸门 —— 连续失败的判定在 Redis（`<ns>:login:*`，15 分钟过期）；用户名不存在时照样落一行，`user_id` 留空 |
 | `zt_galaxy_provider` | 共享端账号的身份：散户 / 工作室。没有行就是散户，只有运营能设成工作室 |
 | `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
 | `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
@@ -202,7 +203,7 @@ SELECT COUNT(*) FROM zt_galaxy_provider_ledger WHERE biz_line = 'galaxy' AND typ
 | `zt_manager_role` | 角色；`writable` 是角色级的读写总开关 |
 | `zt_manager_resource` | 受控资源树：菜单 / 页面 / **接口**，接口的身份是 `(method, 路由模板)` |
 | `zt_manager_user_role` / `zt_manager_role_resource` | 两组关联 |
-| `zt_manager_login_record` | 登录留痕，成功与失败都记 |
+| `zt_manager_login_record` | 登录留痕，成功与失败都记。它是证据不是闸门 —— 连续失败的判定在 Redis（`<manager.redis_namespace>:login:*`，15 分钟过期） |
 
 **授权是两道门叠加，写操作两道都得过**：先按 `(method, FullPath)` 查资源授权，
 再查角色的 `writable`。只有资源授权配不出「这个角色临时只读」（要逐条撤销写资源）；

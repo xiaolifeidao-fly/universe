@@ -91,6 +91,9 @@ type RechargePointsRequest struct {
 type CreateConsumerKeyRequest struct {
 	UserID string `json:"-"`
 	Alias  string `json:"alias"`
+	// Groups 这把密钥要用的模型分组（mg_…），**必填**：中转按分组走，
+	// 没选分组的密钥回答不了「这次按哪份价收」。一个模型最多选一个分组。
+	Groups []string `json:"groups"`
 	// NoticeVersion 当前生效的数据告知版本。确认过才发得出密钥（C-13）。
 	NoticeVersion string `json:"noticeVersion"`
 }

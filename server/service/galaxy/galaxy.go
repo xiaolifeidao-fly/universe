@@ -419,6 +419,18 @@ type Service interface {
 	// ProviderModels 共享端的模型页：平台在卖哪些模型、跑它们各自记多少积分。
 	// 只给**结算价** —— 对外价和毛利不在这条接口里，共享者拿不到也就反推不出抽成。
 	ProviderModels(ctx context.Context, ownerUserID string) ([]dto.ProviderModelView, error)
+	// ---------- 模型分组 ----------
+	// 分组是平台在卖的那个单位：价挂在它上面，密钥选中它才签得出来，
+	// 共享者加入它才接得到单，请求进来先落到一个分组上。见 modelgroup.go。
+	AdminModelGroups(ctx context.Context) ([]dto.ModelGroupView, error)
+	SaveModelGroup(ctx context.Context, req dto.SaveModelGroupRequest) error
+	DeleteModelGroup(ctx context.Context, req dto.DeleteModelGroupRequest) error
+	// ConsumerGroupOptions 使用端新建密钥时的候选分组（带对外价）。
+	ConsumerGroupOptions(ctx context.Context) (dto.ConsumerGroupCatalog, error)
+	// ResolveGroupPolicy 这一次请求落在哪个分组上，以及那个分组允许哪些强度、开不开快速。
+	// 通用层在鉴权之后、构造单元之前调它，然后按结果改写请求体。
+	ResolveGroupPolicy(ctx context.Context, caller dto.Caller, route contract.RouteKey) (contract.GroupPolicy, error)
+
 	// ProviderModelOptions 共享设置页那两个模型框的候选项：平台已上架的模型，
 	// 按厂商分组，让一条车道只看见自己那一族。不带用户维度 —— 它是平台的声明，
 	// 「这台机器上有没有」由贡献自己的 availableModels 回答。
@@ -664,6 +676,9 @@ type service struct {
 	settings *settingsCache
 	// cipher 加密存储密钥明文。没配 KeyCipherSecret 时是 nil，取回明文的接口会明说原因。
 	cipher *keyCipher
+	// groupCache 模型分组的进程内快照。每一次中转都要解「这一单落哪个分组」，
+	// 按条查库就是把同一张小表查成每秒几十次。见 modelgroup.go。
+	groupCache *groupCache
 
 	// waiting 是等待队列深度的进程内计数。P0 单实例，等待发生在持有消费者连接的
 	// 那个进程里，不需要把 rid 放进 Redis 再被别人唤醒。
@@ -706,6 +721,7 @@ func New(database *gorm.DB, ports Ports, kinds *KindRegistry, config Config) Ser
 		kinds:      kinds,
 		config:     config.withDefaults(),
 		settings:   &settingsCache{},
+		groupCache: &groupCache{},
 		cipher:     newKeyCipher(config.KeyCipherSecret),
 	}
 	svc.waiting.byKind = map[string]int{}

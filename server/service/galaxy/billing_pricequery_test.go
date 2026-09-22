@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"contract"
 )
 
 // 取价这条查询长什么样，钉死。
@@ -15,10 +13,10 @@ import (
 // 调价是插新行，旧行留作历史、永远不删。走不走得上索引全看 WHERE 和 ORDER BY，
 // 而写错了不会报错、不会慢到超时，只是每笔请求多扫几千行 —— 这种退化没人会发现。
 //
-//	uk_gx_price = (biz_line, kind, model_id, effort, unit, effective_from)
+//	uk_gx_price = (biz_line, kind, model_id, group_id, unit, effective_from)
 func TestPriceLookupStaysOnTheUniqueKey(t *testing.T) {
 	service, database := billingHarness(t, &replayPlane{settled: true})
-	if _, err := service.priceTable(context.Background(), "llm.chat", "claude-opus-5", contract.EffortHigh, time.Now()); err != nil {
+	if _, err := service.priceTable(context.Background(), "llm.chat", "claude-opus-5", "mg_DEEP", time.Now()); err != nil {
 		t.Fatalf("取价失败：%v", err)
 	}
 	query := database.queryOf(t, "zt_galaxy_price")
@@ -32,7 +30,7 @@ func TestPriceLookupStaysOnTheUniqueKey(t *testing.T) {
 	if strings.Contains(strings.ToLower(query), "desc") {
 		t.Fatalf("ORDER BY 必须全升序，实际语句：%s", query)
 	}
-	if !strings.Contains(query, "ORDER BY kind, model_id, effort, unit, effective_from") {
+	if !strings.Contains(query, "ORDER BY kind, model_id, group_id, unit, effective_from") {
 		t.Fatalf("ORDER BY 要按唯一键的列序，实际语句：%s", query)
 	}
 }

@@ -74,6 +74,11 @@ func (h *Handler) login(side string) gin.HandlerFunc {
 			return
 		}
 		req.Side = side
+		// 来源与 UA 取自请求本身，不接受请求体传入 —— 让调用方自报，按来源
+		// 计数的那道闸换个值就绕过去了。IP 取的是 X-Forwarded-For 的第一跳，
+		// 仍然是可以伪造的，所以它只用于限流与留痕（见 httpx.ClientIP）。
+		req.IP = httpx.ClientIP(context)
+		req.UserAgent = context.GetHeader("User-Agent")
 		result, err := h.accounts.Login(context.Request.Context(), req)
 		httpx.JSON(context, result, err)
 	}

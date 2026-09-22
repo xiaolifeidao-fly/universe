@@ -570,8 +570,13 @@ export class ModelEffortPrice {
 
   cachePrice = 0;
 
+  /** 缓存写入 5 分钟档。名字不带 5m 是历史包袱，别改：旧版本桌面端还在读它。 */
   cacheWritePrice = 0;
+
+  /** 缓存写入 1 小时档。只有 Claude 一族有这个数。 */
+  cacheWrite1hPrice = 0;
 }
+
 
 /**
  * 模型页的一行：这个模型是什么，跑它能记多少积分。
@@ -609,7 +614,17 @@ export class ProviderModelView {
 
   cachePrice = 0;
 
+  /**
+   * 缓存写入两档：5 分钟与 1 小时，单价差 1.6 倍。
+   *
+   * 哪一档由使用者的客户端在请求体的 cache_control 里写，共享端这边只是照单记账 ——
+   * 接到一笔 1h 的缓存写入，记的积分比 5m 多六成。只有 Claude 一族会分这两档，
+   * Codex 一族恒为 0，界面上按 family 决定摆不摆。
+   */
   cacheWritePrice = 0;
+
+  cacheWrite1hPrice = 0;
+
 
   /** 这四个数是这个模型自己的价，还是回落到了该能力的统一价。 */
   priced = false;
@@ -739,11 +754,13 @@ export class BridgeReleaseManifest {
   /** Hub 的对外地址。手动安装那几行 register 命令用它。 */
   hubUrl = "";
 
-  /** Linux / macOS 一行安装脚本的地址，Hub 地址已经写在脚本里。 */
+  /**
+   * 一行安装脚本（sh）的地址，Hub 地址已经写在脚本里。
+   *
+   * 服务端还会带一个 installPowerShell（Windows 版），这里不接：手装 ai-bridge 只给 Linux，
+   * 见「安装 ai-bridge」那一块的文件头注释。
+   */
   installScript = "";
-
-  /** Windows 的 PowerShell 版。 */
-  installPowerShell = "";
 
   platforms: BridgeReleasePackage[] = [];
 }

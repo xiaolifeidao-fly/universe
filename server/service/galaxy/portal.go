@@ -266,41 +266,25 @@ func (s *service) applyCatalogPrices(ctx context.Context, models []dto.PortalMod
 	if err != nil {
 		return err
 	}
+	// 分组一次取全。卡片上那几个数是模型通价（没单独定价的分组按它收），
+	// 分组那一小块是例外：真的单独定过价的那几个分组。
+	groups, err := s.repository.ListModelGroups(ctx, bizLine, "", true)
+	if err != nil {
+		return err
+	}
 	for index := range models {
 		kind := defaultString(models[index].Kind, portalKind)
 		table, own := resolvePrices(priceRows, kind, models[index].ModelID, "")
 		applyKindPrice(&models[index], table, own)
-		applyEffortPrices(&models[index], priceRows, kind)
+		models[index].Groups = modelGroupPrices(groups, priceRows, kind, models[index].ModelID, listPrice)
 	}
 	return nil
 }
 
-// applyEffortPrices 给卡片补上「按强度分档」的那几行。
-//
-// 卡片上原有的四个数来自 effort 为空的那次取价 —— 它是「没单独定价的强度按它收」，
-// 也就是绝大多数请求真正付的价。这里补的是例外：真的单独定过价的那几档。
-// 一档都没有就什么也不补，界面上不会多出一块空的「按强度计价」。
-func applyEffortPrices(model *dto.PortalModelView, priceRows []*repository.GalaxyPrice, kind string) {
-	efforts := pricedEfforts(priceRows, kind, model.ModelID, protocolFamily(model.Family))
-	if len(efforts) == 0 {
-		return
-	}
-	model.Efforts = make([]dto.ModelEffortPrice, 0, len(efforts))
-	for _, effort := range efforts {
-		table, _ := resolvePrices(priceRows, kind, model.ModelID, effort)
-		model.Efforts = append(model.Efforts, dto.ModelEffortPrice{
-			Effort:      effort,
-			InputPrice:  table[contract.UnitInputTokens].Price,
-			OutputPrice: table[contract.UnitOutputTokens].Price,
-			CachePrice:  table[contract.UnitCacheReadTokens].Price,
-			// 和卡片上那一格同一档：绝大多数请求命中的是 5 分钟缓存，
-			// 合计（llm.cache_write_tokens）不进账本、通常也没有价。
-			CacheWritePrice: table[contract.UnitCacheWrite5mTokens].Price,
-		})
-	}
-}
-
 // applyKindPrice 把计价表里这个模型真会被收的价填进卡片。
+//
+// own 是每个单位**落在了哪一层**（见 resolvePrices）：落到 kind 兜底价（第 0 层）
+// 才叫「统一价」，门户据此说明「这几个数字不是这个模型专属的」。
 //
 // **价只有计价表一个出处。** 模型目录上原先也有四档「展示价」，那是第二份数据：
 // 门户照目录标、账上照计价表扣，两个数对不上时两边都不报错，而访问者看到的是
@@ -310,7 +294,7 @@ func applyEffortPrices(model *dto.PortalModelView, priceRows []*repository.Galax
 // own 分得清落到了哪一层 —— 落到兜底价才叫「统一价」，Priced 置 false，
 // 门户据此说明「这几个数字不是这个模型专属的」，否则回落期间一屏模型
 // 显示同一个数，看起来像页面坏了。
-func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]priceRow, own map[contract.MeterUnit]bool) {
+func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]priceRow, own map[contract.MeterUnit]int) {
 	fill := func(unit contract.MeterUnit, price *int64) {
 		if row, ok := table[unit]; ok {
 			*price = row.Price
@@ -322,12 +306,15 @@ func applyKindPrice(model *dto.PortalModelView, table map[contract.MeterUnit]pri
 	fill(contract.UnitInputTokens, &model.InputPrice)
 	fill(contract.UnitOutputTokens, &model.OutputPrice)
 	fill(contract.UnitCacheReadTokens, &model.CachePrice)
-	// 缓存写入在卡片上只有一格，取 5 分钟那一档 —— 它是绝大多数请求真正命中的 TTL。
+	// 缓存写入两格：5 分钟是默认 TTL，1 小时要调用方自己在 cache_control 里声明。
 	// 拿合计（llm.cache_write_tokens）来填是错的：那个单位不进账本，通常也没有价。
 	fill(contract.UnitCacheWrite5mTokens, &model.CacheWritePrice)
-	// 要「输入和输出都是这个模型自己的行」才算它有专属价。用 || 的话，
-	// 只有一档是专属的那些模型会被当成整份都专属，另一档其实是统一价。
-	model.Priced = own[contract.UnitInputTokens] && own[contract.UnitOutputTokens]
+	fill(contract.UnitCacheWrite1hTokens, &model.CacheWrite1hPrice)
+
+	// 要「输入和输出都落在这个模型自己的行上」才算它有专属价（第 1 层或更细）。
+	// 用 || 的话，只有一档是专属的那些模型会被当成整份都专属，另一档其实是统一价。
+	model.Priced = own[contract.UnitInputTokens] >= priceLayerModel &&
+		own[contract.UnitOutputTokens] >= priceLayerModel
 	model.Currency = defaultString(model.Currency, "CNY")
 	// 折扣按**卡片上最终显示的那个价**重算：回落到统一价之后再拿建表时的
 	// 0 去比，「省 X%」要么消失要么是个 100%。访问者读到的是「我要付这个数、

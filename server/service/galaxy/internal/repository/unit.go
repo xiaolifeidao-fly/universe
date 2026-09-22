@@ -23,6 +23,9 @@ type UnitQuery struct {
 	Model string
 	// State 按终态筛（completed / failed…）。空表示不筛。
 	State string
+	// ExcludeStates 反向筛：这几个状态一行都不要。计数和取行共用同一个 scope，
+	// 排掉的行同时不进 total —— 否则页脚写「共 11 条」而翻页只翻出 7 行。
+	ExcludeStates []string
 	// Primitive 让 relay/session/job 在 SQL 里就分开。放内存里过滤的话，
 	// LIMIT 先生效、过滤后生效，一页能被筛得几乎为空。
 	Primitive string
@@ -118,6 +121,9 @@ func (r *GalaxyRepository) unitScope(ctx context.Context, q UnitQuery) *gorm.DB 
 	}
 	if q.State != "" {
 		tx = tx.Where("state = ?", q.State)
+	}
+	if len(q.ExcludeStates) > 0 {
+		tx = tx.Where("state NOT IN ?", q.ExcludeStates)
 	}
 	if q.Primitive != "" {
 		tx = tx.Where("primitive = ?", q.Primitive)
@@ -308,9 +314,12 @@ type UsageRow struct {
 	// Model 这笔用量调的是哪个模型。和 Provider 一样只记在单元表上，
 	// 单元行被清掉时是空串 —— 那时取价只能回落到 kind 的兜底价。
 	Model string `gorm:"column:model"`
-	// Effort 这笔用量跑的是哪一档推理强度。和 Model 同源同命：只记在单元表上，
-	// 单元行被清掉时是空串，那时取价回落到不分强度价 —— 和当初结算时单元行
+	// GroupID 这笔用量落在哪个模型分组上。和 Model 同源同命：只记在单元表上，
+	// 单元行被清掉时是空串，那时取价回落到模型通价 —— 和当初结算时单元行
 	// 已经没了的情形一致。
+	GroupID string `gorm:"column:group_id"`
+	// Effort 这笔用量上游实际跑的那一档。不进取价（价钱按分组收），
+	// 留着是因为逐笔记录页要答「那一次到底按多深跑的」。
 	Effort string `gorm:"column:effort"`
 	Unit   string `gorm:"column:unit"`
 	Amount int64  `gorm:"column:amount"`
@@ -329,7 +338,7 @@ func (r *GalaxyRepository) SumUsage(ctx context.Context, q UnitQuery) ([]UsageRo
 		Table((&GalaxyMeterRecord{}).TableName()+" AS m").
 		Joins("LEFT JOIN "+(&GalaxyUnit{}).TableName()+" AS u ON u.biz_line = m.biz_line AND u.unit_id = m.unit_id").
 		Select("m.kind AS kind, COALESCE(u.provider, '') AS provider, COALESCE(u.model, '') AS model, "+
-			"COALESCE(u.effort, '') AS effort, m.unit AS unit, "+
+			"COALESCE(u.group_id, '') AS group_id, COALESCE(u.effort, '') AS effort, m.unit AS unit, "+
 			"SUM(m.amount) AS amount, COUNT(DISTINCT m.unit_id) AS calls").
 		Where("m.biz_line = ?", q.BizLine)
 	if q.ConsumerKey != "" {
@@ -353,10 +362,11 @@ func (r *GalaxyRepository) SumUsage(ctx context.Context, q UnitQuery) ([]UsageRo
 	var rows []UsageRow
 	// 分组按 u.provider 而不是 COALESCE 的别名：别名和 u.provider 同名，
 	// MySQL 在 GROUP BY 里会当成歧义列报错。NULL 与空串在分组上是同一组，结果一样。
-	// 模型与强度都进分组：计价已经按这两维走了，汇总还合着算的话，账单上那个
-	// Cost 会拿兜底价去乘一笔其实按模型 × 强度价收过的量 —— 而且是静默算错。
-	err := tx.Group("m.kind, u.provider, u.model, u.effort, m.unit").
-		Order("m.kind, u.provider, u.model, u.effort, m.unit").Find(&rows).Error
+	// 模型与分组都进分组条件：计价已经按这两维走了，汇总还合着算的话，账单上那个
+	// Cost 会拿模型通价去乘一笔其实按分组价收过的量 —— 而且是静默算错。
+	// 强度跟着一起分，是为了逐笔记录页能显示它；它不参与取价。
+	err := tx.Group("m.kind, u.provider, u.model, u.group_id, u.effort, m.unit").
+		Order("m.kind, u.provider, u.model, u.group_id, u.effort, m.unit").Find(&rows).Error
 	return rows, err
 }
 
@@ -447,7 +457,7 @@ func (r *GalaxyRepository) FindCreditAccount(ctx context.Context, bizLine, owner
 //
 // **两处都是为了让这条查询走在唯一键上，而不是全表扫一遍再排一遍。**
 //
-//	uk_gx_price = (biz_line, kind, model_id, unit, effective_from)
+//	uk_gx_price = (biz_line, kind, model_id, group_id, unit, effective_from)
 //
 //	· 带 kind：biz_line 恒等于 'galaxy'，不带 kind 等于没有过滤条件；
 //	  带上它索引才收窄到这一个 kind 的那几十行。计费是每笔请求都走的路径，
@@ -465,7 +475,7 @@ func (r *GalaxyRepository) ListEffectivePrices(ctx context.Context, bizLine, kin
 	}
 	var rows []*GalaxyPrice
 	err := tx.Where("effective_from <= ?", at).
-		Order("kind, model_id, effort, unit, effective_from").Find(&rows).Error
+		Order("kind, model_id, group_id, unit, effective_from").Find(&rows).Error
 	return rows, err
 }
 
@@ -478,23 +488,34 @@ func (r *GalaxyRepository) ListAllPrices(ctx context.Context, bizLine string) ([
 		Where("biz_line = ?", bizLine).
 		// 兜底价（model_id = ''）排在这个 kind 的最前面：界面上先看到「这个 kind 收多少」，
 		// 再看到各个模型的特例。model_id 升序天然就是这个顺序，空串最小。
-		Order("kind, model_id, effort, unit, effective_from desc").Find(&rows).Error
+		Order("kind, model_id, group_id, unit, effective_from desc").Find(&rows).Error
 	return rows, err
 }
 
-// DeletePrice 删掉一行价目。按唯一键定位，少一列就会连坐删掉隔壁强度档的价。
-func (r *GalaxyRepository) DeletePrice(ctx context.Context, bizLine, kind, modelID, effort, unit string, effectiveFrom time.Time) error {
+// DeletePrice 删掉一行价目。按唯一键定位，少一列就会连坐删掉隔壁分组的价。
+func (r *GalaxyRepository) DeletePrice(ctx context.Context, bizLine, kind, modelID, groupID, unit string, effectiveFrom time.Time) error {
 	return r.Db.WithContext(ctx).
 		Where("biz_line = ?", bizLine).Where("kind = ?", kind).
-		Where("model_id = ?", modelID).Where("effort = ?", effort).
+		Where("model_id = ?", modelID).Where("group_id = ?", groupID).
 		Where("unit = ?", unit).Where("effective_from = ?", effectiveFrom).
+		Delete(&GalaxyPrice{}).Error
+}
+
+// DeletePricesOfGroup 删掉一个分组名下的全部价目行。分组被删时连带清理 ——
+// 留着的话，下一个用同一个 group_id 建出来的分组会凭空继承一套价。
+func (r *GalaxyRepository) DeletePricesOfGroup(ctx context.Context, bizLine, groupID string) error {
+	if groupID == "" {
+		return nil
+	}
+	return r.Db.WithContext(ctx).
+		Where("biz_line = ?", bizLine).Where("group_id = ?", groupID).
 		Delete(&GalaxyPrice{}).Error
 }
 
 func (r *GalaxyRepository) SavePrice(ctx context.Context, row *GalaxyPrice) error {
 	return r.Db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{
-			{Name: "biz_line"}, {Name: "kind"}, {Name: "model_id"}, {Name: "effort"},
+			{Name: "biz_line"}, {Name: "kind"}, {Name: "model_id"}, {Name: "group_id"},
 			{Name: "unit"}, {Name: "effective_from"},
 		},
 		DoUpdates: clause.AssignmentColumns([]string{"price", "currency", "provider_price", "provider_share"}),

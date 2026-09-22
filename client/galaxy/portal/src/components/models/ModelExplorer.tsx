@@ -29,6 +29,10 @@ import type { PortalEffortPrice, PortalModel, PortalOverview } from "@/utils/por
 
 const ALL = "__all__";
 
+/** Claude 一族的族键。只有它会按 TTL 分档报缓存写入，缓存写那两格只给它摆。 */
+const CLAUDE_FAMILY = "claude";
+
+
 export function ModelExplorer({ overview }: { overview: PortalOverview }) {
   const { t } = useLocale();
   const [family, setFamily] = useState<string>(ALL);
@@ -305,7 +309,22 @@ function ModelDetail({ model }: { model: PortalModel }) {
         </div>
       ) : null}
 
+      {/* 缓存写入两档：只有 Claude 一族按 TTL 分档报 cache_creation，别的族这两个数恒为 0，
+          摆出来等于把「上游没有这个概念」说成「这一档免费」。
+          放在展开里而不是主表上：主表那几列是 CSS 网格排的，手机上六列挤不下，
+          而这两个数又恰恰是重度用缓存的人最需要看清的。 */}
+      {model.family === CLAUDE_FAMILY ? (
+        <div className="gp-list__hint">
+          {t("models.cacheWrite", {
+            price5m: formatUnitPrice(model.cacheWritePrice, model.currency),
+            price1h: formatUnitPrice(model.cacheWrite1hPrice, model.currency),
+          })}
+          <span style={{ display: "block", marginTop: 2 }}>{t("models.cacheWriteHint")}</span>
+        </div>
+      ) : null}
+
       {efforts.length > 0 ? <EffortTable efforts={efforts} currency={model.currency} /> : null}
+
 
       <div className="gp-list__foot">
         <span>

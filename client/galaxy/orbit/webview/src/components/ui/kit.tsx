@@ -12,7 +12,9 @@
  * 每端的页面与样式归自己维护（见 client/galaxy/README.md）。
  */
 
+import { message } from "antd";
 import type { CSSProperties, PropsWithChildren, ReactNode } from "react";
+import { useLocale } from "@/i18n/LocaleProvider";
 import { IconAlert, IconCheck, IconChevronRight, IconCopy } from "./icons";
 
 /* ---------- 容器 ---------- */
@@ -506,6 +508,15 @@ export function Loading() {
 
 /* ---------- 复制 ---------- */
 
+/**
+ * 复制按钮。成和败都弹一条提示。
+ *
+ * 光把图标换成勾不够：按钮小、勾就压在指针底下，点完那一下多半没看见，
+ * 于是人会来回点好几次，始终不确定到底复制上没有。
+ *
+ * 提示收在这里而不是各个调用点：它得对每一个复制按钮都成立，
+ * 交给调用点自己写的话，下一个加进来的按钮就会漏掉。
+ */
 export function CopyBtn({
   value,
   label,
@@ -519,6 +530,7 @@ export function CopyBtn({
   onCopied: () => void;
   small?: boolean;
 }) {
+  const { t } = useLocale();
   return (
     <Btn
       tone="ghost"
@@ -528,9 +540,11 @@ export function CopyBtn({
         try {
           await navigator.clipboard.writeText(value);
           onCopied();
+          message.success(t("common.copySuccess"));
         } catch {
-          // 剪贴板被拒（无安全上下文、用户拒绝）时保持原样：
+          // 剪贴板被拒（无安全上下文、用户拒绝）时不改按钮状态，另外说明白：
           // 谎报"已复制"比什么都不显示更糟，明文密钥只显示这一次。
+          message.error(t("common.copyFailed"));
         }
       }}
     >

@@ -402,6 +402,27 @@ func CallerID(context *gin.Context) string {
 	return "local-console"
 }
 
+// ClientIP 取一个**限流与留痕用**的来访者标识。
+//
+// 不能直接用 gin 的 ClientIP()：几个服务都 SetTrustedProxies(nil)，那个方法只认
+// RemoteAddr，而这套部署前面站着 nginx（门户还多一层 Next.js 代理）——
+// 所有请求看起来都来自同一台机器，按它限流等于全站共用一个额度，记进留痕表里
+// 的也永远是 nginx 自己的地址。所以这里显式读 X-Forwarded-For 的第一跳。
+//
+// 它是可以伪造的：代理把浏览器的请求头原样转发过来，所以这个值实际上是
+// **访问者自己填的**。因此它只用于限流键和留痕，**不参与任何鉴权或归属判断** ——
+// 需要真实来源的地方（比如真按来源封禁）得在 nginx 上按 remote_addr 做。
+func ClientIP(context *gin.Context) string {
+	forwarded, _, _ := strings.Cut(context.GetHeader("X-Forwarded-For"), ",")
+	if value := strings.TrimSpace(forwarded); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(context.GetHeader("X-Real-IP")); value != "" {
+		return value
+	}
+	return context.ClientIP()
+}
+
 func CallerName(context *gin.Context) string {
 	if principal, ok := CurrentUser(context); ok && principal.DisplayName != "" {
 		return principal.DisplayName

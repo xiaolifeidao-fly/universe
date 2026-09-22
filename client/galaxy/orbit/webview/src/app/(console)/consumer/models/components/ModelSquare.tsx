@@ -50,6 +50,10 @@ const BADGE_TONES: Record<string, "accent" | "warn" | "ok" | "default"> = {
 /** 列表的列宽。表头和每一行共用同一份 —— 各写一份迟早错开一列。 */
 const COLUMNS = "minmax(0, 1.7fr) 96px 104px 104px 104px 96px 28px";
 
+/** Claude 一族的族键。只有它会按 TTL 分档报缓存写入，那两档只给它摆。 */
+const CLAUDE_FAMILY = "claude";
+
+
 /** 0 不显示成「0」：那一档没定价，写 0 会被读成免费。 */
 function points(value: number): string {
   return value > 0 ? formatPoints(value) : "-";
@@ -381,7 +385,22 @@ function ModelDetail({ model }: { model: ConsumerModelView }) {
         ))}
       </div>
 
+      {/* 缓存写入两档。只有 Claude 一族按 TTL 分档报 cache_creation，Codex 一族这两个数
+          恒为 0 —— 摆出来等于把「上游没有这个概念」说成「这一档免费」。
+          放在展开里而不是主表上：主表的列宽是写死的网格（COLUMNS），多两列会把
+          模型名挤成一个字一行，而这两个数恰恰是重度用缓存的人最该看清的。 */}
+      {model.family === CLAUDE_FAMILY ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span className="gx-label">{t("models.cacheWriteTitle")}</span>
+          <span className="gx-mono" style={{ fontSize: 12.5 }}>
+            {t("models.cacheWriteLine", { price5m: points(model.cacheWritePrice), price1h: points(model.cacheWrite1hPrice) })}
+          </span>
+          <span className="gx-card__hint">{t("models.cacheWriteHint")}</span>
+        </div>
+      ) : null}
+
       {efforts.length > 0 ? <EffortTable efforts={efforts} caption={t("models.effortTitle")} hint={t("models.effortHint")} /> : null}
+
 
       <span className="gx-card__hint">
         {t("models.priceUnit")}

@@ -213,8 +213,9 @@ func clampLimit(limit int) int {
 
 // OwnedUsage 控制台的用量账单。
 //
-// 与 Usage 的差别只有一处，但那一处是安全边界：统计范围由令牌解析出的密钥集合
-// 决定，不由请求参数决定。请求里的 keyId 只能在这个集合内做进一步收窄。
+// 与 Usage 有两处差别。一处是安全边界：统计范围由令牌解析出的密钥集合决定，
+// 不由请求参数决定，请求里的 keyId 只能在这个集合内做进一步收窄。
+// 另一处是口径：这一路只摆计价行，见下。
 func (s *service) OwnedUsage(ctx context.Context, ownerUserID string, query dto.UsageQuery) (dto.UsageReport, error) {
 	keys, err := s.scopeKeys(ctx, ownerUserID, query.ConsumerKey)
 	if err != nil {
@@ -225,5 +226,33 @@ func (s *service) OwnedUsage(ctx context.Context, ownerUserID string, query dto.
 	}
 	query.ConsumerKey = ""
 	query.ConsumerKeys = keys
-	return s.Usage(ctx, query)
+	report, err := s.Usage(ctx, query)
+	if err != nil {
+		return dto.UsageReport{}, err
+	}
+	report.Lines = pricedLines(report.Lines)
+	return report, nil
+}
+
+// pricedLines 只留下真的有单价的行。
+//
+// 使用端那张表是**账单**：每一行都该是一笔钱。不计价的单位（llm.calls、
+// time.seconds、llm.total_tokens、没配价的缓存写桶）能占到一半以上的行，
+// 而它们的单价和扣费两列全是「-」—— 回答的是「跑了多少量」而不是「花了多少钱」，
+// 却把真正收了钱的那几行挤到了要滚动才看得到的地方。量没有丢：逐笔那一页
+// 点开任意一行，明细里所有单位都还在。
+//
+// 判据是**有没有单价**，不是这一行收了多少：单价乘以量向下取整到微元，
+// 小额确实会落到 0，但那是「这笔太小，显示成 0」，不是「这一项不收钱」——
+// 按扣费筛会把它们跟不计价的混成一类。
+//
+// 合计不受影响：摘掉的行 Cost 恒为 0，本来就没加进 TotalFee。
+func pricedLines(lines []dto.UsageLine) []dto.UsageLine {
+	priced := make([]dto.UsageLine, 0, len(lines))
+	for _, line := range lines {
+		if line.UnitPrice > 0 {
+			priced = append(priced, line)
+		}
+	}
+	return priced
 }

@@ -95,6 +95,9 @@ func buildRegistry(deps *corepkg.Deps) (*corepkg.Registry, error) {
 			// 对外声明的模型清单。去空白、去重、空清单回落 DefaultModels 都在
 			// relay 那边做 —— 那份清单的语义归它管，这里只负责把配置切开。
 			Models: strings.Split(httpx.Property("galaxy.models"), ","),
+			// Codex 那份 manifest 的路径。默认不配：为什么，见 relay/models.go 里
+			// codexCatalog 上面那段。
+			CodexManifest: httpx.Property("galaxy.codex_manifest"),
 		}))
 	}
 	if enabled["delivery"] {

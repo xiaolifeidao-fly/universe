@@ -94,18 +94,40 @@ type RouteRef struct {
 type Config struct {
 	// TokenTTL 会话有效期，每次请求滑动续期。
 	TokenTTL time.Duration
-	// LoginFailWindow / MaxLoginFail 同一账号连续失败多少次就暂时拒绝。
-	// 0 表示不限制。
-	MaxLoginFail    int
+	// MaxLoginFail 同一个用户名在窗口内连续失败多少次就暂时拒绝。
+	//
+	// **0 是「用默认值」，不是「不限制」** —— 管理端的每一个写接口都动真数据，
+	// 一个漏配的部署应该退到有闸的那一边。真要关掉就填负数，那是一次明写的决定。
+	MaxLoginFail int
+	// MaxLoginFailPerIP 同一来源地址的上限，0 取 MaxLoginFail 的 ipFailFactor 倍。
+	// 这一维阈值高是因为一个出口后面可能坐着整间办公室。
+	MaxLoginFailPerIP int
+	// LoginFailWindow 计数窗口，也是被锁之后要等的时间。
 	LoginFailWindow time.Duration
 }
+
+// 登录失败闸的默认值。
+//
+// 10 次比共享算力池那边（5 次）松一档：管理端的账号是同事，被自己锁在门外的
+// 代价是找超管解锁，而这里没有自助找回。窗口一样是 15 分钟。
+const (
+	defaultMaxLoginFail    = 10
+	ipFailFactor           = 6
+	defaultLoginFailWindow = 15 * time.Minute
+)
 
 func (c Config) withDefaults() Config {
 	if c.TokenTTL <= 0 {
 		c.TokenTTL = 7 * 24 * time.Hour
 	}
+	if c.MaxLoginFail == 0 {
+		c.MaxLoginFail = defaultMaxLoginFail
+	}
+	if c.MaxLoginFailPerIP == 0 && c.MaxLoginFail > 0 {
+		c.MaxLoginFailPerIP = c.MaxLoginFail * ipFailFactor
+	}
 	if c.LoginFailWindow <= 0 {
-		c.LoginFailWindow = 15 * time.Minute
+		c.LoginFailWindow = defaultLoginFailWindow
 	}
 	return c
 }
@@ -114,11 +136,15 @@ type Ports struct {
 	// Tokens 必填。没有令牌存储就没法登录 —— 构造时会返回错误，
 	// 而不是留到运行时空指针。
 	Tokens TokenStore
+	// Guard 连续登录失败的计数闸。留空就不限制 —— 装配层一律传，
+	// 留空只出现在不走登录路径的测试里。
+	Guard LoginGuard
 }
 
 type service struct {
 	repository *repository.ManagerRepository
 	tokens     TokenStore
+	guard      LoginGuard
 	config     Config
 
 	// acl 是权限表的进程内缓存。这两张表小且极少变，每个请求查两次库不值得。
@@ -145,7 +171,7 @@ func New(database *gorm.DB, ports Ports, config Config) (Service, error) {
 	}
 	repo := &repository.ManagerRepository{}
 	repo.SetDb(database)
-	return &service{repository: repo, tokens: ports.Tokens, config: config.withDefaults()}, nil
+	return &service{repository: repo, tokens: ports.Tokens, guard: ports.Guard, config: config.withDefaults()}, nil
 }
 
 // Migrate 建表。与 identity / galaxy 一致，由显式的初始化命令调用。

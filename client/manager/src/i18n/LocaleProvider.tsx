@@ -801,6 +801,9 @@ const messages = {
     "galaxy.model.basics": "基础配置",
     "galaxy.model.kindHint": "这个模型按哪种能力计价，定价和额度都跟着它走。不填按 llm.chat",
     "galaxy.model.ourPrices": "对外单价（入 / 出 / 缓存）",
+    "galaxy.model.ourPricesClaude": "对外单价（入 / 出 / 缓存读 / 写5m / 写1h）",
+    "galaxy.model.ourPricesClaudeHint": "缓存写入分两档 TTL：5 分钟与 1 小时，单价差 1.6 倍。用哪一档是调用方在请求体的 cache_control 里自己写的，不写就是 5 分钟——平台既控制不了也预测不了，所以两档都要有价。只有 Claude 一族会按 TTL 分档报这一项，筛到别的厂商时这两格不显示。",
+
     "galaxy.model.ourPriceNone": "查不到价",
     "galaxy.model.ourPriceNoneHint": "这个模型的用量此刻按 0 计费、也按 0 结算，而且不会报错。点「定价」补上，或者给它所属的能力配一份兜底价。",
     "galaxy.model.unified": "统一价",
@@ -1924,6 +1927,9 @@ const messages = {
     "galaxy.model.basics": "Basics",
     "galaxy.model.kindHint": "Which capability this model is billed under; rates and quota follow it. Defaults to llm.chat",
     "galaxy.model.ourPrices": "Retail rate (in / out / cache)",
+    "galaxy.model.ourPricesClaude": "Retail rate (in / out / cache read / write 5m / write 1h)",
+    "galaxy.model.ourPricesClaudeHint": "Cache writes have two TTL tiers, 5 minutes and 1 hour, priced 1.6x apart. Which one applies is set by the caller in the request body's cache_control (omitted means 5 minutes) — the platform can neither control nor predict it, so both tiers need a rate. Only the Claude family reports this split by TTL; these two cells are hidden for other vendors.",
+
     "galaxy.model.ourPriceNone": "No rate found",
     "galaxy.model.ourPriceNoneHint": "Usage on this model is billed at 0 and settled at 0 right now, and nothing reports an error. Fill it in under \"Pricing\", or give its capability a fallback rate.",
     "galaxy.model.unified": "Flat rate",

@@ -156,6 +156,10 @@ type ContributionInput struct {
 		Allow []string `json:"allow"`
 		Deny  []string `json:"deny"`
 	} `json:"models"`
+	// Groups 这条车道加入了哪些模型分组（mg_…）。空 = 不限。
+	// 节点自己不决定它 —— 这是主人在控制台上的选择，hello 时原样回传，
+	// 以 Hub 上存的为准（同 ModelsAllow/Deny 的口径）。
+	Groups          []string          `json:"groups"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
 	Quota           []QuotaGrantInput `json:"quota"`
@@ -183,6 +187,7 @@ type EnabledContribution struct {
 	Provider        string            `json:"provider"`
 	ModelsAllow     []string          `json:"modelsAllow"`
 	ModelsDeny      []string          `json:"modelsDeny"`
+	Groups          []string          `json:"groups"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
 	Quota           []QuotaGrantInput `json:"quota"`
@@ -429,9 +434,15 @@ type IssueKeyRequest struct {
 	AllowedKinds     []string `json:"allowedKinds"`
 	AllowedProviders []string `json:"allowedProviders"`
 	ModelTier        []string `json:"modelTier"`
-	Concurrency      int      `json:"concurrency"`
-	RPM              int      `json:"rpm"`
-	TTLDays          int      `json:"ttlDays"`
+	// Groups 这把密钥选中的模型分组（mg_…）。**自助签发时必填**（见 CreateConsumerKey）：
+	// 中转按分组走，没选分组就没有价可依、也说不清共享者该不该接这一单。
+	// 运营代签可以留空 —— 那时每个模型落在它的默认分组上，和加分组之前一样。
+	//
+	// 一个模型最多选一个分组：同一个模型选两个，一次请求就回答不了「按哪份价收」。
+	Groups      []string `json:"groups"`
+	Concurrency int      `json:"concurrency"`
+	RPM         int      `json:"rpm"`
+	TTLDays     int      `json:"ttlDays"`
 	// NoticeVersion 当前生效的告知版本。**不能标 binding:"required"** ——
 	// 唯一从 JSON 绑它的地方（manager-api 的 issueKey）在绑定之后会用配置里的当前版本
 	// 兜底，而 required 会在那一步之前就把空串打回去，兜底成了永远走不到的死代码。
@@ -459,15 +470,19 @@ type ConsumerKeyView struct {
 	Category string `json:"category"`
 	ModelID  string `json:"modelId,omitempty"`
 	// Revealable 服务端能不能取回明文。老密钥只存了哈希，要换发一次才行。
-	Revealable       bool       `json:"revealable"`
-	AllowedKinds     []string   `json:"allowedKinds"`
-	AllowedProviders []string   `json:"allowedProviders"`
-	ModelTier        []string   `json:"modelTier"`
-	Concurrency      int        `json:"concurrency"`
-	RPM              int        `json:"rpm"`
-	IssuedAt         time.Time  `json:"issuedAt"`
-	ExpiresAt        time.Time  `json:"expiresAt"`
-	FrozenUntil      *time.Time `json:"frozenUntil,omitempty"`
+	Revealable       bool     `json:"revealable"`
+	AllowedKinds     []string `json:"allowedKinds"`
+	AllowedProviders []string `json:"allowedProviders"`
+	ModelTier        []string `json:"modelTier"`
+	// Groups 这把密钥能用的模型分组，已经连同模型名、分组名解出来。
+	// 空 = 存量密钥（每个模型走默认分组）—— 界面要把这一种说清楚，
+	// 否则使用者看到一把「什么都没选」的密钥，不知道它还能不能用。
+	Groups      []KeyGroupView `json:"groups"`
+	Concurrency int            `json:"concurrency"`
+	RPM         int            `json:"rpm"`
+	IssuedAt    time.Time      `json:"issuedAt"`
+	ExpiresAt   time.Time      `json:"expiresAt"`
+	FrozenUntil *time.Time     `json:"frozenUntil,omitempty"`
 }
 
 // Caller 是一次消费者请求认定后的身份。适配器用它构造 WorkUnit。
@@ -478,9 +493,12 @@ type Caller struct {
 	AllowedKinds     []string
 	AllowedProviders []string
 	ModelTier        []string
-	Concurrency      int
-	RPM              int
-	ExpiresAt        time.Time
+	// Groups 这把密钥选中的模型分组。空 = 不限（存量密钥走各模型的默认分组）。
+	// 一次请求落在哪个分组上，由它和请求的模型一起定（见 ResolveGroupPolicy）。
+	Groups      []string
+	Concurrency int
+	RPM         int
+	ExpiresAt   time.Time
 }
 
 // ---------- 用量 ----------
@@ -507,10 +525,12 @@ type UsageLine struct {
 	// 合并成一行的话，那一行的 UnitPrice 只能是几个模型里随便一个的价。
 	// 单元行被清掉的老记录是空串。
 	Model string `json:"model"`
-	// Effort 这笔用量跑的是哪一档推理强度。单价也按它定，所以和 Model 一样必须分行：
-	// 同一个模型的 max 档和 low 档收的是两个价，合成一行就只能显示其中一个。
-	Effort string `json:"effort,omitempty"`
-	Unit   string `json:"unit"`
+	// GroupID / GroupName 这笔用量落在哪个模型分组上。单价按分组定，所以和 Model 一样
+	// 必须分行：同一个模型的「标准」和「深度」收的是两个价，合成一行就只能显示其中一个。
+	// 分组被删掉、或者老记录的单元行已经清掉时，两者都是空串 —— 那一行按模型通价算。
+	GroupID   string `json:"groupId,omitempty"`
+	GroupName string `json:"groupName,omitempty"`
+	Unit      string `json:"unit"`
 	// Amount 该单位的累计量；Calls 是产生它的请求数。
 	Amount int64 `json:"amount"`
 	Calls  int64 `json:"calls"`
@@ -527,23 +547,20 @@ type UsageReport struct {
 	Currency string      `json:"currency"`
 }
 
-// ModelEffortPrice 一个模型在某一档推理强度上的四档单价。
+// KeyGroupView 一把密钥选中的一个分组，连同它属于哪个模型。
 //
-// 卡片上那四个数是**不分强度**那一档（价目表里 effort 为空的行）算出来的 ——
-// 它是「没单独定价的强度都按它收」的那个价，也是绝大多数模型的全部内容。
-// 这个列表只列**真的单独定过价**的档：一个都没有时它是空的，界面上什么也不多画。
-//
-// 不把六档一律列出来：回落之后每一档都等于卡片上那四个数，一屏重复的数字
-// 既说不清「这个模型按强度分档收费」，也说不清「它不分档」。
-type ModelEffortPrice struct {
-	// Effort 档位名，上游原生（Claude 的 low…max、Codex 的 minimal…high）。
-	Effort string `json:"effort"`
-	// 四档单价，口径与所在视图的其余单价完全一致：
-	// 门户 / 使用端是对外价，共享端是结算价。
-	InputPrice      int64 `json:"inputPrice"`
-	OutputPrice     int64 `json:"outputPrice"`
-	CachePrice      int64 `json:"cachePrice"`
-	CacheWritePrice int64 `json:"cacheWritePrice"`
+// 密钥列表要把它摆出来：使用者手上几把密钥的区别，从「名字不同」变成了
+// 「买的档次不同」，只显示名字的话，两把密钥在界面上长得一模一样。
+type KeyGroupView struct {
+	GroupID   string `json:"groupId"`
+	ModelID   string `json:"modelId"`
+	ModelName string `json:"modelName,omitempty"`
+	Name      string `json:"name"`
+	// AllowFast 这个分组支不支持快速。接进客户端之前就该知道。
+	AllowFast bool `json:"allowFast"`
+	// Missing 这个分组已经被删掉或下架了。老密钥上会出现 —— 界面要标出来，
+	// 否则使用者只会看到请求报「模型不允许」而不知道为什么。
+	Missing bool `json:"missing,omitempty"`
 }
 
 // ---------- 提供者视图 ----------
@@ -567,18 +584,28 @@ type ProviderModelView struct {
 	Summary         string   `json:"summary"`
 	BadgeText       string   `json:"badgeText,omitempty"`
 	BadgeTone       string   `json:"badgeTone,omitempty"`
-	// 四档**结算**单价：跑这个模型每百万 token 记多少微积分。
-	// 四个桶互不重叠，口径和计量单位一一对应。
-	InputPrice      int64 `json:"inputPrice"`
-	OutputPrice     int64 `json:"outputPrice"`
-	CachePrice      int64 `json:"cachePrice"`
-	CacheWritePrice int64 `json:"cacheWritePrice"`
+	// 五档**结算**单价：跑这个模型每百万 token 记多少微积分。
+	// 桶之间互不重叠，口径和计量单位一一对应。
+	InputPrice  int64 `json:"inputPrice"`
+	OutputPrice int64 `json:"outputPrice"`
+	CachePrice  int64 `json:"cachePrice"`
+	// 缓存写入两档：5 分钟与 1 小时。只有 Anthropic 一族会报 TTL 分档，
+	// Codex 一族恒为 0 —— 界面上那两格按 Family 决定摆不摆，别摆成「免费」。
+	CacheWritePrice   int64 `json:"cacheWritePrice"`
+	CacheWrite1hPrice int64 `json:"cacheWrite1hPrice"`
+
 	// Priced 这四个数是这个模型自己的价，还是回落到了该 kind 的兜底价。
 	// 界面要能说出区别：回落期间所有模型显示同一个数字，不说清就像页面坏了。
 	Priced bool `json:"priced"`
-	// Efforts 这个模型按推理强度单独定过**结算价**的那几档，由浅到深。
-	// 共享者要回答的是「跑哪个模型的哪一档更赚」，而深思考那一档往往单独加过价。
-	Efforts []ModelEffortPrice `json:"efforts,omitempty"`
+	// Groups 这个模型在卖的分组，价是**结算价**。共享者要回答的是
+	// 「跑哪个模型的哪个分组更赚」，而分组之间往往差着好几倍的价。
+	Groups []ModelGroupPrice `json:"groups,omitempty"`
+	// JoinedGroups 这个人名下至少有一条贡献加入了的分组。界面按它勾上复选框 ——
+	// 共享设置那一屏改的就是这份名单。
+	JoinedGroups []string `json:"joinedGroups,omitempty"`
+	// GroupsUnrestricted 名下至少有一条贡献是「不限分组」（存量贡献，或主人就这么选的）。
+	// 这时 JoinedGroups 可能是空的，而机器照样什么单都接 —— 两件事界面上要分得开。
+	GroupsUnrestricted bool `json:"groupsUnrestricted,omitempty"`
 	// Allowed 这个人名下至少有一条贡献接这个模型（按各自的允许/拒绝名单算）。
 	Allowed bool `json:"allowed"`
 	// Available 至少有一台机器的上游**真的**有这个模型。这是节点报上来的事实，
@@ -633,6 +660,10 @@ type ContributionView struct {
 	Category    string   `json:"category"`
 	ModelsAllow []string `json:"modelsAllow"`
 	ModelsDeny  []string `json:"modelsDeny"`
+	// Groups 主人确认加入的模型分组。空 = 不限（这台机器什么分组的单都接）。
+	// 它和模型名单不重复：名单管「跑哪些模型」，分组管「以什么档次跑」——
+	// 同一个模型的「标准」和「深度」是两份价、两种上游成本。
+	Groups []string `json:"groups"`
 	// 节点报的上游可用模型。给控制台当候选项，不参与任何调度判定。
 	AvailableModels []string `json:"availableModels"`
 	Seats           int      `json:"seats"`
@@ -995,10 +1026,14 @@ type WorkloadQuery struct {
 type SaveContributionLimitsRequest struct {
 	OwnerUserID string `json:"-"`
 	// NodeID 用来消歧：cid 是去掉节点前缀的短名，多台机器上会重名。
-	NodeID          string            `json:"nodeId"`
-	CID             string            `json:"cid" binding:"required"`
-	ModelsAllow     []string          `json:"modelsAllow"`
-	ModelsDeny      []string          `json:"modelsDeny"`
+	NodeID      string   `json:"nodeId"`
+	CID         string   `json:"cid" binding:"required"`
+	ModelsAllow []string `json:"modelsAllow"`
+	ModelsDeny  []string `json:"modelsDeny"`
+	// Groups 加入哪些模型分组。**必须显式给**（可以是空数组 = 不限）：
+	// 这一项和模型名单一样是主人的规则，前端漏传会被当成「清空」，
+	// 所以共享设置那一屏一律整份提交。
+	Groups          []string          `json:"groups"`
 	Seats           int               `json:"seats"`
 	SeatConcurrency int               `json:"seatConcurrency"`
 	Quota           []QuotaGrantInput `json:"quota"`
@@ -1316,9 +1351,16 @@ type UsageRecord struct {
 	Kind     string `json:"kind"`
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
-	// Effort 这一次的推理强度。单价按 (模型, 强度) 定，所以「这一笔为什么扣这么多」
-	// 要靠它才答得完整 —— 同一个模型的 max 档和 low 档是两个价。
-	Effort  string `json:"effort,omitempty"`
+	// GroupID / GroupName 这一次落在哪个模型分组上。单价按 (模型, 分组) 定，
+	// 所以「这一笔为什么扣这么多」要靠它才答得完整。
+	//
+	// 推理强度**不在这里**：它是上游的内部刻度，对使用者不可见（2026-09-22）。
+	// 库里那一列还留着，排障与争议裁决时由运营台去看。
+	GroupID   string `json:"groupId,omitempty"`
+	GroupName string `json:"groupName,omitempty"`
+	// Fast 这一次是不是按快速跑的。分组没开快速时恒为假 —— 界面据此解释
+	// 「我开了快速但账单上不是快速价」。
+	Fast    bool   `json:"fast,omitempty"`
 	State   string `json:"state"`
 	Attempt int    `json:"attempt"`
 
@@ -1397,11 +1439,15 @@ type PortalModelView struct {
 	MaxOutputTokens int64  `json:"maxOutputTokens,omitempty"`
 	// 四个单价对的是四个互不重叠的桶。InputPrice 只管**未命中缓存的新增输入** ——
 	// OpenAI 那边含在 input_tokens 里的 cached 已经由 Hub 减掉了。
-	InputPrice      int64 `json:"inputPrice"`
-	OutputPrice     int64 `json:"outputPrice"`
-	CachePrice      int64 `json:"cachePrice"`
-	CacheWritePrice int64 `json:"cacheWritePrice"`
+	InputPrice  int64 `json:"inputPrice"`
+	OutputPrice int64 `json:"outputPrice"`
+	CachePrice  int64 `json:"cachePrice"`
+	// 缓存写入两档：5 分钟与 1 小时，单价差 1.6 倍。只有 Anthropic 一族会报 TTL 分档，
+	// Codex 一族恒为 0，卡片上按 Family 决定摆不摆。
+	CacheWritePrice   int64 `json:"cacheWritePrice"`
+	CacheWrite1hPrice int64 `json:"cacheWrite1hPrice"`
 	// ListInputPrice / ListOutputPrice / ListCachePrice 官方参考价，同口径同币种。0 = 运营没填，
+
 	// 那一档不划线 —— 比标一个「省 0%」诚实。折扣只按输出价算，缓存这一档不参与。
 	ListInputPrice  int64 `json:"listInputPrice,omitempty"`
 	ListOutputPrice int64 `json:"listOutputPrice,omitempty"`
@@ -1421,10 +1467,13 @@ type PortalModelView struct {
 	// 门户据此决定要不要在卡片上标「统一价」—— 不标的话，回落期间
 	// 所有模型显示同一个价，看起来像是页面坏了。
 	Priced bool `json:"priced"`
-	// Efforts 这个模型按推理强度单独定过价的那几档，由浅到深。空 = 不分强度，
-	// 上面那四个数就是全部。见 ModelEffortPrice。
-	Efforts   []ModelEffortPrice `json:"efforts,omitempty"`
-	SortOrder int                `json:"sortOrder"`
+	// Groups 这个模型在卖的分组，价是**对外价**。空 = 这个模型还没建分组，
+	// 上面那四个数（模型通价）就是全部。见 ModelGroupPrice。
+	//
+	// 它取代了原先按推理强度分档的那张表：档位名是上游的内部刻度，
+	// 对外一律不露（2026-09-22）。
+	Groups    []ModelGroupPrice `json:"groups,omitempty"`
+	SortOrder int               `json:"sortOrder"`
 	// Listed 只有运营的目录接口会填：门户那条公开接口本来就只列上架的。
 	Listed *bool `json:"listed,omitempty"`
 }

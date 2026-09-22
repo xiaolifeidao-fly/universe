@@ -41,6 +41,7 @@ const messages = {
     "common.viewModels": "查看全部模型",
     "common.copy": "复制",
     "common.copied": "已复制",
+    "common.copySuccess": "复制成功",
     "common.copyFailed": "复制失败，请手动选中",
     "common.empty": "暂时没有可展示的数据",
     "common.emptyHint": "服务端还没有上架内容，或者这台机器暂时连不上后端。",
@@ -108,7 +109,7 @@ const messages = {
       "Anthropic 与 OpenAI 两族的 base_url 都吃，/v1/models 也在 —— 客户端的模型发现能走完，不用一个个手敲模型名。",
     "home.why.2.title": "额度跟着密钥走",
     "home.why.2.body":
-      "一把密钥一份额度，输入、输出、缓存读各扣各的，按 token 记账。不换算成看不懂的「点数」，也就没有汇率可做手脚。",
+      "一把密钥一份额度，输入、输出、缓存读写各扣各的，按 token 记账。不换算成看不懂的「点数」，也就没有汇率可做手脚。",
     "home.why.3.title": "每一次都查得到",
     "home.why.3.body":
       "响应头带 X-Galaxy-Request-Id。控制台里能翻到那一次调用的逐笔扣费；对不上，就用这个号发起申诉。",
@@ -128,7 +129,7 @@ const messages = {
 
     "home.faq.1.q": "和直接用官方 API 有什么区别？",
     "home.faq.1.a":
-      "接口是一样的 —— 请求怎么发、响应什么形状、模型名怎么写，都照官方来，客户端一行都不用改。区别在这一层之外：一个地址同时给到 Anthropic 与 OpenAI 两族模型，只要一把密钥；账户里充多少用多少，输入、输出、缓存读按各自单价分开记账；每一次调用都带着请求号，控制台里能翻到那一笔扣了什么。",
+      "接口是一样的 —— 请求怎么发、响应什么形状、模型名怎么写，都照官方来，客户端一行都不用改。区别在这一层之外：一个地址同时给到 Anthropic 与 OpenAI 两族模型，只要一把密钥；账户里充多少用多少，输入、输出、缓存读写按各自单价分开记账；每一次调用都带着请求号，控制台里能翻到那一笔扣了什么。",
     "home.faq.2.q": "我的请求内容会被保存吗？",
     "home.faq.2.a":
       "不保存。平台只记结构化的计量与执行事件（用了哪个模型、多少 token、成功还是失败），请求与响应的正文既不落库也不入日志。也正因如此，发起申诉时不需要、也请不要把请求内容粘贴进来。",
@@ -137,7 +138,7 @@ const messages = {
       "认 base_url 的都支持：Claude Code、Codex CLI、Anthropic 官方 SDK、OpenAI 官方 SDK，以及任何能改基础地址的第三方客户端。模型清单接口也在，客户端的「连接测试 / 模型发现」这一步能正常走完。",
     "home.faq.4.q": "额度是怎么算的？",
     "home.faq.4.a":
-      "按计量单位分别算价：输入 token、输出 token、缓存读取 token 各有各的单价，算出来的钱从同一个账户余额里扣。控制台里能看到每一次调用扣了哪几项、各扣了多少。",
+      "按计量单位分别算价：输入 token、输出 token、缓存读取 token、缓存写入 token 各有各的单价，算出来的钱从同一个账户余额里扣。写入缓存的那一档只有 Claude 一族有，而且按 TTL 分 5 分钟与 1 小时两个价。控制台里能看到每一次调用扣了哪几项、各扣了多少。",
     "home.faq.5.q": "密钥丢了怎么办？",
     "home.faq.5.a":
       "在控制台点「换发」，或者直接让它失效再建一把。余额在账户上、不在密钥上，换一把不会损失任何额度。明文同样只显示这一次。",
@@ -161,7 +162,9 @@ const messages = {
     "models.listPrice": "官方",
     "models.discount": "省 {rate}",
     "models.cache": "缓存读取",
-    "models.cacheWrite": "缓存写入 {price}",
+    "models.cacheWrite": "缓存写入 · 5 分钟 {price5m} · 1 小时 {price1h}",
+    "models.cacheWriteHint": "用哪一档由你的客户端在请求体的 cache_control 里写 ttl 决定，不写就是 5 分钟。Claude Code 走 API 密钥接入时默认 5 分钟。",
+
     "models.priceNoteBase":
       "单价按每百万 token 计，与账单同口径。「新增输入」只算未命中缓存的那部分，命中的走「缓存读取」，两桶不重叠、各扣各的。标着「统一价」的那几行，用的是这一类能力的通用单价，不是这个模型自己的价。点开一行能看到它按推理强度分的那几档价。",
     "models.priceNoteFlat":
@@ -185,19 +188,21 @@ const messages = {
     "models.endpointTitle": "填进客户端的就是这一行",
 
     "pricing.title": "定价",
-    "pricing.lead": "按量付费，不按月。输入、输出、缓存读各有各的单价，一次调用各扣各的。",
+    "pricing.lead": "按量付费，不按月。输入、输出、缓存读写各有各的单价，一次调用各扣各的。",
     "pricing.unitPrices": "单价表",
     "pricing.unitPricesLead": "这张表就是账单的算式：某一项的用量 × 它的单价 ÷ 一百万。",
     "pricing.table.kind": "能力",
     "pricing.table.unit": "计量单位",
+    "pricing.claudeOnly": "仅 Claude 一族",
+
     "pricing.table.price": "每百万单位",
     "pricing.emptyPrices": "价格表还是空的",
     "pricing.emptyPricesHint": "未定价时请求只计量、不计费。部署方需要先写入定价。",
     "pricing.howTitle": "账是怎么算的",
     "pricing.how.1.title": "按 token，不按次",
     "pricing.how.1.body": "一次请求扣多少，取决于它真的吃进和吐出了多少 token，而不是它算「一次」还是「两次」。",
-    "pricing.how.2.title": "三项分开记",
-    "pricing.how.2.body": "输入、输出、缓存读各有各的余额和单价。缓存命中便宜得多，所以值得让它命中。",
+    "pricing.how.2.title": "每一项分开记",
+    "pricing.how.2.body": "输入、输出、缓存读写各有各的单价，从同一个账户余额里扣。缓存命中便宜得多，所以值得让它命中；写进缓存另算一笔，Claude 还按 5 分钟与 1 小时分两档。",
     "pricing.how.3.title": "失败不计费",
     "pricing.how.3.body": "没产出首字节就失败的请求不计费；已经产出的部分按实际产出计。",
     "pricing.faqTitle": "关于钱的几个问题",
@@ -268,6 +273,7 @@ const messages = {
     "common.viewModels": "See all models",
     "common.copy": "Copy",
     "common.copied": "Copied",
+    "common.copySuccess": "Copied to clipboard",
     "common.copyFailed": "Copy failed — select it by hand",
     "common.empty": "Nothing to show yet",
     "common.emptyHint": "Nothing has been listed yet, or this machine cannot reach the backend.",
@@ -337,7 +343,7 @@ const messages = {
       "Both the Anthropic and OpenAI base_url shapes work, and /v1/models is there — model discovery completes, so nobody types model names by hand.",
     "home.why.2.title": "Quota rides with the key",
     "home.why.2.body":
-      "One key, one balance. Input, output and cache reads are metered and charged separately, in tokens — no opaque \"credits\", so there is no exchange rate to bend.",
+      "One key, one balance. Input, output, cache reads and cache writes are metered and charged separately, in tokens — no opaque \"credits\", so there is no exchange rate to bend.",
     "home.why.3.title": "Every call is traceable",
     "home.why.3.body":
       "Responses carry X-Galaxy-Request-Id. The console shows what that one call cost, line by line — and that id is what you file a dispute with.",
@@ -360,7 +366,7 @@ const messages = {
 
     "home.faq.1.q": "How is this different from calling the official APIs directly?",
     "home.faq.1.a":
-      "The interface is identical — how you send a request, the shape of the response, the model names. What changes is everything around it: one endpoint covers both the Anthropic and OpenAI families with a single key; you top up an account and spend it per token, with input, output and cache reads priced separately; and every call carries a request id you can look up in the console, down to what it cost.",
+      "The interface is identical — how you send a request, the shape of the response, the model names. What changes is everything around it: one endpoint covers both the Anthropic and OpenAI families with a single key; you top up an account and spend it per token, with input, output, cache reads and cache writes priced separately; and every call carries a request id you can look up in the console, down to what it cost.",
     "home.faq.2.q": "Do you store my prompts?",
     "home.faq.2.a":
       "No. Only structured metering and execution events are recorded — which model, how many tokens, success or failure. Request and response bodies never reach the database or the logs. That is also why a dispute does not need (and should not include) the payload.",
@@ -369,7 +375,8 @@ const messages = {
       "Anything that lets you set a base_url: Claude Code, Codex CLI, the official Anthropic and OpenAI SDKs, and third-party clients. The model listing endpoint is served too, so \"test connection / discover models\" completes normally.",
     "home.faq.4.q": "How is quota counted?",
     "home.faq.4.a":
-      "Per metering unit. Input tokens, output tokens and cache-read tokens each have their own rate; what they add up to comes off one account balance. The console shows which units a single call consumed and what each one cost.",
+      "Per metering unit. Input tokens, output tokens, cache-read tokens and cache-write tokens each have their own rate; what they add up to comes off one account balance. Cache writes exist only on the Claude family, and split by TTL into a 5-minute and a 1-hour rate. The console shows which units a single call consumed and what each one cost.",
+
     "home.faq.5.q": "What if I lose the key?",
     "home.faq.5.a":
       "Reissue it from the console, or revoke it and create another. The balance lives on the account, not on the key, so you lose nothing by swapping. The new secret is, again, shown only once.",
@@ -395,7 +402,9 @@ const messages = {
     "models.listPrice": "list",
     "models.discount": "{rate} off",
     "models.cache": "Cache read",
-    "models.cacheWrite": "Cache write {price}",
+    "models.cacheWrite": "Cache write · 5 min {price5m} · 1 hour {price1h}",
+    "models.cacheWriteHint": "Which tier applies is set by your client in the request body's cache_control ttl; omit it and you get 5 minutes. Claude Code defaults to 5 minutes when connected with an API key.",
+
     "models.priceNoteBase":
       "Rates are per million tokens, the same unit the bill uses. \"New input\" counts only the tokens that missed the cache; whatever the cache served is billed at the cache-read rate instead. The two buckets never overlap. A row marked \"Flat rate\" is showing the rate for that capability, not a rate set for that model. Open a row to see the rates it charges per reasoning effort.",
     "models.priceNoteFlat":
@@ -420,11 +429,13 @@ const messages = {
 
     "pricing.title": "Pricing",
     "pricing.lead":
-      "Pay for what you use, not by the month. Input, output and cache reads each have their own rate, charged call by call.",
+      "Pay for what you use, not by the month. Input, output, cache reads and cache writes each have their own rate, charged call by call.",
     "pricing.unitPrices": "Unit rates",
     "pricing.unitPricesLead": "This table is the bill's arithmetic: units used × rate ÷ one million.",
     "pricing.table.kind": "Capability",
     "pricing.table.unit": "Metering unit",
+    "pricing.claudeOnly": "Claude family only",
+
     "pricing.table.price": "Per million",
     "pricing.emptyPrices": "The rate table is empty",
     "pricing.emptyPricesHint":
@@ -433,9 +444,9 @@ const messages = {
     "pricing.how.1.title": "Per token, not per call",
     "pricing.how.1.body":
       "What a request costs depends on the tokens it actually consumed and produced — not on whether it counts as one call or two.",
-    "pricing.how.2.title": "Three balances, kept apart",
+    "pricing.how.2.title": "Every bucket, kept apart",
     "pricing.how.2.body":
-      "Input, output and cache reads each have their own rate. Cache hits are far cheaper, which is exactly why they are worth engineering for.",
+      "Input, output, cache reads and cache writes each have their own rate, drawn from one balance. Cache hits are far cheaper, which is exactly why they are worth engineering for; writing to the cache is billed on its own, and on Claude it splits into a 5-minute and a 1-hour tier.",
     "pricing.how.3.title": "Failures are free",
     "pricing.how.3.body":
       "A request that fails before the first byte is not charged. One that already produced output is charged for what it produced.",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"service/galaxy/dto"
 	"service/galaxy/internal/repository"
@@ -95,10 +96,17 @@ func (s *service) ResetPassword(ctx context.Context, req dto.ResetAccountPasswor
 	return err
 }
 
+// truncate 截到列宽以内。max 数的是**字节**（列宽就是按字节算的），
+// 但不切断一个多字节字符 —— 截出半个字符存进 utf8mb4 列会被 MySQL 拒，
+// 而登录留痕那一路一行写不进去就再也补不回来。
 func truncate(value string, max int) string {
 	value = strings.TrimSpace(value)
 	if len(value) <= max {
 		return value
 	}
-	return value[:max]
+	cut := max
+	for cut > 0 && !utf8.RuneStart(value[cut]) {
+		cut--
+	}
+	return value[:cut]
 }

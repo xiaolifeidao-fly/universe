@@ -73,13 +73,43 @@ type Options struct {
 	TokenTTL    time.Duration
 	// Keys 注册即送那把密钥的签发方。留空就只建账号，不送密钥。
 	Keys KeyIssuer
+
+	// Guard 连续登录失败的计数闸。**留空就不限制** —— 只做运营那一半的装配方
+	// （manager-api）根本不暴露登录接口，给它一个计数器没有意义。
+	//
+	// 留痕不受它影响：那一路只要数据库，Guard 在不在都照记。
+	Guard LoginGuard
+	// MaxLoginFail 同一个用户名在窗口内连续失败多少次就暂时拒绝。
+	// 0 取默认值 defaultMaxLoginFail，负数表示这一维不限制。
+	MaxLoginFail int
+	// MaxLoginFailPerIP 同一来源地址的上限，0 取 MaxLoginFail 的
+	// defaultIPFailFactor 倍。这一维阈值高是因为一个出口后面可能坐着一屋子人，
+	// 而且它挡不住伪造来源的那种打法（见 loginKeys）。
+	MaxLoginFailPerIP int
+	// LoginFailWindow 计数窗口，0 取默认 15 分钟。也是被锁之后要等的时间。
+	LoginFailWindow time.Duration
 }
+
+// 登录失败闸的默认值。
+//
+// 5 次是给「记混了几个常用密码」留的余量 —— 真是本人的话，第六次多半也想不起来，
+// 停 15 分钟的代价远小于把一个账号交出去。两个值都可以在配置里改。
+const (
+	defaultMaxLoginFail    = 5
+	defaultIPFailFactor    = 6
+	defaultLoginFailWindow = 15 * time.Minute
+)
 
 type service struct {
 	repository  *repository.GalaxyRepository
 	tokenSecret string
 	tokenTTL    time.Duration
 	keys        KeyIssuer
+
+	guard             LoginGuard
+	maxLoginFail      int
+	maxLoginFailPerIP int
+	loginFailWindow   time.Duration
 }
 
 func New(database *gorm.DB, options Options) Service {
@@ -89,9 +119,23 @@ func New(database *gorm.DB, options Options) Service {
 	if ttl <= 0 {
 		ttl = 7 * 24 * time.Hour
 	}
+	maxFail := options.MaxLoginFail
+	if maxFail == 0 {
+		maxFail = defaultMaxLoginFail
+	}
+	maxFailPerIP := options.MaxLoginFailPerIP
+	if maxFailPerIP == 0 && maxFail > 0 {
+		maxFailPerIP = maxFail * defaultIPFailFactor
+	}
+	window := options.LoginFailWindow
+	if window <= 0 {
+		window = defaultLoginFailWindow
+	}
 	return &service{
 		repository: repo, tokenSecret: strings.TrimSpace(options.TokenSecret),
 		tokenTTL: ttl, keys: options.Keys,
+		guard: options.Guard, maxLoginFail: maxFail,
+		maxLoginFailPerIP: maxFailPerIP, loginFailWindow: window,
 	}
 }
 

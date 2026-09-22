@@ -30,12 +30,16 @@ export function kindLabel(kind: string, t: Translate): string {
 }
 
 /**
- * 界面上一律不露出的计量单位：缓存写入的三个桶。
+ * 界面上一律不露出的计量单位：缓存写入的**合计**。
  *
- * 为什么藏：真按 TTL 分档报这一项的只有 Anthropic（usage.go 里 cache_creation
- * 拆成 ephemeral_5m / ephemeral_1h 两档），OpenAI 一族只有缓存**读取**。
- * 摆在定价与价目界面上，结果是一多半模型常年空着两行，而空行和「这一档不要钱」
- * 在界面上长得一模一样。
+ * 只藏合计这一个。它是 5m 与 1h 两档加出来的数，`billing.go` 的 derivedUnits
+ * 把它挡在账本外 —— 给它填价一分钱都收不到，而填过的行在界面上看着像已经定过了。
+ * 摆出一个填了也没用的入口，比不摆更容易让人以为这一档已经收上钱了。
+ *
+ * 两个 TTL 分项（5m / 1h）从 2026-09-22 起照常露出：它们是真正进账本的那一层，
+ * 单价差 1.6 倍（输入价的 1.25 倍 vs 2 倍），运营不改价这一档就永远按兜底价收。
+ * 只有 Anthropic 一族会报 TTL 分档，所以**按模型摆的地方**（模型目录、模型卡片）
+ * 要按协议族决定摆不摆；而按单位摆的价目表是跨模型的一张表，两行照常在。
  *
  * 藏的是**显示与定价入口**，不是计量与账：actual 里仍然有这几个单位，
  * 结算汇总、用量偏差那些对账口径也照常带着它们 —— 那两页要能和服务端的合计对得上，
@@ -45,11 +49,8 @@ export function kindLabel(kind: string, t: Translate): string {
  * （价目表里已有的行、服务端给的候选、运营手填的 id 都会冒出来），
  * 删常量堵不住任何一条来路。
  */
-export const HIDDEN_UNITS = new Set([
-  "llm.cache_write_tokens",
-  "llm.cache_write_5m_tokens",
-  "llm.cache_write_1h_tokens",
-]);
+export const HIDDEN_UNITS = new Set(["llm.cache_write_tokens"]);
+
 
 /**
  * 推理强度的中文名。

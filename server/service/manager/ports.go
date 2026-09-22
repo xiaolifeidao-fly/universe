@@ -46,3 +46,25 @@ type TokenStore interface {
 	// BumpACLVersion 在权限写操作之后调用。
 	BumpACLVersion(ctx context.Context) error
 }
+
+// LoginGuard 连续登录失败的计数闸。实现和 TokenStore 是同一个 Redis 客户端
+// （manager-api/pkg/tokenstore），共享算力池那边用的是同名的一组方法。
+//
+// 为什么计数不直接数 zt_manager_login_record 的行：判定要的是「读一下、加一次」
+// 的原子性。按表里的行数算，一次并发打过来的几百个请求会同时读到「才失败 0 次」，
+// 于是一起放行 —— 那正是爆破的形状。Redis 的 INCR 没有这个缺口。
+//
+// 两者各司其职，不是重复：Redis 那份是实时判定、会自己过期；留痕表那份是证据，
+// 谁在什么时候从哪儿试过，只有它答得上来。
+type LoginGuard interface {
+	// LoginFailures 读一个键当前窗口内的失败次数，以及窗口还有多久到期。
+	// 键不存在返回 (0, 0, nil)。
+	LoginFailures(ctx context.Context, key string) (int, time.Duration, error)
+	// LoginFailed 记一次失败并返回累计次数。
+	//
+	// 窗口从**第一次**失败起算，此后不再顺延：顺延的话，被锁住的人每按一次
+	// 「登录」都会把自己的解锁时间往后推，提示语从此永远不会变短。
+	LoginFailed(ctx context.Context, key string, window time.Duration) (int, error)
+	// LoginReset 清零。本人登录成功时清掉账号那一维。
+	LoginReset(ctx context.Context, key string) error
+}

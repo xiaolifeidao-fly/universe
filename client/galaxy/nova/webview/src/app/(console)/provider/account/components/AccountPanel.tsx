@@ -217,10 +217,10 @@ export function AccountPanel() {
     });
   };
 
-  // 签发弹窗里那条带密钥的一行安装命令用的是 sh 脚本：平台一个 Linux / macOS 的包都没发布时不给，
-  // 照着跑只会装到一半报「没有这个平台的包」。
+  // 签发弹窗里那条带密钥的一行安装命令用的是 sh 脚本：平台一个 Linux 包都没发布时不给，
+  // 照着跑只会装到一半报「没有这个平台的包」。手装 ai-bridge 只认 Linux，同「安装 ai-bridge」那一块。
   const unixInstallScript =
-    releases?.installScript && (releases.platforms ?? []).some((item) => /^(linux|darwin)-/.test(item.platform ?? ""))
+    releases?.installScript && (releases.platforms ?? []).some((item) => /^linux-/.test(item.platform ?? ""))
       ? releases.installScript
       : "";
 

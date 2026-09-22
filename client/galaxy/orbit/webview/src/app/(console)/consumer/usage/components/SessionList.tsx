@@ -12,7 +12,7 @@ import { useLocale } from "@/i18n/LocaleProvider";
 import { formatDateTime } from "@/utils/format";
 import { closeSession, fetchSessions, type ConsumerKeyView, type SessionView } from "../../api/consumer.api";
 
-export function SessionList({ keys }: { keys: ConsumerKeyView[] }) {
+export function SessionList({ keys, reloadToken }: { keys: ConsumerKeyView[]; reloadToken?: number }) {
   const { t } = useLocale();
   // 静态 Modal.confirm 拿不到 ConfigProvider 的主题，按钮会是 antd 默认的蓝色，所以用 hook 版。
   const [modal, modalHolder] = Modal.useModal();
@@ -31,9 +31,10 @@ export function SessionList({ keys }: { keys: ConsumerKeyView[] }) {
     }
   }, [t]);
 
+  // reloadToken 不进 load 的函数体，只当触发器：页头那个刷新按钮按一下它就换个数，这一栏跟着重拉。
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   const close = (row: SessionView) => {
     void modal.confirm({
