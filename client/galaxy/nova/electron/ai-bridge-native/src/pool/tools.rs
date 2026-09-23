@@ -16,6 +16,10 @@ use std::time::{Duration, Instant};
 /// 「最新版」要走网络，所以缓存 30 分钟：这个面板每次进页面都会拉。
 const LATEST_TTL: Duration = Duration::from_secs(30 * 60);
 const EXEC_TIMEOUT: Duration = Duration::from_secs(20);
+/// 外部 CLI 的发布源固定走 npm 官方站。用户自己的 npm 配置可能指向镜像，
+/// 元数据通常没问题，但 Claude/Codex 的平台二进制较大，镜像不同步或限速时会让
+/// Nova 的安装长期卡在下载阶段。只给这几条命令加参数，不改用户的全局 npm 配置。
+const NPM_REGISTRY: &str = "https://registry.npmjs.org";
 
 /// 本机版本也缓存，两个原因：
 ///   · 有东西在装时界面是一秒一轮，而 `claude --version` 要起一次 node（几百毫秒），
@@ -35,6 +39,13 @@ pub struct ToolStatus {
     pub upgradable: bool,
     /// 没装的工具不显示升级按钮，显示「未安装」。
     pub installed: bool,
+    /// 这个工具在本机登录了没有。由 runner 在探针那一轮填（见 tools_probe_loop）——
+    /// 判断它要解析凭据，而凭据在 CredentialRegistry 手里，这个文件够不着。
+    ///
+    /// **None 不是「没登录」，是「这个问题没有意义」**：本机配置里没有对应的上游
+    /// （主人根本没打算共享它），那就不该在界面上摆一个登录按钮催他登。
+    #[serde(skip_serializing_if = "Option::is_none", rename = "loggedIn")]
+    pub logged_in: Option<bool>,
     /// 正在装 / 刚装完的那一次的进度。没有就是这会儿没人动它 ——
     /// 这时这个字段整个不出现，TS 侧是 undefined，渲染层少一种要判的形态。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,7 +159,7 @@ async fn npm_latest(pkg: &str) -> String {
             return value.clone();
         }
     }
-    match run("npm", &["view", pkg, "version"]).await {
+    match run("npm", &["view", pkg, "version", "--registry", NPM_REGISTRY]).await {
         Ok(raw) => {
             let value = parse_version(&raw);
             latest_cache().lock().unwrap().insert(pkg.into(), (Instant::now(), value.clone()));
@@ -191,6 +202,8 @@ pub async fn tool_statuses(bridge_version: &str) -> Vec<ToolStatus> {
         latest: bridge_version.to_string(),
         upgradable: false,
         installed: true,
+        // ai-bridge 自己没有登录这回事。
+        logged_in: None,
         job: None,
     }];
     all.extend(external_tool_statuses().await);
@@ -222,6 +235,8 @@ fn status(name: &str, current: String, latest: String) -> ToolStatus {
         // 两边都拿得到才判定 —— 网络不通时不该显示一个「可升级」的假信号。
         upgradable: !current.is_empty() && !latest.is_empty() && current != latest,
         installed: !current.is_empty(),
+        // 探针那一轮才知道，见 ToolStatus::logged_in。
+        logged_in: None,
         job: tool_job(name),
         name: name.into(),
         current,
@@ -319,18 +334,33 @@ fn job_running(name: &str) -> bool {
 ///   · `--foreground-scripts` —— claude 的 postinstall 还要另外下一份原生构建，
 ///     不放出来的话最花时间的那一段是黑的；
 ///   · `--no-audit --no-fund` —— 纯噪音，还各自多一次网络往返。
+///   · `--registry` —— 不继承用户配置的第三方镜像，避免大体积平台包被限速。
 /// npm 不认识的开关只会 warn 一行，老版本 npm 上顶多是没有进度，不会装不上。
 fn upgrade_command(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "claude" => Some(&[
             "npm", "install", "-g", "@anthropic-ai/claude-code@latest",
-            "--loglevel=http", "--foreground-scripts", "--no-audit", "--no-fund",
+            "--registry", NPM_REGISTRY, "--loglevel=http", "--foreground-scripts", "--no-audit", "--no-fund",
         ]),
         "codex" => Some(&[
             "npm", "install", "-g", "@openai/codex@latest",
-            "--loglevel=http", "--foreground-scripts", "--no-audit", "--no-fund",
+            "--registry", NPM_REGISTRY, "--loglevel=http", "--foreground-scripts", "--no-audit", "--no-fund",
         ]),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::{upgrade_command, NPM_REGISTRY};
+
+    #[test]
+    fn external_tool_installs_use_the_official_registry() {
+        for name in ["claude", "codex"] {
+            let command = upgrade_command(name).unwrap();
+            let registry = command.iter().position(|arg| *arg == "--registry").unwrap();
+            assert_eq!(command.get(registry + 1), Some(&NPM_REGISTRY), "{name}");
+        }
     }
 }
 

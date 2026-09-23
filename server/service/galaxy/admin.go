@@ -40,7 +40,8 @@ func (s *service) AdminNodes(ctx context.Context, limit int) ([]dto.AdminNodeVie
 				Status: node.Status, Banned: node.Banned, LastBeatAt: node.LastBeatAt,
 				Contributions: make([]dto.ContributionView, 0, len(rows)),
 				// 运营视图不给机器上的工具（那是主人自己的事），但这一列不能是 null。
-				Tools: []dto.NodeToolView{},
+				Tools:  []dto.NodeToolView{},
+				Logins: []dto.NodeLoginView{},
 			},
 			OwnerUserID:  node.OwnerUserID,
 			OwnerName:    ownerNames[node.OwnerUserID],

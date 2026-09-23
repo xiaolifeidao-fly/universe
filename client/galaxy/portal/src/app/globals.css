@@ -1137,6 +1137,17 @@ svg {
   font-weight: 500;
 }
 
+/* 主价底下划掉的官方价。淡一档、小一号：它是用来对照的，不该和真要付的那个数抢同一眼。
+   display: block —— 这一格是网格的孩子，已经被块化了，写成块才会老老实实换行到下一行，
+   跟在价后面同一行的话，98px 的列宽会把两个数挤成一团。 */
+.gp-list__was {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--gp-faint);
+}
+
 .gp-list__right {
   text-align: right;
 }

@@ -7,6 +7,7 @@
   "types": "index.d.ts",
   "scripts": {
     "build": "node scripts/build.cjs",
+    "release": "node scripts/release.cjs",
     "build:debug": "node scripts/build.cjs --debug",
     "test": "cargo test",
     "typecheck": "tsc --noEmit -p tsconfig.json"

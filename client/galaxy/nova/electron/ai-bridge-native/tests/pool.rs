@@ -2,6 +2,7 @@ use ai_bridge_native::business::{group_joined, inline_json, inline_text, Primiti
 use ai_bridge_native::pool::client::{BridgeReleaseManifest, CapabilityReport, HeartbeatResult, HelloResult};
 use ai_bridge_native::pool::hub_address::{HubAddressCheck, HubAddressEvent};
 use ai_bridge_native::pool::lane::{Lane, LaneConfig};
+use ai_bridge_native::pool::login::{login_command, needs_code, parse_login_output, strip_ansi};
 use ai_bridge_native::pool::models::{parse_codex_cache, parse_models};
 use ai_bridge_native::pool::runner::health_signature;
 use ai_bridge_native::pool::setup::{hub_needs_rebind, shell_quote};
@@ -614,4 +615,88 @@ fn a_path_with_spaces_must_survive_the_terminal() {
 #[test]
 fn a_single_quote_in_the_path_cannot_break_out() {
     assert_eq!(shell_quote("/tmp/it's here/claude"), "'/tmp/it'\\''s here/claude'");
+}
+
+// ---------- 远端登录：认出 CLI 说了什么 ----------
+//
+// 下面两段是 2026-09-22 从真机上抓的原样输出（claude 2.1.278 / codex-cli 0.155.1）。
+// 这是整条链上唯一一处依赖别人家输出格式的地方，而它坏掉的样子很隐蔽 ——
+// 界面上一直空着，没有任何报错。把原文钉在这里，对面改版时是这几条用例先红。
+
+/// `codex login --device-auth`。即使输出不是终端（管道），它照样上色。
+const CODEX_DEVICE_AUTH: &str = concat!(
+    "\nWelcome to Codex [v\u{1b}[90m0.155.1\u{1b}[0m]\n",
+    "\u{1b}[90mOpenAI's command-line coding agent\u{1b}[0m\n\n",
+    "Follow these steps to sign in with ChatGPT using device code authorization:\n\n",
+    "1. Open this link in your browser and sign in to your account\n",
+    "   \u{1b}[94mhttps://auth.openai.com/codex/device\u{1b}[0m\n\n",
+    "2. Enter this one-time code \u{1b}[90m(expires in 15 minutes)\u{1b}[0m\n",
+    "   \u{1b}[94mRWEQ-34W3X\u{1b}[0m\n\n",
+    "\u{1b}[90mContinue only if you started this login in Codex.\u{1b}[0m\n",
+);
+
+/// `claude auth login`，在一台开不了浏览器的机器上。
+/// 注意 redirect_uri 是 platform.claude.com 的托管回调页，不是 localhost ——
+/// 所以这条路不需要端口转发，但换来的是「码得粘回来」。
+const CLAUDE_AUTH_LOGIN: &str = concat!(
+    "Opening browser to sign in…\n",
+    "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true",
+    "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code",
+    "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback\n",
+    "Paste code here if prompted > ",
+);
+
+#[test]
+fn the_device_code_and_its_url_are_picked_out_of_codex_output() {
+    let hints = parse_login_output(CODEX_DEVICE_AUTH);
+    assert_eq!(hints.verification_uri.as_deref(), Some("https://auth.openai.com/codex/device"));
+    assert_eq!(hints.user_code.as_deref(), Some("RWEQ-34W3X"));
+    // codex 自己轮询，不等任何人把码送回来。
+    assert!(!hints.waiting_code);
+    assert!(hints.error.is_none());
+}
+
+#[test]
+fn claude_gives_an_address_but_no_code_of_its_own() {
+    let hints = parse_login_output(CLAUDE_AUTH_LOGIN);
+    let url = hints.verification_uri.expect("没认出授权地址");
+    assert!(url.starts_with("https://claude.com/cai/oauth/authorize?"));
+    // 整条地址要完整取回，中途不能被空白或标点截断。
+    assert!(url.ends_with("%2Fcallback"));
+    // claude 这条路里没有短码这回事 —— 码是主人授权完从浏览器里拿回来的。
+    assert_eq!(hints.user_code, None);
+}
+
+#[test]
+fn an_authorize_url_is_never_mistaken_for_a_one_time_code() {
+    // client_id 里全是 `-`，而它如果被当成短码，界面就会让主人去输一串 UUID。
+    let hints = parse_login_output("https://x/y?client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e\n");
+    assert_eq!(hints.user_code, None);
+}
+
+#[test]
+fn a_rejected_code_is_reported_in_the_clis_own_words() {
+    // 实测：码错了 claude 会说这一句，而且**进程不退**，可以再粘一次。
+    let hints = parse_login_output("Invalid code. Please make sure the full code was copied.\n");
+    assert_eq!(
+        hints.error.as_deref(),
+        Some("Invalid code. Please make sure the full code was copied.")
+    );
+}
+
+#[test]
+fn colour_codes_are_stripped_before_anything_is_matched() {
+    assert_eq!(strip_ansi("\u{1b}[94mRWEQ-34W3X\u{1b}[0m"), "RWEQ-34W3X");
+    assert_eq!(strip_ansi("plain"), "plain");
+}
+
+#[test]
+fn only_claude_needs_the_code_pasted_back() {
+    assert!(needs_code("claude"));
+    assert!(!needs_code("codex"));
+    // codex 不带 --device-auth 的话会去开浏览器，在无头机器上那条路是死的。
+    assert_eq!(login_command("codex"), Some(&["codex", "login", "--device-auth"][..]));
+    assert_eq!(login_command("claude"), Some(&["claude", "auth", "login"][..]));
+    // 表里没有的工具名一律不执行。
+    assert_eq!(login_command("bash"), None);
 }

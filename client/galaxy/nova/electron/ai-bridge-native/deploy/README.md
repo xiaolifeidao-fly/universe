@@ -322,9 +322,14 @@ pool:
 2. **出包并签名**（每个平台一个包）：
 
    ```bash
-   AI_BRIDGE_RELEASE_KEY=~/.config/ai-bridge-release/release-signing-key.pem \
-     node scripts/build-cli.cjs [--target <triple>] [--zig]
+   # 一条命令出一版：抬版本号、重编 .node、出各平台包、签名、写 SHA256SUMS。
+   sh scripts/release.sh                       # 默认：抬 patch、出 linux-x64（zig）
+   node scripts/release.cjs --bump patch --target <triple> [--zig]
+
+   # 只出包、不动版本号：
+   node scripts/build-cli.cjs [--target <triple>] [--zig]
    # 产出 ai-bridge-<版本>-<平台>.tar.gz（Windows 是 .zip）和同名的 .sig
+   # 私钥不在 ~/.config/ai-bridge-release/release-signing-key.pem 时，用 AI_BRIDGE_RELEASE_KEY 指路径
 
    # 在 CI 上出的包拿回来再签：
    node scripts/release-sign.cjs sign --key <私钥> ai-bridge-0.2.0-linux-x64.tar.gz ai-bridge-0.2.0-windows-x64.zip

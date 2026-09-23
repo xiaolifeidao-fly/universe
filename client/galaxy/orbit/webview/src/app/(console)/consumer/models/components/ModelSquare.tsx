@@ -24,7 +24,7 @@ import { IconRefresh } from "@/components/ui/icons";
 import { Card, EmptyState, IconBtn, Kpi, Loading, Note, Pill } from "@/components/ui/kit";
 import { VendorMark, vendorLabel } from "@shared/brand/VendorMark";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { formatBps, formatCompact, formatPoints } from "@/utils/format";
+import { formatBps, formatCompact, formatDiscount, formatPoints } from "@/utils/format";
 import {
   fetchCatalog,
   fetchPoints,
@@ -47,8 +47,14 @@ const BADGE_TONES: Record<string, "accent" | "warn" | "ok" | "default"> = {
   neutral: "default",
 };
 
-/** 列表的列宽。表头和每一行共用同一份 —— 各写一份迟早错开一列。 */
-const COLUMNS = "minmax(0, 1.7fr) 96px 104px 104px 104px 96px 28px";
+/**
+ * 列表的列宽。表头和每一行共用同一份 —— 各写一份迟早错开一列。
+ *
+ * 数字那几列掐得比看着需要的更紧：这一页嵌在带侧栏的控制台里，能给表格的宽度本来就少，
+ * 而定宽的列一点不让，多出来的全从模型名那一列身上出。名字被压到「Clau…」时，
+ * 一行里最该认出来的东西反而没了 —— 而每列 96px 装得下 79.90 和它底下划掉的 334.7700。
+ */
+const COLUMNS = "minmax(0, 1.7fr) 84px 96px 96px 96px 84px 24px";
 
 /** Claude 一族的族键。只有它会按 TTL 分档报缓存写入，那两档只给它摆。 */
 const CLAUDE_FAMILY = "claude";
@@ -57,6 +63,32 @@ const CLAUDE_FAMILY = "claude";
 /** 0 不显示成「0」：那一档没定价，写 0 会被读成免费。 */
 function points(value: number): string {
   return value > 0 ? formatPoints(value) : "-";
+}
+
+/**
+ * 主价底下那一行划掉的官方价。
+ *
+ * 「省 X%」是我们自己说的一句话，划线价是可核对的事实 —— 两个数上下摆着，
+ * 拿官方价去对上游官网，省多少自己就看得出来。原先它只写在展开里，而这一页
+ * 收起来的那一行就是拿来比价的：要点开十行才知道哪一行划算，等于没标。
+ *
+ * 两种情况不划：自家这一档没有价（显示成「-」），划掉官方价却给不出替代的数，
+ * 等于说「这个价不算数」然后没有下文；官方价不比自家价高，划了是标一个负的折扣 ——
+ * 和服务端 discountBps 同一个口径，那边返 0，这边也就不该画出一条线来。
+ */
+function ListPrice({ price, list, label }: { price: number; list: number; label: string }) {
+  if (price <= 0 || list <= price) return null;
+  const text = formatPoints(list);
+  // title 里把「官方」和数一起写上：它既是鼠标悬停的提示，也是这个元素的无障碍名字 ——
+  // 只写「官方」的话，读屏念出来的就只有这两个字，那个数反而丢了。
+  return (
+    <s
+      title={`${label} ${text}`}
+      style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 400, color: "var(--gx-faint)" }}
+    >
+      {text}
+    </s>
+  );
 }
 
 export function ModelSquare() {
@@ -297,6 +329,7 @@ function VendorChip({
 function ModelRow({ model, open, onToggle }: { model: ConsumerModelView; open: boolean; onToggle: () => void }) {
   const { t } = useLocale();
   const groups = model.groups ?? [];
+  const listLabel = t("models.listPrice");
   return (
     <>
       <button
@@ -321,7 +354,7 @@ function ModelRow({ model, open, onToggle }: { model: ConsumerModelView; open: b
               <span style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
                 {model.badgeText ? <Pill tone={BADGE_TONES[model.badgeTone] ?? "default"}>{model.badgeText}</Pill> : null}
                 {/* 折扣是服务端按输出价算好的。前端再减一遍的话，门户和这里迟早标出两个数。 */}
-                {model.discountBps > 0 ? <Pill tone="ok">{t("models.discount", { rate: formatBps(model.discountBps) })}</Pill> : null}
+                {model.discountBps > 0 ? <Pill tone="ok">{t("models.discount", { rate: formatDiscount(model.discountBps) })}</Pill> : null}
               </span>
             </span>
             {/* 模型名照原样给出来：使用者要把它一个字不差地填进自己的客户端。 */}
@@ -333,9 +366,18 @@ function ModelRow({ model, open, onToggle }: { model: ConsumerModelView; open: b
         <span className="gx-mono" style={{ textAlign: "right", fontSize: 12, color: "var(--gx-soft)" }}>
           {model.contextTokens > 0 ? formatCompact(model.contextTokens) : "-"}
         </span>
-        <span className="gx-mono" style={{ textAlign: "right" }}>{points(model.inputPrice)}</span>
-        <span className="gx-mono" style={{ textAlign: "right" }}>{points(model.outputPrice)}</span>
-        <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>{points(model.cachePrice)}</span>
+        <span className="gx-mono" style={{ textAlign: "right" }}>
+          {points(model.inputPrice)}
+          <ListPrice price={model.inputPrice} list={model.listInputPrice} label={listLabel} />
+        </span>
+        <span className="gx-mono" style={{ textAlign: "right" }}>
+          {points(model.outputPrice)}
+          <ListPrice price={model.outputPrice} list={model.listOutputPrice} label={listLabel} />
+        </span>
+        <span className="gx-mono" style={{ textAlign: "right", color: "var(--gx-soft)" }}>
+          {points(model.cachePrice)}
+          <ListPrice price={model.cachePrice} list={model.listCachePrice} label={listLabel} />
+        </span>
         <span style={{ textAlign: "right", fontSize: 12 }}>
           {/* 有几档就说几档。一档都没有的模型是**建不出密钥**的（新建密钥必须选一档），
               所以那不是「没什么可说」，展开里会把这句话写清楚。 */}
@@ -407,16 +449,10 @@ function ModelDetail({ model }: { model: ConsumerModelView }) {
       )}
 
 
-      {/* 这一行只剩划线价：没声明官方价的模型整行不出现，否则留下一个空行的 gap。 */}
-      {listed ? (
-        <span className="gx-card__hint">
-          {t("models.listPrice")}{" "}
-          <s className="gx-mono">
-            {points(model.listInputPrice)} / {points(model.listOutputPrice)}
-            {model.listCachePrice > 0 ? ` / ${points(model.listCachePrice)}` : ""}
-          </s>
-        </span>
-      ) : null}
+      {/* 划线价搬到收起来的那一行上了（比价发生在那里，点开才看见等于没标），这里只说清楚
+          那几个划掉的数是什么、折扣按哪一档算。把同样三个数再排一遍，是让人在一屏之内
+          来回核对两处一样的东西。没声明官方价的模型整行不出现。 */}
+      {listed ? <span className="gx-card__hint">{t("models.listHint")}</span> : null}
     </div>
   );
 }

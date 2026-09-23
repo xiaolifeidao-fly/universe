@@ -34,6 +34,7 @@ import {
   nodeDisplayName,
   type NodeView,
 } from "../../api/provider.api";
+import { isLoginBusy, LoginPanel } from "./LoginPanel";
 import { Blank, RowList, TabStrip } from "./parts";
 import { ToolRow } from "./ToolRow";
 
@@ -149,6 +150,8 @@ export function MachineList({
   onUnbind,
   onUpgrade,
   onInstallTool,
+  onStartLogin,
+  onSubmitLoginCode,
   onAddServer,
   onRetryRetired,
 }: {
@@ -166,6 +169,8 @@ export function MachineList({
   onUpgrade: (node: NodeView) => void;
   /** 让某台机器装 / 升一个本机工具。同 onUpgrade，下发和刷新都在页面那一层。 */
   onInstallTool: (node: NodeView, tool: string) => void;
+  onStartLogin: (node: NodeView, tool: string) => void;
+  onSubmitLoginCode: (node: NodeView, tool: string, code: string) => void;
   onAddServer: () => void;
   onRetryRetired: () => void;
 }) {
@@ -221,6 +226,8 @@ export function MachineList({
         onUnbind={() => onUnbind(node)}
         onUpgrade={() => onUpgrade(node)}
         onInstallTool={(tool) => onInstallTool(node, tool)}
+        onStartLogin={(tool) => onStartLogin(node, tool)}
+        onSubmitLoginCode={(tool, code) => onSubmitLoginCode(node, tool, code)}
       />
     ));
   }
@@ -283,6 +290,8 @@ function MachineRow({
   onUnbind,
   onUpgrade,
   onInstallTool,
+  onStartLogin,
+  onSubmitLoginCode,
 }: {
   node: NodeView;
   retired: boolean;
@@ -294,6 +303,8 @@ function MachineRow({
   onUnbind: () => void;
   onUpgrade: () => void;
   onInstallTool: (tool: string) => void;
+  onStartLogin: (tool: string) => void;
+  onSubmitLoginCode: (tool: string, code: string) => void;
 }) {
   const { t } = useLocale();
   const online = !retired && isNodeOnline(node);
@@ -382,6 +393,8 @@ function MachineRow({
           onUnbind={onUnbind}
           onUpgrade={onUpgrade}
           onInstallTool={onInstallTool}
+          onStartLogin={onStartLogin}
+          onSubmitLoginCode={onSubmitLoginCode}
         />
       ) : null}
     </div>
@@ -396,6 +409,8 @@ function MachineDetail({
   onUnbind,
   onUpgrade,
   onInstallTool,
+  onStartLogin,
+  onSubmitLoginCode,
 }: {
   id: string;
   node: NodeView;
@@ -404,6 +419,8 @@ function MachineDetail({
   onUnbind: () => void;
   onUpgrade: () => void;
   onInstallTool: (tool: string) => void;
+  onStartLogin: (tool: string) => void;
+  onSubmitLoginCode: (tool: string, code: string) => void;
 }) {
   const { t } = useLocale();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -493,7 +510,14 @@ function MachineDetail({
           <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("account.machineTools")}</span>
           {(node.tools ?? []).length > 0 ? (
             (node.tools ?? []).map((tool) => (
-              <ToolRow key={tool.name} tool={tool} busy={busy} onRun={() => onInstallTool(tool.name)} t={t} />
+              <ToolRow
+                key={tool.name}
+                tool={tool}
+                busy={busy}
+                onRun={() => onInstallTool(tool.name)}
+                onLogin={() => onStartLogin(tool.name)}
+                t={t}
+              />
             ))
           ) : (
             // 老版本 ai-bridge 报不上来。说清楚是「还没报」而不是「没装」——
@@ -502,6 +526,21 @@ function MachineDetail({
           )}
         </div>
       )}
+      {retired
+        ? null
+        : // 正在进行（或刚结束）的登录摊在工具那一行下面：它讲的是同一件事的下一步，
+          // 而且这一格里要放地址、短码和一个输入框，挤不进上面那一行。
+          // 成功的那条由服务端挂一会儿就收掉，不会一直堆在这儿。
+          (node.logins ?? []).map((login) => (
+            <LoginPanel
+              key={login.tool}
+              login={login}
+              busy={busy}
+              onSubmitCode={(code) => onSubmitLoginCode(login.tool, code)}
+              onRestart={() => onStartLogin(login.tool)}
+              t={t}
+            />
+          ))}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 10 }}>
         <span className="gx-card__hint" style={{ flex: 1, lineHeight: 1.6 }}>
           {retired ? t("account.retiredHint") : t("account.unbindHint")}

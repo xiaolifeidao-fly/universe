@@ -38,6 +38,8 @@ import {
   fetchTerms,
   isUpgradeInProgress,
   installNodeTool,
+  startNodeLogin,
+  submitNodeLoginCode,
   nodeDisplayName,
   orderMachines,
   requestNodeUpgrade,
@@ -52,6 +54,7 @@ import { AccessKeyPanel } from "./AccessKeyPanel";
 import { BridgeInstallPanel } from "./BridgeInstallPanel";
 import { MachineList } from "./MachineList";
 import { ThisComputerPanel } from "./ThisComputerPanel";
+import { isLoginBusy, upsertLogin } from "./LoginPanel";
 import { isToolJobBusy } from "./ToolRow";
 
 /** 和「今天」「共享设置」同一个节奏：心跳 15 秒一次，前端刷得比数据还勤没有意义。 */
@@ -150,11 +153,16 @@ export function AccountPanel() {
     };
   }, [loadKeys, loadNodes, loadReleases, loadRetired, t]);
 
-  // 有机器在升级、或者有机器在装工具时都要刷得勤一点：两件事的进度都是跟着
+  // 有机器在升级、在装工具、或者正在登录时都要刷得勤一点：三件事的进度都是跟着
   // 心跳回来的，按 20 秒一刷，盯着看的那一台会从「等机器领取」直接跳到结果。
+  //
+  // 登录这一条尤其不能慢：主人正对着屏幕等那串短码出来，而机器那边也已经把心跳
+  // 提速到 5 秒了 —— 界面比它还慢的话，快出来的东西全卡在这一层。
   const upgrading = nodes.some(
     (node) =>
-      isUpgradeInProgress(node.upgrade) || (node.tools ?? []).some((tool) => isToolJobBusy(tool.job)),
+      isUpgradeInProgress(node.upgrade) ||
+      (node.tools ?? []).some((tool) => isToolJobBusy(tool.job)) ||
+      (node.logins ?? []).some((login) => isLoginBusy(login)),
   );
 
   // 别的机器上下线、回连通不通、升级走到哪都得看得见。刷新失败不弹：
@@ -253,6 +261,62 @@ export function AccountPanel() {
     }
   };
 
+  /**
+   * 让远端那台机器登录 claude / codex。
+   *
+   * 不弹确认框，同 installTool：它只是在那台机器上起一次登录流程，点错了等它超时
+   * 或者换一个工具再点就好 —— 真正不可逆的那一步（授权）还在主人自己的浏览器里。
+   */
+  const startLogin = async (node: NodeView, tool: string) => {
+    setBusy(true);
+    try {
+      const started = await startNodeLogin(node.nodeId, tool);
+      // 先把这一台就地标成「等机器领取」再去刷新，理由同 installTool：
+      // 列表回来之前按钮还亮着，手快再点一次只会被服务端拒回来。
+      if (started) {
+        setNodes((current) =>
+          current.map((item) =>
+            item.nodeId === node.nodeId
+              ? { ...item, logins: upsertLogin(item.logins ?? [], started) }
+              : item,
+          ),
+        );
+      }
+      await loadNodes().catch(() => undefined);
+    } catch (error) {
+      message.error((error as Error).message || t("common.actionFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 把主人从浏览器里拿回来的授权码交给那台机器。只有 claude 这条路需要。
+   *
+   * 码错了不是异常：服务端照样收下，机器那边会回一句「Invalid code」，进程不退 ——
+   * 主人可以直接再粘一次。所以这里不清空、不重置，只管把它送出去。
+   */
+  const submitLoginCode = async (node: NodeView, tool: string, code: string) => {
+    setBusy(true);
+    try {
+      const updated = await submitNodeLoginCode(node.nodeId, tool, code);
+      if (updated) {
+        setNodes((current) =>
+          current.map((item) =>
+            item.nodeId === node.nodeId
+              ? { ...item, logins: upsertLogin(item.logins ?? [], updated) }
+              : item,
+          ),
+        );
+      }
+      await loadNodes().catch(() => undefined);
+    } catch (error) {
+      message.error((error as Error).message || t("common.actionFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 签发弹窗里那条带密钥的一行安装命令用的是 sh 脚本：平台一个 Linux 包都没发布时不给，
   // 照着跑只会装到一半报「没有这个平台的包」。手装 ai-bridge 只认 Linux，同「安装 ai-bridge」那一块。
   const unixInstallScript =
@@ -290,6 +354,8 @@ export function AccountPanel() {
                   onUnbind={unbind}
                   onUpgrade={upgrade}
                   onInstallTool={(node, tool) => void installTool(node, tool)}
+                  onStartLogin={(node, tool) => void startLogin(node, tool)}
+                  onSubmitLoginCode={(node, tool, code) => void submitLoginCode(node, tool, code)}
                   onAddServer={() => setIssueOpen(true)}
                   onRetryRetired={() => void loadRetired()}
                 />

@@ -1,23 +1,24 @@
 use super::client::{
     AccessDeclaration, CapabilityReport, CompleteBody, EnabledContribution, HeartbeatLane, HubClient,
-    HubFailure, HubLane, InstallInfo, NextResult, ToolCommand,
+    HubFailure, HubLane, InstallInfo, LoginCommand, NextResult, ToolCommand,
 };
 use super::export::{normalize_public_url, resolve_secret, ExportServer};
 use super::hub_address::HubAddressCheck;
 use super::lane::{Lane, LaneConfig};
+use super::login::{any_login_active, login_report, start_login, submit_code};
 use super::machine::machine_fingerprint;
 use super::models::list_models;
 use super::probe::probe;
 use super::token::{fingerprint, read_node_identity, resolve_node_token_file, NodeIdentity};
 use super::tools::{any_job_running, external_tool_statuses, run_tool_job, tool_job, ToolStatus};
 use super::upgrade::{compare_versions, current_platform, UpgradeCommand, UpgradeState, Updater, Version};
-use crate::business::llm_chat::RelayProvider;
+use crate::business::llm_chat::{probe_credentials, RelayProvider};
 use crate::business::video_edit::FfmpegLocalProvider;
 use crate::business::{
     group_joined, local_resources, ArtifactRef, DoneEvent, ErrorClass, Metering, Provider,
     UnitCallbacks, UnitError, UnitEvent, UnitIo, WorkUnit,
 };
-use crate::config::schema::{AccessMode, AppConfig, PoolConfig, PoolExportConfig};
+use crate::config::schema::{AccessMode, AppConfig, AuthMode, PoolConfig, PoolExportConfig, ProviderConfig};
 use crate::core::paths::Env;
 use crate::core::request::Cancel;
 use crate::credentials::CredentialRegistry;
@@ -164,6 +165,8 @@ pub(crate) struct RunnerInner {
     tool_snapshot: Mutex<Vec<ToolStatus>>,
     /// 接手过的工具指令 id。Hub 在看到机器开工之前每次心跳都重发同一条。
     tool_seen: Mutex<HashSet<String>>,
+    /// 接手过的登录指令。键里带着码本身，不只是 id —— 见 accept_login_command。
+    login_seen: Mutex<HashSet<String>>,
     /// 新版本已经装好，正在为重启排空：不领新活、心跳把通道报成 paused、export 入口回 503。
     ///
     /// 和 stopping 分开：排空期间心跳、续租、终态上报都要照常走，在跑的单元得好好跑完 ——
@@ -272,6 +275,7 @@ pub async fn create_pool_runner_with(
             upgrade_gate: Mutex::new(UpgradeGate::default()),
             tool_snapshot: Mutex::new(Vec::new()),
             tool_seen: Mutex::new(HashSet::new()),
+            login_seen: Mutex::new(HashSet::new()),
             restart_draining: AtomicBool::new(false),
             restart: tokio::sync::watch::Sender::new(false),
         }),
@@ -836,7 +840,8 @@ impl RunnerInner {
                 })
                 .collect();
             let tools = self.tools_report();
-            match self.client.heartbeat(&payload, &tools, &self.loop_cancel).await {
+            let logins = login_report();
+            match self.client.heartbeat(&payload, &tools, &logins, &self.loop_cancel).await {
                 Ok(result) => {
                     self.hub_address.lock().unwrap().check_and_log(result.hub_url.as_deref());
                     // 取消搭在心跳的响应里：延迟不超过一个上报周期（T-05）。
@@ -854,12 +859,20 @@ impl RunnerInner {
                     if let Some(command) = result.tool {
                         self.accept_tool_command(command);
                     }
+                    if let Some(command) = result.login {
+                        self.accept_login_command(command);
+                    }
                 }
                 Err(failure) => log_warn!("pool_heartbeat_failed", "message": failure.message()),
             }
             let beat_ms = self.settings.heartbeat_sec as u64 * 1000;
             // 正在装东西就跳快一点：控制台上那个进度条是这条心跳喂的。
-            self.wait(if any_job_running() { beat_ms.min(TOOL_JOB_BEAT_MS) } else { beat_ms }).await;
+            //
+            // 登录会话开着时同样提速，但理由更硬：claude 那条路要把主人粘回来的码
+            // 送回这台机器，而心跳是 poll 节点唯一的下行。15 秒一跳的话，
+            // 「粘完码到机器收到」中间平均要等七八秒，而那串码本身是有寿命的。
+            let busy = any_job_running() || any_login_active();
+            self.wait(if busy { beat_ms.min(TOOL_JOB_BEAT_MS) } else { beat_ms }).await;
         }
     }
 
@@ -874,7 +887,10 @@ impl RunnerInner {
         // 只是和它们抢。晚十几秒报上去没人会察觉 —— 这两个版本号本来就不常变。
         self.wait(TOOLS_PROBE_DELAY_MS).await;
         while !self.stopping.load(Ordering::Relaxed) {
-            let statuses = external_tool_statuses().await;
+            let mut statuses = external_tool_statuses().await;
+            for status in &mut statuses {
+                status.logged_in = self.probe_login_state(&status.name).await;
+            }
             *self.tool_snapshot.lock().unwrap() = statuses;
             // 装完之后那一版号要尽快报上去，所以装东西期间也跟着提速。
             self.wait(if any_job_running() { TOOL_JOB_BEAT_MS } else { TOOLS_PROBE_INTERVAL_MS }).await;
@@ -925,6 +941,52 @@ impl RunnerInner {
     /// —— 机器领了却一条进度都不报，那一次就按「没反应」收掉。
     fn report_tool_command_failure(&self, command: &ToolCommand, message: &str) {
         log_warn!("pool_tool_job_failed", "id": command.id, "tool": command.tool, "message": message);
+    }
+
+    // ---------- 上游登录 ----------
+
+    /// 这个工具在本机登录了没有。None 表示本机没有对应的上游，见 ToolStatus::logged_in。
+    ///
+    /// 走的是和能力探测同一条路（只解析凭据、不发请求），所以它不消耗主人的额度，
+    /// 也不会在上游留痕迹 —— 这一轮探针一分钟跑一次，真打上游是受不了的。
+    async fn probe_login_state(&self, tool: &str) -> Option<bool> {
+        let (name, provider) = provider_for_tool(&self.cfg, tool)?;
+        Some(probe_credentials(provider, name, &self.credentials, &self.env).await.is_ok())
+    }
+
+    /// 接一条登录指令。两种形状：起一次登录，或者把主人粘回来的授权码送到。
+    ///
+    /// 去重的键带上码本身，**不能只用 id**：一次会话里 Hub 会先发「起」、再发
+    /// 「这是码」，两条指令的 id 是同一个 —— 只按 id 去重的话，码会被当成重发丢掉，
+    /// 主人在界面上粘了码却什么都不会发生。码粘错了再来一次同理，那是一条新的键。
+    fn accept_login_command(&self, command: LoginCommand) {
+        if command.id.is_empty() {
+            log_warn!("pool_login_command_without_id", "tool": command.tool,
+                "hint": "登录指令没有 id，没法让 Hub 认出这一次，不执行");
+            return;
+        }
+        let key = format!("{}:{}", command.id, command.code.as_deref().unwrap_or(""));
+        if !self.login_seen.lock().unwrap().insert(key) {
+            return;
+        }
+        tokio::spawn(async move {
+            match command.code.as_deref() {
+                // 有码：喂给那个还卡在 stdin 上的进程。
+                Some(code) => match submit_code(&command.tool, &command.id, code) {
+                    Ok(()) => log_info!("pool_login_code_submitted", "id": command.id,
+                        "tool": command.tool),
+                    // 失败只记一笔：原因在下一跳心跳的 logins 里，控制台照样看得见。
+                    Err(message) => log_warn!("pool_login_code_rejected", "id": command.id,
+                        "tool": command.tool, "message": message),
+                },
+                None => match start_login(&command.tool, Some(&command.id)).await {
+                    Ok(status) => log_info!("pool_login_started_by_hub", "id": command.id,
+                        "tool": command.tool, "state": status.state),
+                    Err(message) => log_warn!("pool_login_start_failed", "id": command.id,
+                        "tool": command.tool, "message": message),
+                },
+            }
+        });
     }
 
     // ---------- 远程升级 ----------
@@ -1467,6 +1529,22 @@ impl Outcome {
 /// 而且要能在控制台上被主人认出来。
 ///
 /// kindVersion 固定 1：适配器目前都是 v1，探测结果里没有这一项。
+/// 本机配置里负责这个工具的那个上游。
+///
+/// 工具名和 authMode 是一一对应的（claude → claude_oauth，codex → codex_chatgpt）：
+/// 「登录 claude」问的就是「claude_oauth 那个上游的凭据还能用吗」。
+///
+/// 配了多个同 authMode 的上游时取撞见的第一个。那种配法本来就少见，而这里要答的是
+/// 「这台机器上的 claude 登录了没」—— 那是一份**本机凭据**，几个上游共用同一份。
+fn provider_for_tool<'a>(cfg: &'a AppConfig, tool: &str) -> Option<(&'a String, &'a ProviderConfig)> {
+    let wanted = match tool {
+        "claude" => AuthMode::ClaudeOauth,
+        "codex" => AuthMode::CodexChatgpt,
+        _ => return None,
+    };
+    cfg.providers.iter().find(|(_, provider)| provider.auth_mode == Some(wanted))
+}
+
 fn local_capability(capability: &super::probe::Capability, cfg: &AppConfig) -> Option<LocalCapability> {
     match capability.kind.as_str() {
         "llm.chat" => {

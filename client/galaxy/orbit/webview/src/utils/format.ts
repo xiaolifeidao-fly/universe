@@ -196,6 +196,20 @@ export function formatBps(bps: number): string {
   return `${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
 }
 
+/**
+ * 折扣按整数百分比标：8500 → 「85%」。
+ *
+ * 和 formatBps 分开是因为这两个数的性质不同。返现比例是合同上的一个数，2.5% 和 3%
+ * 差着钱，小数不能丢；折扣是**算出来**的（自家价比官方参考价便宜多少），末两位小数
+ * 只是除法的余数 —— 「省 76.13%」看着像精算过的承诺，其实官方价一动它就变。
+ *
+ * 向下取整，不四舍五入：宁可少说一点，也不要把 76.4% 说成 76.5% 这样的高报。
+ */
+export function formatDiscount(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return "0%";
+  return `${Math.floor(bps / 100)}%`;
+}
+
 /** 09-10 23:38 —— 桌面窗口宽度有限，年份没有信息量。 */
 export function formatDateTime(value?: string): string {
   const parsed = parseDate(value);

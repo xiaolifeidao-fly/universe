@@ -225,5 +225,6 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_KEY,
   PLATFORMS, parseArchiveName, publicKeyFromBase64, readReleaseKeys, signArchive, signedMessage, verifyArchive,
 };

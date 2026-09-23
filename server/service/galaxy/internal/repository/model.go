@@ -75,6 +75,21 @@ type GalaxyNode struct {
 	ToolCommandName string     `gorm:"column:tool_command_name;type:varchar(32)" description:"要装 / 升的工具名：claude 或 codex"`
 	ToolCommandAt   *time.Time `gorm:"column:tool_command_at;type:timestamp null default null" description:"控制台点下那一刻；超过时限还没人领就作废"`
 
+	// 远端登录（claude / codex）。和上面那组工具指令是**两条独立的槽**：
+	// 一台机器可以一边装 codex 一边登录 claude，共用一个槽会互相顶掉。
+	//
+	// LoginsJSON 是节点每次心跳自报的一份 dto.NodeLoginReport 数组，规矩同 ToolsJSON。
+	LoginsJSON string `gorm:"column:logins_json;type:text" description:"节点自报的登录会话（授权地址、短码、进度），JSON"`
+	// LoginCommandCode 主人在控制台粘回来的授权码，等着搭下一跳心跳送过去。
+	//
+	// 空串 = 这条指令是「起一次登录」；有值 = 「这是你要的那串码」。两者 id 相同。
+	// 存明文是有意的：它是一次性的、几分钟就过期的授权码，不是凭据 —— 换来的 token
+	// 只落在那台机器上，Hub 这边从头到尾看不到。用完即清（见 clearLoginCommand）。
+	LoginCommandID   string     `gorm:"column:login_command_id;type:varchar(40)" description:"登录指令 id，节点在心跳里原样报回"`
+	LoginCommandName string     `gorm:"column:login_command_name;type:varchar(32)" description:"要登录的工具名：claude 或 codex"`
+	LoginCommandCode string     `gorm:"column:login_command_code;type:varchar(255)" description:"主人粘回来的一次性授权码，送达后即清"`
+	LoginCommandAt   *time.Time `gorm:"column:login_command_at;type:timestamp null default null" description:"控制台点下那一刻；超过时限还没人领就作废"`
+
 	// AccessMode 这台机器和 Hub 之间是怎么通信的：
 	//   poll   节点长轮询领活，Hub 永不主动连它（可视化客户端唯一支持的方式）
 	//   export 节点把自己暴露在公网上，Hub 拿 endpoint + secret 主动回连

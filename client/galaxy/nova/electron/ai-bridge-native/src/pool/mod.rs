@@ -2,6 +2,7 @@ pub mod client;
 pub mod export;
 pub mod hub_address;
 pub mod lane;
+pub mod login;
 pub mod machine;
 pub mod models;
 pub mod probe;

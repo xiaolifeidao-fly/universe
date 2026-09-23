@@ -313,6 +313,17 @@ export class NodeView {
    * 那时这一格什么都不画（不是「一个都没装」）。
    */
   tools: NodeTool[] = [];
+
+  /**
+   * 这台机器上正在进行（或刚结束）的登录。没人在登录时是空数组。
+   *
+   * 和 tools 分开是因为它们是两条独立的槽：一台机器可以一边装 codex 一边登录 claude。
+   *
+   * 嵌套对象不经过 class-transformer（项目里没用 @Type），拿到的是普通对象。
+   * 服务端保证这一列永远是数组、不是 null —— null 会盖掉上面这个 [] 默认值，
+   * 而渲染层一个 .map 就是整页崩掉（服务端那边有用例守着）。
+   */
+  logins: NodeLogin[] = [];
 }
 
 /** 机器上的一个本机工具。形状与本机那份（ToolStatus）一致，好让两处共用同一个组件。 */
@@ -329,8 +340,54 @@ export class NodeTool {
 
   installed = false;
 
+  /**
+   * 这个工具在那台机器上登录了没有。
+   *
+   * **undefined 不是「没登录」，是「这个问题没有意义」**：那台机器的配置里没有对应的
+   * 上游，主人根本没打算共享它 —— 这时不该画登录按钮，画了只会催他登一个不想共享的
+   * 账号。老版本 ai-bridge 也报不上来，同样是 undefined。
+   */
+  loggedIn?: boolean;
+
   /** 正在装 / 刚装完的那一次。同 upgrade：嵌套对象不经过 class-transformer。 */
   job?: NodeToolJob;
+}
+
+/**
+ * 机器上正在进行的一次登录。
+ *
+ * 两条路形状不同，界面据 needsCode 分岔：
+ *   · codex 给的是短码加地址，主人在任意设备的浏览器里输完码，机器自己轮询换 token；
+ *   · claude 只给地址，主人授权完要把浏览器里那串码**粘回来**，由平台送回那台机器。
+ */
+export class NodeLogin {
+  tool = "";
+
+  /** pending 是「指令发了、机器还没领」；waiting 是地址就绪、在等主人。 */
+  state: "pending" | "running" | "waiting" | "succeeded" | "failed" = "running";
+
+  /** pending | starting | authorize | verifying | done | failed。 */
+  phase = "";
+
+  /** 让主人在浏览器里打开的地址。没拿到之前是空串。 */
+  verificationUri = "";
+
+  /** 设备码流程里要主人手输的短码。claude 没有。 */
+  userCode = "";
+
+  /** 要不要主人把码粘回来。界面据此决定画不画输入框。 */
+  needsCode = false;
+
+  /** 失败时是机器上那个 CLI 自己说的原因。 */
+  detail = "";
+
+  elapsedMs = 0;
+
+  /** 机器真正跑的那条命令，失败时摆出来好让人自己 ssh 上去跑一遍。 */
+  command = "";
+
+  /** 这一次会话的指令 id。粘码时要原样带回去，服务端靠它认出是哪一次。 */
+  commandId = "";
 }
 
 export class NodeToolJob {
@@ -798,6 +855,31 @@ export async function revokeNode(nodeId: string) {
  */
 export async function installNodeTool(nodeId: string, tool: string) {
   const response = await instance.post<ApiResponse<NodeTool>>("/galaxy/provider/node/tool", { nodeId, tool });
+  return unwrapApiResponse(response.data);
+}
+
+/**
+ * 让远端那台机器登录一个上游（claude、codex）。
+ *
+ * 同 installNodeTool，只是下发指令：机器最多等一个心跳领走，之后的授权地址、短码和
+ * 进度看 NodeView.logins。登录期间机器会把心跳提到 5 秒一跳。
+ */
+export async function startNodeLogin(nodeId: string, tool: string) {
+  const response = await instance.post<ApiResponse<NodeLogin>>("/galaxy/provider/node/login", { nodeId, tool });
+  return unwrapApiResponse(response.data);
+}
+
+/**
+ * 把浏览器里拿到的授权码粘回去，转交给那台机器。
+ *
+ * 只有 claude 这条路需要：它没有设备码流程，机器上那个进程正卡在 stdin 上等这串码。
+ * 码是一次性的、几分钟就过期，送到机器上即清，平台不留存。
+ */
+export async function submitNodeLoginCode(nodeId: string, tool: string, code: string) {
+  const response = await instance.post<ApiResponse<NodeLogin>>(
+    "/galaxy/provider/node/login/code",
+    { nodeId, tool, code },
+  );
   return unwrapApiResponse(response.data);
 }
 

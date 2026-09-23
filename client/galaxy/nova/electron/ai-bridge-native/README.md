@@ -103,6 +103,11 @@ Codex 在 `~/.codex/config.toml` 里把 `base_url` 指到 `http://127.0.0.1:8787
 cargo build --release --bin ai-bridge            # 本机
 node scripts/build-cli.cjs [--target <triple>]   # 连同部署说明与服务模板打成发布包
 
+# 出一版：抬版本号 + 重编 .node + 各平台发布包 + 签名 + 写 SHA256SUMS，一条命令。
+sh scripts/release.sh --note "这一版带来什么"     # 默认抬 patch、出 linux-x64（zig）
+node scripts/release.cjs --bump patch --note "这一版带来什么" \
+  --target x86_64-unknown-linux-gnu --zig       # 不要默认值时直接用它
+
 # 在 macOS 上出 Linux 包（不用 Docker）：zig 当交叉编译器，按 glibc 2.17 链接，老发行版也能跑。
 # 先装一次：brew install zig && cargo install cargo-zigbuild
 node scripts/build-cli.cjs --target x86_64-unknown-linux-gnu --zig
@@ -126,8 +131,11 @@ node scripts/build-cli.cjs --target x86_64-unknown-linux-gnu --zig
 - **换文件在 `SelfUpdater`**：临时目录建在可执行文件旁边（同一个文件系统，rename 才原子），
   系统 `tar` 解包，先试跑 `<新文件> version`，旧文件留 `.old`，换失败还原。
   可执行文件所在目录必须对运行服务的用户可写。
-- **发版**：`scripts/release-sign.cjs`（keygen / sign / verify）；`build-cli.cjs` 设了
-  `AI_BRIDGE_RELEASE_KEY` 时顺手签。完整流程见 [`deploy/README.md`](deploy/README.md)「发布与签名」。
+- **发版**：`scripts/release.cjs` 把抬版本号、两个产物、签名、校验和串成一条命令；
+  底下还是 `build.cjs` / `build-cli.cjs`，它们仍然能单独用。签名工具是
+  `scripts/release-sign.cjs`（keygen / sign / verify），`build-cli.cjs` 找得到私钥就顺手签
+  （先看 `AI_BRIDGE_RELEASE_KEY`，再看 `~/.config/ai-bridge-release/release-signing-key.pem`）。
+  完整流程见 [`deploy/README.md`](deploy/README.md)「发布与签名」。
 
 `src/pool/upgrade.rs` 的测试对着真 tar 包、本地 HTTP 跑下载 / 验签 / 试跑 / 替换，
 还有一组 Node 签名脚本生成的向量；`tests/pool_upgrade.rs` 用假 Hub + 假升级器跑上报顺序、

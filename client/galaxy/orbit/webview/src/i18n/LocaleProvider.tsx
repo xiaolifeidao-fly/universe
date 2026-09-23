@@ -297,6 +297,7 @@ const messages = {
     "models.perOut": "/M 输出",
     "models.listPrice": "官方",
     "models.discount": "省 {rate}",
+    "models.listHint": "每个价底下划掉的那个数是上游官网当期的官方价，同口径、同币种；「省 X%」按输出价算 —— 账单的大头在那一桶。",
 
     "points.unit": "积分",
     "points.title": "积分",
@@ -762,6 +763,7 @@ const messages = {
     "models.perOut": "/M out",
     "models.listPrice": "list",
     "models.discount": "{rate} off",
+    "models.listHint": "The struck-through figure under each rate is the vendor's current list price, same unit and currency. \"X% off\" is computed on the output rate — that is where the bill actually lands.",
 
     "points.unit": "pts",
     "points.title": "Points",

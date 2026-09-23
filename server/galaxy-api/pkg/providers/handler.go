@@ -61,6 +61,8 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.POST("/node/upgrade", h.upgradeNode)
 	// 机器上的 claude / codex：远端那台也能一键装 / 升，进度同样在机器列表里看。
 	api.POST("/node/tool", h.installNodeTool)
+	api.POST("/node/login", h.startNodeLogin)
+	api.POST("/node/login/code", h.submitNodeLoginCode)
 	// 邀请返现。
 	api.GET("/referral", h.referral)
 	api.GET("/referral/invitees", h.referralInvitees)
@@ -119,6 +121,43 @@ func (h *Handler) installNodeTool(context *gin.Context) {
 		return
 	}
 	view, err := h.service.RequestNodeTool(context.Request.Context(), auth.UserID(context), req.NodeID, req.Tool)
+	httpx.JSON(context, view, err)
+}
+
+// startNodeLogin 让这台机器上的 claude / codex 登录上游订阅。
+//
+// 同 installNodeTool，只是记一条指令：机器最多等一个心跳就领走，之后的授权地址、
+// 短码和进度跟着机器列表里的 logins 回来。工具名由服务端按白名单校验 ——
+// 这个接口不接受任何形式的命令，只接受一个名字。
+func (h *Handler) startNodeLogin(context *gin.Context) {
+	var req struct {
+		NodeID string `json:"nodeId" binding:"required"`
+		Tool   string `json:"tool" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.RequestNodeLogin(context.Request.Context(), auth.UserID(context), req.NodeID, req.Tool)
+	httpx.JSON(context, view, err)
+}
+
+// submitNodeLoginCode 主人在浏览器里授权完，把那串码粘回来。
+//
+// 只有 claude 这条路需要：它没有设备码流程，进程会卡在 stdin 上等这串码。
+// 码是一次性的、几分钟就过期，送到机器上即清，不在这边留存。
+func (h *Handler) submitNodeLoginCode(context *gin.Context) {
+	var req struct {
+		NodeID string `json:"nodeId" binding:"required"`
+		Tool   string `json:"tool" binding:"required"`
+		Code   string `json:"code" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	view, err := h.service.SubmitNodeLoginCode(
+		context.Request.Context(), auth.UserID(context), req.NodeID, req.Tool, req.Code)
 	httpx.JSON(context, view, err)
 }
 

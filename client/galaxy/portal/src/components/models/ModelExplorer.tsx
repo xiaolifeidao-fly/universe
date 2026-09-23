@@ -24,7 +24,7 @@ import { BADGE_TONES, Card, Empty, Section, Tag, familyColor } from "@/component
 import { IconChevron, IconSearch } from "@/components/site/icons";
 import { CtaBand } from "@/components/home/HomeSections";
 import { VendorMark } from "@shared/brand/VendorMark";
-import { formatBps, formatContext, formatUnitPrice } from "@/utils/format";
+import { formatContext, formatDiscount, formatUnitPrice } from "@/utils/format";
 import type { PortalGroupPrice, PortalModel, PortalOverview } from "@/utils/portal";
 
 const ALL = "__all__";
@@ -159,6 +159,29 @@ function hasListPrice(model: PortalModel): boolean {
 }
 
 /**
+ * 主价底下那一行划掉的官方价。
+ *
+ * 折扣原先只写在展开里，而这一页收起来的那一行就是拿来比价的 —— 要点开十行才知道
+ * 哪一行便宜，等于没标。「省 X%」是我们自己说的一句话，划线价是可核对的事实：
+ * 两个数上下摆着，来访者拿官方价去对上游官网，省多少自己就看出来了。
+ *
+ * 两种情况不划：自家这一档没有价（显示成「-」），划掉官方价却给不出替代的数，
+ * 等于说「这个价不算数」然后没有下文；官方价不比自家价高，划了是在标一个负的折扣。
+ * 后一条和服务端 discountBps 的口径一致 —— 那边返 0，这边也就不该画出一条线来。
+ */
+function ListPrice({ price, list, currency, label }: { price: number; list?: number; currency: string; label: string }) {
+  if (price <= 0 || !list || list <= price) return null;
+  const text = formatUnitPrice(list, currency);
+  // title 里把「官方」和数一起写上：它既是鼠标悬停的提示，也是这个元素的无障碍名字 ——
+  // 只写「官方」的话，读屏念出来的就只有这两个字，那个数反而丢了。
+  return (
+    <s className="gp-list__was" title={`${label} ${text}`}>
+      {text}
+    </s>
+  );
+}
+
+/**
  * 这一行点开之后有没有东西可看。
  *
  * 什么都没有的模型（目录表空着、靠 galaxy.models 兜底出来的那几行）就不做成按钮：
@@ -180,6 +203,8 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
   const context = formatContext(model.contextTokens ?? 0);
   const range = outputRange(groups);
   const detail = hasDetail(model);
+  const discountBps = model.discountBps ?? 0;
+  const listLabel = t("models.listPrice");
 
   const cells = (
     <>
@@ -196,6 +221,11 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
               {model.badgeText ? (
                 <Tag tone={BADGE_TONES[model.badgeTone ?? "neutral"] ?? "default"}>{model.badgeText}</Tag>
               ) : null}
+              {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。
+                  摆在名字旁边而不是价格那一列：那几列是定宽网格，塞进去会把价挤到换行；
+                  而且使用端的模型广场也是摆在名字旁边 —— 同一个东西在两处长得不一样，
+                  是最廉价的不一致。 */}
+              {discountBps > 0 ? <Tag tone="ok">{t("models.discount", { rate: formatDiscount(discountBps) })}</Tag> : null}
               {!model.priced ? (
                 <span className="gp-tag" title={t("common.unifiedHint")}>
                   {t("common.unified")}
@@ -212,12 +242,15 @@ function ModelRow({ model, open, onToggle }: { model: PortalModel; open: boolean
       </span>
       <span className="gp-list__num" data-label={t("models.input")}>
         {formatUnitPrice(model.inputPrice, model.currency)}
+        <ListPrice price={model.inputPrice} list={model.listInputPrice} currency={model.currency} label={listLabel} />
       </span>
       <span className="gp-list__num" data-label={t("models.output")}>
         {formatUnitPrice(model.outputPrice, model.currency)}
+        <ListPrice price={model.outputPrice} list={model.listOutputPrice} currency={model.currency} label={listLabel} />
       </span>
       <span className="gp-list__num gp-list__num--soft" data-label={t("models.cache")}>
         {formatUnitPrice(model.cachePrice, model.currency)}
+        <ListPrice price={model.cachePrice} list={model.listCachePrice} currency={model.currency} label={listLabel} />
       </span>
       <span className="gp-list__group" data-label={t("models.col.group")}>
         {/* 有档次才说。一档都没有的模型是还没开卖的，那时写「—」比编一句话诚实。 */}
@@ -261,7 +294,6 @@ function ModelDetail({ model }: { model: PortalModel }) {
   const { t } = useLocale();
   const groups = model.groups ?? [];
   const listed = hasListPrice(model);
-  const discountBps = model.discountBps ?? 0;
 
   return (
     <div className="gp-list__detail">
@@ -296,25 +328,10 @@ function ModelDetail({ model }: { model: PortalModel }) {
       {groups.length > 0 ? <GroupTable groups={groups} currency={model.currency} /> : null}
 
 
-      {/* 这一行只剩数：划线价和折扣都没有时整行不出现，否则留下一个空行的 gap。 */}
-      {listed || discountBps > 0 ? (
-        <div className="gp-list__foot">
-          {listed ? (
-            <span>
-              {t("models.listPrice")}{" "}
-              {/* 划线价按主价那几列的顺序排。缓存那一段只在真声明了官方缓存价时才出现：
-                  绝大多数模型没有这个数，平白多一个「-」等于让人以为我们漏填了。 */}
-              <s className="gp-mono">
-                {formatUnitPrice(model.listInputPrice ?? 0, model.currency)} /{" "}
-                {formatUnitPrice(model.listOutputPrice ?? 0, model.currency)}
-                {(model.listCachePrice ?? 0) > 0 ? ` / ${formatUnitPrice(model.listCachePrice ?? 0, model.currency)}` : ""}
-              </s>
-            </span>
-          ) : null}
-          {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
-          {discountBps > 0 ? <Tag tone="ok">{t("models.discount", { rate: formatBps(discountBps) })}</Tag> : null}
-        </div>
-      ) : null}
+      {/* 划线价和折扣都搬到收起来的那一行上了（比价发生在那里，点开才看见等于没标），
+          这里只说清楚那几个划掉的数是什么、折扣按哪一档算 —— 把同样三个数再排一遍，
+          是让人在一屏之内来回核对两处一样的东西。没有划线价的模型整行不出现。 */}
+      {listed ? <div className="gp-list__foot">{t("models.listHint")}</div> : null}
     </div>
   );
 }

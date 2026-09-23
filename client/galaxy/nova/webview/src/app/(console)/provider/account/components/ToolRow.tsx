@@ -28,6 +28,8 @@ export interface ToolRowItem {
   latest: string;
   upgradable: boolean;
   installed: boolean;
+  /** undefined = 这台机器没有对应的上游，「登录了没」这个问题没有意义。 */
+  loggedIn?: boolean;
   job?: ToolRowJob;
 }
 
@@ -50,20 +52,38 @@ export function ToolRow({
   tool,
   busy,
   onRun,
+  onLogin,
   t,
 }: {
   tool: ToolRowItem;
   busy: boolean;
   /** 装、升、失败后重试都是同一件事，所以只有一个回调。 */
   onRun: () => void;
+  /**
+   * 点「登录」。不传就不画这个按钮 —— 本机那一处走的是另一条路（直接开一个终端窗口），
+   * 只有远端机器需要平台在中间转一道。
+   */
+  onLogin?: () => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
 }) {
   const job = tool.job;
   const running = isToolJobBusy(job);
+  // 装着的时候不提登录的事：那会儿这一行已经被进度条占满了，而且还没装完也登不了。
+  const showLogin = !running && tool.installed && tool.loggedIn !== undefined;
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
       <b style={{ fontWeight: 600 }}>{tool.name}</b>
       <span className="gx-mono gx-muted">{tool.installed ? tool.current : t("bridge.toolsMissing")}</span>
+      {showLogin ? (
+        tool.loggedIn ? (
+          <span className="gx-pill gx-pill--sm gx-pill--ok">{t("account.loginDone")}</span>
+        ) : (
+          // 没登录的机器接不了这个上游的单，而在这之前这件事只能 ssh 上去才看得出来。
+          <Btn tone="soft" small loading={busy} onClick={onLogin}>
+            {t("account.loginAction")}
+          </Btn>
+        )
+      ) : null}
       {running && job ? (
         <>
           <span className="gx-pill gx-pill--sm">

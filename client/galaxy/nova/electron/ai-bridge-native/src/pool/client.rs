@@ -1,3 +1,4 @@
+use super::login::LoginStatus;
 use super::tools::ToolStatus;
 use super::upgrade::{truncate_message, UpgradeCommand, UpgradeState};
 use crate::business::{ArtifactRef, Metering, NamedArtifact, UnitError, WorkUnit, WorkspaceRef};
@@ -152,6 +153,13 @@ pub struct HeartbeatResult {
     /// 和 upgrade 一样：Hub 会重发，节点按 id 去重。老版本 Hub 不发这个字段。
     #[serde(default, deserialize_with = "lenient_tool")]
     pub tool: Option<ToolCommand>,
+    /// 登录指令（起一次登录，或者把主人粘回来的码送过来）。
+    ///
+    /// 和 tool 共用同一条下行路，但**不能合并成一个字段**：登录是有来有回的，
+    /// 一次会话期间 Hub 可能先发「起」、后发「这是码」，两条指令的 id 相同而
+    /// 语义不同（见 LoginCommand.code）。
+    #[serde(default, deserialize_with = "lenient_login")]
+    pub login: Option<LoginCommand>,
 }
 
 /// Hub 让这台机器装 / 升一个本机工具。
@@ -176,6 +184,38 @@ where
         Err(error) => {
             log_warn!("pool_tool_command_unparsable", "error": error.to_string(),
                 "hint": "心跳里的工具指令解不动，这一次当作没有；取消清单和生效配置照常处理");
+            Ok(None)
+        }
+    }
+}
+
+/// Hub 让这台机器登录一个上游，或者把主人粘回来的授权码送过来。
+///
+/// 和 ToolCommand 一样只带工具名，**不带命令** —— 跑什么由节点那张固定表决定
+/// （pool::login::login_command）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoginCommand {
+    pub id: String,
+    pub tool: String,
+    /// 主人在控制台粘回来的授权码。
+    ///
+    /// 缺省（None）是「起一次登录」；有值是「这是你要的那串码」。只有 claude 用得上 ——
+    /// codex 走设备码，机器自己轮询，不需要回程。
+    #[serde(default)]
+    pub code: Option<String>,
+}
+
+/// 登录指令解不动就当没有，理由同 lenient_upgrade。
+fn lenient_login<'de, D>(deserializer: D) -> Result<Option<LoginCommand>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(raw) = Option::<Value>::deserialize(deserializer)? else { return Ok(None) };
+    match serde_json::from_value(raw) {
+        Ok(command) => Ok(Some(command)),
+        Err(error) => {
+            log_warn!("pool_login_command_unparsable", "error": error.to_string(),
+                "hint": "心跳里的登录指令解不动，这一次当作没有；取消清单和生效配置照常处理");
             Ok(None)
         }
     }
@@ -551,12 +591,13 @@ impl HubClient {
         &self,
         lanes: &[HeartbeatLane],
         tools: &[ToolStatus],
+        logins: &[LoginStatus],
         cancel: &Cancel,
     ) -> Result<HeartbeatResult, HubFailure> {
         let response = self
             .send_cancellable(
                 "/agent/v1/heartbeat",
-                &json!({ "lanes": lanes, "tools": tools }),
+                &json!({ "lanes": lanes, "tools": tools, "logins": logins }),
                 Some(REQUEST_TIMEOUT),
                 cancel,
             )

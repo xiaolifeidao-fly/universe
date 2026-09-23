@@ -154,6 +154,24 @@
       ],
       "port": 17901,
       "autoPort": false
+    },
+    {
+      "name": "galaxy-orbit-stub",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; export SERVER_TARGET=\"http://127.0.0.1:18802\"; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/orbit/webview",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "17903"
+      ],
+      "port": 17903,
+      "autoPort": false
     }
   ]
 }

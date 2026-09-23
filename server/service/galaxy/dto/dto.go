@@ -272,6 +272,9 @@ type HeartbeatRequest struct {
 	// 老版本节点不报，字段缺失 —— 那和「报了个空数组」不一样，后者表示这台机器
 	// 一个工具都没有。所以存的时候要分清，缺失一律不动库里已有的那份。
 	Tools []NodeToolReport `json:"tools"`
+	// Logins 这台机器上正在进行（或刚结束）的登录会话。规矩同 Tools：
+	// 字段缺失是老版本节点，不动库里那份；空数组是「这会儿没有人在登录」。
+	Logins []NodeLoginReport `json:"logins"`
 }
 
 type LaneInput struct {
@@ -371,6 +374,11 @@ type HeartbeatResult struct {
 	Upgrade *NodeUpgradeCommand `json:"upgrade,omitempty"`
 	// Tool 待执行的「装 / 升本机工具」指令。省略规则同 Upgrade。
 	Tool *NodeToolCommand `json:"tool,omitempty"`
+	// Login 待执行的登录指令：起一次登录，或者把主人粘回来的码送过去。省略规则同 Upgrade。
+	//
+	// 和 Tool 分成两个字段而不是复用一个：登录是有来有回的，一次会话期间这条路上
+	// 先后走的是两种语义不同的指令（见 NodeLoginCommand.Code），而装东西只有一种。
+	Login *NodeLoginCommand `json:"login,omitempty"`
 }
 
 // ---------- 节点：领活与回传 ----------
@@ -773,6 +781,9 @@ type NodeView struct {
 	// 全是节点自报的事实，平台不验证也不拿它做任何判定 —— 和 upstream usage 同一个性质。
 	// 老版本节点报不上来，这里是空数组（**不是 null**：前端拿 null 当数组用会整页白屏）。
 	Tools []NodeToolView `json:"tools"`
+	// Logins 这台机器上正在进行（或刚结束）的登录。没有就是空数组 ——
+	// 前端对 null 很敏感（会盖掉 class-transformer 的 [] 默认值），所以这里一律给数组。
+	Logins []NodeLoginView `json:"logins"`
 }
 
 // ExecutionRecord 是「我的机器上跑过什么」的匿名化日志（P-14）：

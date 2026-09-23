@@ -527,6 +527,12 @@ type Service interface {
 	// RequestNodeTool 控制台点机器上某个本机工具（claude / codex）的「安装 / 升级」。
 	// 同样是记一条指令等心跳下发；装什么包、怎么装在节点自己手里。
 	RequestNodeTool(ctx context.Context, ownerUserID, nodeID, tool string) (dto.NodeToolView, error)
+	// RequestNodeLogin 控制台点机器上某个工具（claude / codex）的「登录」。
+	// 只是记一条待下发的指令；授权地址和短码要等机器把 CLI 的输出报回来。
+	RequestNodeLogin(ctx context.Context, ownerUserID, nodeID, tool string) (dto.NodeLoginView, error)
+	// SubmitNodeLoginCode 主人把浏览器里拿到的授权码粘回来，转交给那台机器。
+	// 只有 claude 这条路用得上 —— codex 走设备码，机器自己轮询。
+	SubmitNodeLoginCode(ctx context.Context, ownerUserID, nodeID, tool, code string) (dto.NodeLoginView, error)
 
 	// ---------- 提供者：邀请返现 ----------
 	ProviderReferral(ctx context.Context, ownerUserID string) (dto.ProviderReferralOverview, error)

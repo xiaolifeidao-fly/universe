@@ -695,6 +695,11 @@ func (s *service) Heartbeat(ctx context.Context, req dto.HeartbeatRequest) (dto.
 	// 顺序不能反 —— saveNodeTools 会把已经被领走的指令收掉，反过来会白发一次。
 	s.saveNodeTools(ctx, node, req.Tools, now)
 	result.Tool = s.pendingToolCommand(node, now)
+	// 远端登录走同一条路，顺序同理：先记下机器报的会话，再看有没有指令要发。
+	// 反过来的话，一条刚被领走的指令会被白发一次；而对「这是码」那种指令，
+	// 白发一次意味着主人粘的码被送两遍（节点会去重，但那一跳的判断就没意义了）。
+	s.saveNodeLogins(ctx, node, req.Logins, now)
+	result.Login = s.pendingLoginCommand(node, now)
 	// 同 Hello：空切片发 []，不发 null，否则节点连这次心跳一起丢掉。
 	result.Cancel = orEmpty(result.Cancel)
 	result.Drain = orEmpty(result.Drain)
@@ -764,7 +769,8 @@ func (s *service) ListNodes(ctx context.Context, ownerUserID string) ([]dto.Node
 			UpgradeBlocker: node.UpgradeBlocker,
 			Upgrade:        nodeUpgradeView(node, now),
 			// 机器上的 claude / codex。同 Contributions：一定是切片不是 nil。
-			Tools: nodeToolViews(node, now),
+			Tools:  nodeToolViews(node, now),
+			Logins: nodeLoginViews(node, now),
 		}
 		if release, ok := latest[node.BridgePlatform]; ok {
 			view.LatestVersion = release.Version
@@ -807,7 +813,8 @@ func (s *service) ListRetiredNodes(ctx context.Context, ownerUserID string) ([]d
 			// 同 ListNodes：nil 切片会序列化成 null，前端的 .map() 会崩。
 			Contributions: []dto.ContributionView{},
 			// 解绑之后没人再去装什么，留着解绑前的旧话只会让人去点一个点不动的按钮。
-			Tools: []dto.NodeToolView{},
+			Tools:  []dto.NodeToolView{},
+			Logins: []dto.NodeLoginView{},
 		})
 	}
 	return views, nil

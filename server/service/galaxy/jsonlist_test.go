@@ -52,11 +52,13 @@ func TestListFieldsNeverSerializeToNull(t *testing.T) {
 		{"没有贡献的机器", dto.NodeView{
 			Contributions: make([]dto.ContributionView, 0),
 			Tools:         make([]dto.NodeToolView, 0),
+			Logins:        make([]dto.NodeLoginView, 0),
 		}},
 		{"没有贡献的机器（运营视图）", dto.AdminNodeView{
 			NodeView: dto.NodeView{
 				Contributions: make([]dto.ContributionView, 0),
 				Tools:         make([]dto.NodeToolView, 0),
+				Logins:        make([]dto.NodeLoginView, 0),
 			},
 		}},
 	}

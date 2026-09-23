@@ -21,7 +21,7 @@ import {
   IconSnow,
 } from "@/components/site/icons";
 import { CodeTabs } from "@/components/home/CodeTabs";
-import { formatBps, formatContext, formatUnitPrice } from "@/utils/format";
+import { formatContext, formatDiscount, formatUnitPrice } from "@/utils/format";
 import { VendorMark, vendorLabel } from "@shared/brand/VendorMark";
 import { useSiteConfig } from "@/components/site/SiteConfigProvider";
 import type { PortalModel, PortalOverview } from "@/utils/portal";
@@ -229,7 +229,7 @@ export function ModelCard({ model }: { model: PortalModel }) {
             ) : null}
           </span>
           {/* 折扣是服务端按输出价算好的。门户再减一遍的话，这里和使用端迟早标出两个数。 */}
-          {discountBps > 0 ? <Tag tone="ok">{t("models.discount").replace("{rate}", formatBps(discountBps))}</Tag> : null}
+          {discountBps > 0 ? <Tag tone="ok">{t("models.discount").replace("{rate}", formatDiscount(discountBps))}</Tag> : null}
         </div>
       ) : null}
 

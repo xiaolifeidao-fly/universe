@@ -293,10 +293,16 @@ type NodeToolReport struct {
 	// Current 本机在跑的版本，空串表示没装。
 	Current string `json:"current"`
 	// Latest 上游最新版，空串表示节点这会儿问不到（网络不通等），此时不该催人升级。
-	Latest     string       `json:"latest"`
-	Upgradable bool         `json:"upgradable"`
-	Installed  bool         `json:"installed"`
-	Job        *NodeToolJob `json:"job,omitempty"`
+	Latest     string `json:"latest"`
+	Upgradable bool   `json:"upgradable"`
+	Installed  bool   `json:"installed"`
+	// LoggedIn 这个工具在那台机器上登录了没有。
+	//
+	// **nil 不是「没登录」，是「这个问题没有意义」**：那台机器的配置里没有对应的上游，
+	// 主人根本没打算共享它 —— 界面据此决定画不画登录按钮，画了只会催他登一个
+	// 他不想共享的账号。老版本节点也不报这个字段，同样是 nil。
+	LoggedIn *bool        `json:"loggedIn,omitempty"`
+	Job      *NodeToolJob `json:"job,omitempty"`
 }
 
 // NodeToolJob 正在装 / 刚装完的那一次。
@@ -328,5 +334,84 @@ type NodeToolView struct {
 	Latest     string       `json:"latest"`
 	Upgradable bool         `json:"upgradable"`
 	Installed  bool         `json:"installed"`
+	LoggedIn   *bool        `json:"loggedIn,omitempty"`
 	Job        *NodeToolJob `json:"job,omitempty"`
+}
+
+// ---------- 远端登录 ----------
+//
+// 和上面那组「装 / 升」是两种形状：装东西发出去就不用管了，而登录中间必须有主人参与。
+//
+//   · codex 走设备码：机器拿到短码和地址，主人在任意一台有浏览器的设备上输码，
+//     机器自己轮询换 token。**单向**。
+//   · claude 没有设备码流程：机器打印一条授权地址，主人在浏览器里授权完拿到一串码，
+//     得把它粘回控制台，再由 Hub 送回那台机器喂给还等着的进程。**有回程**。
+//
+// 回程为什么也搭心跳：poll 接入的机器 Hub 连不上它（只有 export 节点有入站面），
+// 机房里的机器多半是 poll。代价是码最多晚一跳才到，节点那边用「会话期间心跳提速
+// 到 5 秒」补偿。
+
+const (
+	// LoginPending 指令已经发出去、机器还没来领。Hub 自己加的，节点不报这个状态。
+	LoginPending = "pending"
+	// LoginRunning 进程起来了，但还没拿到可以交给主人的地址。
+	LoginRunning = "running"
+	// LoginWaiting 地址（和短码）已就绪，在等主人。界面这时才有东西可显示。
+	LoginWaiting   = "waiting"
+	LoginSucceeded = "succeeded"
+	LoginFailed    = "failed"
+
+	// LoginPhaseVerifying 码已经喂进那个等着的进程了，CLI 正在拿它换 token。
+	//
+	// 这是回程唯一的回执。节点不会为「收到码」单报一条，但它一收到就把 phase 翻成
+	// verifying —— Hub 看到这个才停止重发那串码（见 saveNodeLogins）。码要是错的，
+	// 节点会把 phase 翻回 authorize 并在 detail 里写上 CLI 的原话。
+	LoginPhaseVerifying = "verifying"
+	// LoginPhaseAuthorize 在等主人去浏览器授权。
+	LoginPhaseAuthorize = "authorize"
+)
+
+// NodeLoginCommand 搭在心跳响应上下发的登录指令。
+//
+// Code 为空是「起一次登录」，有值是「这是主人粘回来的码」。两者 ID 相同 ——
+// 它们是同一次会话的两段，节点按 id 加码本身去重（见 pool::runner::accept_login_command）。
+type NodeLoginCommand struct {
+	ID   string `json:"id"`
+	Tool string `json:"tool"`
+	Code string `json:"code,omitempty"`
+}
+
+// NodeLoginReport 节点在心跳里自报的一次登录。字段与节点侧 LoginStatus 一一对应。
+type NodeLoginReport struct {
+	Tool  string `json:"tool"`
+	State string `json:"state"`
+	Phase string `json:"phase"`
+	// VerificationURI 让主人在浏览器里打开的地址。
+	VerificationURI string `json:"verificationUri"`
+	// UserCode 设备码流程里要主人手输的短码。claude 没有。
+	UserCode string `json:"userCode"`
+	// NeedsCode 这条流程要不要主人把码粘回来。界面据此决定画不画输入框。
+	NeedsCode bool `json:"needsCode"`
+	// Detail 失败时是 CLI 自己说的原因（「Invalid code」那种）。
+	Detail    string `json:"detail"`
+	ElapsedMs int64  `json:"elapsedMs"`
+	// Command 节点真正跑的那条命令，失败时摆给主人看。
+	Command string `json:"command"`
+	// CommandID 这一次是被哪条指令拉起来的。**回程要靠它**：主人粘码时，
+	// Hub 从这里取出这次会话的 id，再把码按同一个 id 发回去。
+	CommandID string `json:"commandId"`
+}
+
+// NodeLoginView 控制台上的一次登录。比上报多一个 pending：指令已发、机器还没领的那十几秒。
+type NodeLoginView struct {
+	Tool            string `json:"tool"`
+	State           string `json:"state"`
+	Phase           string `json:"phase"`
+	VerificationURI string `json:"verificationUri"`
+	UserCode        string `json:"userCode"`
+	NeedsCode       bool   `json:"needsCode"`
+	Detail          string `json:"detail"`
+	ElapsedMs       int64  `json:"elapsedMs"`
+	Command         string `json:"command"`
+	CommandID       string `json:"commandId"`
 }
