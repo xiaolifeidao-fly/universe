@@ -1,0 +1,23 @@
+{
+  "name": "@galaxy/ai-bridge-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ai-bridge 的 Rust 原生实现：配置、鉴权、并发闸门、上游凭据与 relay 透传。",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "release": "node scripts/release.cjs",
+    "build:debug": "node scripts/build.cjs --debug",
+    "test": "cargo test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

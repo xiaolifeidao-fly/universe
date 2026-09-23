@@ -2,6 +2,7 @@
 
 import { Suspense } from "react";
 import { LoginFormCard } from "./components/LoginFormCard";
+import { LoginHero } from "./components/LoginHero";
 import { Select, Spin } from "antd";
 import { AppLocale, SUPPORTED_LOCALES, TranslationKey, useLocale } from "@/i18n/LocaleProvider";
 
@@ -26,16 +27,9 @@ export default function LoginPage() {
             label: t(`locale.${item}` as TranslationKey),
           }))}
         />
-        <div
-          style={{
-            position: "relative",
-            zIndex: 1,
-            minHeight: "calc(100vh - 96px)",
-            display: "grid",
-            placeItems: "center",
-          }}
-        >
-          <div style={{ width: "100%", maxWidth: 440 }}>
+        <div className="manager-login-layout">
+          <LoginHero />
+          <div className="manager-login-layout__form">
             {/* LoginFormCard 读 ?redirect=，静态预渲染时必须有 Suspense 边界。 */}
             <Suspense fallback={<div style={{ display: "grid", placeItems: "center", minHeight: 320 }}><Spin size="large" /></div>}>
               <LoginFormCard />

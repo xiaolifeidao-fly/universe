@@ -1,0 +1,123 @@
+# galaxy-hub-api 在 K8s 上的部署示例。
+#
+# 这份只写与「优雅退出 + 实例定向」直接相关的部分，镜像、资源、Secret 按你们的
+# 惯例补。两个控制台服务照抄即可，差别只有三处：不需要 StatefulSet（它们没有
+# 实例亲和）、不需要 GALAXY_INSTANCE、terminationGracePeriodSeconds 可以短很多。
+#
+# 为什么是 StatefulSet 而不是 Deployment：
+#   节点的上行必须回到持有消费者连接的**那一个 pod**，靠的是 Hub 派单时写进
+#   streamURL 的实例地址。Deployment 的 pod 名每次滚动都变，没法做稳定寻址；
+#   StatefulSet 给的是 galaxy-hub-0/1/2 这种名字，正好当实例标识用。
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: galaxy-hub-headless
+spec:
+  # headless：每个 pod 各有一条 DNS（galaxy-hub-0.galaxy-hub-headless.<ns>.svc）。
+  # 边缘 nginx 按 /instance/<pod 名>/ 解析到具体那台，不必维护任何表。
+  clusterIP: None
+  selector:
+    app: galaxy-hub-api
+  ports:
+    - name: http
+      port: 10006
+      targetPort: 10006
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: galaxy-hub
+spec:
+  serviceName: galaxy-hub-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app: galaxy-hub-api
+  template:
+    metadata:
+      labels:
+        app: galaxy-hub-api
+    spec:
+      # 必须盖住 galaxy.shutdown.timeout_ms + drain_delay_ms（默认 630s + 5s）。
+      # 设短了 kubelet 会在收尾到一半时补 SIGKILL —— 那就等于没有优雅退出，
+      # 每次滚动更新都会掐掉这个 pod 上正在跑的请求。
+      terminationGracePeriodSeconds: 700
+      containers:
+        - name: galaxy-hub-api
+          image: your-registry/galaxy-hub-api:latest
+          # 配置加载器按工作目录读 configs/application.properties。
+          workingDir: /app
+          ports:
+            - name: http
+              containerPort: 10006
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # 这一台的专属地址：派单时写进 streamURL，节点照着它把上行推回来。
+            # 也可以不写这一条，改在配置文件里用 galaxy.instance = .../instance/{hostname}，
+            # 两者等价（环境变量优先级更高），StatefulSet 下 hostname 就是 pod 名。
+            - name: GALAXY_INSTANCE
+              value: "https://www.example.com/instance/$(POD_NAME)"
+
+          # 存活：进程还在就 200。**不要**接到 /readyz 上 —— 优雅退出期间
+          # readyz 是 503 而进程完全健康（它正在把在途请求送完），
+          # 接错了 kubelet 会在收尾中途把它重启掉。
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+
+          # 就绪：一收到 SIGTERM 就翻 503，Endpoints 随即把这个 pod 摘掉，
+          # 新的消费者请求不再进来。已经在跑的照常送完。
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 1
+
+          # 这里**不需要** preStop sleep。
+          # kubelet 摘 Endpoints 和发 SIGTERM 是并发的，常见做法是加一个 preStop
+          # 睡几秒等路由收敛；这件事进程自己做了（galaxy.shutdown.drain_delay_ms，
+          # 默认 5 秒）：它先翻 readiness、停止领新活，等这一段过去才关监听。
+          # 两边都睡只会让每次滚动白等一轮。
+
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { memory: "2Gi" }
+---
+# 边缘转发示例（用独立的 nginx Deployment，或者能开 snippet 的 ingress-controller）。
+#
+#   resolver <CoreDNS 的 ClusterIP> valid=10s ipv6=off;
+#
+#   # 统一入口：/v1/* 与节点的 register / hello / heartbeat / next，落哪个 pod 都行
+#   location ^~ /hub-api/ {
+#       proxy_pass http://galaxy-hub-headless:10006/;
+#       proxy_request_buffering off; proxy_buffering off;
+#   }
+#
+#   # 实例定向：只有节点的上行走这里，必须回到指定那个 pod
+#   # pod 名限定 [a-z0-9-]+ 且**不含点**：带点就能让 nginx 去解析外部域名（SSRF）。
+#   location ~ ^/instance/([a-z0-9-]+)(/.*)$ {
+#       set $pod  $1;
+#       set $rest $2;
+#       proxy_pass http://$pod.galaxy-hub-headless:10006$rest$is_args$args;
+#       proxy_request_buffering off; proxy_buffering off;
+#       proxy_read_timeout 1h; proxy_send_timeout 1h; client_max_body_size 0;
+#   }
+#
+# 用 ingress-nginx 的话，这几条注解一个都不能少 —— 默认的请求体缓冲会把节点的
+# chunked 上行整个收完再转，流式当场没了：
+#   nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+#   nginx.ingress.kubernetes.io/proxy-buffering: "off"
+#   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+#   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+#   nginx.ingress.kubernetes.io/proxy-body-size: "0"
+#
+# 还没解决的两件事（多 pod 下会重复执行，见 galaxy-services.md）：
+#   1. sweep / audit 两个后台循环每个 pod 各跑一份，缺 leader election；
+#   2. export 接入的派单器要求消费者连接就在本 pod 上，多 pod 下过半请求会失败。
+# 只用长轮询接入、且能接受巡检重复跑的话，可以先上。

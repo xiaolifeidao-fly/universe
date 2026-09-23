@@ -44,6 +44,7 @@ import { usePollingLoop } from "../hooks/usePollingLoop";
 import { useDraftMemory } from "../hooks/useDraftMemory";
 import { useStickToBottom } from "../hooks/useStickToBottom";
 import { SessionDocumentText, SessionMessageContent, SessionProcessGroup, groupSessionItems, SessionChangeSummary } from "./DeliverySessionMessage";
+import { SessionContextMeter } from "./DeliverySessionContext";
 
 interface DeliveryTaskTestingCasesModalProps {
   open: boolean;
@@ -292,6 +293,8 @@ export function DeliveryTaskTestingCasesModal({
               <Tag color={statusColor[testingCasesStatus]}>{t(`delivery.testingCases.status.${testingCasesStatus}`)}</Tag>
             </div>
             <div className="delivery-session-toolbar__actions">
+              {/* 上下文余量放在动作前面：决定「要不要另起一条会话」，属于发消息前要看的那一眼。 */}
+              <SessionContextMeter context={conversation?.context} tool={provider} model={modelForConfig(testingConfig)} />
               {embedded ? <Button icon={<ArrowLeftOutlined />} onClick={onClose}>{t("delivery.session.backToTask")}</Button> : null}
               {active ? <Button danger icon={<PauseCircleOutlined />} loading={stopping} onClick={() => void stop()}>{t("delivery.session.stop")}</Button> : null}
               <Button icon={<ReloadOutlined />} loading={loading} disabled={!itemKey} onClick={() => void load(selectedThreadId, true)} aria-label={t("delivery.session.refresh")} />

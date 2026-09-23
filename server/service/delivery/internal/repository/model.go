@@ -6,6 +6,109 @@ package repository
 
 import "time"
 
+// DeliveryCommand is the durable authority for a remote action. Redis may wake
+// a worker, but a worker can only execute a command after this record is leased.
+type DeliveryCommand struct {
+	Id        int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine   string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_command_id,priority:1;uniqueIndex:uk_dlv_command_idempotency,priority:1;index:idx_dlv_command_queue,priority:1;index:idx_dlv_command_user,priority:1" description:"业务线"`
+	CommandID string `gorm:"column:command_id;type:varchar(64);uniqueIndex:uk_dlv_command_id,priority:2" description:"服务端生成的命令业务键"`
+	ProgramID int64  `gorm:"column:program_id;index:idx_dlv_command_queue,priority:4;index:idx_dlv_command_user,priority:3" description:"目标项目数值主键"`
+	UserID    string `gorm:"column:user_id;type:varchar(64);uniqueIndex:uk_dlv_command_idempotency,priority:2;index:idx_dlv_command_queue,priority:2;index:idx_dlv_command_user,priority:2" description:"提交人和领取队列所属用户"`
+
+	CommandType    string `gorm:"column:command_type;type:varchar(64)" description:"动作类型，只能是协议定义的标识符"`
+	IdempotencyKey string `gorm:"column:idempotency_key;type:varchar(128);uniqueIndex:uk_dlv_command_idempotency,priority:3" description:"同一用户稳定提交幂等键"`
+	InputJSON      string `gorm:"column:input_json;type:mediumtext" description:"动作输入 JSON 对象，数据库权威副本"`
+	ResultJSON     string `gorm:"column:result_json;type:mediumtext" description:"Worker 回传结果 JSON 对象"`
+	ErrorMessage   string `gorm:"column:error_message;type:varchar(1024)" description:"失败或阻塞的简明错误"`
+
+	// 租约回收与留存期清理都是跨业务线、跨用户的巡检，以 biz_line 打头的索引一条也用不上，
+	// 所以这两条索引以 state 打头：状态先收敛到几行之内，再按时间做范围扫描。
+	State           string     `gorm:"column:state;type:varchar(16);index:idx_dlv_command_queue,priority:3;index:idx_dlv_command_user,priority:4;index:idx_dlv_command_lease,priority:1;index:idx_dlv_command_sweep,priority:1" description:"pending/leased/running/succeeded/failed/cancelled/timed_out"`
+	Progress        int        `gorm:"column:progress;default:0" description:"Worker 回传的执行进度，范围 0-100"`
+	CancelRequested bool       `gorm:"column:cancel_requested;default:false" description:"用户已请求尽力取消，Worker 下次轮询或续租时可见"`
+	LeaseToken      string     `gorm:"column:lease_token;type:varchar(64)" description:"本次领取租约令牌，仅领取 Worker 可回传"`
+	LeaseWorkerID   string     `gorm:"column:lease_worker_id;type:varchar(64)" description:"持有租约的插件标识"`
+	LeaseExpiresAt  *time.Time `gorm:"column:lease_expires_at;type:timestamp;null;index:idx_dlv_command_lease,priority:2" description:"租约截止时刻，默认两分钟"`
+	DispatchCount   int        `gorm:"column:dispatch_count;default:1" description:"待领取通知投递次数，超过上限转为 timed_out"`
+	AttemptCount    int        `gorm:"column:attempt_count;default:0" description:"成功领取次数，超过重试上限转为 timed_out"`
+	StartedAt       *time.Time `gorm:"column:started_at;type:timestamp;null" description:"Worker 首次报告运行的时刻"`
+	FinishedAt      *time.Time `gorm:"column:finished_at;type:timestamp;null" description:"终态回传时刻"`
+	Version         int        `gorm:"column:version;default:1" description:"并发更新版本"`
+	CreatedTime     time.Time  `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
+	UpdatedTime     time.Time  `gorm:"column:updated_time;autoUpdateTime;index:idx_dlv_command_sweep,priority:2" description:"更新时间"`
+}
+
+func (r *DeliveryCommand) TableName() string { return "zt_delivery_command" }
+func (r *DeliveryCommand) Init()             {}
+
+// DeliveryCommandEvent is the append-only event stream used by audit views and SSE cursors.
+type DeliveryCommandEvent struct {
+	Id        int64     `gorm:"column:id;primaryKey;autoIncrement" description:"事件游标主键"`
+	BizLine   string    `gorm:"column:biz_line;type:varchar(32);index:idx_dlv_command_event_stream,priority:1" description:"业务线"`
+	CommandID string    `gorm:"column:command_id;type:varchar(64);index:idx_dlv_command_event_stream,priority:2" description:"关联命令业务键"`
+	UserID    string    `gorm:"column:user_id;type:varchar(64)" description:"命令所属用户"`
+	Kind      string    `gorm:"column:kind;type:varchar(32)" description:"submitted/claimed/activity/lease_renewed/cancel_requested/completed 等事件类型"`
+	State     string    `gorm:"column:state;type:varchar(16)" description:"事件发生后的命令状态"`
+	Message   string    `gorm:"column:message;type:varchar(1024)" description:"面向用户的活动描述"`
+	DataJSON  string    `gorm:"column:data_json;type:mediumtext" description:"附加 JSON 对象，不保存本机路径或凭证"`
+	CreatedAt time.Time `gorm:"column:created_at;autoCreateTime" description:"事件生成时间"`
+}
+
+func (r *DeliveryCommandEvent) TableName() string { return "zt_delivery_command_event" }
+func (r *DeliveryCommandEvent) Init()             {}
+
+// DeliveryCommandAttachment is transient command input held by app-api until
+// the mapped Worker downloads it. It never contains a local workspace path.
+type DeliveryCommandAttachment struct {
+	ID           int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine      string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_command_attachment,priority:1;index:idx_dlv_command_attachment_owner,priority:1"`
+	AttachmentID string    `gorm:"column:attachment_id;type:varchar(64);uniqueIndex:uk_dlv_command_attachment,priority:2"`
+	ProgramID    int64     `gorm:"column:program_id;index:idx_dlv_command_attachment_owner,priority:3"`
+	UserID       string    `gorm:"column:user_id;type:varchar(64);index:idx_dlv_command_attachment_owner,priority:2"`
+	ItemKey      string    `gorm:"column:item_key;type:varchar(128)"`
+	Name         string    `gorm:"column:name;type:varchar(160)"`
+	ContentType  string    `gorm:"column:content_type;type:varchar(128)"`
+	Size         int64     `gorm:"column:size"`
+	Content      []byte    `gorm:"column:content;type:longblob"`
+	CreatedTime  time.Time `gorm:"column:created_time;autoCreateTime"`
+}
+
+func (r *DeliveryCommandAttachment) TableName() string { return "zt_delivery_command_attachment" }
+func (r *DeliveryCommandAttachment) Init()             {}
+
+// DeliveryCommandWorker records a plugin identity for one user and business line.
+type DeliveryCommandWorker struct {
+	Id               int64     `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine          string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_command_worker,priority:1;index:idx_dlv_command_worker_heartbeat,priority:1" description:"业务线"`
+	UserID           string    `gorm:"column:user_id;type:varchar(64);uniqueIndex:uk_dlv_command_worker,priority:2;index:idx_dlv_command_worker_heartbeat,priority:2" description:"当前登录用户标识"`
+	WorkerID         string    `gorm:"column:worker_id;type:varchar(64);uniqueIndex:uk_dlv_command_worker,priority:3;index:idx_dlv_command_worker_heartbeat,priority:3" description:"插件稳定实例标识"`
+	DisplayName      string    `gorm:"column:display_name;type:varchar(128)" description:"插件或电脑显示名"`
+	CapabilitiesJSON string    `gorm:"column:capabilities_json;type:text" description:"支持的命令类型 JSON 数组"`
+	LastHeartbeatAt  time.Time `gorm:"column:last_heartbeat_at;type:timestamp null default null;index:idx_dlv_command_worker_heartbeat,priority:4" description:"最近一次注册、领取或心跳时间"`
+	CreatedTime      time.Time `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
+	UpdatedTime      time.Time `gorm:"column:updated_time;autoUpdateTime" description:"更新时间"`
+}
+
+func (r *DeliveryCommandWorker) TableName() string { return "zt_delivery_command_worker" }
+func (r *DeliveryCommandWorker) Init()             {}
+
+// DeliveryCommandWorkerWorkspace proves a worker has configured a local mapping.
+// The local absolute path intentionally never leaves the plugin process.
+type DeliveryCommandWorkerWorkspace struct {
+	Id          int64     `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
+	BizLine     string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_command_workspace,priority:1;index:idx_dlv_command_workspace_worker,priority:1" description:"业务线"`
+	UserID      string    `gorm:"column:user_id;type:varchar(64);uniqueIndex:uk_dlv_command_workspace,priority:2;index:idx_dlv_command_workspace_worker,priority:2" description:"当前登录用户标识"`
+	WorkerID    string    `gorm:"column:worker_id;type:varchar(64);uniqueIndex:uk_dlv_command_workspace,priority:3;index:idx_dlv_command_workspace_worker,priority:3" description:"插件稳定实例标识"`
+	ProgramID   int64     `gorm:"column:program_id;uniqueIndex:uk_dlv_command_workspace,priority:4;index:idx_dlv_command_workspace_worker,priority:4" description:"已配置本机工作目录映射的项目"`
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime" description:"创建时间"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime" description:"更新时间"`
+}
+
+func (r *DeliveryCommandWorkerWorkspace) TableName() string {
+	return "zt_delivery_command_worker_workspace"
+}
+func (r *DeliveryCommandWorkerWorkspace) Init() {}
+
 // DeliveryProgram 交付项目。一个甲方 / 一个国家的落地推进算一个项目，
 // 对应原型 assets/tasks.json 的 meta 段（"印尼业务 · 任务维护看板"）。
 //
@@ -30,7 +133,7 @@ type DeliveryProgram struct {
 	GitBaseBranch      string `gorm:"column:git_base_branch;type:varchar(255)" description:"项目启用 Git 后的新需求默认基准分支"`
 	GitChatSyncEnabled bool   `gorm:"column:git_chat_sync_enabled;default:false" description:"是否将已结束的需求和任务聊天记录归档到项目工作目录 chat/"`
 	CloudSyncEnabled   bool   `gorm:"column:cloud_sync_enabled;default:false" description:"是否将所选项目内容同步至服务端云端文件库"`
-	CloudSyncScopes    string `gorm:"column:cloud_sync_scopes;type:varchar(128)" description:"同步类别的规范化逗号列表：chat/requirement/design"`
+	CloudSyncScopes    string `gorm:"column:cloud_sync_scopes;type:varchar(128)" description:"同步类别的规范化逗号列表：chat/requirement/design/test/prototype/execution/attachment"`
 
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人"`
 	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`
@@ -45,20 +148,27 @@ func (d *DeliveryProgram) Init()             {}
 // 相对路径而不是本机绝对路径，保证不同成员机器之间不会泄露目录结构。
 type DeliveryCloudSyncFile struct {
 	Id      int64  `gorm:"column:id;primaryKey;autoIncrement" description:"主键"`
-	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_cloud_file,priority:1;index:idx_dlv_cloud_file_updated,priority:1" description:"业务线"`
+	BizLine string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_dlv_cloud_file,priority:1;index:idx_dlv_cloud_file_updated,priority:1;index:idx_dlv_cloud_file_owner,priority:1" description:"业务线"`
 
-	ProgramID    int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2" description:"所属项目"`
-	Category     string `gorm:"column:category;type:varchar(16);uniqueIndex:uk_dlv_cloud_file,priority:3;index:idx_dlv_cloud_file_updated,priority:3" description:"同步类别：chat/requirement/design"`
+	ProgramID    int64  `gorm:"column:program_id;type:bigint;uniqueIndex:uk_dlv_cloud_file,priority:2;index:idx_dlv_cloud_file_updated,priority:2;index:idx_dlv_cloud_file_owner,priority:2" description:"所属项目"`
+	Category     string `gorm:"column:category;type:varchar(16);uniqueIndex:uk_dlv_cloud_file,priority:3;index:idx_dlv_cloud_file_updated,priority:3" description:"同步类别：chat/requirement/design/test/prototype/execution/attachment"`
 	RelativePath string `gorm:"column:relative_path;type:varchar(1024)" description:"项目工作目录内的相对路径"`
 	// 相对路径本身放进联合唯一键会让索引超过 InnoDB 的 3072 字节上限，
 	// 所以唯一性落在定长的路径哈希上，路径列保持完整长度只做展示与回读。
-	RelativePathHash string    `gorm:"column:relative_path_hash;type:char(64);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"relative_path 的 SHA-256，仅用于唯一键"`
-	ContentType      string    `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
-	ObjectKey        string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
-	Size             int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
-	SHA256           string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
-	UpdatedBy        string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
-	UpdatedTime      time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
+	RelativePathHash string `gorm:"column:relative_path_hash;type:char(64);uniqueIndex:uk_dlv_cloud_file,priority:4" description:"relative_path 的 SHA-256，仅用于唯一键"`
+	ContentType      string `gorm:"column:content_type;type:varchar(128)" description:"文件 MIME 类型"`
+
+	// 归属与阶段来自本机桥接对工作目录约定的识别：文档跟着它所属的需求或任务走，
+	// 面板按阶段分栏展示。识别不出来时归属留空，只作为项目级未归类文件列出。
+	OwnerKind string `gorm:"column:owner_kind;type:varchar(16);index:idx_dlv_cloud_file_owner,priority:3" description:"归属类型：requirement/task/program"`
+	OwnerKey  string `gorm:"column:owner_key;type:varchar(64);index:idx_dlv_cloud_file_owner,priority:4" description:"归属的需求键或任务键"`
+	Stage     string `gorm:"column:stage;type:varchar(24)" description:"归属对象内部的阶段：需求 outline/prototype/review/testing/fine-tuning/chat；任务 document/design/testing/fine-tuning/prototype/execution/attachment/chat"`
+
+	ObjectKey   string    `gorm:"column:object_key;type:varchar(1536)" description:"OSS 对象键；正文只保存在私有 OSS"`
+	Size        int64     `gorm:"column:size;type:bigint" description:"正文的字节数"`
+	SHA256      string    `gorm:"column:sha256;type:char(64)" description:"正文 SHA-256，用于识别同内容重传"`
+	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最近同步操作人"`
+	UpdatedTime time.Time `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP;index:idx_dlv_cloud_file_updated,priority:4" description:"最近同步时间"`
 }
 
 func (d *DeliveryCloudSyncFile) TableName() string { return "zt_delivery_cloud_sync_file" }
@@ -264,7 +374,7 @@ type DeliveryRequirementCompletionNotification struct {
 	RecipientName   string `gorm:"column:recipient_name;type:varchar(64)" description:"接收人显示名快照"`
 	// NotificationReadAt 只属于当前 RecipientID；点击后不会影响同需求的其他负责人或协助者。
 	NotificationReadAt *time.Time `gorm:"column:notification_read_at;type:timestamp NULL;index:idx_dlv_requirement_completion_recipient,priority:4" description:"完成提醒已读时间"`
-	CompletedAt        time.Time  `gorm:"column:completed_at;type:timestamp;index:idx_dlv_requirement_completion_recipient,priority:5" description:"本次标记完成的时间"`
+	CompletedAt        time.Time  `gorm:"column:completed_at;type:timestamp null default null;index:idx_dlv_requirement_completion_recipient,priority:5" description:"本次标记完成的时间"`
 	CreatedTime        time.Time  `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
 	UpdatedTime        time.Time  `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"最近刷新时间"`
 }
@@ -388,7 +498,7 @@ type DeliveryItem struct {
 	PrototypeTask bool `gorm:"column:prototype_task;default:false" description:"历史原型任务标记，新流程不写入"`
 
 	Title       string `gorm:"column:title;type:varchar(255)" description:"任务标题"`
-	Description string `gorm:"column:description;type:varchar(1024)" description:"说明"`
+	Description string `gorm:"column:description;type:text" description:"说明"`
 	// BenefitTags 以 JSON 字符串保存多个简短收益标签，避免增加一张只服务展示的关联表。
 	BenefitTags string `gorm:"column:benefit_tags;type:text" description:"任务收益或作用标签 JSON 数组"`
 	// 以下两个字段保留给已存在数据库及旧接口读取；新写入分别使用路径和阶段产物字段。
@@ -414,6 +524,15 @@ type DeliveryItem struct {
 	DevelopmentStatus string `gorm:"column:development_status;type:varchar(16);default:todo;index:idx_dlv_item_development,priority:3" description:"开发阶段：todo/doing/done/blocked/dropped"`
 	TestingStatus     string `gorm:"column:testing_status;type:varchar(16);default:todo;index:idx_dlv_item_testing,priority:3" description:"测试阶段：todo/doing/done/blocked/dropped"`
 	Progress          int    `gorm:"column:progress" description:"进度 0-100，done 强制 100，dropped 不计入统计"`
+
+	// 执行耗时：每一轮执行实例开始与结束时各写一次，累计值只增不减。
+	// 一条任务会被反复执行（再做一次、追问、批量重跑），面板既要看最近一轮花了多久，
+	// 也要看这条任务到现在一共花了多久，所以最近一轮和累计分开存。
+	LastRunStartedAt   *time.Time `gorm:"column:last_run_started_at;type:timestamp NULL" description:"最近一轮执行开始时间"`
+	LastRunFinishedAt  *time.Time `gorm:"column:last_run_finished_at;type:timestamp NULL" description:"最近一轮执行结束时间"`
+	LastRunDurationMs  int64      `gorm:"column:last_run_duration_ms;default:0" description:"最近一轮执行耗时毫秒"`
+	TotalRunDurationMs int64      `gorm:"column:total_run_duration_ms;default:0" description:"历次执行累计耗时毫秒"`
+	RunCount           int        `gorm:"column:run_count;default:0" description:"已结束的执行轮次数"`
 
 	OwnerID   string     `gorm:"column:owner_id;type:varchar(64)" description:"负责人标识，鉴权落地前先存名字"`
 	OwnerName string     `gorm:"column:owner_name;type:varchar(64)" description:"负责人显示名"`
@@ -451,6 +570,13 @@ type DeliveryItemExecutionSession struct {
 	MetadataJSON      string `gorm:"column:metadata_json;type:text" description:"执行器扩展元数据 JSON"`
 	Version           int    `gorm:"column:version;default:1" description:"乐观锁版本"`
 
+	// 一行会话记录被同一任务的历次运行复用，这三列描述的是「最近一轮」：
+	// 绑定成运行中时写开始时间，收到终态时写结束时间并算出这一轮的耗时。
+	RunStartedAt       *time.Time `gorm:"column:run_started_at;type:timestamp NULL" description:"本轮运行开始时间"`
+	RunFinishedAt      *time.Time `gorm:"column:run_finished_at;type:timestamp NULL" description:"本轮运行结束时间"`
+	LastRunDurationMs  int64      `gorm:"column:last_run_duration_ms;default:0" description:"最近一轮运行耗时毫秒"`
+	TotalRunDurationMs int64      `gorm:"column:total_run_duration_ms;default:0" description:"该会话历次运行累计耗时毫秒"`
+
 	CreatedBy   string    `gorm:"column:created_by;type:varchar(64)" description:"创建人"`
 	UpdatedBy   string    `gorm:"column:updated_by;type:varchar(64)" description:"最后修改人"`
 	CreatedTime time.Time `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
@@ -482,13 +608,16 @@ type DeliveryExecutionBatch struct {
 	Summary              string `gorm:"column:summary;type:varchar(2048)" description:"完成或受阻摘要"`
 	// 完成消息只发给启动者，单字段即可表示这位启动者是否已经点击过提醒。
 	NotificationReadAt *time.Time `gorm:"column:notification_read_at;type:timestamp NULL" description:"完成提醒已读时间"`
-	StartedAt          *time.Time `gorm:"column:started_at;type:timestamp NULL" description:"开始时间"`
-	FinishedAt         *time.Time `gorm:"column:finished_at;type:timestamp NULL;index:idx_dlv_execution_batch_notice,priority:4" description:"结束时间"`
-	CreatedBy          string     `gorm:"column:created_by;type:varchar(64);index:idx_dlv_execution_batch_notice,priority:5" description:"启动人"`
-	CreatedByName      string     `gorm:"column:created_by_name;type:varchar(64)" description:"启动人显示名"`
-	UpdatedBy          string     `gorm:"column:updated_by;type:varchar(64)" description:"最后更新人"`
-	CreatedTime        time.Time  `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
-	UpdatedTime        time.Time  `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
+	// 本地桥接每隔几十秒续一次心跳。心跳停了说明执行侧已经不在了（断网、进程被杀、机器休眠），
+	// 服务端据此把批次判死并放行里面的任务，否则任务会被永久锁在一条没人收尾的 running 批次里。
+	HeartbeatAt   *time.Time `gorm:"column:heartbeat_at;type:timestamp NULL" description:"执行侧最近一次心跳时间"`
+	StartedAt     *time.Time `gorm:"column:started_at;type:timestamp NULL" description:"开始时间"`
+	FinishedAt    *time.Time `gorm:"column:finished_at;type:timestamp NULL;index:idx_dlv_execution_batch_notice,priority:4" description:"结束时间"`
+	CreatedBy     string     `gorm:"column:created_by;type:varchar(64);index:idx_dlv_execution_batch_notice,priority:5" description:"启动人"`
+	CreatedByName string     `gorm:"column:created_by_name;type:varchar(64)" description:"启动人显示名"`
+	UpdatedBy     string     `gorm:"column:updated_by;type:varchar(64)" description:"最后更新人"`
+	CreatedTime   time.Time  `gorm:"column:created_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"创建时间"`
+	UpdatedTime   time.Time  `gorm:"column:updated_time;type:timestamp;default:CURRENT_TIMESTAMP" description:"更新时间"`
 }
 
 func (d *DeliveryExecutionBatch) TableName() string { return "zt_delivery_execution_batch" }

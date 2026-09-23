@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+// 流水表的 from_value / to_value 是 varchar(255)、comment 是 varchar(1024)，
+// 但调用方传进来的可能是任务描述、测试用例这类长文本。写库前统一截断：
+// 一条流水不该因为超长（MySQL 1406 Data too long）把整次业务操作带失败。
+const (
+	eventValueMaxRunes   = 255
+	eventCommentMaxRunes = 1024
+)
+
+func clampEventText(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max-1]) + "…"
+}
+
 // ---------- 流水 ----------
 
 func (r *DeliveryRepository) AppendEvents(ctx context.Context, rows []*DeliveryItemEvent) error {
@@ -19,6 +35,9 @@ func (r *DeliveryRepository) AppendEvents(ctx context.Context, rows []*DeliveryI
 		if row.CreatedTime.IsZero() {
 			row.CreatedTime = now
 		}
+		row.FromValue = clampEventText(row.FromValue, eventValueMaxRunes)
+		row.ToValue = clampEventText(row.ToValue, eventValueMaxRunes)
+		row.Comment = clampEventText(row.Comment, eventCommentMaxRunes)
 	}
 	return r.Db.WithContext(ctx).Create(rows).Error
 }
@@ -61,6 +80,9 @@ func (r *DeliveryRepository) AppendRequirementEvents(ctx context.Context, rows [
 		if row.CreatedTime.IsZero() {
 			row.CreatedTime = now
 		}
+		row.FromValue = clampEventText(row.FromValue, eventValueMaxRunes)
+		row.ToValue = clampEventText(row.ToValue, eventValueMaxRunes)
+		row.Comment = clampEventText(row.Comment, eventCommentMaxRunes)
 	}
 	return r.Db.WithContext(ctx).Create(rows).Error
 }

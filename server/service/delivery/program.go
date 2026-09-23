@@ -26,7 +26,55 @@ var (
 
 const maxCloudSyncFileBytes = 8 * 1024 * 1024
 
-var cloudSyncScopeSet = map[string]struct{}{"chat": {}, "requirement": {}, "design": {}}
+var cloudSyncScopeSet = map[string]struct{}{
+	"chat": {}, "requirement": {}, "design": {}, "test": {},
+	"prototype": {}, "execution": {}, "attachment": {},
+}
+
+var cloudSyncScopeOrder = []string{
+	"chat", "requirement", "design", "test", "prototype", "execution", "attachment",
+}
+
+// 云端文档的归属类型。program 表示本机桥接没能把这份文件认到具体的需求或任务上。
+var cloudDocumentOwnerKinds = map[string]struct{}{"requirement": {}, "task": {}, "program": {}}
+
+// 归属对象内部的阶段。需求和任务各有一组，服务端只校验取值合法，
+// 阶段与归属类型是否配套由面板按各自的分栏展示决定。
+var cloudDocumentStages = map[string]struct{}{
+	"outline": {}, "prototype": {}, "review": {}, "testing": {}, "fine-tuning": {}, "chat": {},
+	"document": {}, "design": {}, "execution": {}, "attachment": {},
+}
+
+// normalizeCloudDocumentOwner 收敛桥接报上来的归属与阶段。
+// 认不出归属的文件一律落到 program 且不带键，绝不让一个来历不明的键成为面板上的分组。
+func normalizeCloudDocumentOwner(ownerKind, ownerKey, stage string) (string, string, string, error) {
+	kind := strings.TrimSpace(ownerKind)
+	key := strings.TrimSpace(ownerKey)
+	value := strings.TrimSpace(stage)
+	if kind == "" {
+		kind = "program"
+	}
+	if _, ok := cloudDocumentOwnerKinds[kind]; !ok {
+		return "", "", "", errors.New("云端文档归属类型无效")
+	}
+	if kind == "program" {
+		key = ""
+	}
+	if key == "" && kind != "program" {
+		return "", "", "", errors.New("云端文档缺少归属标识")
+	}
+	if len(key) > 64 || (key != "" && !cloudDocumentOwnerKeyRE.MatchString(key)) {
+		return "", "", "", errors.New("云端文档归属标识无效")
+	}
+	if value != "" {
+		if _, ok := cloudDocumentStages[value]; !ok {
+			return "", "", "", errors.New("云端文档阶段无效")
+		}
+	}
+	return kind, key, value, nil
+}
+
+var cloudDocumentOwnerKeyRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // ---------- 项目 ----------
 
@@ -221,6 +269,10 @@ func (s *service) UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSy
 	if len(contentType) > 128 {
 		return dto.CloudSyncFileView{}, errors.New("云端同步文件类型无效")
 	}
+	ownerKind, ownerKey, stage, err := normalizeCloudDocumentOwner(req.OwnerKind, req.OwnerKey, req.Stage)
+	if err != nil {
+		return dto.CloudSyncFileView{}, err
+	}
 	program, err := s.repo.FindProgram(ctx, req.BizLine.String(), req.ProgramID)
 	if err != nil {
 		return dto.CloudSyncFileView{}, translate(err)
@@ -244,8 +296,96 @@ func (s *service) UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSy
 	row, err := s.repo.UpsertCloudSyncFile(ctx, &repository.DeliveryCloudSyncFile{
 		BizLine: req.BizLine.String(), ProgramID: req.ProgramID, Category: req.Category,
 		RelativePath: relativePath, ContentType: contentType, ObjectKey: objectKey, Size: int64(len(req.Content)),
+		OwnerKind: ownerKind, OwnerKey: ownerKey, Stage: stage,
 		SHA256: checksum, UpdatedBy: actorOf(req.ActorID, req.ActorName), UpdatedTime: now,
 	})
+	if err != nil {
+		return dto.CloudSyncFileView{}, translate(err)
+	}
+	return toCloudSyncFileView(row), nil
+}
+
+// ListCloudSyncFiles exposes a project-scoped document directory only while
+// cloud sync remains enabled. The returned metadata contains no OSS credentials
+// or local machine paths.
+func (s *service) ListCloudSyncFiles(ctx context.Context, query dto.CloudSyncFileQuery) ([]dto.CloudSyncFileView, error) {
+	if !query.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if query.ProgramID <= 0 {
+		return nil, errors.New("缺少项目标识")
+	}
+	category := strings.TrimSpace(query.Category)
+	if category != "" {
+		if _, ok := cloudSyncScopeSet[category]; !ok {
+			return nil, errors.New("云端同步类别无效")
+		}
+	}
+	program, err := s.repo.FindProgram(ctx, query.BizLine.String(), query.ProgramID)
+	if err != nil {
+		return nil, translate(err)
+	}
+	if !program.CloudSyncEnabled {
+		return nil, errors.New("当前项目未启用云端同步")
+	}
+	if category != "" && !cloudSyncScopeEnabled(program.CloudSyncScopes, category) {
+		return nil, errors.New("当前项目未启用该类云端同步")
+	}
+	// 归属过滤是浏览条件而不是写入条件：没传就是整个项目，传了就只看这条需求或任务。
+	ownerKind := strings.TrimSpace(query.OwnerKind)
+	ownerKey := strings.TrimSpace(query.OwnerKey)
+	stage := strings.TrimSpace(query.Stage)
+	if ownerKind != "" {
+		if _, ok := cloudDocumentOwnerKinds[ownerKind]; !ok {
+			return nil, errors.New("云端文档归属类型无效")
+		}
+	}
+	if ownerKey != "" && !cloudDocumentOwnerKeyRE.MatchString(ownerKey) {
+		return nil, errors.New("云端文档归属标识无效")
+	}
+	if stage != "" {
+		if _, ok := cloudDocumentStages[stage]; !ok {
+			return nil, errors.New("云端文档阶段无效")
+		}
+	}
+	rows, err := s.repo.ListCloudSyncFiles(ctx, query.BizLine.String(), query.ProgramID, repository.CloudSyncFileFilter{
+		Category: category, OwnerKind: ownerKind, OwnerKey: ownerKey, Stage: stage,
+	})
+	if err != nil {
+		return nil, err
+	}
+	views := make([]dto.CloudSyncFileView, 0, len(rows))
+	for _, row := range rows {
+		if cloudSyncScopeEnabled(program.CloudSyncScopes, row.Category) {
+			views = append(views, toCloudSyncFileView(row))
+		}
+	}
+	return views, nil
+}
+
+func (s *service) GetCloudSyncFile(ctx context.Context, bizLine contract.BizLine, programID int64, category, relativePath string) (dto.CloudSyncFileView, error) {
+	if !bizLine.Valid() {
+		return dto.CloudSyncFileView{}, contract.ErrBizLineRequired
+	}
+	if programID <= 0 {
+		return dto.CloudSyncFileView{}, errors.New("缺少项目标识")
+	}
+	category = strings.TrimSpace(category)
+	if _, ok := cloudSyncScopeSet[category]; !ok {
+		return dto.CloudSyncFileView{}, errors.New("云端同步类别无效")
+	}
+	relativePath, err := normalizeCloudSyncRelativePath(relativePath)
+	if err != nil {
+		return dto.CloudSyncFileView{}, err
+	}
+	program, err := s.repo.FindProgram(ctx, bizLine.String(), programID)
+	if err != nil {
+		return dto.CloudSyncFileView{}, translate(err)
+	}
+	if !program.CloudSyncEnabled || !cloudSyncScopeEnabled(program.CloudSyncScopes, category) {
+		return dto.CloudSyncFileView{}, errors.New("当前项目未启用该类云端同步")
+	}
+	row, err := s.repo.FindCloudSyncFile(ctx, bizLine.String(), programID, category, relativePath)
 	if err != nil {
 		return dto.CloudSyncFileView{}, translate(err)
 	}
@@ -262,7 +402,7 @@ func normalizeCloudSyncScopes(raw []string) ([]string, error) {
 		seen[scope] = struct{}{}
 	}
 	scopes := make([]string, 0, len(seen))
-	for _, scope := range []string{"chat", "requirement", "design"} {
+	for _, scope := range cloudSyncScopeOrder {
 		if _, ok := seen[scope]; ok {
 			scopes = append(scopes, scope)
 		}
@@ -377,6 +517,7 @@ func toCloudSyncFileView(row *repository.DeliveryCloudSyncFile) dto.CloudSyncFil
 	updated := row.UpdatedTime
 	return dto.CloudSyncFileView{
 		ProgramID: row.ProgramID, Category: row.Category, RelativePath: row.RelativePath,
-		ContentType: row.ContentType, Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated,
+		ContentType: row.ContentType, OwnerKind: row.OwnerKind, OwnerKey: row.OwnerKey, Stage: row.Stage,
+		Size: row.Size, SHA256: row.SHA256, UpdatedAt: &updated, ObjectKey: row.ObjectKey,
 	}
 }

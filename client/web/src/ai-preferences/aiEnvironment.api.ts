@@ -2,9 +2,7 @@
 
 import { plainToInstance } from "class-transformer";
 import { instance } from "@/utils/axios";
-import { DELIVERY_TASK_PLANNER_BRIDGE_URL } from "@/project-workspaces/deliveryTaskPlanner";
-
-const AI_BRIDGE_URL = DELIVERY_TASK_PLANNER_BRIDGE_URL;
+import { getDeliveryTaskPlannerBridgeUrl } from "@/project-workspaces/deliveryTaskPlanner";
 
 export class AIEnvironmentHealth {
   ready = false;
@@ -25,7 +23,7 @@ export class AIEnvironmentHealth {
 }
 
 export async function fetchAIEnvironmentHealth() {
-  const response = await instance.get<AIEnvironmentHealth>(`${AI_BRIDGE_URL}/v1/ai/health`, {
+  const response = await instance.get<AIEnvironmentHealth>(`${getDeliveryTaskPlannerBridgeUrl()}/v1/ai/health`, {
     timeout: 10000,
   });
   return plainToInstance(AIEnvironmentHealth, response.data);

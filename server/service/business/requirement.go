@@ -14,13 +14,10 @@ import (
 
 const untitledRequirement = "未命名业务诉求"
 
-// 两种文档标题：一份是访谈过程中每轮自动沉淀的整理，一份是业务方点「确认文档」
-// 后产出的正式诉求文档。它们共用同一条版本线，靠标题区分，翻版本时一眼能认出
-// 哪一版是业务方自己确认要落地的那份。
-const (
-	interviewDocumentTitlePrefix = "AI 访谈整理 · "
-	confirmedDocumentTitlePrefix = "业务诉求文档 · "
-)
+// 一场访谈只落一份文档，标题固定用这个前缀。访谈过程中的每一轮只在对话里回应，
+// 不再各自沉淀一版整理：业务方要的是聊透之后那一份结论，中间版本只会让人反复
+// 确认「哪份才算数」。
+const confirmedDocumentTitlePrefix = "业务诉求文档 · "
 
 // 业务方点「确认文档」时替他说的那句话。它照常落成一条 user 消息：对话里必须
 // 看得出这一版文档是谁、在哪一步要求产出的，否则文档会像凭空冒出来。
@@ -347,7 +344,7 @@ func (s *service) conversation(ctx context.Context, requirement *repository.Busi
 	if err != nil {
 		return dto.ConversationView{}, err
 	}
-	documents, err := s.repo.ListDocuments(ctx, requirement.BizLine, requirement.ID)
+	document, err := s.repo.FindLatestDocument(ctx, requirement.BizLine, requirement.ID)
 	if err != nil {
 		return dto.ConversationView{}, err
 	}
@@ -364,9 +361,11 @@ func (s *service) conversation(ctx context.Context, requirement *repository.Busi
 	if messageViews == nil {
 		messageViews = []dto.MessageView{}
 	}
-	documentViews := toDocumentViews(documents)
-	if documentViews == nil {
-		documentViews = []dto.DocumentView{}
+	// 文档字段仍然是数组：一场访谈最多一份，但客户端已经按列表渲染，保持形状
+	// 不变比让两端同时改契约更省事。
+	documentViews := []dto.DocumentView{}
+	if document != nil {
+		documentViews = append(documentViews, toDocumentView(document))
 	}
 	if activities == nil {
 		activities = []dto.ConversationActivity{}
@@ -431,14 +430,10 @@ func (s *service) refreshRemoteConversation(ctx context.Context, requirement *re
 			}
 		}
 	}
-	documentTitle := interviewDocumentTitlePrefix + title
-	if requirement.RemoteMode == dto.ConversationModeDocument {
-		documentTitle = confirmedDocumentTitlePrefix + title
-	}
 	finalized, err := s.repo.FinalizeRemoteConversation(ctx, repository.RemoteConversationFinalization{
 		BizLine: requirement.BizLine, RequirementID: requirement.ID, ExpectedThreadID: requirement.RemoteThreadID,
 		ThreadID: threadID, TurnID: requirement.RemoteTurnID, Title: title, Reply: reply,
-		DocumentTitle: documentTitle,
+		DocumentTitle: intakeDocumentTitle(requirement.RemoteMode, title),
 	})
 	if err != nil {
 		return "", nil, err
@@ -737,12 +732,17 @@ func toMessageView(row *repository.BusinessRequirementMessage) dto.MessageView {
 	return dto.MessageView{ID: row.ID, Role: row.Role, Content: row.Content, CreatedAt: timePtr(row.CreatedTime)}
 }
 
-func toDocumentViews(rows []*repository.BusinessRequirementDocument) []dto.DocumentView {
-	views := make([]dto.DocumentView, 0, len(rows))
-	for _, row := range rows {
-		views = append(views, toDocumentView(row))
+// intakeDocumentTitle names the document a finished turn should write, and
+// returns "" for the turns that must not write one at all.
+//
+// 只有业务方点过「确认文档」的那一轮才落文档。普通访谈轮次照常把回复写进对话，
+// 但不再各自沉淀一份整理：那样一场访谈会攒出十几份内容雷同的文档，业务方和产研
+// 都得先判断哪一份才算数。
+func intakeDocumentTitle(mode, title string) string {
+	if strings.TrimSpace(mode) != dto.ConversationModeDocument {
+		return ""
 	}
-	return views
+	return confirmedDocumentTitlePrefix + title
 }
 
 func toDocumentView(row *repository.BusinessRequirementDocument) dto.DocumentView {

@@ -35,9 +35,10 @@ type RemoteConversationFinalization struct {
 	TurnID           string
 	Title            string
 	Reply            string
-	// DocumentTitle names the version this turn produces. The confirmed
-	// document and an ordinary interview summary share one lineage, so the
-	// title is what tells a reader which kind of version they are looking at.
+	// DocumentTitle names the document this turn produces, and doubles as the
+	// switch for producing one at all: an ordinary interview turn leaves it
+	// empty and only appends its reply to the chat. A conversation therefore
+	// carries exactly one document, written when the business user confirms it.
 	DocumentTitle string
 }
 
@@ -164,7 +165,7 @@ func (r *BusinessRepository) FailRunningRemoteConversation(ctx context.Context, 
 // FinalizeRemoteConversation atomically claims a running remote turn and
 // stores its final answer. The conditional state transition prevents two
 // concurrent polling requests from creating duplicate assistant messages or
-// duplicate document versions.
+// writing the document twice.
 func (r *BusinessRepository) FinalizeRemoteConversation(ctx context.Context, input RemoteConversationFinalization) (bool, error) {
 	now := time.Now()
 	finalized := false
@@ -184,26 +185,15 @@ func (r *BusinessRepository) FinalizeRemoteConversation(ctx context.Context, inp
 		}
 		finalized = true
 
-		version := 1
-		var latest BusinessRequirementDocument
-		err := tx.Where("biz_line = ? AND requirement_id = ? AND type = ?", input.BizLine, input.RequirementID, "ai_intake").
-			Order("version desc, id desc").First(&latest).Error
-		if err == nil {
-			version = latest.Version + 1
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-
 		if err := tx.Create(&BusinessRequirementMessage{
 			BizLine: input.BizLine, RequirementID: input.RequirementID, Role: "assistant", Content: input.Reply, CreatedTime: now,
 		}).Error; err != nil {
 			return err
 		}
-		if err := tx.Create(&BusinessRequirementDocument{
-			BizLine: input.BizLine, RequirementID: input.RequirementID, Type: "ai_intake",
-			Title: input.DocumentTitle, Content: input.Reply, Version: version, CreatedTime: now,
-		}).Error; err != nil {
-			return err
+		if strings.TrimSpace(input.DocumentTitle) != "" {
+			if err := writeIntakeDocument(tx, input, now); err != nil {
+				return err
+			}
 		}
 		return tx.Model(&BusinessRequirement{}).Where("id = ? AND biz_line = ?", input.RequirementID, input.BizLine).Updates(map[string]any{
 			"title":            input.Title,
@@ -219,6 +209,36 @@ func (r *BusinessRepository) FinalizeRemoteConversation(ctx context.Context, inp
 	return finalized, err
 }
 
+// writeIntakeDocument keeps one intake document per conversation. Confirming
+// again is a rewrite, not a new version: the business user asked for a single
+// document, and a second row would immediately reopen the "which one is
+// current" question the single document exists to close.
+//
+// The version column is still bumped, because it is part of the row's unique
+// index and reviewing how often a conversation was re-confirmed is cheap to
+// keep. Legacy rows written per turn stay untouched below the newest one; the
+// conversation read only ever surfaces that newest row.
+func writeIntakeDocument(tx *gorm.DB, input RemoteConversationFinalization, now time.Time) error {
+	var latest BusinessRequirementDocument
+	err := tx.Where("biz_line = ? AND requirement_id = ? AND type = ?", input.BizLine, input.RequirementID, "ai_intake").
+		Order("version desc, id desc").First(&latest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return tx.Create(&BusinessRequirementDocument{
+			BizLine: input.BizLine, RequirementID: input.RequirementID, Type: "ai_intake",
+			Title: input.DocumentTitle, Content: input.Reply, Version: 1, CreatedTime: now,
+		}).Error
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Model(&BusinessRequirementDocument{}).Where("id = ?", latest.ID).Updates(map[string]any{
+		"title":        input.DocumentTitle,
+		"content":      input.Reply,
+		"version":      latest.Version + 1,
+		"created_time": now,
+	}).Error
+}
+
 func (r *BusinessRepository) ListMessages(ctx context.Context, bizLine string, requirementID int64) ([]*BusinessRequirementMessage, error) {
 	var rows []*BusinessRequirementMessage
 	if err := r.Db.WithContext(ctx).Where("biz_line = ? AND requirement_id = ?", bizLine, requirementID).Order("id asc").Find(&rows).Error; err != nil {
@@ -232,12 +252,21 @@ func (r *BusinessRepository) CreateMessage(ctx context.Context, row *BusinessReq
 	return r.Db.WithContext(ctx).Create(row).Error
 }
 
-func (r *BusinessRepository) ListDocuments(ctx context.Context, bizLine string, requirementID int64) ([]*BusinessRequirementDocument, error) {
-	var rows []*BusinessRequirementDocument
-	if err := r.Db.WithContext(ctx).Where("biz_line = ? AND requirement_id = ?", bizLine, requirementID).Order("version desc, id desc").Find(&rows).Error; err != nil {
+// FindLatestDocument returns the one document a conversation carries, or nil
+// when the business user has not confirmed one yet. Conversations created
+// before the per-turn document was dropped still hold their old rows, so the
+// read is "newest wins" rather than "there is only ever one row".
+func (r *BusinessRepository) FindLatestDocument(ctx context.Context, bizLine string, requirementID int64) (*BusinessRequirementDocument, error) {
+	var row BusinessRequirementDocument
+	err := r.Db.WithContext(ctx).Where("biz_line = ? AND requirement_id = ?", bizLine, requirementID).
+		Order("version desc, id desc").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
 		return nil, err
 	}
-	return rows, nil
+	return &row, nil
 }
 
 // 明确列出投影的列：`document.*` 里的 biz_line / type 用不到，而 title 在两张表

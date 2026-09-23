@@ -116,11 +116,11 @@ func TestNormalizeProgress(t *testing.T) {
 }
 
 func TestNormalizeCloudSyncScopesKeepsOnlyDeclaredScopesInStableOrder(t *testing.T) {
-	scopes, err := normalizeCloudSyncScopes([]string{"design", "chat", "design", "requirement"})
+	scopes, err := normalizeCloudSyncScopes([]string{"execution", "design", "chat", "attachment", "prototype", "test", "design", "requirement"})
 	if err != nil {
 		t.Fatalf("合法云端同步类别不应报错：%v", err)
 	}
-	if got, want := strings.Join(scopes, ","), "chat,requirement,design"; got != want {
+	if got, want := strings.Join(scopes, ","), "chat,requirement,design,test,prototype,execution,attachment"; got != want {
 		t.Fatalf("云端同步类别顺序或去重错误：got=%s want=%s", got, want)
 	}
 	if _, err := normalizeCloudSyncScopes([]string{"chat", "source"}); err == nil {
@@ -136,6 +136,34 @@ func TestNormalizeCloudSyncRelativePathRejectsWorkspaceEscape(t *testing.T) {
 		if _, err := normalizeCloudSyncRelativePath(raw); err == nil {
 			t.Fatalf("越界路径必须拒绝：%s", raw)
 		}
+	}
+}
+
+func TestNormalizeCloudDocumentOwnerFallsBackToProgramWithoutInventingAKey(t *testing.T) {
+	kind, key, stage, err := normalizeCloudDocumentOwner("", "", "")
+	if err != nil || kind != "program" || key != "" || stage != "" {
+		t.Fatalf("旧版桥接不报归属时应落到项目级未归类：%q %q %q %v", kind, key, stage, err)
+	}
+	// 归属类型是 program 就不该带键：桥接没认出归属时给的键一定是猜的，不能进面板的分组。
+	if kind, key, _, err := normalizeCloudDocumentOwner("program", "req-1", "outline"); err != nil || kind != "program" || key != "" {
+		t.Fatalf("未归类文件不应保留归属标识：%q %q %v", kind, key, err)
+	}
+	if _, _, _, err := normalizeCloudDocumentOwner("requirement", "", "outline"); err == nil {
+		t.Fatal("声明了归属类型却没有归属标识必须拒绝")
+	}
+	for _, raw := range []string{"../req-1", "req 1", "req/1"} {
+		if _, _, _, err := normalizeCloudDocumentOwner("requirement", raw, "outline"); err == nil {
+			t.Fatalf("非法归属标识必须拒绝：%s", raw)
+		}
+	}
+	if _, _, _, err := normalizeCloudDocumentOwner("module", "m-1", ""); err == nil {
+		t.Fatal("未声明的归属类型必须拒绝")
+	}
+	if _, _, _, err := normalizeCloudDocumentOwner("task", "task-1", "planning"); err == nil {
+		t.Fatal("未声明的阶段必须拒绝")
+	}
+	if kind, key, stage, err := normalizeCloudDocumentOwner("task", "task-1", "design"); err != nil || kind != "task" || key != "task-1" || stage != "design" {
+		t.Fatalf("合法归属不应被改写：%q %q %q %v", kind, key, stage, err)
 	}
 }
 
@@ -355,6 +383,28 @@ func TestNormalizeRequirementItemReferencesKeepsValidUniqueKeys(t *testing.T) {
 	}
 }
 
+func TestExecutionBatchIsDeadFollowsHeartbeat(t *testing.T) {
+	now := time.Now()
+	fresh := now.Add(-time.Second)
+	stale := now.Add(-ExecutionBatchHeartbeatTTL - time.Minute)
+	if executionBatchIsDead(&repository.DeliveryExecutionBatch{HeartbeatAt: &fresh}, now) {
+		t.Fatal("刚续过心跳的批次不能被判死")
+	}
+	if !executionBatchIsDead(&repository.DeliveryExecutionBatch{HeartbeatAt: &stale}, now) {
+		t.Fatal("心跳过期的批次必须判死，否则任务被永久锁住")
+	}
+	// 升级前建的批次没有心跳字段，退回启动时间判断。
+	if !executionBatchIsDead(&repository.DeliveryExecutionBatch{StartedAt: &stale}, now) {
+		t.Fatal("没有心跳的老批次应按启动时间判死")
+	}
+	if executionBatchIsDead(&repository.DeliveryExecutionBatch{StartedAt: &fresh}, now) {
+		t.Fatal("刚启动的老批次不能被判死")
+	}
+	if !executionBatchIsDead(&repository.DeliveryExecutionBatch{CreatedTime: stale}, now) {
+		t.Fatal("既没有心跳也没有启动时间时应按创建时间判死")
+	}
+}
+
 func TestExecutionBatchStateTransitions(t *testing.T) {
 	if err := validateExecutionBatchItemTransition(ExecutionBatchItemPending, ExecutionBatchItemRunning); err != nil {
 		t.Fatalf("pending -> running should be valid: %v", err)
@@ -364,6 +414,10 @@ func TestExecutionBatchStateTransitions(t *testing.T) {
 	}
 	if err := validateExecutionBatchItemTransition(ExecutionBatchItemCompleted, ExecutionBatchItemBlocked); err == nil {
 		t.Fatal("completed batch item must not become blocked")
+	}
+	// 启动前就已经完成的任务会被直接记完成跳过；不放行的话批次里会留下收不了尾的 pending。
+	if err := validateExecutionBatchItemTransition(ExecutionBatchItemPending, ExecutionBatchItemCompleted); err != nil {
+		t.Fatalf("pending -> completed should be valid: %v", err)
 	}
 	if _, err := normalizeExecutionBatchMode("sequence"); err != nil {
 		t.Fatalf("sequence should be a valid execution batch mode: %v", err)
@@ -407,6 +461,74 @@ func TestBuildRequirementProgressViewKeepsAllTaskStatesAndBatchContext(t *testin
 	}
 	if len(view.Batches) != 1 || len(view.Batches[0].Items) != 1 || view.Batches[0].Items[0].ItemKey != "doing" {
 		t.Fatalf("执行批次上下文不完整：%#v", view.Batches)
+	}
+}
+
+// 一轮执行的耗时按「绑定成运行中」到「收到终态」这段算。中途的进度更新不是边界，
+// 不能把已经结算过的一轮再累加一次 —— 终态会被后台补偿重放。
+func TestRunTimingMeasuresOneRunAndAccumulatesOnce(t *testing.T) {
+	start := time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC)
+	begin := runTimingFor(nil, "running", start)
+	if !begin.Started || begin.StartedAt == nil || !begin.StartedAt.Equal(start) || begin.FinishedAt != nil {
+		t.Fatalf("绑定成运行中应当开一轮新的计时：%#v", begin)
+	}
+
+	session := &repository.DeliveryItemExecutionSession{
+		RunStartedAt: begin.StartedAt, TotalRunDurationMs: 5_000,
+	}
+	end := start.Add(90 * time.Second)
+	finish := runTimingFor(session, "completed", end)
+	if !finish.Finished || finish.LastMs != 90_000 || finish.TotalMs != 95_000 {
+		t.Fatalf("终态应当结算本轮并累加到会话总耗时：%#v", finish)
+	}
+
+	session.RunFinishedAt = finish.FinishedAt
+	session.LastRunDurationMs = finish.LastMs
+	session.TotalRunDurationMs = finish.TotalMs
+	replay := runTimingFor(session, "completed", end.Add(time.Minute))
+	if replay.Finished || replay.LastMs != 90_000 || replay.TotalMs != 95_000 {
+		t.Fatalf("重放终态不能二次累加：%#v", replay)
+	}
+}
+
+// 存量会话没有开始时刻，补一个结束时刻就够；时钟回拨也不能写出负耗时。
+func TestRunTimingIgnoresMissingStartAndBackwardClock(t *testing.T) {
+	now := time.Date(2026, time.September, 2, 10, 0, 0, 0, time.UTC)
+	legacy := runTimingFor(&repository.DeliveryItemExecutionSession{}, "blocked", now)
+	if legacy.Finished || legacy.LastMs != 0 || legacy.FinishedAt == nil {
+		t.Fatalf("缺开始时刻时只补结束时刻：%#v", legacy)
+	}
+	later := now.Add(time.Minute)
+	backward := runTimingFor(&repository.DeliveryItemExecutionSession{RunStartedAt: &later}, "completed", now)
+	if backward.LastMs != 0 || backward.TotalMs != 0 {
+		t.Fatalf("时钟回拨不能写出负耗时：%#v", backward)
+	}
+}
+
+// 需求的执行耗时是它下面每条任务的累计之和；任务视图要把最近一轮也带出去，
+// 面板上「本次 / 累计」两个数都从这里读。
+func TestRequirementProgressSumsTaskRunDurations(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 2, 9, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	rows := []*repository.DeliveryItem{
+		{
+			ItemKey: "a", Status: StatusDone, Progress: 100,
+			LastRunStartedAt: &startedAt, LastRunFinishedAt: &finishedAt,
+			LastRunDurationMs: 120_000, TotalRunDurationMs: 300_000, RunCount: 3,
+		},
+		{ItemKey: "b", Status: StatusDoing, Progress: 50, LastRunStartedAt: &startedAt, TotalRunDurationMs: 45_000, RunCount: 1},
+	}
+	view := buildRequirementProgressView(
+		&repository.DeliveryRequirement{RequirementKey: "req-1"}, rows, nil, nil, nil, nil,
+	)
+	if view.TotalRunDurationMs != 345_000 || view.RunCount != 4 {
+		t.Fatalf("需求累计耗时应当是各任务之和：%#v", view)
+	}
+	if view.Items[0].LastRunDurationMs != 120_000 || view.Items[0].TotalRunDurationMs != 300_000 {
+		t.Fatalf("任务视图缺少执行耗时：%#v", view.Items[0])
+	}
+	if view.Items[1].LastRunFinishedAt != nil || view.Items[1].LastRunStartedAt == nil {
+		t.Fatalf("还在跑的任务只有开始时刻：%#v", view.Items[1])
 	}
 }
 

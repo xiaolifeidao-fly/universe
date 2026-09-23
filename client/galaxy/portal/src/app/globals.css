@@ -1,0 +1,1896 @@
+/**
+ * 门户站的设计系统。
+ *
+ * 它和两个控制台（.gx-*）是同一个牌子的两副面孔，不是同一套组件：
+ * 控制台是坐下来干活的地方 —— 密度高、13px、一屏塞满；门户是陌生人站着看三十秒
+ * 的地方 —— 留白、大字、一次只说一件事。硬把 .gx-* 搬过来，得到的是一个
+ * 「后台管理系统的首页」，那正是这类站点最常见的样子，也是最没人愿意读的样子。
+ *
+ * 共用的只有两样：字体（tokens.css 里自托管的 Instrument Serif / JetBrains Mono）
+ * 和那支青绿。青绿必须一模一样 —— 用户从门户点进控制台的那一刻，
+ * 颜色一变，他会以为自己跳到了另一家公司。
+ *
+ * 类名前缀 gp-（galaxy portal），和控制台的 gx- 分开，免得有人把两边的样式串着用。
+ */
+
+@import "../../../../shared/styles/tokens.css";
+
+:root {
+  --gp-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", system-ui,
+    sans-serif;
+  --gp-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --gp-serif: "Instrument Serif", "Songti SC", Georgia, "Times New Roman", serif;
+
+  /* 底色比控制台再亮一档：那边要长时间盯着，这边只看半分钟，亮一点更精神。 */
+  --gp-app: #f7f9f8;
+  --gp-surface: #ffffff;
+  --gp-surface-2: #f1f5f3;
+  --gp-ink: #101a19;
+  --gp-soft: #475652;
+  --gp-faint: #7d8b87;
+  --gp-line: rgba(16, 26, 25, 0.08);
+  --gp-line-strong: rgba(16, 26, 25, 0.14);
+
+  /* 青绿：和 Orbit 控制台同一个值，一个色号都不能差。 */
+  --gp-accent: #0f7b74;
+  --gp-accent-ink: #0a5c57;
+  --gp-accent-lite: #35a89f;
+  --gp-accent-soft: rgba(15, 123, 116, 0.09);
+  --gp-accent-line: rgba(15, 123, 116, 0.22);
+
+  /* 暖铜：只用在模型族标记上（Claude 那一族）。一整页青绿里留一个暖色的落点，
+     别把它当成第二个强调色到处撒。 */
+  --gp-ember: #b4531f;
+  --gp-ember-soft: rgba(180, 83, 31, 0.1);
+
+  --gp-ok: #2f7d4a;
+  --gp-warn: #9a6f14;
+
+  --gp-radius: 14px;
+  --gp-radius-lg: 20px;
+  --gp-shadow: 0 1px 2px rgba(16, 26, 25, 0.04), 0 12px 32px -18px rgba(16, 26, 25, 0.28);
+  --gp-shadow-lift: 0 2px 4px rgba(16, 26, 25, 0.05), 0 28px 60px -28px rgba(16, 26, 25, 0.35);
+  --gp-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* 版心。1180 是两列 560 + 60 沟槽，正好让首页的图文各占一半而不显空。 */
+  --gp-page: 1180px;
+  --gp-gutter: clamp(20px, 5vw, 40px);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  /* 锚点跳转时不要把标题顶到吸顶导航下面。 */
+  scroll-padding-top: 96px;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--gp-app);
+  color: var(--gp-ink);
+  font-family: var(--gp-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* tokens.css 给后台画的那层靛紫辉光在这里是错的调子，盖掉。 */
+body::before {
+  content: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+::selection {
+  background: var(--gp-accent-soft);
+  color: var(--gp-accent-ink);
+}
+
+/* ---------- 排版 ---------- */
+
+.gp-h1 {
+  margin: 0;
+  font-size: clamp(32px, 4.1vw, 52px);
+  line-height: 1.1;
+  letter-spacing: -0.028em;
+  font-weight: 700;
+}
+
+.gp-h2 {
+  margin: 0;
+  font-size: clamp(26px, 3.2vw, 38px);
+  line-height: 1.18;
+  letter-spacing: -0.022em;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.gp-h3 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.35;
+  letter-spacing: -0.012em;
+  font-weight: 650;
+}
+
+.gp-lead {
+  margin: 0;
+  font-size: clamp(15px, 1.5vw, 17px);
+  line-height: 1.72;
+  color: var(--gp-soft);
+  max-width: 54ch;
+  text-wrap: pretty;
+}
+
+.gp-body {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.75;
+  color: var(--gp-soft);
+  text-wrap: pretty;
+}
+
+.gp-mono {
+  font-family: var(--gp-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "calt" 0;
+}
+
+/* 大数字用衬线。Instrument Serif 只带拉丁字形，中文会自动落回 PingFang ——
+   所以它只用在「纯数字 + 单位」这种地方，混排中文会露出两套字。 */
+.gp-figure {
+  font-family: var(--gp-serif);
+  font-size: clamp(30px, 3.6vw, 42px);
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-weight: 400;
+}
+
+.gp-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  font-weight: 600;
+}
+
+/* ---------- 骨架 ---------- */
+
+.gp-page {
+  width: 100%;
+  max-width: var(--gp-page);
+  margin: 0 auto;
+  padding-inline: var(--gp-gutter);
+}
+
+.gp-section {
+  padding-block: clamp(56px, 8vw, 104px);
+  position: relative;
+}
+
+.gp-section--tight {
+  padding-block: clamp(40px, 5vw, 64px);
+}
+
+.gp-section__head {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: clamp(28px, 4vw, 44px);
+  max-width: 62ch;
+}
+
+.gp-rule {
+  height: 1px;
+  border: 0;
+  margin: 0;
+  background: var(--gp-line);
+}
+
+/* ---------- 顶栏 ---------- */
+
+.gp-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: rgba(247, 249, 248, 0.82);
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s var(--gp-ease), background 0.2s var(--gp-ease);
+}
+
+.gp-header[data-scrolled="true"] {
+  border-bottom-color: var(--gp-line);
+  background: rgba(247, 249, 248, 0.94);
+}
+
+.gp-header__bar {
+  height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.gp-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.gp-brand__mark {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  color: var(--gp-accent);
+}
+
+.gp-brand__name {
+  font-family: var(--gp-serif);
+  font-size: 23px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+.gp-brand__tag {
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  padding-top: 3px;
+}
+
+.gp-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline: auto;
+}
+
+.gp-nav__link {
+  position: relative;
+  padding: 8px 13px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--gp-soft);
+  transition: color 0.16s var(--gp-ease), background 0.16s var(--gp-ease);
+}
+
+.gp-nav__link:hover {
+  color: var(--gp-ink);
+  background: rgba(16, 26, 25, 0.045);
+}
+
+.gp-nav__link[data-active="true"] {
+  color: var(--gp-ink);
+}
+
+.gp-nav__link[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 13px;
+  right: 13px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--gp-accent);
+}
+
+.gp-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+/* 汉堡按钮只在窄屏出现。 */
+.gp-burger {
+  display: none;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gp-line-strong);
+  border-radius: 10px;
+  background: var(--gp-surface);
+  color: var(--gp-ink);
+  cursor: pointer;
+}
+
+.gp-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s var(--gp-ease);
+  border-top: 1px solid transparent;
+}
+
+.gp-drawer[data-open="true"] {
+  grid-template-rows: 1fr;
+  border-top-color: var(--gp-line);
+}
+
+.gp-drawer__inner {
+  overflow: hidden;
+}
+
+.gp-drawer__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-block: 12px 18px;
+}
+
+.gp-drawer__link {
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 550;
+  color: var(--gp-ink);
+}
+
+.gp-drawer__link:hover {
+  background: rgba(16, 26, 25, 0.045);
+}
+
+/* ---------- 按钮 ---------- */
+
+.gp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 42px;
+  padding-inline: 20px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  font-size: 14.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.16s var(--gp-ease), border-color 0.16s var(--gp-ease), transform 0.16s var(--gp-ease),
+    box-shadow 0.16s var(--gp-ease), color 0.16s var(--gp-ease);
+}
+
+.gp-btn:active {
+  transform: translateY(1px);
+}
+
+.gp-btn--primary {
+  background: var(--gp-accent);
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(10, 92, 87, 0.24), 0 10px 24px -12px rgba(10, 92, 87, 0.6);
+}
+
+.gp-btn--primary:hover {
+  background: var(--gp-accent-ink);
+}
+
+.gp-btn--ghost {
+  background: var(--gp-surface);
+  border-color: var(--gp-line-strong);
+  color: var(--gp-ink);
+}
+
+.gp-btn--ghost:hover {
+  border-color: rgba(16, 26, 25, 0.28);
+  box-shadow: var(--gp-shadow);
+}
+
+.gp-btn--quiet {
+  background: transparent;
+  color: var(--gp-soft);
+  padding-inline: 12px;
+}
+
+.gp-btn--quiet:hover {
+  color: var(--gp-ink);
+  background: rgba(16, 26, 25, 0.05);
+}
+
+.gp-btn--sm {
+  height: 34px;
+  padding-inline: 14px;
+  font-size: 13.5px;
+  border-radius: 9px;
+}
+
+.gp-btn--lg {
+  height: 48px;
+  padding-inline: 26px;
+  font-size: 15.5px;
+  border-radius: 12px;
+}
+
+.gp-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.gp-textlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--gp-accent-ink);
+  font-weight: 600;
+  font-size: 14px;
+  transition: gap 0.16s var(--gp-ease), color 0.16s var(--gp-ease);
+}
+
+.gp-textlink:hover {
+  color: var(--gp-accent);
+  gap: 9px;
+}
+
+/* ---------- 卡片与徽标 ---------- */
+
+.gp-card {
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-line);
+  border-radius: var(--gp-radius-lg);
+  padding: 24px;
+  transition: border-color 0.2s var(--gp-ease), box-shadow 0.2s var(--gp-ease), transform 0.2s var(--gp-ease);
+}
+
+.gp-card--lift:hover {
+  border-color: var(--gp-line-strong);
+  box-shadow: var(--gp-shadow-lift);
+  transform: translateY(-2px);
+}
+
+.gp-card--flat {
+  background: transparent;
+  border-color: var(--gp-line);
+}
+
+.gp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-inline: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--gp-line-strong);
+  background: var(--gp-surface);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gp-soft);
+  white-space: nowrap;
+}
+
+.gp-pill--accent {
+  border-color: var(--gp-accent-line);
+  background: var(--gp-accent-soft);
+  color: var(--gp-accent-ink);
+}
+
+.gp-pill--ember {
+  border-color: rgba(180, 83, 31, 0.24);
+  background: var(--gp-ember-soft);
+  color: var(--gp-ember);
+}
+
+.gp-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding-inline: 8px;
+  border-radius: 6px;
+  background: var(--gp-surface-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--gp-soft);
+  white-space: nowrap;
+}
+
+.gp-tag--accent {
+  background: var(--gp-accent-soft);
+  color: var(--gp-accent-ink);
+}
+
+.gp-tag--ok {
+  background: rgba(47, 125, 74, 0.1);
+  color: var(--gp-ok);
+}
+
+.gp-tag--warn {
+  background: rgba(154, 111, 20, 0.12);
+  color: var(--gp-warn);
+}
+
+/* 划掉的官方价。比正文小一档、颜色最淡 —— 它是个对照物，不该和我们自己的价抢。 */
+.gp-model__list {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  font-family: var(--gp-mono);
+  font-size: 11.5px;
+  color: var(--gp-faint);
+}
+
+.gp-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gp-ok);
+  box-shadow: 0 0 0 3px rgba(47, 125, 74, 0.16);
+  flex: 0 0 auto;
+}
+
+/* ---------- 首屏 ---------- */
+
+.gp-hero {
+  position: relative;
+  overflow: hidden;
+  padding-block: clamp(48px, 7vw, 92px) clamp(40px, 6vw, 76px);
+}
+
+/* 底纹：一层极淡的青绿雾 + 一层网格。两层都不抢内容，
+   但少了它们首屏就是一张白纸 —— 白纸上再好的排版也显得没做完。 */
+.gp-hero__wash {
+  position: absolute;
+  inset: -20% -10% auto -10%;
+  height: 700px;
+  pointer-events: none;
+  background:
+    radial-gradient(560px 380px at 72% 18%, rgba(15, 123, 116, 0.13), transparent 62%),
+    radial-gradient(460px 320px at 12% 6%, rgba(180, 83, 31, 0.07), transparent 60%);
+}
+
+.gp-hero__grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(16, 26, 25, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 26, 25, 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: center top;
+  -webkit-mask-image: radial-gradient(720px 420px at 50% 0%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(720px 420px at 50% 0%, #000 0%, transparent 78%);
+}
+
+.gp-hero__inner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: clamp(28px, 4vw, 56px);
+  align-items: center;
+}
+
+.gp-hero__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.gp-hero__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* 首屏要点。原来这里是服务地址加一排统计数字，现在换成三句话说清能调什么 ——
+   不描边不加底色：它紧跟在两个按钮下面，再来一个方框就成了第三个抢注意力的块。 */
+.gp-hero__points {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gp-hero__point {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--gp-soft);
+  text-wrap: pretty;
+}
+
+/* 勾号按首行文字的中线压一点，不然它会浮在字的上沿。 */
+.gp-hero__point-mark {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--gp-accent-ink);
+}
+
+/* ---------- 轨道图 ---------- */
+
+.gp-orbit {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+  display: grid;
+  place-items: center;
+}
+
+.gp-orbit__rings {
+  position: absolute;
+  inset: 0;
+  color: var(--gp-accent);
+}
+
+.gp-orbit__spin {
+  transform-origin: 50% 50%;
+  animation: gpSpin 64s linear infinite;
+}
+
+.gp-orbit__spin--reverse {
+  animation-duration: 96s;
+  animation-direction: reverse;
+}
+
+@keyframes gpSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.gp-orbit__core {
+  position: relative;
+  width: 38%;
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
+  /* 不用 grid：两行文字在 auto 轨道里会被 stretch 撑到圆的两端。 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-align: center;
+  color: #ffffff;
+  background: radial-gradient(circle at 34% 28%, var(--gp-accent-lite), var(--gp-accent) 46%, var(--gp-accent-ink) 100%);
+  box-shadow: 0 24px 60px -22px rgba(10, 92, 87, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.gp-orbit__core b {
+  font-family: var(--gp-serif);
+  font-size: clamp(19px, 2.4vw, 27px);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+}
+
+.gp-orbit__core span {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  opacity: 0.82;
+}
+
+/* 卫星芯片挂在轨道上。位置用百分比定，容器是正方形所以缩放时不会跑偏。 */
+.gp-orbit__chip {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-radius: 11px;
+  background: var(--gp-surface);
+  border: 1px solid var(--gp-line);
+  box-shadow: var(--gp-shadow);
+  white-space: nowrap;
+}
+
+.gp-orbit__chip b {
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.gp-orbit__chip small {
+  display: block;
+  font-family: var(--gp-mono);
+  font-size: 10px;
+  color: var(--gp-faint);
+  letter-spacing: 0;
+}
+
+.gp-orbit__badge {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  flex: 0 0 auto;
+}
+
+/* ---------- 价格滚动条 ---------- */
+
+.gp-ticker {
+  border-block: 1px solid var(--gp-line);
+  background: var(--gp-surface);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+
+.gp-ticker__track {
+  display: flex;
+  width: max-content;
+  animation: gpMarquee 56s linear infinite;
+}
+
+.gp-ticker:hover .gp-ticker__track {
+  animation-play-state: paused;
+}
+
+@keyframes gpMarquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.gp-ticker__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-right: 1px solid var(--gp-line);
+}
+
+.gp-ticker__name {
+  font-family: var(--gp-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.gp-ticker__price {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--gp-faint);
+}
+
+.gp-ticker__price b {
+  font-family: var(--gp-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gp-ink);
+}
+
+/* ---------- 网格 ---------- */
+
+.gp-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.gp-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.gp-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.gp-grid--4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+/* ---------- 三步接入 ---------- */
+
+.gp-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: start;
+}
+
+.gp-step {
+  display: flex;
+  gap: 14px;
+  padding: 18px 0;
+  border-top: 1px solid var(--gp-line);
+}
+
+.gp-step:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.gp-step__no {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--gp-accent-soft);
+  color: var(--gp-accent-ink);
+  font-family: var(--gp-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gp-code {
+  border-radius: var(--gp-radius-lg);
+  border: 1px solid var(--gp-line);
+  background: var(--gp-surface);
+  overflow: hidden;
+  box-shadow: var(--gp-shadow);
+}
+
+.gp-code__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  height: 42px;
+  border-bottom: 1px solid var(--gp-line);
+  background: var(--gp-surface-2);
+}
+
+.gp-code__tab {
+  height: 28px;
+  padding-inline: 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gp-faint);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.gp-code__tab[data-active="true"] {
+  background: var(--gp-surface);
+  border-color: var(--gp-line);
+  color: var(--gp-ink);
+  box-shadow: 0 1px 2px rgba(16, 26, 25, 0.05);
+}
+
+.gp-code pre {
+  margin: 0;
+  padding: 20px;
+  overflow-x: auto;
+  font-family: var(--gp-mono);
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--gp-ink);
+  tab-size: 2;
+}
+
+.gp-code .c {
+  color: var(--gp-faint);
+}
+
+.gp-code .k {
+  color: var(--gp-accent-ink);
+  font-weight: 600;
+}
+
+.gp-code .s {
+  color: var(--gp-ember);
+}
+
+/* ---------- 模型 ---------- */
+
+.gp-model {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+}
+
+.gp-model__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.gp-model__mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  flex: 0 0 auto;
+}
+
+.gp-model__id {
+  font-family: var(--gp-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  word-break: break-all;
+}
+
+.gp-model__vendor {
+  font-size: 11.5px;
+  color: var(--gp-faint);
+  margin-top: 2px;
+}
+
+/* 价格块推到卡片底部：摘要有长有短，不推的话同一行里三张卡的价格会错开，
+   而价格正是这一排卡片让人横向比较的东西。 */
+.gp-model__price {
+  margin-top: auto;
+  display: grid;
+  /* 列数跟着格子数走：配了缓存读取价的模型是三格，没配的还是两格。
+     写死 repeat(2, ...) 的话，第三格会掉到第二行独占整行，看起来像漏了一格。 */
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
+  background: var(--gp-line);
+  border: 1px solid var(--gp-line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.gp-model__cell {
+  background: var(--gp-surface-2);
+  padding: 10px 12px;
+}
+
+/* 三格时每格只剩三分之一宽。「¥0.1250」这种四位小数的价在 14px 等宽下要 60 多像素，
+   和「/ 1M」挤在同一行就会折行 —— 而只有一部分卡片折，一排卡片的价格行高低不齐。
+   所以把单位挪到第二行：所有格子等高，也不再依赖价格有几位。 */
+.gp-model__price--trio .gp-model__cell {
+  padding-inline: 10px;
+}
+
+.gp-model__price--trio .gp-model__cell b {
+  font-size: 13px;
+}
+
+.gp-model__price--trio .gp-model__cell em {
+  display: block;
+  margin-left: 0;
+}
+
+.gp-model__cell span {
+  display: block;
+  font-size: 11px;
+  color: var(--gp-faint);
+  margin-bottom: 3px;
+}
+
+.gp-model__cell b {
+  font-family: var(--gp-mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.gp-model__cell em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--gp-faint);
+  font-family: var(--gp-sans);
+  margin-left: 2px;
+}
+
+.gp-model__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* ---------- 模型列表 ----------
+   卡片墙换成列表是因为这一页的用法变了：加上档次这一维之后，一个模型是一小张
+   价目表而不是一个价，而来访者在做的事是横向比价 —— 比价要求数字上下对齐。 */
+
+.gp-list {
+  /* 列宽只写一份，表头和每一行共用。各写一份迟早错开一列。 */
+  --gp-model-cols: minmax(0, 1.7fr) 78px 98px 98px 98px 132px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.gp-list__head,
+.gp-list__row {
+  display: grid;
+  grid-template-columns: var(--gp-model-cols);
+  align-items: center;
+  gap: 12px;
+}
+
+.gp-list__head {
+  padding: 0 16px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  border-bottom: 1px solid var(--gp-line);
+}
+
+.gp-list__item + .gp-list__item {
+  border-top: 1px solid var(--gp-line);
+}
+
+/* 整行是按钮：点哪儿都能展开。做成只有箭头能点的话，一行里能点的区域只有 20px 宽。 */
+.gp-list__row {
+  width: 100%;
+  padding: 13px 16px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s var(--gp-ease);
+}
+
+/* 底色比 --gp-surface-2 淡一档，不直接用它：行里的「统一价」标签正是那个底色，
+   两者一样的话，鼠标一悬停那个标签就在自己的行里消失了。 */
+.gp-list__row:hover,
+.gp-list__row[aria-expanded="true"] {
+  background: rgba(16, 26, 25, 0.03);
+}
+
+/* 没有东西可展开的那几行不是按钮，也就不该有 hover 的响应。 */
+.gp-list__row[data-static="true"] {
+  cursor: default;
+}
+
+.gp-list__row[data-static="true"]:hover {
+  background: transparent;
+}
+
+.gp-list__name {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.gp-list__mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  flex: 0 0 auto;
+}
+
+.gp-list__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gp-list__label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* 名字有省略号兜着，角标没有 —— 所以让步的是名字。不写 flexShrink 的话，
+   flex 会先压最长的那个孩子，于是「带角标的那一行连模型名都不见了」。 */
+.gp-list__label b {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gp-ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gp-list__marks {
+  display: inline-flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.gp-list__id {
+  font-size: 11.5px;
+  color: var(--gp-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gp-list__num {
+  text-align: right;
+  font-family: var(--gp-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gp-ink);
+  white-space: nowrap;
+}
+
+.gp-list__num--soft {
+  color: var(--gp-soft);
+  font-weight: 500;
+}
+
+/* 主价底下划掉的官方价。淡一档、小一号：它是用来对照的，不该和真要付的那个数抢同一眼。
+   display: block —— 这一格是网格的孩子，已经被块化了，写成块才会老老实实换行到下一行，
+   跟在价后面同一行的话，98px 的列宽会把两个数挤成一团。 */
+.gp-list__was {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--gp-faint);
+}
+
+.gp-list__right {
+  text-align: right;
+}
+
+.gp-list__group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  font-size: 12px;
+}
+
+/* 各档的输出价区间。收起来的行上只写「3 档」的话，有没有必要点开得一个个试。 */
+.gp-list__range {
+  font-size: 11px;
+  color: var(--gp-faint);
+  white-space: nowrap;
+}
+
+.gp-list__caret {
+  display: flex;
+  justify-content: flex-end;
+  color: var(--gp-faint);
+}
+
+/* 转的是箭头本身，不是那一格。格子在窄屏上有一整列那么宽，
+   转整格等于把箭头甩到行的另一头去 —— 而它看起来只像画坏了。 */
+.gp-list__caret svg {
+  transition: transform 0.18s var(--gp-ease);
+}
+
+.gp-list__caret[data-open="true"] svg {
+  transform: rotate(90deg);
+}
+
+/* 展开的那一块缩进到与模型名对齐 —— 它属于上面那一行，不是新的一条。 */
+.gp-list__detail {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 2px 16px 20px 55px;
+}
+
+.gp-list__caption {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+}
+
+.gp-list__hint,
+.gp-list__foot {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--gp-faint);
+}
+
+.gp-list__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.gp-groups {
+  border: 1px solid var(--gp-line);
+  border-radius: 12px;
+  background: var(--gp-surface-2);
+  padding: 2px 14px;
+}
+
+.gp-groups__head,
+.gp-groups__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 98px 98px 98px;
+  gap: 12px;
+  align-items: center;
+  font-size: 12.5px;
+}
+
+.gp-groups__head {
+  padding: 9px 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  border-bottom: 1px solid var(--gp-line);
+}
+
+.gp-groups__row {
+  padding: 9px 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--gp-ink);
+}
+
+.gp-groups__row + .gp-groups__row {
+  border-top: 1px solid var(--gp-line);
+}
+
+/* 档次的一句话说明。跟在名字下面，小一号、淡一档 —— 它解释「这一档卖的是什么」，
+   而不该和价钱抢同一眼。 */
+.gp-groups__note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--gp-faint);
+}
+
+/* 窄屏：表头整条撤掉，每个数字自己带上列名（data-label）。
+   横向滚动的表格在手机上等于「看价格时看不见模型名」—— 而这一页就是拿来比价的。 */
+@media (max-width: 880px) {
+  .gp-list__head {
+    display: none;
+  }
+
+  .gp-list__row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 14px;
+    align-items: start;
+  }
+
+  .gp-list__name {
+    grid-column: 1 / -1;
+  }
+
+  .gp-list__num,
+  .gp-list__right {
+    text-align: left;
+  }
+
+  .gp-list__num::before,
+  .gp-list__group::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--gp-sans);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--gp-faint);
+    margin-bottom: 3px;
+  }
+
+  .gp-list__caret {
+    align-self: center;
+  }
+
+  .gp-list__detail {
+    padding-left: 16px;
+  }
+
+  /* 档次表四列等分。给价格列写死宽度的话，剩给「档次」那一列的就只有二十来像素，
+     表头会一个字一行竖着排下来。 */
+  .gp-groups__head,
+  .gp-groups__row {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .gp-groups {
+    padding-inline: 12px;
+  }
+}
+
+.gp-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.gp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gp-chip {
+  height: 34px;
+  padding-inline: 14px;
+  border-radius: 999px;
+  border: 1px solid var(--gp-line-strong);
+  background: var(--gp-surface);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gp-soft);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.16s var(--gp-ease);
+}
+
+.gp-chip:hover {
+  border-color: var(--gp-accent-line);
+  color: var(--gp-accent-ink);
+}
+
+.gp-chip[data-active="true"] {
+  background: var(--gp-ink);
+  border-color: var(--gp-ink);
+  color: #ffffff;
+}
+
+.gp-chip__count {
+  font-family: var(--gp-mono);
+  font-size: 11px;
+  opacity: 0.66;
+}
+
+.gp-search {
+  position: relative;
+  min-width: 220px;
+}
+
+.gp-search input {
+  width: 100%;
+  height: 38px;
+  padding: 0 14px 0 36px;
+  border-radius: 10px;
+  border: 1px solid var(--gp-line-strong);
+  background: var(--gp-surface);
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--gp-ink);
+  outline: none;
+  transition: border-color 0.16s var(--gp-ease), box-shadow 0.16s var(--gp-ease);
+}
+
+.gp-search input:focus {
+  border-color: var(--gp-accent);
+  box-shadow: 0 0 0 3px var(--gp-accent-soft);
+}
+
+.gp-search svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--gp-faint);
+  pointer-events: none;
+}
+
+/* ---------- 定价 ---------- */
+
+.gp-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px;
+  position: relative;
+}
+
+.gp-plan[data-featured="true"] {
+  border-color: var(--gp-accent-line);
+  box-shadow: 0 2px 4px rgba(10, 92, 87, 0.06), 0 30px 60px -34px rgba(10, 92, 87, 0.55);
+}
+
+.gp-plan__flag {
+  position: absolute;
+  top: -11px;
+  left: 26px;
+  height: 22px;
+  padding-inline: 10px;
+  border-radius: 999px;
+  background: var(--gp-accent);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  letter-spacing: 0.02em;
+}
+
+.gp-plan__price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.gp-plan__price b {
+  font-family: var(--gp-serif);
+  font-size: 44px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.gp-plan__price span {
+  font-size: 13px;
+  color: var(--gp-faint);
+}
+
+.gp-plan__units {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-block: 4px;
+}
+
+.gp-plan__unit {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--gp-soft);
+}
+
+.gp-plan__unit b {
+  font-family: var(--gp-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gp-ink);
+}
+
+/* 购买按钮撑满卡片宽度，四张卡的按钮才会在同一条线上。 */
+.gp-plan__buy {
+  width: 100%;
+}
+
+.gp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.gp-table th {
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  padding: 0 14px 10px;
+  border-bottom: 1px solid var(--gp-line);
+  white-space: nowrap;
+}
+
+.gp-table td {
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--gp-line);
+  color: var(--gp-soft);
+  vertical-align: baseline;
+}
+
+.gp-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.gp-table td:first-child {
+  color: var(--gp-ink);
+  font-weight: 550;
+}
+
+.gp-table .num {
+  text-align: right;
+  font-family: var(--gp-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--gp-ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.gp-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- FAQ ---------- */
+
+.gp-faq {
+  border-top: 1px solid var(--gp-line);
+}
+
+.gp-faq__item {
+  border-bottom: 1px solid var(--gp-line);
+}
+
+.gp-faq__q {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 4px;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--gp-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.gp-faq__q svg {
+  flex: 0 0 auto;
+  color: var(--gp-faint);
+  transition: transform 0.22s var(--gp-ease);
+}
+
+.gp-faq__item[data-open="true"] .gp-faq__q svg {
+  transform: rotate(45deg);
+  color: var(--gp-accent);
+}
+
+.gp-faq__a {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.26s var(--gp-ease);
+}
+
+.gp-faq__item[data-open="true"] .gp-faq__a {
+  grid-template-rows: 1fr;
+}
+
+.gp-faq__a > div {
+  overflow: hidden;
+}
+
+.gp-faq__a p {
+  margin: 0;
+  padding: 0 4px 22px;
+  max-width: 72ch;
+  font-size: 14.5px;
+  line-height: 1.78;
+  color: var(--gp-soft);
+}
+
+/* ---------- 收尾 CTA ---------- */
+
+.gp-cta {
+  position: relative;
+  overflow: hidden;
+  border-radius: 26px;
+  padding: clamp(32px, 5vw, 56px);
+  color: #eef5f3;
+  background: radial-gradient(760px 340px at 84% 0%, #14655f, transparent 62%), #0d1a19;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 26px;
+}
+
+.gp-cta__grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(600px 300px at 80% 0%, #000, transparent 76%);
+  mask-image: radial-gradient(600px 300px at 80% 0%, #000, transparent 76%);
+}
+
+.gp-cta__copy {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 52ch;
+}
+
+.gp-cta__copy p {
+  margin: 0;
+  color: rgba(238, 245, 243, 0.72);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.gp-cta__actions {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.gp-cta .gp-btn--ghost {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #eef5f3;
+}
+
+.gp-cta .gp-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.34);
+}
+
+/* ---------- 页脚 ---------- */
+
+.gp-footer {
+  border-top: 1px solid var(--gp-line);
+  background: var(--gp-surface);
+  margin-top: clamp(48px, 7vw, 92px);
+}
+
+.gp-footer__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr));
+  gap: 32px;
+  padding-block: clamp(36px, 5vw, 56px);
+}
+
+.gp-footer__col h4 {
+  margin: 0 0 14px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gp-faint);
+  font-weight: 650;
+}
+
+.gp-footer__col ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gp-footer__col a,
+.gp-footer__col li {
+  font-size: 13.5px;
+  color: var(--gp-soft);
+}
+
+.gp-footer__col a:hover {
+  color: var(--gp-accent-ink);
+}
+
+.gp-footer__bottom {
+  border-top: 1px solid var(--gp-line);
+  padding-block: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--gp-faint);
+}
+
+/* ---------- 表单 ---------- */
+
+.gp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.gp-field > label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gp-ink);
+}
+
+.gp-field > label span {
+  color: var(--gp-faint);
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+/* 蜜罐：真人看不见，脚本会顺手填。不能用 display:none —— 有些脚本会跳过隐藏字段。 */
+.gp-honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.gp-note {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--gp-accent-soft);
+  border: 1px solid var(--gp-accent-line);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--gp-accent-ink);
+}
+
+.gp-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.gp-note--quiet {
+  background: var(--gp-surface-2);
+  border-color: var(--gp-line);
+  color: var(--gp-soft);
+}
+
+/* ---------- 空态 ---------- */
+
+.gp-empty {
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--gp-faint);
+  font-size: 14px;
+  border: 1px dashed var(--gp-line-strong);
+  border-radius: var(--gp-radius-lg);
+}
+
+/* ---------- 响应式 ----------
+   三个断点，各自解决一件具体的事：
+   1080 轨道图挤不下 → 首屏改单列；960 四列变两列；720 全部单列。 */
+
+@media (max-width: 1080px) {
+  .gp-hero__inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gp-orbit {
+    max-width: 430px;
+    order: -1;
+  }
+
+  .gp-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 960px) {
+  .gp-nav {
+    display: none;
+  }
+
+  .gp-burger {
+    display: inline-flex;
+  }
+
+  .gp-header__actions .gp-btn--ghost {
+    display: none;
+  }
+
+  .gp-grid--4,
+  .gp-grid--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .gp-footer__top {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .gp-grid--2,
+  .gp-grid--3,
+  .gp-grid--4 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .gp-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gp-cta {
+    border-radius: 20px;
+  }
+}
+
+/* 联系页那两栏在 900 以下堆成一列 —— 表单挤到 300 宽就没法填了。 */
+@media (max-width: 900px) {
+  .gp-contact {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* 手机。顶栏和轨道图各有一处在这个宽度上装不下，分别处理：
+   顶栏把语言开关收进抽屉（「控制台」是主行动，它留在外面）；
+   轨道图把芯片压扁 —— 三个 180 宽的芯片并排会盖住中间那颗核。 */
+@media (max-width: 600px) {
+  .gp-header__bar {
+    gap: 12px;
+  }
+
+  .gp-brand__tag,
+  .gp-header__actions .gp-lang {
+    display: none;
+  }
+
+  .gp-orbit {
+    max-width: 330px;
+  }
+
+  .gp-orbit__chip {
+    padding: 6px 9px;
+    gap: 6px;
+    border-radius: 9px;
+  }
+
+  .gp-orbit__chip b {
+    font-size: 11.5px;
+  }
+
+  .gp-orbit__chip small {
+    display: none;
+  }
+
+  .gp-orbit__badge {
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+
+  .gp-drawer__lang {
+    display: flex;
+  }
+}
+
+/* 抽屉里的语言开关平时不出现 —— 宽屏上它在顶栏。 */
+.gp-drawer__lang {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  border-top: 1px solid var(--gp-line);
+  padding-top: 12px;
+}
+
+/* 动效一律可关。轨道图和滚动条是装饰，晕动症患者不该为它买单。 */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

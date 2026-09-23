@@ -1,6 +1,14 @@
 "use client";
 
-import { LeftOutlined, RightOutlined } from "@ant-design/icons";
+import {
+  ArrowRightOutlined,
+  CloudServerOutlined,
+  DesktopOutlined,
+  LeftOutlined,
+  RightOutlined,
+  SafetyCertificateOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
 import { Button, Modal, Segmented, Space } from "antd";
 import { useState, type ReactNode } from "react";
 import { TranslationKey, useLocale } from "@/i18n/LocaleProvider";
@@ -10,9 +18,9 @@ interface TaskBoardStoryModalProps {
   onClose: () => void;
 }
 
-type SceneKey = "collab" | "focus" | "compute";
+type SceneKey = "collab" | "focus" | "compute" | "sharing";
 
-const SCENE_KEYS: SceneKey[] = ["collab", "focus", "compute"];
+const SCENE_KEYS: SceneKey[] = ["collab", "focus", "compute", "sharing"];
 
 // 每个场景只描述一件事：现状为什么疼、任务面板换成了什么做法。
 // 文案走 t()，示意图走 CSS 动画（globals.css 的 .board-story-* 一族）。
@@ -37,6 +45,13 @@ const SCENES: Record<SceneKey, { tag: TranslationKey; title: TranslationKey; pai
     pains: ["story.s3.pain1", "story.s3.pain2", "story.s3.pain3"],
     fixes: ["story.s3.fix1", "story.s3.fix2", "story.s3.fix3"],
     metric: "story.s3.metric",
+  },
+  sharing: {
+    tag: "story.s4.tag",
+    title: "story.s4.title",
+    pains: ["story.s4.pain1", "story.s4.pain2", "story.s4.pain3"],
+    fixes: ["story.s4.fix1", "story.s4.fix2", "story.s4.fix3"],
+    metric: "story.s4.metric",
   },
 };
 
@@ -87,6 +102,7 @@ export function TaskBoardStoryModal({ open, onClose }: TaskBoardStoryModalProps)
         {scene === "collab" ? <CollabScene /> : null}
         {scene === "focus" ? <FocusScene /> : null}
         {scene === "compute" ? <ComputeScene /> : null}
+        {scene === "sharing" ? <SharingScene /> : null}
       </div>
 
       <div className="board-story__columns">
@@ -255,6 +271,65 @@ function ComputeScene() {
           <em>{t("story.s3.parallel")}</em>
           <i className="board-story-throughput__bar board-story-throughput__bar--parallel" />
         </span>
+      </div>
+    </div>
+  );
+}
+
+/** 场景四：用户授权闲置执行环境，平台在权限范围内将算力调度给其他用户。 */
+function SharingScene() {
+  const { t } = useLocale();
+  const providers = [t("story.s4.provider1"), t("story.s4.provider2")];
+  const consumers = [t("story.s4.consumer1"), t("story.s4.consumer2")];
+
+  return (
+    <div className="board-story-sharing">
+      <div className="board-story-sharing__group">
+        <strong className="board-story-sharing__group-title">{t("story.s4.providerGroup")}</strong>
+        {providers.map((label) => (
+          <div className="board-story-sharing__endpoint board-story-sharing__endpoint--provider" key={label}>
+            <DesktopOutlined />
+            <span>
+              <strong>{label}</strong>
+              <small>{t("story.s4.authorized")}</small>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="board-story-sharing__transfer" aria-hidden="true">
+        <i />
+        <ArrowRightOutlined />
+      </div>
+
+      <div className="board-story-sharing__platform">
+        <CloudServerOutlined className="board-story-sharing__platform-icon" />
+        <strong>{t("story.s4.platform")}</strong>
+        <small>{t("story.s4.platformNote")}</small>
+        <span><SafetyCertificateOutlined /> {t("story.s4.scope")}</span>
+      </div>
+
+      <div className="board-story-sharing__transfer board-story-sharing__transfer--out" aria-hidden="true">
+        <i />
+        <ArrowRightOutlined />
+      </div>
+
+      <div className="board-story-sharing__group">
+        <strong className="board-story-sharing__group-title">{t("story.s4.consumerGroup")}</strong>
+        {consumers.map((label) => (
+          <div className="board-story-sharing__endpoint board-story-sharing__endpoint--consumer" key={label}>
+            <UserOutlined />
+            <span>
+              <strong>{label}</strong>
+              <small>{t("story.s4.onDemand")}</small>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="board-story-sharing__guard">
+        <SafetyCertificateOutlined />
+        <span>{t("story.s4.guard")}</span>
       </div>
     </div>
   );

@@ -1,0 +1,77 @@
+{
+  "name": "@galaxy/nova-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Galaxy Nova desktop application",
+  "main": "dist/main.js",
+  "build": {
+    "appId": "com.galaxy.nova",
+    "productName": "Nova",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://galaxy.invalid/desktop/nova",
+        "channel": "latest"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "desktop.json",
+        "to": "desktop.json"
+      }
+    ],
+    "afterPack": "nova/electron/build/after-pack.cjs",
+    "directories": {
+      "output": "../../release/nova"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icons"
+    },
+    "asarUnpack": [
+      "node_modules/@galaxy/ai-bridge-native/**",
+      "node_modules/ai-bridge/**",
+      "node_modules/zod/**"
+    ]
+  },
+  "scripts": {
+    "dev": "node ../../scripts/desktop.cjs dev nova",
+    "start": "node ../../scripts/desktop.cjs start nova",
+    "build": "node ../../scripts/desktop.cjs build nova",
+    "package": "node ../../scripts/desktop.cjs package nova",
+    "typecheck": "tsc --noEmit",
+    "build:electron": "node ../../scripts/build-electron.cjs nova"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "electron": "40.10.2",
+    "npm": "^11.19.1",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "ai-bridge": "*",
+    "electron-updater": "^6.8.9"
+  }
+}

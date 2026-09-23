@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS `zt_delivery_execution_batch` (
   `blocked_count`          bigint       NOT NULL,
   `summary`                varchar(2048) NOT NULL,
   `notification_read_at`   timestamp    NULL,
+  `heartbeat_at`           timestamp    NULL,
   `started_at`             timestamp    NULL,
   `finished_at`            timestamp    NULL,
   `created_by`             varchar(64)  NOT NULL,

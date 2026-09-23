@@ -2,7 +2,13 @@
 .env
 .env.*
 !.env.example
-/server/web-api/configs/application.properties
+server/web-api/configs/application.properties
+server/web-api/configs/application_dev.properties
+server/app-api/configs/application.properties
+server/manager-api/configs/application.properties
+server/galaxy-api/configs/application.properties
+# 只有 *.example.properties 进版本库，真配置一律本地持有。
+!server/**/configs/*.example.properties
 
 # OS/editor artifacts
 .DS_Store
@@ -20,4 +26,70 @@
 /server/web-api/run/
 /client/web/*.tar.gz
 /server/web-api/*.tar.gz
+/server/app-api/bin/
+/server/app-api/logs/
+/server/app-api/package/
+/server/app-api/run/
+/server/app-api/*.tar.gz
+/client/app/node_modules/
+/client/app/.next/
+/client/app/tsconfig.tsbuildinfo
+/client/app/logs/
+/client/app/package/
+/client/app/run/
+/client/app/*.tar.gz
+/client/galaxy/node_modules/
+/client/galaxy/.next/
+/client/galaxy/tsconfig.tsbuildinfo
+/client/galaxy/logs/
+/client/galaxy/package/
+/client/galaxy/run/
+/client/galaxy/*.tar.gz
+/client/manager/node_modules/
+/client/manager/.next/
+/client/manager/tsconfig.tsbuildinfo
+/client/manager/logs/
+/client/manager/package/
+/client/manager/run/
+/client/manager/*.tar.gz
+# symlink (client/shared 没有自己的依赖，靠这个软链复用 client/manager 的 node_modules)
+/client/shared/node_modules
+/server/manager-api/bin/
+/server/manager-api/logs/
+/server/manager-api/package/
+/server/manager-api/run/
+/server/manager-api/*.tar.gz
+/server/galaxy-api/bin/
+/server/galaxy-api/logs/
+/server/galaxy-api/package/
+/server/galaxy-api/run/
+/server/galaxy-api/*.tar.gz
 
+.codex/delivery-task-*
+# Galaxy desktop builds
+/client/galaxy/.next-*/
+/client/galaxy/.desktop/
+/client/galaxy/release/
+# 打包时生成：这个安装包默认连哪个控制台
+/client/galaxy/*/electron/desktop.json
+/client/galaxy/nova/common/
+/client/galaxy/orbit/common/
+/client/galaxy/*/node_modules/
+/client/galaxy/*/electron/common/
+/client/galaxy/*/electron/node_modules/
+/client/galaxy/*/webview/node_modules/
+/client/galaxy/*/webview/.next/
+# 门户站（client/galaxy/portal）没有 webview 这一层，构建产物直接在包根下。
+/client/galaxy/portal/.next/
+/client/galaxy/portal/tsconfig.tsbuildinfo
+/client/galaxy/portal/package/
+/client/galaxy/portal/logs/
+/client/galaxy/portal/run/
+/client/galaxy/portal/*.tar.gz
+/client/galaxy/*/webview/tsconfig.tsbuildinfo
+/client/galaxy/*/webview/package/
+/client/galaxy/*/webview/logs/
+/client/galaxy/*/webview/run/
+/client/galaxy/*/webview/*.tar.gz
+/client/galaxy/*/electron/dist/
+/client/galaxy/.electron-tests/

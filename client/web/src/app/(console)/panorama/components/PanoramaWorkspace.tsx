@@ -29,21 +29,22 @@ import {
   type PanoramaLayout,
   type PanoramaPick,
 } from "./PanoramaStage";
+import { PANORAMA_CSS } from "./panoramaPalette";
 
 // 和看板页共用同一个记忆键：两个页面切来切去，选中的项目应该是同一个。
 const PROGRAM_KEY = "zb.delivery.programId";
 
 /** 和三维里 healthColor 同一套阈值，卡片条的色条不能和球对不上。 */
 function moduleAccent(progress: number): string {
-  if (progress < 15) return "#f43f5e";
-  if (progress < 70) return "#fbbf24";
-  return "#34d399";
+  if (progress < 15) return PANORAMA_CSS.red;
+  if (progress < 70) return PANORAMA_CSS.amber;
+  return PANORAMA_CSS.green;
 }
 
 function requirementAccent(status: RequirementStatus): string {
-  if (status === "done") return "#34d399";
-  if (status === "dropped") return "#46536e";
-  return "#22d3ee";
+  if (status === "done") return PANORAMA_CSS.green;
+  if (status === "dropped") return PANORAMA_CSS.gray;
+  return PANORAMA_CSS.cyan;
 }
 
 function requirementProgress(status: RequirementStatus): number {
@@ -237,7 +238,7 @@ export function PanoramaWorkspace() {
         kicker: t("delivery.kpi.maturity"),
         title: `${Math.round(overview.maturityScore)}%`,
         subtitle: t("delivery.kpi.maturityHint"),
-        accent: "#22d3ee",
+        accent: PANORAMA_CSS.cyan,
         progress: overview.maturityScore,
         meta: [
           [t("delivery.kpi.total"), String(overview.totalCount)],
@@ -259,7 +260,7 @@ export function PanoramaWorkspace() {
         kicker: `${t("delivery.panorama.weight")} ${module.weight}%`,
         title: module.name,
         subtitle: "",
-        accent: "#22d3ee",
+        accent: PANORAMA_CSS.cyan,
         progress: module.progress,
         meta: [
           [t("delivery.field.progress"), `${module.progress}%`],
@@ -276,7 +277,7 @@ export function PanoramaWorkspace() {
       kicker: stage.maturityLevel,
       title: stage.tag,
       subtitle: "",
-      accent: "#22d3ee",
+      accent: PANORAMA_CSS.cyan,
       progress: stage.progress,
       meta: [
         [t("delivery.field.progress"), `${stage.progress}%`],
@@ -325,7 +326,7 @@ export function PanoramaWorkspace() {
           <div className="pano-kpi">
             <div>
               <span>{t("delivery.kpi.maturity")}</span>
-              <b style={{ color: "#34d399" }}>{Math.round(overview.maturityScore)}%</b>
+              <b style={{ color: PANORAMA_CSS.green }}>{Math.round(overview.maturityScore)}%</b>
             </div>
             <div>
               <span>{t("delivery.kpi.total")}</span>
@@ -333,7 +334,7 @@ export function PanoramaWorkspace() {
             </div>
             <div>
               <span>{t("delivery.status.blocked")}</span>
-              <b style={{ color: "#f43f5e" }}>{overview.statusCounts?.blocked ?? 0}</b>
+              <b style={{ color: PANORAMA_CSS.red }}>{overview.statusCounts?.blocked ?? 0}</b>
             </div>
           </div>
         ) : null}
@@ -342,7 +343,7 @@ export function PanoramaWorkspace() {
       <Spin spinning={loading}>
         {!programId || !overview ? (
           <div className="pano-empty">
-            <Empty description={t("delivery.noProgram")} />
+            <Empty className="manager-empty-state" description={t("delivery.noProgram")} />
           </div>
         ) : (
           <div className={`pano-shell${fullscreen ? " is-fullscreen" : ""}`} ref={shellRef}>
@@ -413,9 +414,9 @@ export function PanoramaWorkspace() {
             {/* 大球按当前分组进度着色，小球按需求状态着色。 */}
             <div className="pano-legend">
               <b>{t("delivery.panorama.legendTitle")}</b>
-              <div><i style={{ background: "#22d3ee" }} />{t("delivery.requirement.status.open")}</div>
-              <div><i style={{ background: "#34d399" }} />{t("delivery.requirement.status.done")}</div>
-              <div><i style={{ background: "#46536e" }} />{t("delivery.requirement.status.dropped")}</div>
+              <div><i style={{ background: PANORAMA_CSS.cyan }} />{t("delivery.requirement.status.open")}</div>
+              <div><i style={{ background: PANORAMA_CSS.green }} />{t("delivery.requirement.status.done")}</div>
+              <div><i style={{ background: PANORAMA_CSS.gray }} />{t("delivery.requirement.status.dropped")}</div>
               <em>
                 {t("delivery.panorama.requirementCount").replace("{n}", String(requirements.length))}
                 {" · "}

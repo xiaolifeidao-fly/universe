@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Orbit">
+  <!-- Orbit（使用端）：绕着模型转的一颗星。冷色取自使用端设计系统的 --gx-accent 一族。 -->
+  <defs>
+    <linearGradient id="orbit-bg" x1="0.08" y1="0" x2="0.92" y2="1">
+      <stop offset="0" stop-color="#3fb5ab"/>
+      <stop offset="0.42" stop-color="#128079"/>
+      <stop offset="1" stop-color="#084f4b"/>
+    </linearGradient>
+    <radialGradient id="orbit-lit" cx="0.28" cy="0.16" r="0.85">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.3"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="orbit-shade" cx="0.68" cy="1.02" r="0.9">
+      <stop offset="0" stop-color="#02322f" stop-opacity="0.44"/>
+      <stop offset="1" stop-color="#02322f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="orbit-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#eafffb" stop-opacity="0.5"/>
+      <stop offset="0.42" stop-color="#aef2e8" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#aef2e8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="orbit-core" x1="0.22" y1="0.04" x2="0.78" y2="0.96">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d9f4ef"/>
+    </linearGradient>
+    <linearGradient id="orbit-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <!-- 卫星要压在后面那道轨道上面，所以把它落点处的轨道挖掉一圈 -->
+    <mask id="orbit-behind">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="356" cy="294" r="96" fill="#000"/>
+    </mask>
+  </defs>
+
+  <rect width="1024" height="1024" rx="229" fill="url(#orbit-bg)"/>
+  <rect width="1024" height="1024" rx="229" fill="url(#orbit-shade)"/>
+  <rect width="1024" height="1024" rx="229" fill="url(#orbit-lit)"/>
+
+  <circle cx="512" cy="512" r="344" fill="url(#orbit-glow)"/>
+
+  <g fill="none" stroke="#ffffff" stroke-linecap="round">
+    <ellipse cx="512" cy="512" rx="328" ry="146" transform="rotate(-32 512 512)" stroke-width="52" opacity="0.44" mask="url(#orbit-behind)"/>
+    <ellipse cx="512" cy="512" rx="328" ry="146" transform="rotate(34 512 512)" stroke-width="56" opacity="0.95"/>
+  </g>
+
+  <circle cx="512" cy="512" r="118" fill="url(#orbit-core)"/>
+  <circle cx="356" cy="294" r="66" fill="url(#orbit-core)"/>
+
+  <rect x="3" y="3" width="1018" height="1018" rx="226.5" fill="none" stroke="url(#orbit-edge)" stroke-width="6"/>
+</svg>

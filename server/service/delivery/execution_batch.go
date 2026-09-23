@@ -71,19 +71,24 @@ func (s *service) CreateExecutionBatch(ctx context.Context, req dto.CreateExecut
 		if err != nil {
 			return translate(err)
 		}
+		// 先把心跳已经停掉的批次判死收尾，再做互斥判断：
+		// 断网或桥接进程没了的时候没人替它收尾，否则「再做一次」会被一条早就不存在的运行永久挡住。
+		if _, err := s.releaseDeadExecutionBatches(ctx, tx, req.BizLine.String(), req.ProgramID, actorOf(req.ActorID, req.ActorName)); err != nil {
+			return err
+		}
 		active, err := tx.FindActiveExecutionBatchItemKeys(ctx, req.BizLine.String(), req.ProgramID, itemKeys)
 		if err != nil {
 			return err
 		}
 		if len(active) > 0 {
-			return fmt.Errorf("任务正在其他执行批次中：%s", strings.Join(active, "、"))
+			return fmt.Errorf("任务正在其他执行批次中：%s。若执行端已经不在运行，请在任务面板点「全部停止」后重试", strings.Join(active, "、"))
 		}
 		now := time.Now()
 		created = &repository.DeliveryExecutionBatch{
 			BizLine: req.BizLine.String(), ProgramID: req.ProgramID, BatchID: generateExecutionBatchID(),
 			RequirementKey: requirement.RequirementKey, RequirementName: requirement.Name, RequirementGitBranch: requirement.GitBranch,
 			Mode: mode, ExecutorType: executorType, Status: ExecutionBatchStatusRunning, ItemCount: len(itemKeys),
-			StartedAt: &now, CreatedBy: req.ActorID, CreatedByName: actorOf(req.ActorID, req.ActorName), UpdatedBy: actorOf(req.ActorID, req.ActorName),
+			StartedAt: &now, HeartbeatAt: &now, CreatedBy: req.ActorID, CreatedByName: actorOf(req.ActorID, req.ActorName), UpdatedBy: actorOf(req.ActorID, req.ActorName),
 		}
 		batchItems := make([]*repository.DeliveryExecutionBatchItem, 0, len(itemKeys))
 		for sequence, itemKey := range itemKeys {
@@ -218,6 +223,149 @@ func (s *service) GetExecutionBatch(ctx context.Context, bizLine contract.BizLin
 	return toExecutionBatchView(batch, items), nil
 }
 
+// ExecutionBatchHeartbeatTTL 是批次心跳的容忍上限。执行侧每隔 executionBatchHeartbeatInterval
+// 续一次心跳，超过这个时间还没续上就按「执行端已经不在了」处理。
+// 取值要能扛住一次普通的网络抖动或桥接重启，又不能长到让用户干等。
+const ExecutionBatchHeartbeatTTL = 3 * time.Minute
+
+// closeExecutionBatch 把一条运行中的批次收口成 blocked：没跑完的任务一律记受阻，
+// 批次是被强行中止的，不能假装它们完成了。调用方需自行保证已经拿到批次锁。
+func closeExecutionBatch(ctx context.Context, tx *repository.DeliveryRepository, batch *repository.DeliveryExecutionBatch, reason, actor string, now time.Time) error {
+	items, err := tx.ListExecutionBatchItems(ctx, batch.BizLine, batch.ProgramID, batch.BatchID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.UpdateExecutionBatchItemsByStatus(ctx, batch.BizLine, batch.ProgramID, batch.BatchID,
+		[]string{ExecutionBatchItemPending, ExecutionBatchItemRunning},
+		map[string]any{"status": ExecutionBatchItemBlocked, "message": reason},
+	); err != nil {
+		return err
+	}
+	completedCount := 0
+	for _, item := range items {
+		if item.Status == ExecutionBatchItemCompleted {
+			completedCount++
+		}
+	}
+	blockedCount := len(items) - completedCount
+	if _, err := tx.UpdateExecutionBatch(ctx, batch.BizLine, batch.ProgramID, batch.BatchID, map[string]any{
+		"status": ExecutionBatchStatusBlocked, "summary": reason,
+		"completed_count": completedCount, "blocked_count": blockedCount,
+		"finished_at": &now, "updated_by": actor,
+	}); err != nil {
+		return err
+	}
+	batch.Status = ExecutionBatchStatusBlocked
+	batch.Summary = reason
+	batch.CompletedCount = completedCount
+	batch.BlockedCount = blockedCount
+	batch.FinishedAt = &now
+	return nil
+}
+
+// executionBatchIsDead 判断批次的执行侧是否已经不在了：心跳过期即视为死亡。
+// 老数据没有心跳字段，退回用启动时间判断，避免升级前留下的批次永远挡着任务。
+func executionBatchIsDead(batch *repository.DeliveryExecutionBatch, now time.Time) bool {
+	beat := batch.HeartbeatAt
+	if beat == nil {
+		beat = batch.StartedAt
+	}
+	if beat == nil {
+		beat = &batch.CreatedTime
+	}
+	return now.Sub(*beat) > ExecutionBatchHeartbeatTTL
+}
+
+// releaseDeadExecutionBatches 收尾所有心跳已停的批次，返回被判死的批次。调用方需在事务里先锁住项目。
+func (s *service) releaseDeadExecutionBatches(ctx context.Context, tx *repository.DeliveryRepository, bizLine string, programID int64, actor string) ([]*repository.DeliveryExecutionBatch, error) {
+	batches, err := tx.ListRunningExecutionBatches(ctx, bizLine, programID, "")
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	released := make([]*repository.DeliveryExecutionBatch, 0, len(batches))
+	for _, batch := range batches {
+		if !executionBatchIsDead(batch, now) {
+			continue
+		}
+		if err := closeExecutionBatch(ctx, tx, batch, "执行端心跳已停止（断网或执行进程退出），批次被自动收尾。", actor, now); err != nil {
+			return nil, err
+		}
+		released = append(released, batch)
+	}
+	return released, nil
+}
+
+// CancelExecutionBatches 强制关闭仍在运行的批次。任务面板的「全部停止」必须能兜住桥接侧的任何状态：
+// 断网、进程重启或线程已经退出时，本地内存里早就没有这个批次了，只有服务端还留着 running，
+// 任务会被永久锁在批次里。这里按项目（或指定批次）把 running 一次性收口成 blocked。
+func (s *service) CancelExecutionBatches(ctx context.Context, req dto.CancelExecutionBatchRequest) ([]dto.ExecutionBatchView, error) {
+	if !req.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 {
+		return nil, errors.New("缺少项目标识")
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		reason = "用户在任务面板停止了执行，批次被强制关闭。"
+	}
+	// 摘要与批次任务说明共用这段文案，按较小的那一列（message varchar(1024)）限长。
+	if len([]rune(reason)) > 1024 {
+		return nil, errors.New("停止原因不能超过 1024 字符")
+	}
+	batchID := strings.TrimSpace(req.BatchID)
+	var cancelled []*repository.DeliveryExecutionBatch
+	if err := s.repo.Tx(ctx, func(tx *repository.DeliveryRepository) error {
+		if err := tx.LockProgram(ctx, req.BizLine.String(), req.ProgramID); err != nil {
+			return translate(err)
+		}
+		batches, err := tx.ListRunningExecutionBatches(ctx, req.BizLine.String(), req.ProgramID, batchID)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		for _, batch := range batches {
+			if err := closeExecutionBatch(ctx, tx, batch, reason, actorOf(req.ActorID, req.ActorName), now); err != nil {
+				return err
+			}
+			cancelled = append(cancelled, batch)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	views := make([]dto.ExecutionBatchView, 0, len(cancelled))
+	for _, row := range cancelled {
+		views = append(views, toExecutionBatchView(row, nil))
+	}
+	return views, nil
+}
+
+// HeartbeatExecutionBatches 由本地执行端定期上报「我还在跑这些批次」，返回服务端认可仍在运行的批次号。
+// 上报不在运行中的批次不算错误：执行端可能刚被停止，让它按返回值收敛即可。
+func (s *service) HeartbeatExecutionBatches(ctx context.Context, req dto.ExecutionBatchHeartbeatRequest) ([]string, error) {
+	if !req.BizLine.Valid() {
+		return nil, contract.ErrBizLineRequired
+	}
+	if req.ProgramID <= 0 {
+		return nil, errors.New("缺少项目标识")
+	}
+	batchIDs := make([]string, 0, len(req.BatchIDs))
+	for _, batchID := range req.BatchIDs {
+		if trimmed := strings.TrimSpace(batchID); trimmed != "" {
+			batchIDs = append(batchIDs, trimmed)
+		}
+	}
+	if len(batchIDs) == 0 {
+		return []string{}, nil
+	}
+	if _, err := s.repo.TouchExecutionBatchHeartbeats(ctx, req.BizLine.String(), req.ProgramID, batchIDs); err != nil {
+		return nil, err
+	}
+	return s.repo.FilterRunningExecutionBatchIDs(ctx, req.BizLine.String(), req.ProgramID, batchIDs)
+}
+
 func (s *service) ListExecutionBatchNotifications(ctx context.Context, query dto.ExecutionBatchNotificationQuery) ([]dto.ExecutionBatchView, error) {
 	if !query.BizLine.Valid() {
 		return nil, contract.ErrBizLineRequired
@@ -289,7 +437,9 @@ func validateExecutionBatchItemTransition(current, next string) error {
 	if current == next {
 		return nil
 	}
-	if current == ExecutionBatchItemPending && (next == ExecutionBatchItemRunning || next == ExecutionBatchItemBlocked) {
+	// pending 也能直接落到终态：任务在批次启动前就已经完成会被直接记完成跳过，
+	// 还没轮到就被停止或判死的任务则直接记受阻。少了这条，批次里会留下永远收不了尾的 pending。
+	if current == ExecutionBatchItemPending && next != ExecutionBatchItemPending {
 		return nil
 	}
 	if current == ExecutionBatchItemRunning && (next == ExecutionBatchItemCompleted || next == ExecutionBatchItemBlocked) {

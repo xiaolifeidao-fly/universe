@@ -1,9 +1,15 @@
 go 1.21
 
 use (
+	./app-api
 	./common
 	./contract
 	./delivery-api
+	./manager-api
 	./service
+	./galaxy-api
+	./galaxy-common
+	./galaxy-consumer-api
+	./galaxy-hub-api
 	./web-api
 )

@@ -1,0 +1,931 @@
+/**
+ * manager 的 design token 全部来自 @shared/styles/tokens.css（单一数据源，
+ * 别在这里重新定义 --manager-* 变量）。这个文件只放 manager 自己的布局/组件类。
+ *
+ * 下面这些类是从 client/web/src/app/globals.css 里挑出来、按 manager 目前的
+ * stub 需要精简过的拷贝（比如去掉了 web 侧栏的分组/子菜单样式，manager 现在
+ * 导航是平的，没有分组）。web 的 globals.css 有 8000+ 行页面专属样式，
+ * 不是"抽公共层"的对象，这里没有照抄，只挑了骨架页面真正用到的部分。
+ * 复用前先看 client/shared/README.md 的取舍说明。
+ */
+
+@import "../../../shared/styles/tokens.css";
+/* 字体地址要带 basePath（管理端挂在 /manager 下），只能由应用自己声明；
+   必须排在 tokens.css 后面，见 fonts.css 顶注。 */
+@import "./fonts.css";
+
+/* ─── Shell layout ─── */
+
+.manager-shell-root {
+  position: relative;
+  z-index: 1;
+  height: 100dvh;
+  overflow: hidden;
+  background: transparent;
+}
+
+.manager-shell-surface {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.manager-shell-layout {
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0 !important;
+}
+
+.manager-shell-sider {
+  height: 100%;
+  min-height: 0;
+}
+
+.manager-sidebar-scroll {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.manager-main-layout {
+  min-width: 0;
+  min-height: 0 !important;
+  height: 100%;
+  overflow: hidden;
+}
+
+.manager-command-bar {
+  flex: 0 0 auto;
+}
+
+.manager-console-content {
+  min-height: 0 !important;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.manager-locale-select {
+  width: 150px;
+}
+
+.manager-sidebar-card {
+  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 46%, #f4f7fb 100%);
+  border-right: 1px solid var(--manager-border);
+  box-shadow: 1px 0 0 rgba(24, 34, 48, 0.02), var(--manager-shadow-sm);
+}
+
+.manager-brand-block {
+  position: relative;
+  padding: 4px 6px 16px;
+  border-bottom: 1px solid var(--manager-border);
+}
+
+.manager-wordmark {
+  display: inline-block;
+}
+
+.manager-wordmark strong {
+  font-size: var(--manager-fs-lg);
+  line-height: 1.15;
+  letter-spacing: 0;
+  font-weight: 700;
+  color: var(--manager-text);
+}
+
+.manager-wordmark small {
+  display: block;
+  margin-top: 3px;
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-micro);
+  letter-spacing: 0;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.manager-prototype-title h1 {
+  margin: 0;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-xl);
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.manager-prototype-title > div {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-menu-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 36px !important;
+  min-width: 36px !important;
+  height: 36px !important;
+  padding: 0 !important;
+  border-color: var(--manager-border-strong) !important;
+  color: var(--manager-text-faint) !important;
+}
+
+.manager-menu-trigger:hover {
+  border-color: var(--manager-primary) !important;
+  color: var(--manager-primary) !important;
+}
+
+.manager-mobile-sider-mask {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .manager-shell-sider {
+    position: fixed !important;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 101;
+    width: 260px !important;
+    max-width: 260px !important;
+    height: 100dvh;
+    transform: translateX(-100%);
+    transition: transform 0.25s var(--manager-ease) !important;
+    box-shadow: var(--manager-shadow-lg);
+  }
+
+  .manager-shell-sider.manager-shell-sider--mobile-open {
+    transform: translateX(0);
+  }
+
+  .manager-shell-sider .manager-sidebar-card {
+    padding-inline: 14px !important;
+  }
+
+  .manager-mobile-sider-mask {
+    display: block;
+    position: fixed;
+    z-index: 100;
+    inset: 0;
+    border: 0;
+    background: rgba(16, 24, 40, 0.24);
+  }
+
+  .manager-command-bar {
+    padding: 12px 16px !important;
+  }
+}
+
+@media (max-width: 700px) {
+  .manager-console-content {
+    padding: 18px 16px 40px !important;
+  }
+
+  .manager-prototype-title h1 {
+    font-size: var(--manager-fs-lg);
+  }
+
+  .manager-prototype-title > div {
+    display: none;
+  }
+}
+
+.manager-crest {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #ffffff;
+  background: linear-gradient(145deg, #14233f 0%, #276bd8 68%, #21a1a1 100%);
+  box-shadow: 0 6px 16px -6px rgba(39, 107, 216, 0.62);
+  overflow: hidden;
+}
+
+.manager-crest-planet {
+  position: relative;
+  z-index: 1;
+  font-size: 25px;
+  filter: drop-shadow(0 2px 4px rgba(4, 17, 40, 0.28));
+}
+
+.manager-crest-star {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  color: #ffd56a;
+  font-size: var(--manager-fs-micro);
+  filter: drop-shadow(0 1px 2px rgba(4, 17, 40, 0.35));
+}
+
+.manager-sidebar-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 10px 2px;
+  border-top: 1px solid var(--manager-border);
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.manager-dot-live {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--manager-success);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--manager-success) 70%, transparent);
+  animation: managerPulse 2s infinite;
+}
+@keyframes managerPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ─── Nav menu ─── */
+
+.manager-shell-menu.ant-menu .ant-menu-item {
+  height: 44px;
+  min-height: 44px;
+  margin: 2px 0 !important;
+  padding: 0 10px !important;
+  border-radius: 11px;
+  color: var(--manager-text-soft) !important;
+  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t);
+}
+
+.manager-nav-item-content {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 11px;
+}
+
+.manager-nav-item-icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  box-sizing: border-box;
+  padding-bottom: 2px;
+  line-height: 1;
+  border-radius: 8px;
+  color: var(--manager-text-faint);
+  background: rgba(24, 34, 48, 0.045);
+  font-size: var(--manager-fs-lg);
+  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t), transform var(--manager-t);
+}
+
+.manager-nav-item-label {
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--manager-fs-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item:hover {
+  color: var(--manager-text) !important;
+  background: rgba(24, 34, 48, 0.045) !important;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item:hover .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: #fff;
+  box-shadow: var(--manager-shadow-sm);
+  transform: translateY(-1px);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item-selected {
+  position: relative;
+  color: var(--manager-text) !important;
+  font-weight: 600;
+  background: linear-gradient(90deg, var(--manager-primary-muted), transparent) !important;
+  box-shadow: inset 0 0 0 1px var(--manager-primary-muted);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item-selected::before {
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: -5px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--manager-primary);
+  content: "";
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item-selected .manager-nav-item-icon {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, var(--manager-primary), color-mix(in srgb, var(--manager-primary) 48%, #fff));
+  box-shadow: 0 4px 12px -5px color-mix(in srgb, var(--manager-primary) 78%, transparent);
+}
+
+/* ─── Nav submenu（系统设置这类折叠分组） ─── */
+
+/*
+ * 子菜单标题要和顶层菜单项**逐项对齐**：antd 给它的默认值是另一套
+ * （高 40 / 圆角 16 / 上下 margin 4 / 内联 padding-left 24），混在一起就成了
+ * 一个方框，视觉上像从菜单里掉出来的。
+ */
+.manager-shell-menu.ant-menu .ant-menu-submenu-title {
+  height: 44px;
+  min-height: 44px;
+  margin: 2px 0 !important;
+  /*
+   * 右边 30 而不是 10：折叠箭头是**绝对定位**的，它不占标签的盒子 —— 标签算宽度时
+   * 当它不存在，于是最长那条英文（Customers & growth）正好压在箭头上，
+   * 而 scrollWidth 一点都不超，自动省略号也不会触发。这 30px 就是给箭头留的位。
+   */
+  padding: 0 30px 0 10px !important;
+  border-radius: 11px;
+  color: var(--manager-text-soft) !important;
+  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover {
+  color: var(--manager-text) !important;
+  background: rgba(24, 34, 48, 0.045) !important;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: #fff;
+  box-shadow: var(--manager-shadow-sm);
+  transform: translateY(-1px);
+}
+
+/* 折叠箭头：antd 默认色比这套弱对比的文字还重，压一档。 */
+.manager-shell-menu.ant-menu .ant-menu-submenu-arrow {
+  color: var(--manager-text-faint);
+}
+
+/*
+ * 子列表：antd 给 inline 子菜单铺了一层 rgba(0,0,0,0.02) 的底 —— 在这套
+ * 药丸式菜单里它就是一个突兀的灰块。去掉底色，改用一条竖导引线表达层级，
+ * 位置正好落在父项图标的中线上。
+ */
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline {
+  position: relative;
+  background: transparent !important;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline::before {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 22px;
+  width: 1px;
+  background: var(--manager-border);
+  content: "";
+}
+
+/*
+ * 子项的缩进必须在这里显式写。antd 是用**内联样式** padding-left 做层级缩进的，
+ * 而上面 .ant-menu-item 那条规则带了 !important，会把它盖掉 —— 结果就是子项
+ * 贴着左边、和父项左对齐，看不出从属关系。
+ *
+ * 32px：子项也有图标之后，这里缩进的是**图标**而不是文字了。原先是 47
+ * （父项 padding 10 + 图标 26 + gap 11），让子项文字对齐父项文字；现在照搬
+ * 那个值会把子项图标推到父项文字的位置上，右边只剩九十来像素装标签。
+ * 32 让子项图标落在导引线（left: 22）右侧半格，文字起点 32 + 20 + 9 = 61。
+ */
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline > .ant-menu-item {
+  padding-right: 6px !important;
+  padding-left: 32px !important;
+}
+
+/*
+ * 子项图标：小一号、**没有底托**。
+ *
+ * 一级菜单那个圆角底托是层级信号，子项再来一个，两层就一样重了 —— 展开之后
+ * 侧栏是一整片色块，反而比没有图标更难扫。子项只留字形，靠颜色和位置区分。
+ */
+.manager-shell-menu.ant-menu .ant-menu-sub .manager-nav-item-content {
+  gap: 9px;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub .manager-nav-item-icon {
+  width: 20px;
+  height: 20px;
+  padding-bottom: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: var(--manager-fs-base);
+}
+
+/* 悬停/选中时子项图标只换颜色：底托和浮起是一级菜单的语言。 */
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item:hover .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item-selected .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: transparent;
+  box-shadow: none;
+}
+
+/*
+ * 侧栏收起来之后二级菜单改从悬浮层出，而 antd 把那一层渲染到 body 上的
+ * .ant-menu-submenu-popup 里 —— 上面那些以 .manager-shell-menu 开头的规则全都够不着它，
+ * 同一个菜单项在悬浮层里会退回一级菜单那个带底托的大图标。这里再交代一次，
+ * 让它和展开时长得一样。
+ */
+.ant-menu-submenu-popup .manager-nav-item-content {
+  gap: 9px;
+}
+
+.ant-menu-submenu-popup .manager-nav-item-icon {
+  width: 20px;
+  height: 20px;
+  padding-bottom: 0;
+  border-radius: 6px;
+  color: var(--manager-text-faint);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--manager-fs-base);
+}
+
+.ant-menu-submenu-popup .ant-menu-item:hover .manager-nav-item-icon,
+.ant-menu-submenu-popup .ant-menu-item-selected .manager-nav-item-icon {
+  color: var(--manager-primary);
+}
+
+/* 父项在子页面被选中时也要有在场感，否则折叠起来就完全看不出自己在哪。 */
+.manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  color: var(--manager-text) !important;
+  font-weight: 600;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .manager-nav-item-icon {
+  color: var(--manager-primary);
+  background: #fff;
+  box-shadow: var(--manager-shadow-sm);
+}
+
+/* ─── Data card / empty state ─── */
+
+.manager-data-card {
+  position: relative;
+  border-radius: var(--manager-r-lg);
+  padding: 20px;
+  background: var(--manager-surface);
+  border: 1px solid var(--manager-border);
+  box-shadow: var(--manager-shadow);
+}
+
+.manager-empty-state {
+  padding: var(--manager-sp-8) var(--manager-sp-4);
+}
+
+.manager-empty-state .ant-empty-image {
+  height: 100px;
+  margin-bottom: var(--manager-sp-3);
+}
+
+.manager-empty-state .ant-empty-description {
+  color: var(--manager-text-soft);
+  font-size: var(--manager-fs-sm);
+  line-height: var(--manager-lh-snug);
+}
+
+/* ─── Login ─── */
+
+.manager-shell-card {
+  background: var(--manager-surface);
+  border: 1px solid var(--manager-border);
+  box-shadow: var(--manager-shadow-sm);
+}
+
+.manager-login-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  padding: 24px;
+  display: flex;
+  align-items: stretch;
+  background: transparent;
+}
+
+.manager-login-panel {
+  width: 100%;
+  border-radius: var(--manager-r-xl);
+  padding: clamp(24px, 4vw, 42px);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--manager-border);
+  background: var(--manager-surface);
+  box-shadow: var(--manager-shadow-lg);
+}
+
+.manager-login-locale-select {
+  position: absolute;
+  z-index: 2;
+  top: 20px;
+  right: 20px;
+  width: 150px;
+}
+
+.manager-login-layout {
+  position: relative;
+  z-index: 1;
+  min-height: calc(100vh - 96px);
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(24px, 5vw, 64px);
+}
+
+.manager-login-layout__form {
+  display: flex;
+  justify-content: center;
+}
+
+.manager-login-layout__form > * {
+  width: 100%;
+  max-width: 440px;
+}
+
+.manager-login-hero {
+  position: relative;
+  padding: 12px clamp(8px, 2vw, 32px) 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--manager-sp-6);
+}
+
+.manager-login-hero__glow {
+  position: absolute;
+  z-index: 0;
+  inset: -80px -40px auto -80px;
+  height: 360px;
+  pointer-events: none;
+  background: radial-gradient(420px 300px at 20% 20%, var(--manager-primary-light), transparent 70%);
+}
+
+.manager-login-hero__grid {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(16, 24, 40, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 24, 40, 0.05) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse 100% 80% at 30% 30%, #000 40%, transparent 85%);
+}
+
+.manager-login-hero__brand,
+.manager-login-hero__tagline,
+.manager-login-hero__features {
+  position: relative;
+  z-index: 1;
+}
+
+.manager-login-hero__brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.manager-login-hero__tagline {
+  margin: 0;
+  max-width: 30em;
+  font-family: var(--manager-serif);
+  font-size: clamp(22px, 2.4vw, 30px);
+  line-height: var(--manager-lh-snug);
+  color: var(--manager-text);
+}
+
+.manager-login-hero__features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--manager-sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manager-login-hero__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--manager-sp-3);
+}
+
+.manager-login-hero__features li > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manager-login-hero__features b {
+  font-size: var(--manager-fs-base);
+  color: var(--manager-text);
+}
+
+.manager-login-hero__features small {
+  color: var(--manager-text-faint);
+  font-size: var(--manager-fs-xs);
+  line-height: var(--manager-lh-snug);
+}
+
+.manager-login-hero__feature-icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--manager-r);
+  background: var(--manager-primary-light);
+  color: var(--manager-primary);
+  font-size: 16px;
+}
+
+@media (max-width: 992px) {
+  .manager-login-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-login-hero {
+    display: none;
+  }
+}
+
+/* ─── Stagger animations ─── */
+
+.manager-stagger-1,
+.manager-stagger-2,
+.manager-stagger-3,
+.manager-stagger-4 {
+  opacity: 0;
+  transform: translateY(12px);
+  animation: managerRise 500ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.manager-stagger-2 {
+  animation-delay: 60ms;
+}
+.manager-stagger-3 {
+  animation-delay: 110ms;
+}
+.manager-stagger-4 {
+  animation-delay: 160ms;
+}
+
+@keyframes managerRise {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── Page / section scaffolding (对齐 client/web 同名类，管理页面用) ─── */
+
+.manager-page-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.manager-page-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 20px 22px;
+  border-radius: var(--manager-r-lg);
+  border: 1px solid var(--manager-border);
+  background: var(--manager-surface);
+  box-shadow: var(--manager-shadow);
+}
+
+.manager-page-heading h1 {
+  margin: 6px 0 4px;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-xl);
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.manager-page-heading .ant-typography {
+  color: var(--manager-text-soft);
+  line-height: 1.65;
+}
+
+.manager-section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.manager-section-title h2 {
+  position: relative;
+  margin: 0;
+  padding-left: 11px;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.manager-section-title h2::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 14px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--manager-primary), var(--manager-cyan, #0e8ba8));
+}
+
+.manager-section-title .manager-section-rule {
+  flex: 1;
+  min-width: 20px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--manager-border), transparent);
+}
+
+.manager-section-label {
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 400;
+}
+
+/* ─── Table ─── */
+
+.manager-table .ant-table {
+  background: transparent !important;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-base);
+}
+
+.manager-table .ant-table-container {
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r);
+  overflow: hidden;
+}
+
+.manager-table .ant-table-thead > tr > th {
+  background: var(--manager-panel) !important;
+  color: var(--manager-text-faint) !important;
+  border-bottom: 1px solid var(--manager-border) !important;
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 400 !important;
+}
+
+.manager-table .ant-table-tbody > tr > td {
+  background: var(--manager-surface) !important;
+  border-bottom: 1px solid var(--manager-border) !important;
+  padding: 13px 12px;
+}
+
+/* 悬停底色要**不透明**：它会盖到右侧 fixed 列的单元格上，而那一格是 sticky 浮在
+   横向滚走的列上面的 —— 带 alpha 的话被压住的列会直接透出来叠在操作按钮上。
+   --manager-primary-light 本身是 rgba（渐变光晕要用它的透明度），这里用 color-mix
+   取它压在行底色上的等价实色，改主色时两处仍然跟着走。 */
+.manager-table .ant-table-tbody > tr:hover > td {
+  background: color-mix(in srgb, var(--manager-primary) 10%, var(--manager-surface)) !important;
+}
+
+.manager-table .ant-table-tbody > tr:hover > td:first-child {
+  box-shadow: inset 2px 0 0 var(--manager-primary);
+}
+
+.manager-table .ant-pagination {
+  margin-bottom: 0 !important;
+}
+
+.manager-table .ant-pagination .ant-pagination-item-active,
+.manager-table .ant-pagination .ant-pagination-item-active a {
+  color: var(--manager-text) !important;
+  font-weight: 700;
+}
+
+.manager-table-subline {
+  margin-top: 3px;
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  line-height: 1.4;
+}
+
+.manager-count-tag.ant-tag {
+  margin-inline-end: 0;
+  padding: 2px 9px;
+  border: 1px solid var(--manager-border);
+  background: var(--manager-panel);
+  color: var(--manager-text-faint);
+  border-radius: 20px;
+  font-family: var(--manager-mono);
+  font-size: var(--manager-fs-xs);
+  font-weight: 400;
+}
+
+/* ─── Form / modal skin ─── */
+
+.manager-filter-input.ant-input-affix-wrapper,
+.manager-filter-input.ant-select .ant-select-selector,
+.manager-filter-input.ant-input,
+.manager-filter-input.ant-picker,
+.manager-form-skin .ant-input-affix-wrapper,
+.manager-form-skin .ant-input,
+.manager-form-skin .ant-select .ant-select-selector,
+.manager-form-skin .ant-input-number,
+.manager-form-skin .ant-input-number-input,
+.manager-form-skin .ant-input-textarea textarea {
+  background: var(--manager-surface) !important;
+  border-color: var(--manager-border-strong) !important;
+  color: var(--manager-text) !important;
+  box-shadow: none !important;
+}
+
+.manager-filter-input.ant-input-affix-wrapper:hover,
+.manager-filter-input.ant-select:hover .ant-select-selector,
+.manager-filter-input.ant-input:hover,
+.manager-form-skin .ant-input-affix-wrapper:hover,
+.manager-form-skin .ant-input:hover,
+.manager-form-skin .ant-select:hover .ant-select-selector,
+.manager-form-skin .ant-input-number:hover,
+.manager-form-skin .ant-input-textarea textarea:hover {
+  border-color: var(--manager-primary) !important;
+}
+
+.manager-form-skin .ant-input-number,
+.manager-form-skin .ant-input-number-input-wrap {
+  width: 100%;
+}
+
+.manager-form-skin .ant-form-item-label > label,
+.manager-form-skin .ant-checkbox-wrapper,
+.manager-form-skin .ant-typography,
+.manager-filter-input .ant-select-selection-item,
+.manager-filter-input input,
+.manager-filter-input .ant-input,
+.manager-filter-input .ant-select-selection-placeholder {
+  color: var(--manager-text-soft) !important;
+}
+
+.manager-form-skin .ant-modal-content,
+.manager-form-skin .ant-drawer-content {
+  background: var(--manager-surface) !important;
+  border: 1px solid var(--manager-border-strong);
+  border-radius: var(--manager-r-xl);
+  box-shadow: var(--manager-shadow-lg);
+}
+
+.manager-form-skin .ant-modal-header,
+.manager-form-skin .ant-drawer-header {
+  background: transparent !important;
+  border-bottom: 1px solid var(--manager-border);
+  padding-bottom: 14px;
+}
+
+.manager-form-skin .ant-modal-title,
+.manager-form-skin .ant-drawer-title,
+.manager-form-skin .ant-modal-close {
+  color: var(--manager-text) !important;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.manager-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}

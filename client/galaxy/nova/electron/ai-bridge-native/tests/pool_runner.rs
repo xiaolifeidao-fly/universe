@@ -1,0 +1,348 @@
+mod common;
+
+use ai_bridge_native::config::parse_config;
+use ai_bridge_native::core::logger::set_silent;
+use ai_bridge_native::core::paths::Env;
+use ai_bridge_native::pool::runner::create_pool_runner;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::response::IntoResponse;
+use axum::routing::post;
+use axum::Router;
+use base64::Engine;
+use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// 假 Hub：只实现节点会打的那几个端点，并把收到的东西记下来供断言。
+#[derive(Default)]
+struct HubState {
+    hello: Mutex<Option<Value>>,
+    /// 派下去的单元；每个只发一次。
+    pending: Mutex<Vec<Value>>,
+    next_calls: AtomicUsize,
+    streamed: Mutex<Vec<u8>>,
+    stream_headers: Mutex<Option<(String, String)>>,
+    completed: Mutex<Vec<Value>>,
+    enabled: Mutex<Value>,
+    /// 收到的心跳请求体，按先后存着。
+    heartbeats: Mutex<Vec<Value>>,
+    /// 要搭在心跳响应上下发的工具指令。
+    tool_command: Mutex<Option<Value>>,
+    /// progress 的响应码；0 表示正常 200。
+    progress_status: AtomicU16,
+    progress_calls: AtomicUsize,
+}
+
+async fn start_hub(state: Arc<HubState>) -> String {
+    let app = Router::new()
+        .route("/agent/v1/hello", post(|State(state): State<Arc<HubState>>, body: String| async move {
+            *state.hello.lock().unwrap() = serde_json::from_str(&body).ok();
+            let enabled = state.enabled.lock().unwrap().clone();
+            axum::Json(json!({ "accepted": [], "rejected": [], "quotaEffective": {}, "enabled": enabled }))
+        }))
+        .route("/agent/v1/heartbeat", post(|State(state): State<Arc<HubState>>, body: String| async move {
+            if let Ok(value) = serde_json::from_str::<Value>(&body) {
+                state.heartbeats.lock().unwrap().push(value);
+            }
+            let mut response = json!({ "cancel": [], "drain": [], "quotaUpdate": {}, "serverTime": 0 });
+            if let Some(command) = state.tool_command.lock().unwrap().clone() {
+                response["tool"] = command;
+            }
+            axum::Json(response)
+        }))
+        .route("/agent/v1/next", post(|State(state): State<Arc<HubState>>, _body: String| async move {
+            state.next_calls.fetch_add(1, Ordering::SeqCst);
+            let claimed = state.pending.lock().unwrap().pop();
+            match claimed {
+                Some(unit) => axum::Json(unit).into_response(),
+                None => {
+                    // 别让长轮询变成忙等：真 Hub 会挂住这条连接。
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    axum::http::StatusCode::NO_CONTENT.into_response()
+                }
+            }
+        }))
+        .route("/stream/{unit}", post(|State(state): State<Arc<HubState>>, headers: HeaderMap, body: axum::body::Bytes| async move {
+            let status = headers.get("x-galaxy-upstream-status").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let encoded = headers.get("x-galaxy-upstream-headers").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            *state.stream_headers.lock().unwrap() = Some((status, encoded));
+            state.streamed.lock().unwrap().extend_from_slice(&body);
+            axum::Json(json!({ "ok": true }))
+        }))
+        .route("/agent/v1/units/{unit}/complete", post(|State(state): State<Arc<HubState>>, body: String| async move {
+            if let Ok(value) = serde_json::from_str::<Value>(&body) {
+                state.completed.lock().unwrap().push(value);
+            }
+            axum::Json(json!({ "ok": true }))
+        }))
+        .route("/agent/v1/units/{unit}/progress", post(|State(state): State<Arc<HubState>>| async move {
+            state.progress_calls.fetch_add(1, Ordering::SeqCst);
+            let status = state.progress_status.load(Ordering::SeqCst);
+            if status == 0 || status == 200 {
+                axum::Json(json!({ "cancelRequested": false })).into_response()
+            } else {
+                (axum::http::StatusCode::from_u16(status).unwrap(),
+                    axum::Json(json!({ "message": "租约已失效" }))).into_response()
+            }
+        }))
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { let _ = axum::serve(listener, app).await; });
+    format!("http://127.0.0.1:{port}")
+}
+
+fn work_unit(hub: &str, group: Option<&str>) -> Value {
+    let body = base64::engine::general_purpose::STANDARD.encode("{\"model\":\"test\"}");
+    let path = base64::engine::general_purpose::STANDARD.encode("/v1/messages");
+    let mut unit = json!({
+        "id": "u_1", "kind": "llm.chat", "kindVersion": 1, "primitive": "relay",
+        "provider": "api_key", "consumerKey": "ck_1", "state": "running",
+        "inputs": [{ "name": "path", "inline": path }, { "name": "body", "inline": body }],
+    });
+    if let Some(group) = group {
+        unit["model"] = json!("claude-sonnet-5");
+        unit["group"] = json!(group);
+    }
+    json!({
+        "unit": unit,
+        "lease": { "token": "lease_1", "expiresAt": 0, "renewSec": 60 },
+        "streamURL": format!("{hub}/stream/u_1"),
+        "cancel": [],
+    })
+}
+
+fn enabled_lane(seats: u32, groups: Vec<&str>) -> Value {
+    json!([{
+        "cid": "claude", "kind": "llm.chat", "kindVersion": 1, "provider": "api_key",
+        "groups": groups, "seats": seats, "seatConcurrency": 1,
+    }])
+}
+
+struct Harness {
+    hub: Arc<HubState>,
+    runner: ai_bridge_native::pool::runner::PoolRunner,
+    upstream_calls: Arc<AtomicUsize>,
+    _dir: tempfile::TempDir,
+}
+
+async fn harness(upstream_status: u16, enabled: Value, unit: Option<Value>) -> Harness {
+    set_silent(std::env::var("LOG_LEVEL").as_deref() != Ok("debug"));
+    let dir = tempfile::tempdir().unwrap();
+
+    let response = "data: {\"ok\":true}\n\n".to_string();
+    let upstream_calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&upstream_calls);
+    let origin = common::start_plain_upstream(move |req| {
+        let response = response.clone();
+        let counted = Arc::clone(&counted);
+        async move {
+            // 模型清单端点在这条链路上无关紧要：拿不到就降级成空清单。
+            if req.uri.path().ends_with("/models") {
+                return axum::http::StatusCode::NOT_FOUND.into_response();
+            }
+            counted.fetch_add(1, Ordering::SeqCst);
+            // 拉长一点回合，让并发重复派发在测试里稳定重现。
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            (
+                axum::http::StatusCode::from_u16(upstream_status).unwrap(),
+                [("content-type", "text/event-stream"), ("retry-after", "300"), ("request-id", "req_up")],
+                response,
+            )
+                .into_response()
+        }
+    })
+    .await;
+
+    let hub_state = Arc::new(HubState { enabled: Mutex::new(enabled), ..Default::default() });
+    let hub = start_hub(Arc::clone(&hub_state)).await;
+    if let Some(unit) = unit {
+        hub_state.pending.lock().unwrap().push(unit_with_hub(unit, &hub));
+    }
+
+    let token_file = dir.path().join("node-token.json");
+    std::fs::write(&token_file, json!({
+        "version": 1, "nodeId": "node_1", "token": "node-secret",
+        "hubURL": hub, "pairedAt": "2026-01-01T00:00:00Z",
+    }).to_string()).unwrap();
+
+    let cfg = parse_config(json!({
+        "mode": "pool",
+        "relay": { "enabled": false },
+        "providers": { "claude": { "type": "relay", "authMode": "api_key",
+            "apiKey": "upstream-secret", "baseURL": format!("{origin}/v1") } },
+        "pool": { "hubURL": hub, "tokenFile": token_file, "heartbeatSec": 1, "nextWaitSec": 1,
+            "contributions": [] },
+    }), &Env::default())
+    .expect("pool 配置");
+
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let env = Env::from_pairs([("AI_BRIDGE_RUNTIME_DIR",
+        dir.path().join("runtime").to_string_lossy().into_owned())]);
+    let runner = create_pool_runner(cfg, env, "test".into(), http).await.expect("建运行循环");
+    Harness { hub: hub_state, runner, upstream_calls, _dir: dir }
+}
+
+fn unit_with_hub(mut unit: Value, hub: &str) -> Value {
+    unit["streamURL"] = json!(format!("{hub}/stream/u_1"));
+    unit
+}
+
+async fn wait_for<F: Fn() -> bool>(label: &str, condition: F) {
+    for _ in 0..200 {
+        if condition() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    panic!("等不到：{label}");
+}
+
+#[tokio::test]
+async fn a_claimed_unit_is_relayed_upstream_and_streamed_back_byte_for_byte() {
+    let h = harness(200, enabled_lane(1, vec![]), Some(work_unit("", None))).await;
+    h.runner.start().await.expect("hello");
+
+    // hello 报的是「这台机器有什么」，不带座位与额度 —— 那些由控制台定。
+    let hello = h.hub.hello.lock().unwrap().clone().expect("收到 hello");
+    let contributions = hello["contributions"].as_array().unwrap();
+    assert_eq!(contributions.len(), 1);
+    assert_eq!(contributions[0]["cid"], json!("claude"));
+    assert_eq!(contributions[0]["provider"], json!("api_key"), "路由键由 authMode 推出来");
+    assert_eq!(contributions[0]["available"], json!(true));
+    assert!(contributions[0].get("seats").is_none(), "座位不该由节点申报");
+    assert_eq!(h.runner.lane_ids(), vec!["claude".to_string()]);
+    // 设备指纹：Hub 只认 64 位小写十六进制的 sha256，别的一律当没报，信誉就退回按节点记。
+    let fingerprint = hello["machineFingerprint"].as_str().expect("hello 带设备指纹");
+    assert_eq!(fingerprint.len(), 64);
+    assert!(fingerprint.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()), "{fingerprint}");
+
+    wait_for("单元报终态", || !h.hub.completed.lock().unwrap().is_empty()).await;
+
+    let streamed = String::from_utf8(h.hub.streamed.lock().unwrap().clone()).unwrap();
+    assert_eq!(streamed, "data: {\"ok\":true}\n\n", "消费者拿到的必须是上游的原始字节");
+
+    let (status, encoded) = h.hub.stream_headers.lock().unwrap().clone().expect("上行带了上游头");
+    assert_eq!(status, "200");
+    let decoded: Value = serde_json::from_slice(
+        &base64::engine::general_purpose::STANDARD.decode(encoded).unwrap()).unwrap();
+    assert_eq!(decoded["content-type"], json!("text/event-stream"));
+    assert_eq!(decoded["request-id"], json!("req_up"));
+
+    let completed = h.hub.completed.lock().unwrap().clone();
+    assert_eq!(completed[0]["state"], json!("completed"));
+    assert_eq!(completed[0]["lease"], json!("lease_1"));
+    assert!(completed[0].get("error").is_none());
+    h.runner.stop().await;
+}
+
+#[tokio::test]
+async fn an_expired_lease_is_rejected_before_the_upstream_is_called() {
+    let h = harness(200, enabled_lane(1, vec![]), Some(work_unit("", None))).await;
+    h.hub.progress_status.store(409, Ordering::SeqCst);
+    h.runner.start().await.expect("hello");
+
+    wait_for("租约预检", || h.hub.progress_calls.load(Ordering::SeqCst) > 0).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(h.upstream_calls.load(Ordering::SeqCst), 0, "失效租约不能产生任何上游请求");
+    assert!(h.hub.completed.lock().unwrap().is_empty(), "已被 Hub 否定的租约不再报终态");
+    h.runner.stop().await;
+}
+
+#[tokio::test]
+async fn duplicate_inflight_units_only_touch_the_upstream_once() {
+    let h = harness(200, enabled_lane(2, vec![]), Some(work_unit("", None))).await;
+    {
+        let mut pending = h.hub.pending.lock().unwrap();
+        let duplicate = pending[0].clone();
+        pending.push(duplicate);
+    }
+    h.runner.start().await.expect("hello");
+
+    wait_for("唯一执行报终态", || !h.hub.completed.lock().unwrap().is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(h.upstream_calls.load(Ordering::SeqCst), 1, "同一 id 并发派发不能重复执行");
+    h.runner.stop().await;
+}
+
+#[tokio::test]
+async fn an_upstream_429_throttles_the_lane_and_is_reported_as_a_retryable_fault() {
+    let h = harness(429, enabled_lane(1, vec![]), Some(work_unit("", None))).await;
+    h.runner.start().await.expect("hello");
+    wait_for("单元报终态", || !h.hub.completed.lock().unwrap().is_empty()).await;
+
+    let completed = h.hub.completed.lock().unwrap().clone();
+    assert_eq!(completed[0]["state"], json!("failed"));
+    assert_eq!(completed[0]["error"]["code"], json!("upstream_429"));
+    assert_eq!(completed[0]["error"]["retryable"], json!(true));
+    assert_eq!(completed[0]["error"]["class"], json!("upstream_fault"));
+    // 上游说了 Retry-After，这条通道要退出候选，不能立刻再去领活。
+    assert_eq!(h.hub.streamed.lock().unwrap().len(), "data: {\"ok\":true}\n\n".len(),
+        "429 的响应体同样要原样带回给消费者");
+    h.runner.stop().await;
+}
+
+/// Hub 是路由权威，但「在我的机器上执行什么」这条边界不信任 Hub：
+/// 派下来一个主人没加入的分组，节点必须自己挡掉。
+#[tokio::test]
+async fn a_unit_outside_the_joined_groups_is_refused_without_touching_the_upstream() {
+    let h = harness(200, enabled_lane(1, vec!["mg_STD"]), Some(work_unit("", Some("mg_DEEP")))).await;
+    h.runner.start().await.expect("hello");
+    wait_for("单元被拒", || !h.hub.completed.lock().unwrap().is_empty()).await;
+
+    let completed = h.hub.completed.lock().unwrap().clone();
+    assert_eq!(completed[0]["state"], json!("failed"));
+    assert_eq!(completed[0]["error"]["code"], json!("capability_mismatch"));
+    assert_eq!(completed[0]["error"]["retryable"], json!(true), "换台机器可能就能跑");
+    assert!(h.hub.streamed.lock().unwrap().is_empty(), "根本不该碰上游");
+    h.runner.stop().await;
+}
+
+/// enabled 缺字段（老版本 Hub）与空数组是两回事：前者维持现状，后者停掉所有通道。
+#[tokio::test]
+async fn an_absent_enabled_field_keeps_the_lanes_while_an_empty_array_drains_them() {
+    let h = harness(200, json!([]), None).await;
+    h.runner.start().await.expect("hello");
+    assert!(h.runner.lane_ids().is_empty(), "空数组就是一条都别跑");
+
+    let h2 = harness(200, Value::Null, None).await;
+    h2.runner.start().await.expect("hello");
+    assert!(h2.runner.lane_ids().is_empty(), "老版本 Hub 不下发时保持现状（本来就没有）");
+    h.runner.stop().await;
+    h2.runner.stop().await;
+}
+
+/// 停了就必须是真的停了：长轮询要断开，不能在 stop 之后还继续领活。
+#[tokio::test]
+async fn stopping_the_runner_ends_the_long_poll() {
+    let h = harness(200, enabled_lane(1, vec![]), None).await;
+    h.runner.start().await.expect("hello");
+    wait_for("开始长轮询", || h.hub.next_calls.load(Ordering::SeqCst) > 0).await;
+
+    h.runner.stop().await;
+    let after_stop = h.hub.next_calls.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(h.hub.next_calls.load(Ordering::SeqCst), after_stop, "停了之后不该再领活");
+}
+
+/// 心跳要带上本机那两个工具（控制台上远端机器那一行就是它喂的），而且一条
+/// **认不出来的**工具指令只能被当场拒掉：命令表在节点自己手里，Hub 说什么都不算。
+///
+/// 故意用一个不存在的工具名 —— 真名字会让这条测试在构建机上真去装一遍 npm 包。
+#[tokio::test]
+async fn heartbeats_carry_local_tools_and_refuse_an_unknown_tool_command() {
+    let h = harness(200, enabled_lane(1, vec![]), None).await;
+    *h.hub.tool_command.lock().unwrap() = Some(json!({ "id": "tl_1", "tool": "definitely-not-a-tool" }));
+    h.runner.start().await.expect("hello");
+
+    wait_for("第一次心跳", || !h.hub.heartbeats.lock().unwrap().is_empty()).await;
+    let beat = h.hub.heartbeats.lock().unwrap()[0].clone();
+    let tools = beat.get("tools").expect("心跳要有 tools 这一栏");
+    assert!(tools.is_array(), "没探到也要发空数组，不能是 null：Hub 那边 null 和「没报」是两回事");
+
+    // 拒掉之后一切照常：心跳继续、通道还在。指令跑不起来不该让这台机器停摆。
+    wait_for("心跳照常继续", || h.hub.heartbeats.lock().unwrap().len() >= 2).await;
+    assert_eq!(h.runner.lane_ids(), vec!["claude".to_string()]);
+}

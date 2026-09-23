@@ -136,3 +136,24 @@ func TestProjectScopePermissions(t *testing.T) {
 }
 
 func containsResponse(value, wanted string) bool { return strings.Contains(value, wanted) }
+
+// TestRequireAdminKeepsProductResearchPersona RequireAdmin 是交付工作台的系统设置门：
+// 管理员角色之外还要产研身份。共享池的运营曾经为了绕开这道身份门另开过一个
+// RequirePlatformAdmin，Galaxy 账号体系独立后它没有调用方、删掉了 ——
+// 这条测试钉住删它的时候没把 RequireAdmin 的身份门一起拆掉。
+func TestRequireAdminKeepsProductResearchPersona(t *testing.T) {
+	SetUserAuthenticator(testAuthenticator{principal: UserPrincipal{ID: "1", Role: "admin"}})
+	defer SetUserAuthenticator(nil)
+
+	engine := gin.New()
+	engine.POST("/api/system/users", RequireAdmin(),
+		func(context *gin.Context) { JSON(context, "ok", nil) })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/system/users", nil)
+	request.Header.Set("token", "valid")
+	engine.ServeHTTP(recorder, request)
+	if !containsResponse(recorder.Body.String(), "当前登录身份不是产品产研") {
+		t.Fatalf("RequireAdmin 的产研身份门不该被拆掉，实际 %s", recorder.Body.String())
+	}
+}

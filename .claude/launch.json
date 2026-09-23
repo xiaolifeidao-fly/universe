@@ -3,8 +3,11 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/bin/bash",
       "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
         "--prefix",
         "client/web",
         "run",
@@ -17,9 +20,157 @@
     },
     {
       "name": "web-preview",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "client/web", "run", "dev", "--", "-p", "7897"],
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/web",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7897"
+      ],
       "port": 7897,
+      "autoPort": false
+    },
+    {
+      "name": "app-preview",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/app",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7896"
+      ],
+      "port": 7896,
+      "autoPort": false
+    },
+    {
+      "name": "manager",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/manager",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7895"
+      ],
+      "port": 7895
+    },
+    {
+      "name": "galaxy-nova",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/nova/webview",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7891"
+      ],
+      "port": 7891
+    },
+    {
+      "name": "galaxy-orbit",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/orbit/webview",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "7892"
+      ],
+      "port": 7892
+    },
+    {
+      "name": "galaxy-portal",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/portal",
+        "run",
+        "dev"
+      ],
+      "port": 17900
+    },
+    {
+      "name": "galaxy-portal-stub",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; export SERVER_TARGET=\"http://127.0.0.1:18801\"; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/portal",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "17902"
+      ],
+      "port": 17902,
+      "autoPort": false
+    },
+    {
+      "name": "galaxy-portal-preview",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; export SERVER_TARGET=\"https://www.galaxy.rodeo\"; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/portal",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "17901"
+      ],
+      "port": 17901,
+      "autoPort": false
+    },
+    {
+      "name": "galaxy-orbit-stub",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "export NVM_DIR=\"${NVM_DIR:-$HOME/.nvm}\"; [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\"; command -v npm >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1; export SERVER_TARGET=\"http://127.0.0.1:18802\"; exec npm \"$@\"",
+        "npm",
+        "--prefix",
+        "client/galaxy/orbit/webview",
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "17903"
+      ],
+      "port": 17903,
       "autoPort": false
     }
   ]

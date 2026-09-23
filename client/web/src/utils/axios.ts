@@ -3,6 +3,7 @@
 import axios from "axios";
 import { plainToInstance } from "class-transformer";
 import { clearAuthToken, getAuthToken } from "@/utils/auth";
+import { resolveThreadWriterBusy } from "@/project-workspaces/threadWriterLock";
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -55,11 +56,15 @@ function detailOfErrorResponse(data: unknown): string {
 
 instance.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const detail = detailOfErrorResponse((error as { response?: { data?: unknown } })?.response?.data);
     if (detail && error instanceof Error) {
       error.message = detail;
     }
+    // Codex 的会话线程被别的进程占着时，先问过用户要不要收掉那个进程；同意了就把刚才
+    // 失败的请求原样重发一次，调用方不必知道中间发生过什么。
+    const retried = await resolveThreadWriterBusy(instance, error);
+    if (retried) return retried;
     return Promise.reject(error);
   },
 );

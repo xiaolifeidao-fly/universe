@@ -32,6 +32,236 @@
 
 ---
 
+## 共享算力池 `zt_galaxy_*`（缩写 `gx`）
+
+Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一鉴权、调度、计量与结算。
+设计见 [`doc/galaxy/`](../doc/galaxy/README.md)。
+
+共享池按**平台维度**运行，不按空间隔离：池内表的 `biz_line` 固定为 `galaxy`。
+任务宇宙等按空间运行的业务接进来时，其 `unit` 行携带适配器解析出的真实空间。
+
+**供给单元是贡献，不是节点**——座位、额度、队列、绑定、限流全部以 `cid` 为主键。
+一台机器（节点）可以有多个贡献，同机两个贡献的额度互相独立。
+
+**账号是 Galaxy 自己的，和下面 `zt_identity_*`（任务宇宙）无关，而且两端各一张表。**
+共享端（提供者，Nova）和使用端（消费者，Orbit）是两批人，各注册各的，令牌互不通用；
+池内表里所有 `owner_user_id` / `user_id` / `provider_user_id` 存的都是这两张表的 `user_id`
+（共享端 `pu_…`，使用端 `cu_…`，从任务宇宙迁过来的是 `pu_legacy_<原 id>` / `cu_legacy_<原 id>`）。
+两张表的列一模一样——分表不是为了让两端长得不一样，是为了它们在库里没有交集：**查账号必须
+先说清是哪一端**，漏掉端的查询查不出东西，而不是把另一端的人捞出来。运营不在这套账号里：
+共享池的运营接口全在 manager-api，认的是 `zt_manager_*`。
+
+| 表 | 作用 |
+|---|---|
+| `zt_galaxy_provider_user` | 共享端账号。用户名在本端内唯一；`token_version` 签进令牌，改密码、重置、停用都加一 |
+| `zt_galaxy_consumer_user` | 使用端账号。列与共享端那张相同；积分余额、密钥、邀请码都挂在这批账号上 |
+| `zt_galaxy_login_record` | 两端的登录留痕，成功与失败都记，**不按端分表**（`side` 只是一列）。它是证据不是闸门 —— 连续失败的判定在 Redis（`<ns>:login:*`，15 分钟过期）；用户名不存在时照样落一行，`user_id` 留空 |
+| `zt_galaxy_provider` | 共享端账号的身份：散户 / 工作室。没有行就是散户，只有运营能设成工作室 |
+| `zt_galaxy_node` | 提供者的一台机器；`token_hash` 存节点令牌的 sha256，撤销即置空 |
+| `zt_galaxy_pairing_code` | 一次性配对码，10 分钟有效，只对已记录条款同意的提供者签发 |
+| `zt_galaxy_contribution` | 贡献：kind + provider + 加入的模型分组（`groups_json`）+ 座位 + 挂机时段 + 信誉。`groups_json` 是**范围上唯一的闸**：分组属于某一个模型，加入了哪些分组就等于提供哪些模型的哪几档能力，空 = 不限。2026-09-22 起不再有 `models_allow_json` / `models_deny_json` 两列通配名单（见 `20260922_galaxy_contribution_drop_model_list.sql`）—— 两个维度各拦一半时，一条被拦下的单在界面上看不出是哪一道闸拦的；`models_available_json` 留着，但它是节点报的事实、只作界面标注，任何判定都不看它。`upstream_usage_json` / `upstream_usage_at` 是节点自报的**上游订阅余量**（Claude / Codex 账号自己的 5 小时、周限额），和 `quota_grant` 讲的不是一件事：那张表是主人打算放多少出去，这两列是上游实际还让跑多少。数据来自节点**问本机装着的 `claude` / `codex` 自己**（`claude -p "/usage"`、codex app-server 的 `account/rateLimits/read`），每 5 分钟一次，两条都不花 token。存的是**已用百分比**，不是剩余：Claude 报已用、Codex 屏幕上报剩余，统一成一种，换算只在界面做一次。观测时刻单独一列，界面必须一起显示 —— 探针可能连着几轮没采到（CLI 没装、没登录、超时）。`upstream_floor_json` 是主人按它划的线（`[{"window":"7d","percent":20}]`，window 为空 = 任一窗口，percent 是**剩余**百分比下限，剩余 ≤ 它就不接新单）：必填，默认 `[{"window":"","percent":0}]`，空字符串按默认解、存量行不必回填。这一对是 2026-09-21 起**唯一**拿节点自报的数去挡派单的地方，而且判定单向 —— 认得出来的窗口低于线才拦，认不出来 / 没采到一律放行（见 `service/galaxy/upstreamfloor.go`）。计费仍然不碰它。心跳 15 秒一次但只在变了时才 UPDATE |
+| `zt_galaxy_quota_grant` | 授权行 `(cid, unit, limit, window, reset_at)`；额度以 Hub 为权威。`window` 是 `5h` / `day` / `week` / `month` / `total`，认不出来的按 `day` 算。**5h 是一天切五段**（最后一段 20:00–24:00 只有四小时，24 不是 5 的整数倍）—— Claude / Codex 的订阅额度本来就按 5 小时一轮刷新，摊平成日额度的话，早上就能把一天的量跑完然后在上游撞限流 |
+| `zt_galaxy_quota_window` | Redis 计数器的分钟级快照，供对账与控制台展示。**旧窗口从不清理**，所以行数是「贡献 × 单位 × 天数」，不是一张小表；`idx_gx_quota_window_key` 给「全池此刻还剩多少额度」用（那个查询手上只有窗口键、没有 cid，走不了按 cid 打头的唯一键） |
+| `zt_galaxy_seat_binding` | 座位绑定留痕；权威在 Redis（带 TTL），这里供审计 |
+| `zt_galaxy_unit` | 工作单元：一次请求 / 一个回合 / 一个任务的权威记录 |
+| `zt_galaxy_unit_event` | 单元事件流；只记结构化事实，不记 body 与凭据 |
+| `zt_galaxy_meter_record` | 计量流水，幂等键 `(unit_id, attempt, unit)`，对账以它求和为准 |
+| `zt_galaxy_usage_mismatch` | 节点自报与 Hub 解析的偏差超阈值的记录，累计影响信誉 |
+| `zt_galaxy_consumer_key` | 算力密钥：鉴权按 sha256 查；`secret_cipher` 是明文的 AES-GCM 密文（加密密钥在配置 `galaxy.key_cipher_secret`，不进库），给「一键使用」和运营转交取回；带有效期、冻结期与允许范围。**不带额度** —— 使用者自助签发，最多 5 把有效的，花的都是同一份账户余额 |
+| `zt_galaxy_consumer_balance` | **历史**：额度包时期按 `(密钥, 模型, 计量单位)` 记的 token 额度。改成按账户积分余额逐笔扣费之后，请求路径一行都不再读它；留着是因为那是买过的记录 |
+| `zt_galaxy_consent_record` | 提供者加入同意与消费者数据告知确认；两者都是硬前置 |
+| `zt_galaxy_price` | 「kind × 模型 × **分组** × 单位 → 单价」表。两个价：`price` 向使用者收、`provider_price` 结给共享者，差额是平台毛利，都按每百万单位的微分存。取价是**三级回落**（`kind 兜底 → 模型通价 → 分组价`），每一层按单位分别盖：`model_id` 空串是该 kind 的兜底价，`group_id` 空串是该模型的通价 —— 都不是「叫空串的那一个」。`provider_share` 是老口径，只在 `provider_price` 为 0 时回落。**除唯一键外没有别的索引**：取价靠 `uk_gx_price` 的前缀，所以计费路径一定要带 `kind`，`ORDER BY` 也一定要和索引同向（全升序）—— 见 `ListEffectivePrices` 的注释 |
+| `zt_galaxy_artifact` | 产物元数据；字节在 OSS，服务端只签 presigned URL |
+| `zt_galaxy_credit_account` | 提供者积分账户。存**微积分**（1,000,000 = 1 积分 = ¥1），和使用者那本 `points_account` 同一口径 |
+| `zt_galaxy_consumer_ledger` / `zt_galaxy_provider_ledger` / `zt_galaxy_platform_ledger` | 双账本 + 平台抽成与坏账 |
+| `zt_galaxy_payout` | 提现申请。账本只记受理那一笔，待打款/驳回这段状态在这张表上 |
+| `zt_galaxy_audit_probe` | 抽检记录：以 Hub 自有账号影子重放，比对结构相似度 |
+| `zt_galaxy_package` | **历史**：额度商品目录。额度包已下架，不再有代码读写这张表 |
+| `zt_galaxy_order` | **历史**：买额度包的订单。不会再有新行 —— 使用端不下单，也没有支付渠道。管理端的订单页只读它，答「这个人当初买过什么、发到哪把密钥上」 |
+| `zt_galaxy_ledger_session` | 有状态会话：钉在哪个贡献、跑到第几回合、工作区在哪个 commit |
+| `zt_galaxy_ledger_turn` | 回合摘要。`(sid, seq)` 是幂等键，重复提交不重跑 |
+| `zt_galaxy_ledger_checkpoint` | 节点侧 CLI 的高保真快照，绑 CLI 版本 |
+| `zt_galaxy_dispute` | 争议工单。`(unit_id, attempt)` 唯一，同一次执行只能有一张 |
+| `zt_galaxy_model` | 门户与模型广场的模型目录（怎么讲清楚这个模型），不参与计价也不参与派单；为空时回落到 `galaxy.models` 声明的清单。**单价不在这张表里**：曾经有过四列展示价，和 `zt_galaxy_price` 是两份互不校验的数据，2026-09-20 删掉了（`migrations/20260920_galaxy_model_drop_display_price.sql`）；留下的 `list_*_price` 是官方参考价（别人家的价）。`referral_bps` 也不再读：分享返现改成按充值算，而充值不挑模型 |
+| `zt_galaxy_model_group` | **模型分组**：平台在一个模型上卖的那几个档次（「标准」「深度」「快速」）。价挂在它上面（`zt_galaxy_price.group_id`），密钥选中它才签得出来（`zt_galaxy_consumer_key.groups_json`），共享者加入它才接得到单（`zt_galaxy_contribution.groups_json`，派单硬过滤）。`efforts_json` 是这个分组卖哪几档推理强度（空 = 不限，不在表里的档会被夹到最浅的一档），`allow_fast` 是卖不卖快速。`is_default` 用 `1 / NULL` 表示 —— 「每个模型最多一个默认分组」靠 `uk_gx_model_group_default` 加上「NULL 不参与唯一性」实现，写 0 会让第二个非默认分组撞上唯一键。**分组名是对外的，不要写上游的档位名** |
+| `zt_galaxy_lead` | 门户「联系我们」线索。**全站唯一被未鉴权接口写入的表**，字段一律短、按 IP 限流、`ip`/`user_agent` 不进任何对外视图 |
+| `zt_galaxy_points_account` | 使用者积分余额（1 积分 = ¥1，存微积分）。**名下几把密钥花的是这一份钱**，调一次模型扣一次。和提供者的 `credit_account` 是两本账 |
+| `zt_galaxy_points_ledger` | 积分流水：运营充值 / 按量消费 / 申诉退款 / 分享返现（`purchase` 是额度包时期的历史）。和余额变动同一个事务写，`txn_id` 幂等（消费那一笔是 `usage:<单元>:<尝试>`）；`unit_id` 指回那一次请求，账单与申诉靠它接上 |
+| `zt_galaxy_referral` | 使用者的邀请码与邀请人。注册时和账号一起建，之后邀请人不可改；老账号打开分享页时补码 |
+| `zt_galaxy_setting` | 运营随时要改、改完不该重启的开关，目前只有分享返现比例 `referral.default_bps`（按被邀请人的充值额算） |
+| `zt_galaxy_bridge_release` | 已发布的 ai-bridge 安装包（一个版本一个平台一行）。字节在 OSS，这里只有 sha256 与 Ed25519 发布签名；节点只装验得过签名的包，下架不删行 |
+| `zt_galaxy_provider_referral` | 共享端的邀请码与邀请人。和使用端的 `zt_galaxy_referral` 是两张表、两套码：两端是两批人，码混在一个命名空间里会「查得到但返错人」 |
+| `zt_galaxy_usage_rollup` | 管理端仪表盘的**按小时用量汇总**，`(小时桶, 类别, 计量单位)` 一行。**派生数据**：量来自 `meter_record`、钱来自两本账、类别由 `unit` 行上的模型推 —— 整表删掉也不丢账，下次读到哪个小时就重算哪个小时。每个算过的小时都有一行**类别与单位都是空串的标记行**，哪怕那个小时没有量；没有它就分不出「没有量」和「还没算过」。Hub 巡检与仪表盘读取都会写，两边写的是同一份绝对值、按唯一键整行覆盖，所以并发与重复都安全 |
+| `zt_galaxy_tracking_daily` | 官网打开与 Orbit 模型广场点击的**按日汇总埋点**。唯一键是 `(biz_line, event_date, event_key, target_key)`，数据库原子累加；模型点击的 `target_key` 是 `model_id`，官网打开为空。只保留运营所需的日期、位置、目标与次数，不保存 IP、账号或 UA 等逐条访客身份 |
+| `zt_galaxy_desktop_release` | 桌面客户端（Nova / Orbit）的发版记录，一个端 × 一个平台通道 × 一个版本一行。存的是要写到 OSS 上的 `latest-*.yml` **原文**；没有 sha256 与发布签名 —— 包一百多兆，字节不经服务端（浏览器拿签名地址直传），校验值在清单里。客户端走 electron-updater 直接读 OSS，不打服务端任何接口 |
+
+**建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，
+并顺带写入 `llm.chat` 的默认定价；或者直接执行 `server/galaxy.sql`（只建表，定价表是空的，
+请求会因为「未定价」只计量不计费）。与 delivery 一致，建表不做成进程启动的副作用。
+
+`galaxy.sql` 不是手写的，是让 GORM 自己走一遍建表流程抄下来的
+（`service/galaxy/internal/repository/ddldump_test.go`，`GALAXY_DDL_OUT=... go test -run TestDumpDDL`），
+所以先跑 SQL 再跑 galaxyinit 不会被 ALTER。它因此刻意不写 COLUMN COMMENT、不加多余 DEFAULT ——
+AutoMigrate 会把「库里有、模型里没有」判定为差异改回去，字段说明放在 `--` 行注释里。
+表清单的唯一出处是 `repository.models()`，`TestGalaxySQLCoversEveryTable` 守着两者不漂。
+
+已经建过库的环境走增量：`server/migrations/20260907_galaxy_dispute.sql`、
+`server/migrations/20260910_galaxy_payout.sql`，以及 `server/migrations/` 下其余 `*_galaxy_*.sql`。
+`20260911_galaxy_user.sql` 建两张账号表、把老数据从任务宇宙账号迁过来，
+并把这份脚本上一版建的两端共用表 `zt_galaxy_user` 里的行按端搬进新表（旧表不删，确认无误后手工 DROP），
+**要在发新版 galaxy-api 和 manager-api 之前跑**。
+`20260912_galaxy_points_referral.sql` 加积分、邀请、配置三类表和密钥 / 套餐 / 订单 / 模型的新列，同样**先于发版**：
+新版使用端注册在同一事务里写 `zt_galaxy_referral`，表不在注册整个失败。
+`20260912_galaxy_bridge_release.sql` 给 `zt_galaxy_node` 加十个升级相关的列并建安装包表，
+`20260912_galaxy_provider_referral.sql` 建共享端邀请表并给供给侧账本加 `related_user_id`。
+这两个**必须先于新版 galaxy-api 发布**：节点行的那十列在每次 hello / 心跳的查询里，
+缺列会让**所有机器**连不上（不是少一个功能，是整个池子掉线）。
+
+下面这两条属于额度包那一版，**新部署不需要**（商品与订单两张表现在只剩历史数据）：
+
+`20260920_galaxy_package_items.sql` 给 `zt_galaxy_package` 与 `zt_galaxy_order` 各加一列 `items_json`，
+把额度包从「一份不分模型的额度 + 一个手填的售价」换成「模型 × 数量 × 折扣，售价算出来」。
+**只加列，一行数据都不改**：存量包的 `items_json` 为空，就是遗留包 —— 照常卖、照常上下架，构成改不了。
+不在 SQL 里反推折扣是有意的：反推要先算 Σ 数量 × 单价，而单价按 `(kind, model_id, unit)` 分层回落
+还带生效时间，在 SQL 里重写一遍这套规则算错了不报错，只会让某个包的价格在运营毫不知情时变掉。
+管理端的编辑框会在打开**绑了模型的**遗留包时当场按当前单价把折扣反推出来摆给运营看，他确认了再存。
+**要先于发版跑**：缺这两列，商品目录的每一次读写都报 1054 —— 运营开不了「商品与定价」，
+使用端的广场和下单也一起挂。
+
+`20260920_galaxy_balance_billing.sql` 给积分流水加 `unit_id` / `kind` 两列与一条按单元回查的索引，
+对应「一次请求扣一笔账户余额」这个新口径。**要先于发版跑**：缺列时每笔结算写流水都报 1054，
+而扣费失败只记日志不阻断 —— 表面上一切正常，只是**谁都不扣钱**。
+它只加列不删任何东西：`zt_galaxy_consumer_balance` 上那些按密钥记的老额度留在原地，
+只是请求路径不再读它们。
+
+`20260920_galaxy_balance_model.sql` 给密钥余额加 `model_id` 并换唯一键，让额度能按模型分账。
+它属于额度包那一版，**新部署不需要**：那张表现在只剩历史数据。
+
+种子：`server/galaxy_model_group_seed.sql` 给 9 个模型各铺一组由浅到深的分组（连同它们的输出价），
+是按强度定价那一版种子的继任者 —— 同一批价，换成挂在分组上。它**跑在迁移之后**，
+group_id 和迁移算的是同一个值，两边都跑过也不会翻倍。
+
+`20260922_galaxy_model_group.sql` 建分组表，给价目表换上 `group_id`（并**删掉** `effort` 列），
+给密钥、贡献、单元行各加分组列。**必须先于发版跑**，硬度和 `model_id` 那条一样：
+新版的取价、保存、删除都带 `group_id`，缺列会让 `zt_galaxy_price` 上每一次读写都报 1054 ——
+也就是全站不计费、不结算；`zt_galaxy_unit` 缺列则让派单那一刻的 INSERT 整条失败，请求直接打不进来。
+
+它做三件有数据含义的事：给目录里每个模型建一个「标准」分组（不限强度、允许快速，
+也就是**和加分组之前完全一样**的行为）；把按强度定过价的行折成「待命名分组」并**下架**
+（档位名不能直接摆给使用者看，运营改完名字再上架，在那之前这些价躺着不生效，
+生效的是模型通价 —— 也正是这一档原先的回落目标）；删掉跨模型的强度行（`model_id` 为空、
+`effort` 非空），它们在分组模型里没有对应物，脚本会先报数再删，种子脚本从不产生这种行。
+
+存量密钥与存量贡献的分组列都是空，含义是**不限**：密钥落在各模型的默认分组上，
+贡献什么分组的单都接 —— 迁移那一刻没有任何一台在线机器会掉出候选。
+
+`20260922_galaxy_contribution_drop_model_list.sql` 丢掉贡献上的
+`models_allow_json` / `models_deny_json`：模型范围从此只由加入的分组决定
+（分组属于某一个模型，这个问题它已经答完了）。两道闸并排摆着的时候，
+主人勾上了分组却仍然接不到单，界面上看不出是谁拦的。**发版前后跑都行** ——
+新版不读它，旧版读到的是自己写下的值，没有哪一边会因为缺列报错。
+不回填 `groups_json`：通配模式翻不成分组（`claude-sonnet-*` 对应哪几个档次只有主人清楚），
+猜一份等于替他做了「接不接深度档」这个花钱的决定，脚本改为先把原先收窄过范围的车道列出来。
+顺带修掉一处长期静默的覆盖：`ReplaceContributions` 的 upsert 把这两列列进了 `DoUpdates`，
+而节点从来不上报名单，每走一次那条路径主人填的名单就被清成空。
+
+`20260919_galaxy_price_model.sql` 给价目表加 `model_id` 并把唯一键换成
+`(biz_line, kind, model_id, unit, effective_from)`，让同一个 kind 下每个模型能各自定价。
+存量行一律落成兜底价（`model_id = ''`），行为和跑之前完全一样。
+**必须先于发版跑**，而且比下面那条更硬：新版的取价、保存、删除都带 `model_id`，
+缺列会让 `zt_galaxy_price` 上每一次读写都报 1054 —— 也就是**全站不计费、不结算**
+（`record` 取价失败直接返错）。`model_id` 是 `NOT NULL DEFAULT ''`：MySQL 的唯一索引不拦 NULL，
+这一列可空的话「同 kind 同单位同生效时刻」能插进两行，取价先拿到哪行全看运气。
+
+`20260919_galaxy_provider_price.sql` 给价目表加 `provider_price` 并按老算式回填，
+把上游价从「对外价 × 分成比例」变成一个独立的数。**要先于发版跑**，
+但缺列不会让池子掉线：请求路径上少一列只会让 `provider_price` 读成 0、结算自动回落老口径，
+真正会挂的是管理端价目表的保存（写入语句里带了这个列名，报 1054）。
+回填之后每一笔结算的金额和跑之前一样（取整差最多 1 微分 / 百万单位），不需要重算历史账。
+
+`20260918_galaxy_desktop_release.sql` 建桌面客户端的发版表（热更新）。它**不必先于发版**：
+表不在只是管理端那一页报错，两个客户端与共享池完全不受影响 —— 客户端读的是 OSS 上的清单，
+不经过服务端。同一批的 `20260918_manager_desktop_release_menu.sql` 给管理端补那一页的菜单资源，
+接口资源在 `server/manager_galaxy_resources.sql` 里（跑 `managerinit` 也一样）。
+
+**2026-09-12 同一批还改了供给侧账本的量纲**（不需要迁移脚本，但要确认一次）：
+`zt_galaxy_provider_ledger.amount` 从「计量数（token 数）」改成「微积分」，
+`galaxy.payout_rate` 从「多少积分兑一块钱 = 100」改成「多少微积分兑一块钱 = 1,000,000」。
+定价表为空的部署不会有历史 settle 行（`record` 在未定价时根本不写账本），发版前核对一次：
+
+```sql
+SELECT COUNT(*) FROM zt_galaxy_provider_ledger WHERE biz_line = 'galaxy' AND type = 'settle';
+```
+
+不是 0 的话，那些老行记的是 token 数、和新写进去的积分混在一个列里，收益页的合计会偏大；
+按 `zt_galaxy_meter_record` 与当时的 `zt_galaxy_price` 重算一次再上线。
+
+**抽检表的隐私取舍：** `zt_galaxy_audit_probe` 会**短期保留**被抽中那次请求的原文
+（比例上限 1%/贡献/日），因为不留原文就无法重放比对；但节点的响应只保留**结构签名**
+（出现过哪些事件类型 / JSON 键路径），不保留响应内容。比对一跑完就把原文清空，
+超过 24 小时没跑的也一并清空 —— 保留它的唯一理由是「还要重放一次」，理由消失就该删。
+
+**争议工单为什么钉 `(unit_id, attempt)` 而不只钉 `unit_id`：** 结算幂等键就是这两个 ——
+重跑过的单元每次尝试各自结算过一遍，只钉 `unit_id` 会让一次「支持申诉」把两次的钱
+都退掉。追回也不抹原始流水，而是在三本账上各记一笔反向的（`refund` / `clawback` /
+`baddebt`，幂等键加 `:dispute` 后缀）：抹掉原始记录就对不出「这笔钱进来过又出去了」，
+事后没法审。`detail` 是申诉人自述且限长 512 —— 请求内容平台本来就不留存，
+界面上也明确劝阻粘贴。
+
+**业务空间放在 `space` 而不是 `biz_line`：** 共享池按平台维度运行，池内表的
+`biz_line` 固定 `galaxy`，所有索引以它打头。任务宇宙这类按空间运行的业务，
+其空间记在 `zt_galaxy_unit.space` 与 `zt_galaxy_ledger_session.space` 里
+（对应待决策 O-02）。这样既能按空间回查，又不会让池内的索引因为多值 `biz_line` 而失效。
+
+**为什么额度计数器不在 MySQL：** 放置路径上要读写「已用 + 已预留」，这是每请求
+两次以上的高频写。它们在 Redis（`quota:{cid}:{unit}:{窗口}`），MySQL 只保存分钟级
+快照与流水；两者定期对账，对不上以 `meter_record` 求和为准。
+
+---
+
+## 管理端身份与权限 `zt_manager_*`（缩写 `mgr`）
+
+登录**管理端**（`client/manager` / `manager-api`）的人，与下面 `zt_identity_*` 那套
+**业务用户**是两套账号，没有外键、没有数据关联、令牌互不通用。分开的理由：管理端的
+处置动作会动真钱（封禁节点、裁决争议、发算力密钥、改业务线授权），合成一套的话，
+一个 web 控制台的业务账号就能进到这些地方；而且业务用户那边只有 `role=admin`
+一个布尔，配不出「这个人能看池水位但不能封节点」。
+
+| 表 | 作用 |
+|---|---|
+| `zt_manager_user` | 管理端账号；bcrypt 密码，平台级、不带 `biz_line` |
+| `zt_manager_role` | 角色；`writable` 是角色级的读写总开关 |
+| `zt_manager_resource` | 受控资源树：菜单 / 页面 / **接口**，接口的身份是 `(method, 路由模板)` |
+| `zt_manager_user_role` / `zt_manager_role_resource` | 两组关联 |
+| `zt_manager_login_record` | 登录留痕，成功与失败都记。它是证据不是闸门 —— 连续失败的判定在 Redis（`<manager.redis_namespace>:login:*`，15 分钟过期） |
+
+**授权是两道门叠加，写操作两道都得过**：先按 `(method, FullPath)` 查资源授权，
+再查角色的 `writable`。只有资源授权配不出「这个角色临时只读」（要逐条撤销写资源）；
+只有 `writable` 配不出「能改用户、不能封节点」。`resource_url` 存的是 **gin 的路由
+模板**（`/api/users/:id`）而不是具体请求路径，否则每个 id 都要在表里占一行。
+
+**接口资源不手写，从真实路由表生成**（`managerinit` 遍历 `engine.Routes()`）。
+手写清单和路由迟早分叉，而分叉的后果是「登录用户一律 403」——一个看起来像 bug
+的配置故障。进程启动时还会再比对一次，把没登记的路由打进日志。
+
+**未登记的路由默认拒绝**，不是默认放行：忘了登记是配置疏漏，按放行处理等于新接口
+天生对所有人开放。唯一的例外是 `super_admin` 角色，它绕过资源过滤——一次配错授权
+就能把所有人关在门外，必须留一条改回来的活路。
+
+**令牌在 Redis 里**（`manager:token:*`，滑动过期），另有 `manager:user:{id}:tokens`
+反向索引，撤权 / 禁用 / 改密时按人踢掉全部会话。所以 Redis 是 manager-api 的启动
+硬依赖。表里刻意没有 `token_version`——那是无状态签名令牌的撤销手段，这里用不上。
+
+新环境两步：[`server/manager.sql`](manager.sql) 建表，
+[`server/manager_seed.sql`](manager_seed.sql) 写入角色、资源、超级管理员与授权。
+只建表不灌数据的话表是空的，谁也登不进去。
+
+也可以用 `cd server/manager-api && go run ./cmd/managerinit` 一步做完（直接写库）。
+两条路等价：seed SQL 由 `cmd/managerseed` 从同一份路由表生成，
+接口资源不会和代码分叉。
+
+---
+
 ## 控制台身份与授权 `zt_identity_*`（缩写 `identity`）
 
 | 表 | 作用 |
@@ -61,7 +291,7 @@
 | 表 | 作用 | 原型出处 |
 |---|---|---|
 | `zt_delivery_program` | 交付项目（印尼业务 = 一行） | `meta` |
-| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计文件的 OSS 对象索引；正文只在私有 OSS | 原型没有 |
+| `zt_delivery_cloud_sync_file` | 已同步聊天、需求、设计、测试、原型、执行产物与附件的 OSS 对象索引；正文只在私有 OSS；`owner_kind` / `owner_key` / `stage` 记这份文档属于哪条需求或任务的哪个阶段，未识别出归属时留空 | 原型没有 |
 | `zt_delivery_stage` | 推进阶段（现状 / 第一步 … 终局） | `stages[]` |
 | `zt_delivery_module` | 能力模块 + 权重（数据回传 30% …） | `modules[]` |
 | `zt_delivery_time_plan` | 时间计划：项目的交付时间窗口，对应一条从基准分支切出的发布分支（默认 `release/{截止日期}`） | 原型没有 |
@@ -69,11 +299,15 @@
 | `zt_delivery_requirement_event` | 需求自身的变更流水；与任务流水按时间聚合为需求时间线 | 原型没有 |
 | `zt_delivery_requirement_planning_session` | 需求拆解会话目录（聊天列表）；对话正文在执行器自己的会话缓存里，这里只存 `thread_id` | 原型没有 |
 | `zt_delivery_requirement_planning_batch` | 需求拆解批次：一次「拆解并写入任务」算一批，任务进度按批次成行展示 | 原型没有 |
-| `zt_delivery_item` | 推进任务，看板主体；`requirement_key` 指向所属需求，`planning_batch_key` 指向来源拆解批次（非必填）；测试用例可与研发并行生成，`prototype_task` 仅保留历史兼容 | `tasks[]` |
-| `zt_delivery_item_execution_session` | 任务与外部执行器会话的通用绑定及独立状态 | 原型没有，供自动执行引擎使用 |
+| `zt_delivery_item` | 推进任务，看板主体；`requirement_key` 指向所属需求，`planning_batch_key` 指向来源拆解批次（非必填）；测试用例可与研发并行生成，`prototype_task` 仅保留历史兼容；`last_run_*` / `total_run_duration_ms` / `run_count` 记执行耗时 | `tasks[]` |
+| `zt_delivery_item_execution_session` | 任务与外部执行器会话的通用绑定及独立状态；`run_started_at` / `run_finished_at` 是一轮运行的边界，耗时按这两个时刻结算后累加到任务上 | 原型没有，供自动执行引擎使用 |
 | `zt_delivery_item_dependency` | 任务依赖有向边（前置 → 后置），`source_side` / `target_side` 持久化两端连接边框 | 任务面板依赖连线 |
 | `zt_delivery_item_event` | 流水：状态流转 / 进度改动 / 进展评论；事件中冻结 `requirement_key`，供需求时间线回溯 | 原型没有，看板的价值主要在这 |
 | `zt_delivery_snapshot` | 每日进度快照，趋势与三维图历史 | 原型没有 |
+| `zt_delivery_command` | 用户提交的远程命令、租约、取消请求和最终结果；数据库权威 | 移动端远程执行 |
+| `zt_delivery_command_event` | 命令审计与 SSE 游标事件流 | 移动端远程执行 |
+| `zt_delivery_command_worker` | 按用户和业务线登记的插件及最近心跳 | 移动端远程执行 |
+| `zt_delivery_command_worker_workspace` | Worker 已配置的项目工作目录映射，不保存绝对路径 | 移动端远程执行 |
 
 ### 隔离维度
 
@@ -87,13 +321,18 @@
 `web-api/configs/application.properties` 配置写入**私有**阿里云 OSS，数据库仅保存对象键和校验元数据：
 
 ```properties
-oss.endpoint=https://oss-cn-hangzhou.aliyuncs.com
-oss.bucket=your-private-bucket
-oss.access_key_id=your-access-key-id
-oss.access_key_secret=your-access-key-secret
-oss.prefix=universe/delivery
-# 仅兼容 MinIO / 测试端点时设为 true；阿里云 OSS 保持 false 或省略。
-oss.path_style=false
+oss.enabled=true
+oss.dirPrefix=universe/delivery
+# 可填写完整 URL；省略协议时服务端默认使用 HTTPS。
+oss.endpoint=oss-cn-hangzhou.aliyuncs.com
+oss.bucketName=your-private-bucket
+oss.accessKeyId=your-access-key-id
+oss.accessKeySecret=your-access-key-secret
+# app-api 的 OSS 短时签名下载地址有效期，单位为秒。
+oss.expireTime=600
+# 当前服务端同步直接上传并受控读取，预留给未来异步上传回调 / 临时令牌场景。
+oss.callbackUrl=
+oss.tokenExpireTime=300
 ```
 
 存量库须执行 [`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。
@@ -168,11 +407,20 @@ uk_dlv_snapshot  (biz_line, program_id, stat_date, module_key)
 - `zt_delivery_execution_batch`（执行批次）回答「这一次批量/串行跑了哪些任务、结果如何」，一批任务可以被执行无数次
 - 任务对拆解批次是弱引用：`planning_batch_key` 非必填，批次被删也不影响任务
 
+**⑦ 用户命令中心由数据库裁决领取，Redis 不保存命令正文。**
+
+- `zt_delivery_command` 是用户提交、租约、取消请求、重试次数、最终结果的唯一权威记录；Redis 只保存不含参数的短时 `command_id` 唤醒提示，丢失提示时 Worker 仍可回退查询数据库。
+- 同一 `(biz_line, user_id, idempotency_key)` 只对应一条命令。并发重试返回同一记录，不能产生第二次本地执行。
+- 领取以 `UPDATE ... WHERE state = 'pending' AND cancel_requested = false` 原子完成；只有更新成功的 Worker 持有随机 `lease_token`，续租、活动和最终回传都必须同时匹配该 token 与 `worker_id`。
+- `pending`、`leased` 或 `running` 都以两分钟为恢复窗口。未领取命令会重新发送最多三次领取通知后进入 `timed_out`；失联租约低于三次领取尝试时回到 `pending`，否则进入 `timed_out`。每次转变都会写入 `zt_delivery_command_event`，重新调度会再次发送 Redis 唤醒提示。
+- Worker 仅登记已配置本机工作目录的 `(biz_line, program_id)` 映射。绝不上传、保存或下发本机绝对路径；领取查询只会返回同一用户、同一业务线、同一项目且能力匹配的命令。
+- 命令行与事件行是可再生的执行痕迹，不是账本：只读快照类命令（会话快照、Git 只读、用量）终态一小时后清理，其余命令保留一个月，事件行随命令一并删除。手机端会话页每几秒就落一条快照命令，不清理的话这两张表会无上限地涨。
+
 ### 建表
 
 两条路，结构完全一致，走哪条都行。
 
-**① 直接跑 SQL：** [`server/delivery.sql`](delivery.sql)，八张表的 DDL 都在里面。
+**① 直接跑 SQL：** [`server/delivery.sql`](delivery.sql)，交付域表的 DDL 都在里面。
 
 ```bash
 mysql -h <host> -P <port> -u <user> -p <database> < server/delivery.sql
@@ -251,8 +499,13 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 
 已有项目表升级到项目级云端同步时，执行
 [`migrations/20260823_delivery_program_cloud_sync.sql`](migrations/20260823_delivery_program_cloud_sync.sql)。
-该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档和设计文档会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。
+该脚本可安全重复执行；云端同步默认关闭，只有项目管理员选中的聊天记录、需求文档、设计文档、测试资料、原型、执行产物和附件会由本机桥接上传。云端文件按项目相对路径覆盖更新，不保存成员机器的绝对路径。
 服务端上传到私有 OSS 后，数据库仅保存对象键、大小和 SHA-256 校验值。
+
+已有云端文件索引表升级到按需求 / 任务归属分组时，执行
+[`migrations/20260909_delivery_cloud_document_owner.sql`](migrations/20260909_delivery_cloud_document_owner.sql)。
+该脚本可安全重复执行；补齐 `owner_kind` / `owner_key` / `stage` 三列和 `idx_dlv_cloud_file_owner`。
+存量记录归属为空，按项目级未归类展示，重新执行一次云端同步即可回填。
 
 已有需求表升级到支持需求详情里 @ 引用历史需求时，执行
 [`migrations/20260818_delivery_requirement_references.sql`](migrations/20260818_delivery_requirement_references.sql)。
@@ -264,8 +517,24 @@ go run service/delivery/cmd/dlvimport -program indonesia -bizline whatsapp \
 分别记录一次批次的启动事实和批次内每条任务的进度快照。缺这两张表时，任务面板批量执行会直接报
 `Table 'xxx.zt_delivery_execution_batch' doesn't exist`。
 
+已有 `zt_delivery_execution_batch` 升级到心跳判死时，执行
+[`migrations/20260905_delivery_execution_batch_heartbeat.sql`](migrations/20260905_delivery_execution_batch_heartbeat.sql)。
+它补上 `heartbeat_at`：执行端每隔 30 秒续一次心跳，超过 3 分钟没续上就按执行端已经不在了处理，
+批次被自动收尾并放行里面的任务。缺这个字段时，一次断网或执行进程退出就会让批次永远停在 `running`，
+批次里的任务再也启动不了（报「任务正在其他执行批次中」）。
+
 已有需求表升级到支持需求详情里 @ 引用既有任务时，执行
 [`migrations/20260818_delivery_requirement_task_references.sql`](migrations/20260818_delivery_requirement_task_references.sql)。
 该脚本可安全重复执行；它补齐的 `reference_item_keys` 默认为空串，存量需求没有任务关联。
+
+已有库启用移动端用户命令中心前，执行
+[`migrations/20260903_delivery_command_center.sql`](migrations/20260903_delivery_command_center.sql)。
+该脚本可安全重复执行；它建立权威命令、审计事件、插件注册和工作目录映射四张表。命令输入与结果不写 Redis，本机路径和 Worker 凭证也不得写入任意一张表。
+
+命令表的巡检索引改以 `state` 打头后，执行
+[`migrations/20260910_delivery_command_sweep_index.sql`](migrations/20260910_delivery_command_sweep_index.sql)。
+租约回收与留存期清理都是跨业务线、跨用户的定时巡检，以 `biz_line` 打头的索引一条也用不上；
+移动端会话页每几秒落一条快照命令，表长得快，而领取命令时会顺带跑一次租约回收，扫描成本会直接压在领取延迟上。
+该脚本可安全重复执行。
 
 省掉 `-file` 就只建表。**DDL 不在服务启动时跑** —— 线上建表不该是进程启动的副作用。

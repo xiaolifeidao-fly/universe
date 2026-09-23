@@ -447,7 +447,7 @@ export function BusinessLineWorkspace() {
 					</Space>
 				</div>
 				{rows.length === 0 && !loading ? (
-					<Empty description={t("businessLines.empty")} />
+					<Empty className="manager-empty-state" description={t("businessLines.empty")} />
 				) : (
 					<div className="manager-table">
 						<Table<BizLineRecord>
@@ -515,7 +515,7 @@ export function BusinessLineWorkspace() {
 			>
 				<Typography.Paragraph type="secondary">{t("businessLines.permissionHint")}</Typography.Paragraph>
 				{members.length === 0 && !membersLoading ? (
-					<Empty description={t("businessLines.memberEmpty")} />
+					<Empty className="manager-empty-state manager-empty-state--compact" description={t("businessLines.memberEmpty")} />
 				) : (
 					<div className="manager-table">
 						<Table<BizLineMemberRecord>

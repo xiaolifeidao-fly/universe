@@ -7,15 +7,17 @@ import { toolDisplayName, type AITool } from "@/ai-preferences/AIPreferencesProv
 import type { CodexPlanningSessionSummary } from "@/api/delivery.api";
 import { useLocale } from "@/i18n/LocaleProvider";
 
-/** 需求聊天历史按用途分栏：拆解、代码 review、测试、微调各自隔离。 */
-export type DeliveryHistoryTab = "planning" | "review" | "testing" | "fineTuning";
+/** 需求聊天历史按用途分栏：需求分析、拆解、代码 review、测试、微调各自隔离。 */
+export type DeliveryHistoryTab = "analysis" | "planning" | "review" | "testing" | "fineTuning";
 
-export const DELIVERY_HISTORY_TABS: DeliveryHistoryTab[] = ["planning", "review", "testing", "fineTuning"];
+// 顺序就是需求推进的顺序：先分析清楚，再拆解，之后才是 review、测试和微调。
+export const DELIVERY_HISTORY_TABS: DeliveryHistoryTab[] = ["analysis", "planning", "review", "testing", "fineTuning"];
 
 interface DeliverySessionHistoryTabsProps {
   activeTab: DeliveryHistoryTab;
   onTabChange: (tab: DeliveryHistoryTab) => void;
   planningConversations: CodexPlanningSessionSummary[];
+  analysisConversations?: CodexPlanningSessionSummary[];
   reviewConversations?: CodexPlanningSessionSummary[];
   testingConversations: CodexPlanningSessionSummary[];
   fineTuningConversations?: CodexPlanningSessionSummary[];
@@ -33,10 +35,12 @@ interface DeliverySessionHistoryTabsProps {
 }
 
 function entrySubtitle(kind: DeliveryHistoryTab, executorType: AITool, t: (key: string) => string) {
-  const label = kind === "planning"
-    ? t("delivery.planning.title")
-    : kind === "review" ? t("delivery.review.title")
-      : kind === "testing" ? t("delivery.testingCases.status") : t("delivery.fineTuning.title");
+  const label = kind === "analysis"
+    ? t("delivery.analysis.title")
+    : kind === "planning"
+      ? t("delivery.planning.title")
+      : kind === "review" ? t("delivery.review.title")
+        : kind === "testing" ? t("delivery.testingCases.status") : t("delivery.fineTuning.title");
   return [label, toolDisplayName(executorType)].filter(Boolean).join(" · ");
 }
 
@@ -44,6 +48,7 @@ export function DeliverySessionHistoryTabs({
   activeTab,
   onTabChange,
   planningConversations,
+  analysisConversations = [],
   reviewConversations = [],
   testingConversations,
   fineTuningConversations = [],
@@ -58,10 +63,12 @@ export function DeliverySessionHistoryTabs({
 }: DeliverySessionHistoryTabsProps) {
   const { t } = useLocale();
   const kind = activeTab;
-  const entries = activeTab === "planning"
-    ? planningConversations
-    : activeTab === "review" ? reviewConversations
-      : activeTab === "testing" ? testingConversations : fineTuningConversations;
+  const entries = activeTab === "analysis"
+    ? analysisConversations
+    : activeTab === "planning"
+      ? planningConversations
+      : activeTab === "review" ? reviewConversations
+        : activeTab === "testing" ? testingConversations : fineTuningConversations;
   const tabDraft = draft && draft.kind === activeTab ? draft : null;
   const entryTitle = (title: string) => title || (kind === "testing" && testingTitleFallback ? testingTitleFallback : t("delivery.session.untitled"));
 
@@ -122,9 +129,11 @@ export function DeliverySessionHistoryTabs({
         ))}
         {!tabDraft && !entries.length ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t(
-            activeTab === "review"
-              ? "delivery.session.historyTab.reviewEmpty"
-              : activeTab === "fineTuning" ? "delivery.fineTuning.historyEmpty" : "delivery.session.historyEmpty",
+            activeTab === "analysis"
+              ? "delivery.analysis.historyEmpty"
+              : activeTab === "review"
+                ? "delivery.session.historyTab.reviewEmpty"
+                : activeTab === "fineTuning" ? "delivery.fineTuning.historyEmpty" : "delivery.session.historyEmpty",
           )} />
         ) : null}
       </div>

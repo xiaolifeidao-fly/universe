@@ -62,7 +62,10 @@ import {
 	installDeliveryTaskPlannerUpdate,
 	restartDeliveryTaskPlannerUpdate,
 } from "@/api/delivery.api";
-import { DELIVERY_TASK_PLANNER_REPOSITORY_URL } from "@/project-workspaces/deliveryTaskPlanner";
+import {
+	DELIVERY_TASK_PLANNER_REPOSITORY_URL,
+	getDeliveryTaskPlannerBridgeUrl,
+} from "@/project-workspaces/deliveryTaskPlanner";
 import { ManagerNotificationCenter } from "./ManagerNotificationCenter";
 
 const TaskBoardStoryModal = dynamic(
@@ -458,7 +461,8 @@ export function ManagerShell({ children }: ManagerShellProps) {
 	}, [advanceSilentTaskPlannerUpdate, taskPlannerInstallation?.jobId, taskPlannerInstallation?.status]);
 
 	const taskPlannerInstallPrompt = t("delivery.plugin.installPrompt")
-		.replace("{url}", DELIVERY_TASK_PLANNER_REPOSITORY_URL);
+		.replace("{url}", DELIVERY_TASK_PLANNER_REPOSITORY_URL)
+		.replace("{bridge}", getDeliveryTaskPlannerBridgeUrl());
 	const copyTaskPlannerInstallPrompt = () => {
 		void copyTextToClipboard(taskPlannerInstallPrompt)
 			.then(() => message.success(t("delivery.plugin.installCopied")))

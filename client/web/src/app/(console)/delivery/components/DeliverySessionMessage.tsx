@@ -7,7 +7,7 @@ import { BulbOutlined, CodeOutlined, DownOutlined, EditOutlined, EyeOutlined, Fi
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
-import type { CodexConversationAttachment, CodexConversationChange, CodexConversationItem } from "@/api/delivery.api";
+import type { CodexConversationAttachment, CodexConversationChange, CodexConversationItem, CodexTokenUsage } from "@/api/delivery.api";
 import {
   SessionAttachments,
   SessionFilePreviewModal,
@@ -449,4 +449,30 @@ export function SessionChangeSummary({
       />
     </section>
   );
+}
+
+
+/**
+ * 一轮（或整条会话）烧掉多少 token。
+ *
+ * 只给三个数：进去多少、其中多少命中缓存（便宜一个数量级）、出来多少。
+ * 执行器没报用量的老会话没有这个字段，整行不渲染。
+ */
+export function SessionTurnUsage({ usage, label }: { usage?: CodexTokenUsage; label?: string }) {
+  const { t } = useLocale();
+  if (!usage?.totalTokens) return null;
+  return (
+    <div className="delivery-session-usage manager-mono">
+      <span>{label ?? t("delivery.usage.turnTotal")}</span>
+      <em>{t("delivery.usage.input")} {formatSessionTokens(usage.inputTokens)}</em>
+      {usage.cachedInputTokens ? <i>{t("delivery.usage.cached")} {formatSessionTokens(usage.cachedInputTokens)}</i> : null}
+      <em>{t("delivery.usage.output")} {formatSessionTokens(usage.outputTokens)}</em>
+      {typeof usage.costUsd === "number" ? <i>${usage.costUsd.toFixed(2)}</i> : null}
+    </div>
+  );
+}
+
+function formatSessionTokens(value: number) {
+  const count = Math.max(0, Math.round(value || 0));
+  return count >= 10000 ? `${(count / 1000).toFixed(0)}k` : count.toLocaleString("zh-CN");
 }

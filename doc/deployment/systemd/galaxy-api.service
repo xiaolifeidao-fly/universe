@@ -1,0 +1,47 @@
+# galaxy-api —— Nova 提供端控制台
+#
+# 安装：
+#   sudo cp galaxy-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now galaxy-api
+#
+# 装之前把 User / WorkingDirectory 改成部署机上的实际值。
+[Unit]
+Description=galaxy-api —— Nova 提供端控制台
+Documentation=file:///doc/deployment/galaxy-services.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=galaxy
+Group=galaxy
+# 配置加载器按**工作目录**读 configs/application.properties，这一条不能省，
+# 也不能用 ExecStart 的绝对路径代替 —— 换个工作目录启动就会读不到配置直接 panic。
+WorkingDirectory=/data/app/galaxy/galaxy-api
+ExecStart=/data/app/galaxy/galaxy-api/bin/galaxy-api
+# 监听地址默认读配置文件里的 server.address（:10004）。要覆盖就解开这一行 ——
+# 两处都写容易漂，别没事改它。
+# Environment=GALAXY_API_ADDR=:10004
+
+Restart=always
+RestartSec=5
+
+KillSignal=SIGTERM
+# 进程收到 SIGTERM 会先停止领新活、等在途请求跑完，再关监听退出。
+# 这个值必须大于 galaxy.shutdown.timeout_ms + galaxy.shutdown.drain_delay_ms，
+# 否则 systemd 会在它收尾到一半时补一刀 SIGKILL —— 那就等于没有优雅退出。
+TimeoutStopSec=60
+# 只把信号发给主进程。这个服务没有子进程，control-group 模式在 SIGKILL 阶段
+# 会连带清理，反而会掩盖真正的退出耗时。
+KillMode=mixed
+
+# Hub 要同时扛住节点的长轮询和消费者的流式连接，默认的 1024 明显不够。
+# 两个控制台用不到这么多，但统一一个值省得记。
+LimitNOFILE=65535
+
+# 日志进 journald：journalctl -u galaxy-api -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

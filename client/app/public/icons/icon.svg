@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">交付台</title>
+  <rect width="512" height="512" rx="104" fill="#146b5d"/>
+  <path fill="#f8fbf9" d="M146 144h156c36 0 64 28 64 64v123c0 36-28 64-64 64H220l-74 55v-95c0-13 10-24 24-24h132c18 0 32-14 32-32V222c0-18-14-32-32-32H146v-46Zm76 112h76v35h-76v-35Zm0 68h118v35H222v-35Z"/>
+  <circle cx="370" cy="145" r="38" fill="#f3a157"/>
+</svg>

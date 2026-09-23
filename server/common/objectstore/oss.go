@@ -1,4 +1,4 @@
-// Package objectstore 提供服务端调用阿里云 OSS 的最小 PUT 适配器。
+// Package objectstore 提供服务端调用阿里云 OSS 的最小读写适配器。
 //
 // 它使用 OSS V1 签名，避免让领域服务依赖某一版 SDK；桶保持私有，下载授权应另行签发。
 package objectstore
@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,7 +24,16 @@ import (
 // OSSConfig 来自服务端部署配置。Endpoint 必须是不带 bucket 的 OSS 服务端点，
 // 例如 https://oss-cn-hangzhou.aliyuncs.com。
 type OSSConfig struct {
-	Endpoint        string
+	Endpoint string
+	// PublicHost 交到**别人手里**的地址走哪个域名：签名地址（浏览器直传、节点下载）
+	// 与公开读地址（桌面壳取更新清单）都用它，服务端自己的读写仍然走 Endpoint。
+	//
+	// 两者要分开是因为最优解相反：服务端和桶同区时 Endpoint 填 -internal 既快又不计
+	// 流量，而那个域名在 VPC 外根本解析不到 —— 同一个地址交到运营的浏览器或用户的
+	// 桌面壳手里就是连不上，两边都只看到一个超时。
+	//
+	// 不配就回落到 Endpoint，老部署行为不变。挂了 CDN 或自定义域名就填那个。
+	PublicHost      string
 	Bucket          string
 	AccessKeyID     string
 	AccessKeySecret string
@@ -36,6 +46,7 @@ type OSSConfig struct {
 // AliyunOSS 是 OSS V1 的私有桶写入客户端。
 type AliyunOSS struct {
 	endpoint        *url.URL
+	publicHost      *url.URL
 	bucket          string
 	accessKeyID     string
 	accessKeySecret string
@@ -45,18 +56,27 @@ type AliyunOSS struct {
 	now             func() time.Time
 }
 
+// ObjectContent is a private object returned through a server-authorized read.
+// The object key and OSS credentials are deliberately not returned to callers.
+type ObjectContent struct {
+	ContentType string
+	Data        []byte
+}
+
+const maxObjectReadBytes = 8 * 1024 * 1024
+
 // NewAliyunOSS 校验配置并构造一个用于服务端同步的 OSS 客户端。
 func NewAliyunOSS(config OSSConfig) (*AliyunOSS, error) {
-	endpointText := strings.TrimSpace(config.Endpoint)
-	if endpointText == "" {
-		return nil, errors.New("OSS endpoint 未配置")
+	endpoint, err := parseEndpoint(config.Endpoint, "endpoint")
+	if err != nil {
+		return nil, err
 	}
-	endpoint, err := url.Parse(endpointText)
-	if err != nil || endpoint.Scheme == "" || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") {
-		return nil, errors.New("OSS endpoint 无效")
-	}
-	if endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return nil, errors.New("OSS endpoint 不能包含查询参数或片段")
+	// publicHost 是可选的：不配就让签名地址与公开读地址继续走 endpoint。
+	publicHost := endpoint
+	if strings.TrimSpace(config.PublicHost) != "" {
+		if publicHost, err = parseEndpoint(config.PublicHost, "publicHost"); err != nil {
+			return nil, err
+		}
 	}
 	bucket := strings.TrimSpace(config.Bucket)
 	if bucket == "" || strings.ContainsAny(bucket, "/\\?#:@") {
@@ -83,20 +103,59 @@ func NewAliyunOSS(config OSSConfig) (*AliyunOSS, error) {
 		now = time.Now
 	}
 	return &AliyunOSS{
-		endpoint: endpoint, bucket: bucket, accessKeyID: strings.TrimSpace(config.AccessKeyID),
+		endpoint: endpoint, publicHost: publicHost, bucket: bucket, accessKeyID: strings.TrimSpace(config.AccessKeyID),
 		accessKeySecret: strings.TrimSpace(config.AccessKeySecret), prefix: prefix, pathStyle: config.PathStyle,
 		httpClient: client, now: now,
 	}, nil
 }
 
-// Put 将正文写入 OSS；返回的 key 已包含部署配置的 prefix，供数据库仅保存元数据时定位对象。
+// Put 将正文写入 OSS；objectKey 是**相对键**，部署配置的 prefix 由这里补上。
+// 返回的 key 已包含 prefix，供数据库仅保存元数据时定位对象。
 func (c *AliyunOSS) Put(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error) {
-	key, err := normalizeObjectKey(objectKey, false)
+	return c.PutObject(ctx, c.ResolveKey(objectKey), contentType, content, sha256)
+}
+
+// ResolveKey 相对键 → 真正的对象键：补上部署配置的 prefix。
+//
+// 它存在是因为**这个客户端里只有 Put 会自动补 prefix**，签名地址（SignedURL /
+// SignedPutURL）和 Get 拿的都是真正的对象键。同一个目录里既有服务端写的小文件、
+// 又有浏览器拿签名地址直传的大文件时（桌面安装包就是这样：清单由服务端写、
+// 安装包由浏览器传），两边必须先在这里对齐成同一套键，否则清单和它指向的包
+// 会安静地落在两个目录里 —— 发布成功，客户端 404。
+//
+// 不做合法性校验：真正的把关在 PutObject / SignedPutURL 里，那里连同 prefix
+// 一起判路径穿越。
+func (c *AliyunOSS) ResolveKey(objectKey string) string {
+	trimmed := strings.Trim(strings.TrimSpace(strings.ReplaceAll(objectKey, "\\", "/")), "/")
+	switch {
+	case c.prefix == "":
+		return trimmed
+	case trimmed == "":
+		return c.prefix
+	default:
+		return c.prefix + "/" + trimmed
+	}
+}
+
+// PublicURL 公开读地址：把一个**真正的对象键**（或一段前缀，传空串就是 prefix 本身）
+// 拼成谁都能取的地址。不签名，所以只对设成公开读的前缀有意义。
+//
+// 桌面壳的更新清单就得是这种地址：electron-updater 拿到的是一个**目录**，自己往后拼
+// latest-mac.yml，再拼清单里的文件名 —— 签名签的是单个对象，签不出目录；而且签名有
+// 有效期，检查更新却发生在用户机器上的任意时刻，用户可能一个月后才点那一下。
+func (c *AliyunOSS) PublicURL(objectKey string) (string, error) {
+	key, err := normalizeObjectKey(objectKey, true)
 	if err != nil {
 		return "", fmt.Errorf("OSS 对象键无效: %w", err)
 	}
-	if c.prefix != "" {
-		key = c.prefix + "/" + key
+	return c.publicObjectURL(key), nil
+}
+
+// PutObject 写一个对象，objectKey 是**真正的对象键**（不再补 prefix）。
+func (c *AliyunOSS) PutObject(ctx context.Context, objectKey, contentType string, content []byte, sha256 string) (string, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return "", fmt.Errorf("OSS 对象键无效: %w", err)
 	}
 	if contentType = strings.TrimSpace(contentType); contentType == "" {
 		contentType = "application/octet-stream"
@@ -140,18 +199,120 @@ func (c *AliyunOSS) Put(ctx context.Context, objectKey, contentType string, cont
 	return key, nil
 }
 
+// Get reads a previously stored object using a server-side OSS V1 signature.
+// objectKey must be the persisted key returned by Put, including any configured
+// prefix; applying the prefix again would point at a different object.
+func (c *AliyunOSS) Get(ctx context.Context, objectKey string) (ObjectContent, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	date := c.now().UTC().Format(http.TimeFormat)
+	stringToSign := strings.Join([]string{http.MethodGet, "", "", date}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	authorization := "OSS " + c.accessKeyID + ":" + base64.StdEncoding.EncodeToString(signer.Sum(nil))
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.objectURL(key), nil)
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("构造 OSS 读取请求失败: %w", err)
+	}
+	request.Header.Set("Date", date)
+	request.Header.Set("Authorization", authorization)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("读取 OSS 失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return ObjectContent{}, fmt.Errorf("OSS 读取失败: status=%d, body=%s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if response.ContentLength > maxObjectReadBytes {
+		return ObjectContent{}, errors.New("OSS 对象不能超过 8MB")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxObjectReadBytes+1))
+	if err != nil {
+		return ObjectContent{}, fmt.Errorf("读取 OSS 正文失败: %w", err)
+	}
+	if len(data) > maxObjectReadBytes {
+		return ObjectContent{}, errors.New("OSS 对象不能超过 8MB")
+	}
+	contentType := strings.TrimSpace(response.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	return ObjectContent{ContentType: contentType, Data: data}, nil
+}
+
+// SignedURL creates a short-lived GET URL for a private object. It exposes
+// neither the access key secret nor local file paths; callers still have to
+// pass app-level authorization before this method is reached.
+func (c *AliyunOSS) SignedURL(objectKey string, expiresAt time.Time) (string, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return "", fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	expiresAt = expiresAt.UTC()
+	if !expiresAt.After(c.now().UTC()) {
+		return "", errors.New("OSS 签名地址已过期")
+	}
+	expires := strconv.FormatInt(expiresAt.Unix(), 10)
+	stringToSign := strings.Join([]string{http.MethodGet, "", "", expires}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	signature := base64.StdEncoding.EncodeToString(signer.Sum(nil))
+
+	parsed, err := url.Parse(c.publicObjectURL(key))
+	if err != nil {
+		return "", fmt.Errorf("构造 OSS 签名地址失败: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("OSSAccessKeyId", c.accessKeyID)
+	query.Set("Expires", expires)
+	query.Set("Signature", signature)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+// objectURL 服务端自己发请求用的地址，走部署配置的 endpoint（同区时是内网域名）。
 func (c *AliyunOSS) objectURL(key string) string {
-	result := *c.endpoint
+	return buildObjectURL(c.endpoint, c.bucket, c.pathStyle, key)
+}
+
+// publicObjectURL 交到别人手里的地址，走 publicHost（没配就是 endpoint）。
+func (c *AliyunOSS) publicObjectURL(key string) string {
+	return buildObjectURL(c.publicHost, c.bucket, c.pathStyle, key)
+}
+
+func buildObjectURL(base *url.URL, bucket string, pathStyle bool, key string) string {
+	result := *base
 	result.RawQuery = ""
 	result.Fragment = ""
-	if c.pathStyle {
-		result.Path = joinURLPath(result.Path, c.bucket, key)
+	if pathStyle {
+		result.Path = joinURLPath(result.Path, bucket, key)
 	} else {
-		result.Host = c.bucket + "." + result.Host
+		result.Host = bucket + "." + result.Host
 		result.Path = joinURLPath(result.Path, key)
 	}
 	result.RawPath = ""
 	return result.String()
+}
+
+// parseEndpoint 校验一个 OSS 服务端点（endpoint / publicHost 共用）。
+func parseEndpoint(raw, name string) (*url.URL, error) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return nil, fmt.Errorf("OSS %s 未配置", name)
+	}
+	parsed, err := url.Parse(text)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil, fmt.Errorf("OSS %s 无效", name)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, fmt.Errorf("OSS %s 不能包含查询参数或片段", name)
+	}
+	return parsed, nil
 }
 
 func joinURLPath(base string, parts ...string) string {
@@ -184,4 +345,102 @@ func normalizeObjectKey(raw string, allowEmpty bool) (string, error) {
 		return "", errors.New("不能包含路径穿越")
 	}
 	return cleaned, nil
+}
+
+// SignedPutURL 创建短期有效的 PUT 直传地址。共享池的大产物不经服务端中转：
+// 消费者与节点各自拿签名地址直传 OSS，服务端只签 URL、不搬字节。
+//
+// Content-Type 参与签名，客户端上传时必须带同一个值，否则 OSS 会拒绝。
+func (c *AliyunOSS) SignedPutURL(objectKey, contentType string, expiresAt time.Time) (string, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return "", fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	expiresAt = expiresAt.UTC()
+	if !expiresAt.After(c.now().UTC()) {
+		return "", errors.New("OSS 签名地址已过期")
+	}
+	expires := strconv.FormatInt(expiresAt.Unix(), 10)
+	stringToSign := strings.Join([]string{http.MethodPut, "", strings.TrimSpace(contentType), expires}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	signature := base64.StdEncoding.EncodeToString(signer.Sum(nil))
+
+	parsed, err := url.Parse(c.publicObjectURL(key))
+	if err != nil {
+		return "", fmt.Errorf("构造 OSS 签名地址失败: %w", err)
+	}
+	query := parsed.Query()
+	query.Set("OSSAccessKeyId", c.accessKeyID)
+	query.Set("Expires", expires)
+	query.Set("Signature", signature)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+// Stat 看一个对象在不在、有多大（HEAD，不取正文）。
+//
+// 桌面安装包由浏览器拿签名地址直传，服务端一个字节都不经手 —— 于是「运营到底传上去了没有」
+// 只能在这里问一次。少了这一问，一个指向不存在文件的清单会被发布出去：
+// 发布看着成功，每一台机器在下载那一步 404。
+func (c *AliyunOSS) Stat(ctx context.Context, objectKey string) (int64, bool, error) {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return 0, false, fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	response, err := c.do(ctx, http.MethodHead, key)
+	if err != nil {
+		return 0, false, fmt.Errorf("读取 OSS 对象信息失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return 0, false, nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return 0, false, fmt.Errorf("OSS 对象信息读取失败: status=%d", response.StatusCode)
+	}
+	size := response.ContentLength
+	if size < 0 {
+		// HEAD 理应带 Content-Length；个别网关会吞掉它。这时候只回「在」，
+		// 大小交给调用方按 0 处理（它比对的是「传了没有」，不是字节级校验）。
+		size = 0
+	}
+	return size, true, nil
+}
+
+// Delete 删一个对象。已经不在了也算成功 —— 调用方要的是「它别再被人下载到」。
+func (c *AliyunOSS) Delete(ctx context.Context, objectKey string) error {
+	key, err := normalizeObjectKey(objectKey, false)
+	if err != nil {
+		return fmt.Errorf("OSS 对象键无效: %w", err)
+	}
+	response, err := c.do(ctx, http.MethodDelete, key)
+	if err != nil {
+		return fmt.Errorf("删除 OSS 对象失败: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return fmt.Errorf("OSS 删除失败: status=%d, body=%s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
+// do 发一个不带正文的请求（HEAD / DELETE），按 OSS V1 签名。
+// key 必须是已经规范化过的**真正的对象键**。
+func (c *AliyunOSS) do(ctx context.Context, method, key string) (*http.Response, error) {
+	date := c.now().UTC().Format(http.TimeFormat)
+	stringToSign := strings.Join([]string{method, "", "", date}, "\n") + "\n/" + c.bucket + "/" + key
+	signer := hmac.New(sha1.New, []byte(c.accessKeySecret))
+	_, _ = signer.Write([]byte(stringToSign))
+	request, err := http.NewRequestWithContext(ctx, method, c.objectURL(key), nil)
+	if err != nil {
+		return nil, fmt.Errorf("构造 OSS 请求失败: %w", err)
+	}
+	request.Header.Set("Date", date)
+	request.Header.Set("Authorization", "OSS "+c.accessKeyID+":"+base64.StdEncoding.EncodeToString(signer.Sum(nil)))
+	return c.httpClient.Do(request)
 }

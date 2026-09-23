@@ -20,6 +20,7 @@ func (r *DeliveryRepository) AutoMigrate() error {
 	return r.Db.AutoMigrate(
 		&DeliveryProgram{}, &DeliveryCloudSyncFile{}, &DeliveryStage{}, &DeliveryModule{}, &DeliveryTimePlan{}, &DeliveryRequirement{}, &DeliveryRequirementEvent{}, &DeliveryRequirementCompletionNotification{}, &DeliveryRequirementPlanningSession{}, &DeliveryRequirementPlanningBatch{}, &DeliveryRequirementTestingSession{},
 		&DeliveryItem{}, &DeliveryItemExecutionSession{}, &DeliveryExecutionBatch{}, &DeliveryExecutionBatchItem{}, &DeliveryItemDependency{}, &DeliveryItemEvent{}, &DeliverySnapshot{},
+		&DeliveryCommand{}, &DeliveryCommandEvent{}, &DeliveryCommandAttachment{}, &DeliveryCommandWorker{}, &DeliveryCommandWorkerWorkspace{},
 	)
 }
 

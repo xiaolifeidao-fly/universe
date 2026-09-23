@@ -22,6 +22,8 @@ import (
 
 // Service 交付推进看板。
 type Service interface {
+	CommandService
+
 	// ---------- 项目 ----------
 	ListPrograms(ctx context.Context, bizLine contract.BizLine) ([]dto.ProgramView, error)
 	// ResolveProgramBizLine 根据全局唯一的项目标识取得项目归属；项目范围接口不信任客户端业务线。
@@ -33,6 +35,8 @@ type Service interface {
 	SaveProgramGitConfig(ctx context.Context, req dto.SaveProgramGitConfigRequest) (dto.ProgramView, error)
 	SaveProgramCloudSyncConfig(ctx context.Context, req dto.SaveProgramCloudSyncConfigRequest) (dto.ProgramView, error)
 	UpsertCloudSyncFile(ctx context.Context, req dto.UpsertCloudSyncFileRequest) (dto.CloudSyncFileView, error)
+	ListCloudSyncFiles(ctx context.Context, query dto.CloudSyncFileQuery) ([]dto.CloudSyncFileView, error)
+	GetCloudSyncFile(ctx context.Context, bizLine contract.BizLine, programID int64, category, relativePath string) (dto.CloudSyncFileView, error)
 	MigrateProgram(ctx context.Context, req dto.MigrateProgramRequest) error
 
 	// ---------- 阶段 / 模块 ----------
@@ -101,6 +105,8 @@ type Service interface {
 	CreateExecutionBatch(ctx context.Context, req dto.CreateExecutionBatchRequest) (dto.ExecutionBatchView, error)
 	UpdateExecutionBatchItem(ctx context.Context, req dto.UpdateExecutionBatchItemRequest) (dto.ExecutionBatchView, error)
 	FinalizeExecutionBatch(ctx context.Context, req dto.FinalizeExecutionBatchRequest) (dto.ExecutionBatchView, error)
+	CancelExecutionBatches(ctx context.Context, req dto.CancelExecutionBatchRequest) ([]dto.ExecutionBatchView, error)
+	HeartbeatExecutionBatches(ctx context.Context, req dto.ExecutionBatchHeartbeatRequest) ([]string, error)
 	GetExecutionBatch(ctx context.Context, bizLine contract.BizLine, programID int64, batchID string) (dto.ExecutionBatchView, error)
 	ListExecutionBatchNotifications(ctx context.Context, query dto.ExecutionBatchNotificationQuery) ([]dto.ExecutionBatchView, error)
 	MarkExecutionBatchNotificationRead(ctx context.Context, req dto.MarkExecutionBatchNotificationReadRequest) (dto.ExecutionBatchView, error)
@@ -115,18 +121,25 @@ type Service interface {
 }
 
 type service struct {
-	repo         *repository.DeliveryRepository
-	cloudStorage CloudObjectStorage
+	repo            *repository.DeliveryRepository
+	cloudStorage    CloudObjectStorage
+	commandNotifier CommandNotifier
 }
 
 // New 由应用装配层注入 OSS 适配器。未配置 OSS 时传 nil，只有实际同步时才返回明确错误，
 // 避免未启用云同步的本地环境因为缺少云端凭证而无法启动。
 func New(database *gorm.DB, cloudStorage ...CloudObjectStorage) Service {
-	repo := &repository.DeliveryRepository{}
-	repo.SetDb(database)
 	var storage CloudObjectStorage
 	if len(cloudStorage) > 0 {
 		storage = cloudStorage[0]
 	}
-	return &service{repo: repo, cloudStorage: storage}
+	return NewWithCommandNotifier(database, storage, nil)
+}
+
+// NewWithCommandNotifier adds best-effort worker wakeups without making Redis
+// availability part of the command durability contract.
+func NewWithCommandNotifier(database *gorm.DB, cloudStorage CloudObjectStorage, commandNotifier CommandNotifier) Service {
+	repo := &repository.DeliveryRepository{}
+	repo.SetDb(database)
+	return &service{repo: repo, cloudStorage: cloudStorage, commandNotifier: commandNotifier}
 }

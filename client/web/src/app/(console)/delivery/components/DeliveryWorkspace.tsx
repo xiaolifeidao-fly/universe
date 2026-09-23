@@ -51,6 +51,7 @@ import { DeliveryRequirementAssignModal } from "./DeliveryRequirementAssignModal
 import { DeliveryRequirementGitCheckModal } from "./DeliveryRequirementGitCheckModal";
 import { DeliveryRequirementSessionModal } from "./DeliveryRequirementSessionModal";
 import { DeliveryRequirementTimePlanModal } from "./DeliveryRequirementTimePlanModal";
+import { DeliveryRequirementUsageModal } from "./DeliveryRequirementUsageModal";
 import { DeliveryRequirementTimelineDrawer } from "./DeliveryRequirementTimelineDrawer";
 import { DeliveryOnboardingGuide } from "./DeliveryOnboardingGuide";
 import { DeliveryGitWorkspaceBadge } from "./DeliveryGitWorkspaceBadge";
@@ -181,6 +182,8 @@ export function DeliveryWorkspace() {
   const [sessionItem, setSessionItem] = useState<DeliveryItemRecord | null>(null);
   const [documentItem, setDocumentItem] = useState<DeliveryItemRecord | null>(null);
   const [outlineRequirement, setOutlineRequirement] = useState<DeliveryRequirementRecord | null>(null);
+  // 消耗按需汇总：桥接要逐条任务问会话表，不能跟着需求列表一起刷。
+  const [usageRequirement, setUsageRequirement] = useState<DeliveryRequirementRecord | null>(null);
   const [startTaskTestingCases, setStartTaskTestingCases] = useState(false);
   const [planningOpen, setPlanningOpen] = useState(false);
   // 快速指派用独立弹窗，不复用需求编辑窗口，避免为了改个负责人整条需求都进编辑态。
@@ -1130,6 +1133,7 @@ export function DeliveryWorkspace() {
             setPlanningOpen(true);
           }}
 		  onOutline={setOutlineRequirement}
+		  onUsage={setUsageRequirement}
 		  onTimeline={setTimelineRequirement}
 		  onTimePlan={setTimePlanRequirement}
 		  projectGitEnabled={Boolean(selectedProgram?.gitEnabled)}
@@ -1146,6 +1150,7 @@ export function DeliveryWorkspace() {
         />
         <div className="delivery-requirement-layout__main">
           <div className="delivery-toolbar">
+          <div className="delivery-toolbar__group delivery-toolbar__group--actions">
     		<Tooltip title={t("delivery.execution.batchHint")}>
     			<Button
     				icon={<PlayCircleOutlined />}
@@ -1172,6 +1177,20 @@ export function DeliveryWorkspace() {
                 {t("delivery.execution.sequenceSelected").replace("{count}", String(selectedExecutableItems.length))}
               </Button>
             </Tooltip>
+            {view === "board" && filters.groupBy === "status" && (filters.phase ?? "requirement") !== "testing" ? (
+    				<Button
+    					icon={<FastForwardOutlined />}
+    					disabled={selectedAdvanceableItems.length === 0 || submitting}
+    					onClick={() => void handleAdvance(filters.phase === "development" ? "development" : "requirement", selectedAdvanceableItems)}
+    				>
+    					{t("delivery.phase.advanceSelected").replace("{count}", String(selectedAdvanceableItems.length))}
+    				</Button>
+    			) : null}
+          </div>
+
+          <div className="delivery-toolbar__divider" />
+
+          <div className="delivery-toolbar__group delivery-toolbar__group--view">
             <Segmented
               value={view}
               onChange={(value) => setView(value as ViewMode)}
@@ -1203,22 +1222,11 @@ export function DeliveryWorkspace() {
               />
             ) : null}
             {view === "board" && (filters.groupBy === "stage" || filters.groupBy === "status") ? (
-    			<>
-    				<Segmented
-    					value={filters.phase ?? "requirement"}
-    					onChange={(value) => { setSelectedItemKeys([]); setFilters({ ...filters, phase: value as DeliveryPhase }); }}
-    					options={DELIVERY_PHASES.map((phase) => ({ value: phase, label: t(`delivery.phase.${phase}`) }))}
-    				/>
-    				{filters.groupBy === "status" && (filters.phase ?? "requirement") !== "testing" ? (
-    					<Button
-    						icon={<FastForwardOutlined />}
-    						disabled={selectedAdvanceableItems.length === 0 || submitting}
-    						onClick={() => void handleAdvance(filters.phase === "development" ? "development" : "requirement", selectedAdvanceableItems)}
-    					>
-    						{t("delivery.phase.advanceSelected").replace("{count}", String(selectedAdvanceableItems.length))}
-    					</Button>
-    				) : null}
-    			</>
+    			<Segmented
+    				value={filters.phase ?? "requirement"}
+    				onChange={(value) => { setSelectedItemKeys([]); setFilters({ ...filters, phase: value as DeliveryPhase }); }}
+    				options={DELIVERY_PHASES.map((phase) => ({ value: phase, label: t(`delivery.phase.${phase}`) }))}
+    			/>
             ) : null}
             {view === "board" ? (
               <label className="delivery-dependency-toggle">
@@ -1227,6 +1235,11 @@ export function DeliveryWorkspace() {
                 <Switch size="small" checked={showDependencyArrows} onChange={setShowDependencyArrows} />
               </label>
             ) : null}
+          </div>
+
+          <div className="delivery-toolbar__divider" />
+
+          <div className="delivery-toolbar__group delivery-toolbar__group--filters">
             {view === "board" && filters.groupBy === "status" ? (
               <Select
                 allowClear
@@ -1298,12 +1311,13 @@ export function DeliveryWorkspace() {
               onBlur={() => setFilters({ ...filters, keyword })}
             />
           </div>
+          </div>
           <div className="delivery-task-panel-scroll" ref={taskPanelScrollRef}>
             <Spin spinning={loading}>
               {!programId ? (
-                <Empty description={t("delivery.noProgram")} />
+                <Empty className="manager-empty-state" description={t("delivery.noProgram")} />
               ) : !filters.requirementKey ? (
-                <Empty description={t("delivery.requirement.selectToViewTasks")} />
+                <Empty className="manager-empty-state manager-empty-state--compact" description={t("delivery.requirement.selectToViewTasks")} />
               ) : view === "board" ? (
                 <DeliveryKanban
                   focusedItemKey={focusedItemKey}
@@ -1415,6 +1429,14 @@ export function DeliveryWorkspace() {
         requirement={outlineRequirement}
         codexBridgeReady={codexBridgeReady}
         onClose={() => setOutlineRequirement(null)}
+      />
+
+      <DeliveryRequirementUsageModal
+        open={Boolean(usageRequirement)}
+        programId={programId}
+        requirementKey={usageRequirement?.requirementKey ?? ""}
+        requirementName={usageRequirement?.name ?? ""}
+        onClose={() => setUsageRequirement(null)}
       />
 
       <DeliveryRequirementSessionModal

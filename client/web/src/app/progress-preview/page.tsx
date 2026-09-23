@@ -10,11 +10,44 @@ import {
 } from "@/api/delivery.api";
 import { DeliveryRequirementProgressModal } from "../(console)/delivery/components/DeliveryRequirementProgressModal";
 
+/** 执行耗时的样例数据：跑过的任务给最近一轮和累计，执行中的那条只给开始时刻，让秒表走起来。 */
+function runDuration(status: DeliveryStatus) {
+  const now = Date.now();
+  if (status === "doing") {
+    return {
+      lastRunStartedAt: new Date(now - 95_000).toISOString(),
+      lastRunDurationMs: 0,
+      totalRunDurationMs: 260_000,
+      runCount: 2,
+    };
+  }
+  if (status === "done") {
+    return {
+      lastRunStartedAt: new Date(now - 3_600_000).toISOString(),
+      lastRunFinishedAt: new Date(now - 3_462_000).toISOString(),
+      lastRunDurationMs: 138_000,
+      totalRunDurationMs: 402_000,
+      runCount: 3,
+    };
+  }
+  if (status === "blocked") {
+    return {
+      lastRunStartedAt: new Date(now - 7_200_000).toISOString(),
+      lastRunFinishedAt: new Date(now - 7_139_000).toISOString(),
+      lastRunDurationMs: 61_000,
+      totalRunDurationMs: 61_000,
+      runCount: 1,
+    };
+  }
+  return { lastRunDurationMs: 0, totalRunDurationMs: 0, runCount: 0 };
+}
+
 function task(itemKey: string, title: string, status: DeliveryStatus, phase: DeliveryPhase, dependsOnItemKeys: string[], sortOrder: number, note = "") {
   return Object.assign(new DeliveryItemRecord(), {
     itemKey, title, status, phase, dependsOnItemKeys, sortOrder, note,
     ownerName: status === "todo" ? "" : "陈洁",
     progress: status === "done" ? 100 : status === "doing" ? 50 : status === "blocked" ? 20 : 0,
+    ...runDuration(status),
   });
 }
 
@@ -61,6 +94,8 @@ const progress = Object.assign(new DeliveryRequirementProgressRecord(), {
   countedCount: 6,
   progress: 37,
   statusCounts: { todo: 2, doing: 2, done: 1, blocked: 1, dropped: 1 },
+  totalRunDurationMs: items.reduce((sum, item) => sum + item.totalRunDurationMs, 0),
+  runCount: items.reduce((sum, item) => sum + item.runCount, 0),
   items,
   batches,
 });
