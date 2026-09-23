@@ -5,7 +5,8 @@
 //
 //   - 返回体里不能有任何用户维度的东西（余额、订单、节点、密钥一个都不能沾）；
 //   - 读接口要有缓存，否则一个公开地址就是一条直通数据库的压测通道；
-//   - 唯一的写接口（留资）要限流，而且不能只信 X-Forwarded-For。
+//   - 来访者自己填写内容的写接口（留资）要限流，而且不能只信 X-Forwarded-For；
+//     官网打开只累加服务端固定的日桶，不接受来访者内容。
 package portal
 
 import (
@@ -82,7 +83,15 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.GET("/overview", h.overview)
 	api.GET("/models", h.models)
 	api.GET("/pricing", h.pricing)
+	// 官网打开。事件键在服务端固定，公开入口不能替别的位置伪造事件。
+	api.POST("/events/open", h.recordOpen)
 	api.POST("/leads", h.submitLead)
+}
+
+func (h *Handler) recordOpen(context *gin.Context) {
+	httpx.JSON(context, nil, h.service.RecordTrackingEvent(
+		context.Request.Context(), dto.TrackingEventPortalOpen, "",
+	))
 }
 
 // overview 门户整站的数据。一次给全，前端不用为了首页拼四条请求。
@@ -140,7 +149,7 @@ func (h *Handler) catalog(context *gin.Context) (dto.PortalOverview, error) {
 	return view, nil
 }
 
-// submitLead 「联系我们」。全站唯一一条未登录能写库的路径。
+// submitLead 「联系我们」。公开面唯一一条会把来访者填写内容写进库的路径。
 func (h *Handler) submitLead(context *gin.Context) {
 	var req dto.SubmitLeadRequest
 	if err := context.ShouldBindJSON(&req); err != nil {

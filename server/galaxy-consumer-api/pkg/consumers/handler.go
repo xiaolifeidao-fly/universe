@@ -66,6 +66,7 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 	// 模型广场与余额。**这一端不卖任何东西**：积分只能由运营在 manager-api 里充进来，
 	// 调模型时按单价逐笔从余额里扣。所以没有商品、没有下单、没有支付。
 	console.GET("/catalog", h.catalog)
+	console.POST("/events/model-click", h.recordModelClick)
 	// 新建密钥那一屏的候选分组（带对外价）。和模型广场分开：广场按模型讲故事，
 	// 这一条按「一个模型一个分组」摊平 —— 那一屏要做的选择就是这个形状。
 	console.GET("/groups", h.groupOptions)
@@ -87,6 +88,19 @@ func (h *Handler) RegisterConsole(group *gin.RouterGroup) {
 func (h *Handler) catalog(context *gin.Context) {
 	view, err := h.service.ConsumerCatalog(context.Request.Context(), h.options.Models)
 	httpx.JSON(context, view, err)
+}
+
+func (h *Handler) recordModelClick(context *gin.Context) {
+	var req struct {
+		ModelID string `json:"modelId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, nil, h.service.RecordTrackingEvent(
+		context.Request.Context(), dto.TrackingEventModelSquareClick, req.ModelID,
+	))
 }
 
 // groupOptions 能选的模型分组。选分组就是选价钱，所以带着价一起给。

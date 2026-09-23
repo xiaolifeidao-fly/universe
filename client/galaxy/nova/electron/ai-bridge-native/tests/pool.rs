@@ -1,15 +1,19 @@
 use ai_bridge_native::business::{group_joined, inline_json, inline_text, Primitive, WorkUnit};
+use ai_bridge_native::core::paths::Env;
+use ai_bridge_native::credentials::CredentialRegistry;
 use ai_bridge_native::pool::client::{BridgeReleaseManifest, CapabilityReport, HeartbeatResult, HelloResult};
 use ai_bridge_native::pool::hub_address::{HubAddressCheck, HubAddressEvent};
 use ai_bridge_native::pool::lane::{Lane, LaneConfig};
 use ai_bridge_native::pool::login::{login_command, needs_code, parse_login_output, strip_ansi};
-use ai_bridge_native::pool::models::{parse_codex_cache, parse_models};
+use ai_bridge_native::pool::models::{clear_model_cache, list_models, parse_codex_cache, parse_models};
 use ai_bridge_native::pool::runner::health_signature;
 use ai_bridge_native::pool::setup::{hub_needs_rebind, shell_quote};
 use ai_bridge_native::pool::tools::{parse_version, resolve_in, Progress};
+use axum::response::IntoResponse;
 use base64::Engine;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 mod common;
@@ -219,6 +223,38 @@ fn codex_cache_keeps_only_selectable_models_in_selector_order() {
                  r#"{"models":[{"slug":"x"}]}"#] {
         assert!(parse_codex_cache(junk).is_empty(), "不该从 {junk} 解析出模型");
     }
+}
+
+#[tokio::test]
+async fn model_results_survive_an_in_memory_cache_reset() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::from_pairs([("AI_BRIDGE_RUNTIME_DIR",
+        dir.path().join("runtime").to_string_lossy().into_owned())]);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&calls);
+    let origin = common::start_plain_upstream(move |_request| {
+        let counted = Arc::clone(&counted);
+        async move {
+            counted.fetch_add(1, Ordering::SeqCst);
+            axum::Json(json!({ "data": [{ "id": "model-a" }, { "id": "model-b" }] })).into_response()
+        }
+    }).await;
+    let provider = common::relay_provider_config("api_key", Some("secret"), Some(&format!("{origin}/v1")));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let credentials = CredentialRegistry::new(client.clone());
+
+    clear_model_cache();
+    let first = list_models("persisted", &provider, &credentials, &env, &client).await;
+    assert_eq!(first, vec!["model-a", "model-b"]);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(dir.path().join("runtime/models-cache.json").is_file());
+
+    // 清空内存等价于一次新进程；第二次应直接命中磁盘缓存。
+    clear_model_cache();
+    let second = list_models("persisted", &provider, &credentials, &env, &client).await;
+    assert_eq!(second, first);
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "重启后不应再请求上游 /models");
+    clear_model_cache();
 }
 
 // ---------- 工具版本解析 ----------

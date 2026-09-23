@@ -1479,3 +1479,23 @@ type GalaxyUsageRollup struct {
 
 func (r *GalaxyUsageRollup) TableName() string { return "zt_galaxy_usage_rollup" }
 func (r *GalaxyUsageRollup) Init()             {}
+
+// GalaxyTrackingDaily 是面向运营看板的埋点日汇总。
+//
+// 这里只存「哪一天、哪个位置、哪个目标被触发了多少次」，不保存 IP、账号或 UA：
+// 当前产品问题只需要趋势，保留逐条访问流水既增加隐私面，也会让官网每次打开都长一行。
+// TargetKey 让模型点击能保留 model_id；官网打开没有目标，固定为空串。
+type GalaxyTrackingDaily struct {
+	ID        int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	BizLine   string    `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_tracking_daily,priority:1" description:"业务线"`
+	EventDate time.Time `gorm:"column:event_date;type:date;uniqueIndex:uk_gx_tracking_daily,priority:2" description:"服务端本地时区统计日期"`
+	EventKey  string    `gorm:"column:event_key;type:varchar(48);uniqueIndex:uk_gx_tracking_daily,priority:3" description:"portal.open / model_square.model_click"`
+	TargetKey string    `gorm:"column:target_key;type:varchar(96);uniqueIndex:uk_gx_tracking_daily,priority:4" description:"目标业务键；模型点击为 model_id，官网打开为空"`
+	Count     int64     `gorm:"column:count" description:"触发次数"`
+
+	CreatedTime time.Time `gorm:"column:created_time;autoCreateTime"`
+	UpdatedTime time.Time `gorm:"column:updated_time;autoUpdateTime"`
+}
+
+func (r *GalaxyTrackingDaily) TableName() string { return "zt_galaxy_tracking_daily" }
+func (r *GalaxyTrackingDaily) Init()             {}

@@ -358,6 +358,9 @@ type Service interface {
 	ListExportTargets(ctx context.Context) ([]ExportTarget, error)
 	// RecordEndpointHealth 记一次回连探测结果，主人在控制台上看到的就是这句话。
 	RecordEndpointHealth(ctx context.Context, nodeID, status, detail string) error
+	// EnableHardPinFallback 允许旧 Responses 会话在原贡献的回连身份错位后解除硬钉。
+	// 请求携带完整上下文，下一次 Submit 会删掉 previous_response_id 再重新放置。
+	EnableHardPinFallback(ctx context.Context, cid string) error
 
 	// ---------- 提供者：今天与收益 ----------
 	// ProviderDashboard 「今天」那一页要的全部数字，一次查完 ——
@@ -405,6 +408,8 @@ type Service interface {
 	SaveReferralSettings(ctx context.Context, req dto.SaveReferralSettingsRequest) error
 	// ConsumerCatalog 使用端的模型广场：在卖哪些模型、各自什么价。
 	ConsumerCatalog(ctx context.Context, fallbackModels []string) (dto.ConsumerCatalog, error)
+	// RecordTrackingEvent 记录受支持的位置事件；日期只取服务端时钟。
+	RecordTrackingEvent(ctx context.Context, eventKey, targetKey string) error
 
 	// ---------- 门户（未登录可见的那一面） ----------
 	// PortalCatalog 门户整站要展示的东西：模型目录、额度包、单价表与统计。
@@ -688,6 +693,9 @@ type service struct {
 	// groupCache 模型分组的进程内快照。每一次中转都要解「这一单落哪个分组」，
 	// 按条查库就是把同一张小表查成每秒几十次。见 modelgroup.go。
 	groupCache *groupCache
+	// hardPinFallbacks 与 settings 一样用指针：事务里的 scoped service 是浅拷贝，
+	// 必须和本体共享这份「旧会话可以迁移」的短期状态。
+	hardPinFallbacks *hardPinFallbacks
 
 	// waiting 是等待队列深度的进程内计数。P0 单实例，等待发生在持有消费者连接的
 	// 那个进程里，不需要把 rid 放进 Redis 再被别人唤醒。
@@ -718,20 +726,21 @@ func New(database *gorm.DB, ports Ports, kinds *KindRegistry, config Config) Ser
 		metrics = noopMetrics{}
 	}
 	svc := &service{
-		metrics:    metrics,
-		repository: repo,
-		control:    ports.Control,
-		signer:     ports.Signer,
-		uploader:   ports.Uploader,
-		desktop:    ports.Desktop,
-		notifier:   ports.Notifier,
-		replayer:   ports.Replayer,
-		audit:      audit,
-		kinds:      kinds,
-		config:     config.withDefaults(),
-		settings:   &settingsCache{},
-		groupCache: &groupCache{},
-		cipher:     newKeyCipher(config.KeyCipherSecret),
+		metrics:          metrics,
+		repository:       repo,
+		control:          ports.Control,
+		signer:           ports.Signer,
+		uploader:         ports.Uploader,
+		desktop:          ports.Desktop,
+		notifier:         ports.Notifier,
+		replayer:         ports.Replayer,
+		audit:            audit,
+		kinds:            kinds,
+		config:           config.withDefaults(),
+		settings:         &settingsCache{},
+		groupCache:       &groupCache{},
+		hardPinFallbacks: &hardPinFallbacks{until: map[string]time.Time{}},
+		cipher:           newKeyCipher(config.KeyCipherSecret),
 	}
 	svc.waiting.byKind = map[string]int{}
 	return svc

@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "ai-bridge-native"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "async-stream",
  "async-trait",

@@ -378,12 +378,33 @@ func (a *Adapter) Route(ctx context.Context, raw corepkg.Input) (contract.RouteK
 	if in.previousResponseID != "" {
 		cid, found := a.deps.Galaxy.LookupResponseContribution(ctx, in.previousResponseID)
 		if !found {
+			// 请求本身带着完整上下文，response id 只是优先回原贡献的加速线索。
+			// 映射过期后摘掉它，按普通请求重新放置；直接 400 会让一条内容完整的
+			// 旧会话仅仅因为路由缓存过期就永久不能继续。
+			if detached, ok := detachPreviousResponseID(in.body); ok {
+				in.body = detached
+				in.previousResponseID = ""
+				return route, nil
+			}
 			return route, contract.NewUnitError(contract.ErrorClassInput, contract.CodeInvalidBody, false,
-				"previous_response_id 已过期，请重新发起对话")
+				"previous_response_id 已过期，且请求上下文无法脱离旧响应")
 		}
 		route.HardPin = cid
 	}
 	return route, nil
+}
+
+func detachPreviousResponseID(raw []byte) ([]byte, bool) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, false
+	}
+	delete(payload, "previous_response_id")
+	detached, err := json.Marshal(payload)
+	if err != nil {
+		return nil, false
+	}
+	return detached, true
 }
 
 // Estimate 预估（设计文档 5.5）。预估只用于预留，终态按实际回补。

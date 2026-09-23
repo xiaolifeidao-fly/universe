@@ -70,6 +70,15 @@ const (
 
 	// chunkSize 对拷缓冲。SSE 事件通常几百字节，32KB 足够摊薄系统调用。
 	chunkSize = 32 * 1024
+
+	// identityRetryDelay 回连落到另一节点、且对方在执行前明确拒绝时，隔多久
+	// 用一条全新的 TCP 连接再试一次。
+	//
+	// 公网入口前面常有 NAT / 反代。它们切后端时，Hub 连接池里可能短暂留着一条
+	// 指向旧后端的 keep-alive；直接把这一次派单判死，会让带 previous_response_id
+	// 的会话在客户端连续五次重连里得到同一个 502。只有 401/403 这种能证明对方
+	// 尚未执行单元的响应才允许重试，避免重复碰上游。
+	identityRetryDelay = 150 * time.Millisecond
 )
 
 // nodeLoop 一台机器的领活循环，连同它是按哪份回连信息起的。
@@ -85,7 +94,10 @@ type Dispatcher struct {
 	galaxy   galaxy.Service
 	exchange *corepkg.Exchange
 	client   *http.Client
-	metrics  galaxy.Metrics
+	// freshClient 禁用 keep-alive，只用于身份错位后的安全重试。正常流式响应仍走
+	// client；否则每一次长对话都新建连接，白白损失连接复用。
+	freshClient *http.Client
+	metrics     galaxy.Metrics
 
 	mu      sync.Mutex
 	loops   map[string]nodeLoop
@@ -98,27 +110,33 @@ type Dispatcher struct {
 
 func New(service galaxy.Service, exchange *corepkg.Exchange, metrics galaxy.Metrics) *Dispatcher {
 	return &Dispatcher{
-		galaxy:   service,
-		exchange: exchange,
-		metrics:  metrics,
-		loops:    map[string]nodeLoop{},
-		health:   map[string]string{},
-		client: &http.Client{
-			// 不设总超时：回连拿到的是一条流式响应，一次对话跑十分钟是正常的。
-			// 时限由 ResponseHeaderTimeout（等响应头）和读循环里的空闲看门狗
-			// （等字节）分别兜 —— 一个总超时会把长对话在中途掐断。
-			Timeout: 0,
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				ResponseHeaderTimeout: headerTimeout,
-				MaxIdleConnsPerHost:   32,
-				IdleConnTimeout:       90 * time.Second,
-			},
-			// 不跟随重定向：回连的目标是主人自己填的地址，跟着 302 走等于把
-			// 「Hub 会去访问哪台机器」的决定权交给了那台机器。
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
+		galaxy:      service,
+		exchange:    exchange,
+		metrics:     metrics,
+		loops:       map[string]nodeLoop{},
+		health:      map[string]string{},
+		client:      exportHTTPClient(false),
+		freshClient: exportHTTPClient(true),
+	}
+}
+
+func exportHTTPClient(disableKeepAlives bool) *http.Client {
+	return &http.Client{
+		// 不设总超时：回连拿到的是一条流式响应，一次对话跑十分钟是正常的。
+		// 时限由 ResponseHeaderTimeout（等响应头）和读循环里的空闲看门狗
+		// （等字节）分别兜 —— 一个总超时会把长对话在中途掐断。
+		Timeout: 0,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ResponseHeaderTimeout: headerTimeout,
+			MaxIdleConnsPerHost:   32,
+			IdleConnTimeout:       90 * time.Second,
+			DisableKeepAlives:     disableKeepAlives,
+		},
+		// 不跟随重定向：回连的目标是主人自己填的地址，跟着 302 走等于把
+		// 「Hub 会去访问哪台机器」的决定权交给了那台机器。
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
 	}
 }
@@ -348,17 +366,7 @@ func (d *Dispatcher) push(ctx context.Context, target galaxy.ExportTarget, claim
 	// 不该把正在流的对话掐断。
 	requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, target.ExecuteURL(), strings.NewReader(string(payload)))
-	if err != nil {
-		d.abort(ctx, unitID, contract.CodeInvalidBody, false, err.Error())
-		return
-	}
-	request.Header.Set("content-type", "application/json")
-	request.Header.Set("authorization", "Bearer "+target.Secret)
-	request.Header.Set("x-galaxy-contract", strconv.Itoa(d.galaxy.Config().ContractVersion))
-	request.Header.Set("x-galaxy-unit", unitID)
-
-	response, err := d.client.Do(request)
+	response, err := d.execute(requestCtx, target, unitID, payload)
 	if err != nil {
 		d.observe(target.NodeID, "unreachable", started)
 		d.recordHealth(ctx, target.NodeID, "unreachable",
@@ -373,9 +381,17 @@ func (d *Dispatcher) push(ctx context.Context, target galaxy.ExportTarget, claim
 	// 不该到消费者手上（见 galaxy.ExportNodeHeader 的注释）。
 	if got := response.Header.Get(galaxy.ExportNodeHeader()); got != target.NodeID {
 		d.observe(target.NodeID, "rejected", started)
+		log.Printf("galaxy export 回连身份不一致 node=%s got=%s status=%d url=%s unit=%s",
+			target.NodeID, got, response.StatusCode, target.BaseURL, unitID)
 		d.recordHealth(ctx, target.NodeID, "unreachable",
 			"这个地址后面不是本机节点，请核对公网地址与端口映射", false)
-		d.abort(ctx, unitID, contract.CodeNodeUnavailable, true, "回连到的不是这台节点，已放弃这次派单")
+		message := "回连到的不是这台节点，已放弃这次派单"
+		if cid := hardPinOf(claimed.Unit); cid != "" {
+			if err := d.galaxy.EnableHardPinFallback(ctx, cid); err == nil {
+				message = "原节点回连身份错位，已解除旧会话节点绑定并自动改派"
+			}
+		}
+		d.abort(ctx, unitID, contract.CodeNodeUnavailable, true, message)
 		return
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -387,6 +403,53 @@ func (d *Dispatcher) push(ctx context.Context, target galaxy.ExportTarget, claim
 	d.recordHealth(ctx, target.NodeID, "ok", "", false)
 	d.observe(target.NodeID, "ok", started)
 	d.relay(ctx, unitID, response)
+}
+
+// execute 把单元送到节点。第一次走正常连接池；若回到另一节点，且那台节点用
+// 401/403 明确证明「密钥不对、单元尚未执行」，就丢掉旧 keep-alive，用全新连接
+// 再试一次。身份不一致但返回 2xx 时绝不重试：那台节点可能已经碰了上游，重放
+// 会造成重复执行。
+func (d *Dispatcher) execute(ctx context.Context, target galaxy.ExportTarget, unitID string, payload []byte) (*http.Response, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, target.ExecuteURL(), strings.NewReader(string(payload)))
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("content-type", "application/json")
+		request.Header.Set("authorization", "Bearer "+target.Secret)
+		request.Header.Set("x-galaxy-contract", strconv.Itoa(d.galaxy.Config().ContractVersion))
+		request.Header.Set("x-galaxy-unit", unitID)
+
+		client := d.client
+		if attempt > 0 {
+			client = d.freshClient
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return nil, err
+		}
+		got := response.Header.Get(galaxy.ExportNodeHeader())
+		identityMismatch := got != target.NodeID
+		rejectedBeforeExecution := response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden
+		if attempt == 0 && identityMismatch && rejectedBeforeExecution {
+			log.Printf("galaxy export 回连暂时落到另一节点，换新连接重试 node=%s got=%s status=%d url=%s unit=%s",
+				target.NodeID, got, response.StatusCode, target.BaseURL, unitID)
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+			sleep(ctx, identityRetryDelay)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+		return response, nil
+	}
+	return nil, errors.New("回连重试未返回结果")
+}
+
+func hardPinOf(unit map[string]any) string {
+	value, _ := unit["hardPin"].(string)
+	return strings.TrimSpace(value)
 }
 
 // relay 把节点回来的字节对拷给消费者。这段与长轮询上行那边（agent.stream）

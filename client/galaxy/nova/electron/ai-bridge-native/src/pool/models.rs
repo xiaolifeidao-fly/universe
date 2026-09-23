@@ -1,12 +1,13 @@
 use crate::config::schema::{AuthMode, ProviderConfig};
-use crate::core::paths::{expand_home, home_dir, Env};
+use crate::core::paths::{expand_home, home_dir, runtime_dir, Env};
 use crate::credentials::types::UpstreamAuthContext;
-use crate::credentials::{resolve_upstream, CredentialRegistry};
+use crate::credentials::{resolve_upstream, CredentialRegistry, UpstreamTarget};
 use crate::{log_info, log_warn};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// 上游可用模型清单。
 ///
@@ -22,6 +23,8 @@ const TTL: Duration = Duration::from_secs(6 * 60 * 60);
 /// 失败缓存短一些：上游临时抽风不该让候选项空掉半天。
 const FAILURE_TTL: Duration = Duration::from_secs(10 * 60);
 const TIMEOUT: Duration = Duration::from_secs(8);
+const PERSISTENT_CACHE_VERSION: u32 = 1;
+const PERSISTENT_CACHE_FILE: &str = "models-cache.json";
 /// Codex 后端按主版本过滤模型：0.x 给空清单，>= 1 给完整的。
 const DEFAULT_CODEX_CLIENT_VERSION: &str = "1.0.0";
 
@@ -36,7 +39,25 @@ fn cache() -> &'static Mutex<HashMap<String, Entry>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// 只给测试用：清掉缓存，避免用例之间互相污染。
+#[derive(Default, Deserialize, Serialize)]
+struct PersistentCache {
+    version: u32,
+    entries: HashMap<String, PersistentEntry>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct PersistentEntry {
+    #[serde(rename = "expiresAtMs")]
+    expires_at_ms: u64,
+    models: Vec<String>,
+}
+
+fn persistent_cache_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// 只给测试用：清掉进程内缓存。不删磁盘文件，便于模拟进程重启。
 pub fn clear_model_cache() {
     cache().lock().unwrap().clear();
 }
@@ -59,22 +80,44 @@ pub async fn list_models(
             return cached;
         }
     }
-    if let Some(hit) = cache().lock().unwrap().get(name) {
+    // 键里带实际上游地址：同名 provider 切换官方 / 中转后不得复用旧清单。
+    let upstream = match resolve_upstream(provider, env).await {
+        Ok(upstream) => upstream,
+        Err(message) => {
+            log_warn!("pool_models_unavailable", "provider": name, "message": message);
+            return vec![];
+        }
+    };
+    let key = persistent_key(name, provider, &upstream);
+    if let Some(hit) = cache().lock().unwrap().get(&key) {
         if hit.at.elapsed() < hit.ttl {
             return hit.models.clone();
         }
     }
+    if let Some((models, remaining)) = load_persistent(&key, env).await {
+        cache().lock().unwrap().insert(key.clone(), Entry {
+            at: Instant::now(), ttl: remaining, models: models.clone(),
+        });
+        log_info!("pool_models_from_persistent_cache", "provider": name, "count": models.len());
+        return models;
+    }
 
-    match fetch_models(name, provider, credentials, env, client).await {
+    match fetch_models(name, provider, credentials, env, client, &upstream).await {
         Ok(models) => {
-            cache().lock().unwrap().insert(name.into(), Entry { at: Instant::now(), ttl: TTL, models: models.clone() });
+            cache().lock().unwrap().insert(key.clone(), Entry {
+                at: Instant::now(), ttl: TTL, models: models.clone(),
+            });
+            store_persistent(key, models.clone(), TTL, env).await;
             log_info!("pool_models_listed", "provider": name, "count": models.len());
             models
         }
         Err(message) => {
             // 降级成空清单，不往上抛：模型候选项是锦上添花，不能拖垮能力探测。
             log_warn!("pool_models_unavailable", "provider": name, "message": message);
-            cache().lock().unwrap().insert(name.into(), Entry { at: Instant::now(), ttl: FAILURE_TTL, models: vec![] });
+            cache().lock().unwrap().insert(key.clone(), Entry {
+                at: Instant::now(), ttl: FAILURE_TTL, models: vec![],
+            });
+            store_persistent(key, vec![], FAILURE_TTL, env).await;
             vec![]
         }
     }
@@ -86,9 +129,8 @@ async fn fetch_models(
     credentials: &CredentialRegistry,
     env: &Env,
     client: &reqwest::Client,
+    upstream: &UpstreamTarget,
 ) -> Result<Vec<String>, String> {
-    // 上游跟着本机正在用的走（中转站或订阅官方），/models 也打同一个地方。
-    let upstream = resolve_upstream(provider, env).await?;
     let credential = credentials.resolve(provider)?;
     let headers = credential
         .headers(&UpstreamAuthContext {
@@ -123,6 +165,88 @@ async fn fetch_models(
     }
     let payload: Value = response.json().await.map_err(|e| e.without_url().to_string())?;
     Ok(parse_models(&payload))
+}
+
+fn persistent_key(name: &str, provider: &ProviderConfig, upstream: &UpstreamTarget) -> String {
+    serde_json::to_string(&(
+        name,
+        provider.auth_mode.unwrap_or(AuthMode::CodexChatgpt).label(),
+        upstream.base_url.as_str(),
+    ))
+    .unwrap_or_else(|_| name.to_string())
+}
+
+async fn load_persistent(key: &str, env: &Env) -> Option<(Vec<String>, Duration)> {
+    let path = runtime_dir(env).join(PERSISTENT_CACHE_FILE);
+    let raw = tokio::fs::read(&path).await.ok()?;
+    let saved: PersistentCache = match serde_json::from_slice(&raw) {
+        Ok(saved) => saved,
+        Err(error) => {
+            log_warn!("pool_models_cache_invalid",
+                "path": path.to_string_lossy(), "message": error.to_string());
+            return None;
+        }
+    };
+    if saved.version != PERSISTENT_CACHE_VERSION {
+        return None;
+    }
+    let entry = saved.entries.get(key)?;
+    let remaining_ms = entry.expires_at_ms.saturating_sub(unix_ms());
+    if remaining_ms == 0 {
+        return None;
+    }
+    Some((entry.models.clone(), Duration::from_millis(remaining_ms)))
+}
+
+async fn store_persistent(key: String, models: Vec<String>, ttl: Duration, env: &Env) {
+    let _guard = persistent_cache_lock().lock().await;
+    let dir = runtime_dir(env);
+    if let Err(error) = tokio::fs::create_dir_all(&dir).await {
+        log_warn!("pool_models_cache_write_failed",
+            "path": dir.to_string_lossy(), "message": error.to_string());
+        return;
+    }
+    let path = dir.join(PERSISTENT_CACHE_FILE);
+    let now = unix_ms();
+    let mut saved = match tokio::fs::read(&path).await {
+        Ok(raw) => serde_json::from_slice::<PersistentCache>(&raw).unwrap_or_default(),
+        Err(_) => PersistentCache::default(),
+    };
+    if saved.version != PERSISTENT_CACHE_VERSION {
+        saved = PersistentCache { version: PERSISTENT_CACHE_VERSION, entries: HashMap::new() };
+    }
+    saved.entries.retain(|_, entry| entry.expires_at_ms > now);
+    saved.entries.insert(key, PersistentEntry {
+        expires_at_ms: now.saturating_add(ttl.as_millis().min(u128::from(u64::MAX)) as u64),
+        models,
+    });
+    let bytes = match serde_json::to_vec(&saved) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_warn!("pool_models_cache_write_failed",
+                "path": path.to_string_lossy(), "message": error.to_string());
+            return;
+        }
+    };
+    // 同目录写临时文件后再原子替换，避免强制退出留下半个 JSON。
+    let temporary = dir.join(format!(".{PERSISTENT_CACHE_FILE}.{}.tmp", std::process::id()));
+    let result = async {
+        tokio::fs::write(&temporary, bytes).await?;
+        tokio::fs::rename(&temporary, &path).await
+    }.await;
+    if let Err(error) = result {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        log_warn!("pool_models_cache_write_failed",
+            "path": path.to_string_lossy(), "message": error.to_string());
+    }
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
 }
 
 /// 兼容三种形状：OpenAI / Anthropic 的 `{data:[{id}]}`、少数网关的 `{models:["..."]}`，

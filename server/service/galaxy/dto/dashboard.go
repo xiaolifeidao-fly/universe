@@ -31,6 +31,8 @@ type AdminDashboard struct {
 	Revenue DashboardRevenue `json:"revenue"`
 	// Capacity 此刻池子里还剩多少额度。
 	Capacity DashboardCapacity `json:"capacity"`
+	// Tracking 官网打开与模型广场点击的最近 14 天日趋势。
+	Tracking DashboardTracking `json:"tracking"`
 	// Degraded 取不到的那几块。取不到就说取不到，**不显示成 0** ——
 	// 「今天零消耗」和「这块数据没取到」是完全不同的两件事，而 0 会被读成前者。
 	Degraded []string `json:"degraded"`

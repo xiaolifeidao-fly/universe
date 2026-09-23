@@ -22,6 +22,7 @@ type stubService struct {
 	catalog  dto.PortalOverview
 	catalogs int
 	leads    []dto.SubmitLeadRequest
+	events   []string
 }
 
 func (s *stubService) PortalCatalog(context.Context, []string) (dto.PortalOverview, error) {
@@ -32,6 +33,11 @@ func (s *stubService) PortalCatalog(context.Context, []string) (dto.PortalOvervi
 func (s *stubService) SubmitLead(_ context.Context, req dto.SubmitLeadRequest) (dto.LeadView, error) {
 	s.leads = append(s.leads, req)
 	return dto.LeadView{LeadID: "lead-1"}, nil
+}
+
+func (s *stubService) RecordTrackingEvent(_ context.Context, eventKey, _ string) error {
+	s.events = append(s.events, eventKey)
+	return nil
 }
 
 func newEngine(service galaxy.Service, options Options) *gin.Engine {
@@ -55,6 +61,7 @@ func TestPortalRoutesRegisterWithoutConflict(t *testing.T) {
 		"GET /api/galaxy/portal/overview",
 		"GET /api/galaxy/portal/models",
 		"GET /api/galaxy/portal/pricing",
+		"POST /api/galaxy/portal/events/open",
 		"POST /api/galaxy/portal/leads",
 	}
 	registered := map[string]bool{}
@@ -70,6 +77,17 @@ func TestPortalRoutesRegisterWithoutConflict(t *testing.T) {
 	// 公开前缀下面多一条接口，就是多一条不需要身份就能读的通道。
 	if len(engine.Routes()) != len(want) {
 		t.Errorf("门户面只应有 %d 条路由，实际 %d 条", len(want), len(engine.Routes()))
+	}
+}
+
+func TestPortalOpenUsesFixedEventKey(t *testing.T) {
+	service := &stubService{}
+	engine := newEngine(service, Options{})
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/galaxy/portal/events/open", nil))
+
+	if len(service.events) != 1 || service.events[0] != dto.TrackingEventPortalOpen {
+		t.Fatalf("官网入口必须固定记录 portal.open，实际 %v", service.events)
 	}
 }
 

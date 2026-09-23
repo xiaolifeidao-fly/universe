@@ -1,4 +1,4 @@
-use super::client::CompleteBody;
+use super::client::{CompleteBody, LeaseState};
 use super::runner::{Outcome, RunnerInner};
 use crate::business::{UnitCallbacks, UnitEvent, UnitIo, WorkUnit};
 use crate::config::schema::PoolExportConfig;
@@ -216,6 +216,28 @@ async fn execute(State(state): State<Arc<ExportState>>, headers: HeaderMap, body
             return response;
         }
     };
+
+    // export 也可能在校验与占位期间失租；上游连接前必须拿到 Hub 当下的肯定。
+    match state.runner.client.confirm_lease(&unit.id, &lease).await {
+        Ok(LeaseState::Valid) => {}
+        Ok(LeaseState::Cancelled) => {
+            state.runner.report_terminal(&unit.id, &CompleteBody {
+                lease, state: "cancelled".into(), ..Default::default()
+            }).await;
+            state.runner.finish_unit(slot).await;
+            return reject(&state, StatusCode::CONFLICT, "unit_cancelled", "单元已被取消");
+        }
+        Ok(LeaseState::Lost) => {
+            log_warn!("pool_lease_rejected_before_upstream", "unitId": unit.id);
+            state.runner.finish_unit(slot).await;
+            return reject(&state, StatusCode::CONFLICT, "lease_lost", "租约已失效");
+        }
+        Err(message) => {
+            log_warn!("pool_lease_check_failed", "unitId": unit.id, "message": message.clone());
+            state.runner.finish_unit(slot).await;
+            return reject(&state, StatusCode::SERVICE_UNAVAILABLE, "lease_check_failed", &message);
+        }
+    }
 
     let io = UnitIo {
         cancel: slot.cancel.clone(),
@@ -508,4 +530,3 @@ pub fn normalize_public_url(raw: &str) -> Result<String, String> {
     let path = parsed.path().trim_end_matches('/');
     Ok(format!("{origin}{path}"))
 }
-

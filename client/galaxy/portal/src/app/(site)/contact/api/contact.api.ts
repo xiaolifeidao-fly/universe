@@ -2,10 +2,10 @@
 
 /**
  * 「联系我们」的接口层。按仓库惯例，页面自带自己的 api/ ——
- * 门户只有这一条写接口，它就只归这一页。
+ * 留资只归这一页；官网打开埋点属于整个站点，放在路由组共用的 api/ 下。
  *
- * 打的是 /api/galaxy/portal/leads：那是服务端上唯一一条未鉴权就能写库的路由，
- * 限流、蜜罐与字段截断都在服务端做，这里只负责把话说清楚地送过去。
+ * 打的是 /api/galaxy/portal/leads：它会写入来访者填写的内容，
+ * 所以限流、蜜罐与字段截断都在服务端做，这里只负责把话说清楚地送过去。
  */
 
 import { instance, unwrapApiResponse, type ApiResponse } from "@/utils/axios";

@@ -1,6 +1,6 @@
 use super::client::{
     AccessDeclaration, CapabilityReport, CompleteBody, EnabledContribution, HeartbeatLane, HubClient,
-    HubFailure, HubLane, InstallInfo, LoginCommand, NextResult, ToolCommand,
+    HubFailure, HubLane, InstallInfo, LeaseState, LoginCommand, NextResult, ToolCommand,
 };
 use super::export::{normalize_public_url, resolve_secret, ExportServer};
 use super::hub_address::HubAddressCheck;
@@ -1278,6 +1278,14 @@ impl RunnerInner {
                 retryable: true, message: "单元不在本机任何贡献的申报范围内".into(),
             });
         };
+        // 检查与登记在同一把锁下，否则两个并发 dispatch 会同时通过。
+        let mut aborts = self.aborts.lock().unwrap();
+        if aborts.contains_key(&unit.id) {
+            return Err(UnitError {
+                class: ErrorClass::NodeFault, code: "unit_already_running".into(),
+                retryable: true, message: "相同工作单元已在本机执行".into(),
+            });
+        }
         if !lane.acquire(&unit.consumer_key) {
             return Err(UnitError {
                 class: ErrorClass::NodeFault, code: "capability_mismatch".into(),
@@ -1286,32 +1294,51 @@ impl RunnerInner {
         }
 
         let cancel = self.loop_cancel.child();
-        self.aborts
-            .lock()
-            .unwrap()
-            .insert(unit.id.clone(), Inflight { cancel: cancel.clone(), lease: lease.to_string() });
+        aborts.insert(unit.id.clone(), Inflight { cancel: cancel.clone(), lease: lease.to_string() });
+        drop(aborts);
         // 每个单元一个临时目录，结束后整个删掉：消费者的素材不该在主人机器上留过夜（约束 4）。
         let work_dir = std::env::temp_dir().join("ai-bridge-unit").join(&unit.id);
         // 续租心跳：job 可以跑两小时，租约只有 60 秒。不续的话 Hub 会判它跑丢了，
         // 把同一个任务派给另一台机器重跑一遍。
-        let renew_every = Duration::from_millis((renew_sec.unwrap_or(60) * 500).max(15_000));
+        let lease_ttl = Duration::from_secs(renew_sec.unwrap_or(60).max(1));
+        let renew_every = std::cmp::max(lease_ttl / 2, Duration::from_secs(1));
         let renew = {
             let client = Arc::clone(&self.client);
             let cancel = cancel.clone();
             let unit_id = unit.id.clone();
             let lease = lease.to_string();
             tokio::spawn(async move {
+                let mut last_confirmed = Instant::now();
                 loop {
                     tokio::select! {
                         biased;
                         () = cancel.cancelled() => return,
                         () = tokio::time::sleep(renew_every) => {}
                     }
-                    match client.progress(&unit_id, &lease, None, true).await {
+                    match client.confirm_lease(&unit_id, &lease).await {
                         // 取消搭在续租的响应里回来，不单独轮询（T-05）。
-                        Ok(true) => cancel.cancel(crate::core::errors::http_error(499, "hub_cancelled", "hub_cancelled")),
-                        Ok(false) => {}
-                        Err(message) => log_debug!("pool_renew_failed", "unitId": unit_id, "message": message),
+                        Ok(LeaseState::Cancelled) => {
+                            cancel.cancel(crate::core::errors::http_error(499, "hub_cancelled", "hub_cancelled"));
+                            return;
+                        }
+                        Ok(LeaseState::Lost) => {
+                            log_warn!("pool_lease_lost", "unitId": unit_id);
+                            cancel.cancel(crate::core::errors::http_error(409, "lease_lost", "租约已失效"));
+                            return;
+                        }
+                        Ok(LeaseState::Valid) => last_confirmed = Instant::now(),
+                        Err(message) => {
+                            log_debug!("pool_renew_failed", "unitId": unit_id, "message": message);
+                            // Hub 暂时不可达时允许一个租期的抖动；超过后就已无法
+                            // 证明所有权，必须停止上游，否则 Hub 改派后两边会同时执行。
+                            if last_confirmed.elapsed() >= lease_ttl {
+                                log_warn!("pool_lease_confirmation_expired", "unitId": unit_id);
+                                cancel.cancel(crate::core::errors::http_error(
+                                    409, "lease_lost", "超过一个租期未能确认租约",
+                                ));
+                                return;
+                            }
+                        }
                     }
                 }
             })
@@ -1348,6 +1375,11 @@ impl RunnerInner {
         let slot = match self.begin_unit(&unit, &lease, claimed.lease.renew_sec) {
             Ok(slot) => slot,
             Err(error) => {
+                // 新的重复派发不得用自己的租约把正在执行的原单元报成失败。
+                if error.code == "unit_already_running" {
+                    log_warn!("pool_duplicate_unit_ignored", "unitId": unit.id);
+                    return;
+                }
                 // 这两种失败发生在登记进 aborts 之前，stop() 根本看不见它们，
                 // 所以必须自己报 —— 不报的话 Hub 只能等时限到点。
                 self.client.complete(&unit.id, &CompleteBody {
@@ -1356,6 +1388,36 @@ impl RunnerInner {
                 return;
             }
         };
+        // 领取后可能经过排队或卡顿；真正碰上游前再同步验租。
+        // 无法证明租约有效时 fail closed，避免一份已改派的单元重复计费。
+        match self.client.confirm_lease(&unit.id, &lease).await {
+            Ok(LeaseState::Valid) => {}
+            Ok(LeaseState::Cancelled) => {
+                self.report_terminal(&unit.id, &CompleteBody {
+                    lease, state: "cancelled".into(), ..Default::default()
+                }).await;
+                self.finish_unit(slot).await;
+                return;
+            }
+            Ok(LeaseState::Lost) => {
+                log_warn!("pool_lease_rejected_before_upstream", "unitId": unit.id);
+                self.finish_unit(slot).await;
+                return;
+            }
+            Err(message) => {
+                log_warn!("pool_lease_check_failed", "unitId": unit.id, "message": message.clone());
+                self.report_terminal(&unit.id, &CompleteBody {
+                    lease, state: "failed".into(),
+                    error: Some(UnitError {
+                        class: ErrorClass::NodeFault, code: "lease_check_failed".into(),
+                        retryable: true, message,
+                    }),
+                    ..Default::default()
+                }).await;
+                self.finish_unit(slot).await;
+                return;
+            }
+        }
         let lane = Arc::clone(&slot.lane);
         self.run_unit(&claimed, &lane, slot.cancel.clone(), slot.work_dir.clone(), slot.started).await;
         self.finish_unit(slot).await;
@@ -1368,6 +1430,15 @@ impl RunnerInner {
     /// （不在申报范围、通道已满）stop() 根本看不见，它们必须自己报。
     pub(crate) async fn report_terminal(&self, unit_id: &str, body: &CompleteBody) {
         if self.stopping.load(Ordering::Relaxed) {
+            return;
+        }
+        // 明确失租后只做本地收尾，不再用已失效的所有权报终态。
+        let lease_lost = self.aborts.lock().unwrap().get(unit_id)
+            .map(|inflight| inflight.cancel.is_cancelled()
+                && inflight.cancel.reason().code == "lease_lost")
+            .unwrap_or(false);
+        if lease_lost {
+            log_debug!("pool_terminal_skipped_after_lease_loss", "unitId": unit_id);
             return;
         }
         self.client.complete(unit_id, body).await;

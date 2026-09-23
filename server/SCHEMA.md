@@ -92,6 +92,7 @@ Galaxy 把订阅用户的闲置算力汇聚成公共共享池，由平台统一�
 | `zt_galaxy_bridge_release` | 已发布的 ai-bridge 安装包（一个版本一个平台一行）。字节在 OSS，这里只有 sha256 与 Ed25519 发布签名；节点只装验得过签名的包，下架不删行 |
 | `zt_galaxy_provider_referral` | 共享端的邀请码与邀请人。和使用端的 `zt_galaxy_referral` 是两张表、两套码：两端是两批人，码混在一个命名空间里会「查得到但返错人」 |
 | `zt_galaxy_usage_rollup` | 管理端仪表盘的**按小时用量汇总**，`(小时桶, 类别, 计量单位)` 一行。**派生数据**：量来自 `meter_record`、钱来自两本账、类别由 `unit` 行上的模型推 —— 整表删掉也不丢账，下次读到哪个小时就重算哪个小时。每个算过的小时都有一行**类别与单位都是空串的标记行**，哪怕那个小时没有量；没有它就分不出「没有量」和「还没算过」。Hub 巡检与仪表盘读取都会写，两边写的是同一份绝对值、按唯一键整行覆盖，所以并发与重复都安全 |
+| `zt_galaxy_tracking_daily` | 官网打开与 Orbit 模型广场点击的**按日汇总埋点**。唯一键是 `(biz_line, event_date, event_key, target_key)`，数据库原子累加；模型点击的 `target_key` 是 `model_id`，官网打开为空。只保留运营所需的日期、位置、目标与次数，不保存 IP、账号或 UA 等逐条访客身份 |
 | `zt_galaxy_desktop_release` | 桌面客户端（Nova / Orbit）的发版记录，一个端 × 一个平台通道 × 一个版本一行。存的是要写到 OSS 上的 `latest-*.yml` **原文**；没有 sha256 与发布签名 —— 包一百多兆，字节不经服务端（浏览器拿签名地址直传），校验值在清单里。客户端走 electron-updater 直接读 OSS，不打服务端任何接口 |
 
 **建表：** 两条路等价。`cd server/galaxy-api && go run ./cmd/galaxyinit` 走 AutoMigrate，

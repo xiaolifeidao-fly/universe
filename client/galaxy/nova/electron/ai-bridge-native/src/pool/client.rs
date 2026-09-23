@@ -728,6 +728,30 @@ impl HubClient {
         Ok(payload.get("cancelRequested").and_then(Value::as_bool).unwrap_or(false))
     }
 
+    /// 上游调用前同步续租。失租是 Hub 的明确否定，与临时网络错误分开表达。
+    pub async fn confirm_lease(&self, unit_id: &str, lease: &str) -> Result<LeaseState, String> {
+        let response = self
+            .request(&format!("/agent/v1/units/{unit_id}/progress"))
+            .json(&json!({ "lease": lease, "renew": true }))
+            .send()
+            .await
+            .map_err(|e| e.without_url().to_string())?;
+        let status = response.status().as_u16();
+        let payload = read_json(response).await;
+        // 404 = 单元不存在，409/410 = 租约已收回或单元已终止。
+        if matches!(status, 404 | 409 | 410) {
+            return Ok(LeaseState::Lost);
+        }
+        if !(200..300).contains(&status) {
+            return Err(message_of(&payload).unwrap_or_else(|| format!("Hub 返回 {status}")));
+        }
+        if payload.get("cancelRequested").and_then(Value::as_bool).unwrap_or(false) {
+            Ok(LeaseState::Cancelled)
+        } else {
+            Ok(LeaseState::Valid)
+        }
+    }
+
     /// 报一次升级进度（契约 3.3）。返回 Hub 认不认这条指令。
     ///
     /// id 对不上（过期的指令）Hub 也回 200，只是 accepted=false —— 那不是网络错误，
@@ -821,6 +845,13 @@ impl HubClient {
 pub struct StreamOutcome {
     pub ok: bool,
     pub consumer_gone: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseState {
+    Valid,
+    Cancelled,
+    Lost,
 }
 
 async fn read_json(response: reqwest::Response) -> Value {

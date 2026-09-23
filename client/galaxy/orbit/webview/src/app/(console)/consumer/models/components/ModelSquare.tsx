@@ -28,6 +28,7 @@ import { formatBps, formatCompact, formatDiscount, formatPoints } from "@/utils/
 import {
   fetchCatalog,
   fetchPoints,
+  recordModelSquareClick,
   type ConsumerModelView,
   type ModelGroupPrice,
   type PointsSummary,
@@ -128,6 +129,15 @@ export function ModelSquare() {
     [rows, activeVendor],
   );
 
+  const toggleModel = useCallback((modelId: string) => {
+    const opening = expanded !== modelId;
+    setExpanded(opening ? modelId : "");
+    if (opening) {
+      // 埋点不能拖住展开动画；失败也不该把一个正常点击变成错误提示。
+      void recordModelSquareClick(modelId).catch(() => undefined);
+    }
+  }, [expanded]);
+
   const header = (
     <PageHeader
       title={t("models.title")}
@@ -204,7 +214,7 @@ export function ModelSquare() {
                         key={model.modelId}
                         model={model}
                         open={expanded === model.modelId}
-                        onToggle={() => setExpanded(expanded === model.modelId ? "" : model.modelId)}
+                        onToggle={() => toggleModel(model.modelId)}
                       />
                     ))
                   )}

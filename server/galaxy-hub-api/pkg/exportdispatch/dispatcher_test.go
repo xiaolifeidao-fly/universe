@@ -33,6 +33,7 @@ type fakeGalaxy struct {
 	health    []string
 	results   int
 	abandoned []string
+	fallbacks []string
 }
 
 func (f *fakeGalaxy) Config() galaxy.Config { return galaxy.DefaultConfig() }
@@ -62,6 +63,13 @@ func (f *fakeGalaxy) Abandon(_ context.Context, unitID, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.abandoned = append(f.abandoned, unitID)
+	return nil
+}
+
+func (f *fakeGalaxy) EnableHardPinFallback(_ context.Context, cid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fallbacks = append(f.fallbacks, cid)
 	return nil
 }
 
@@ -154,6 +162,59 @@ func TestPushRefusesAResponseThatDoesNotIdentifyTheNode(t *testing.T) {
 	}
 	if len(service.health) != 1 || !strings.HasPrefix(service.health[0], "unreachable|") {
 		t.Fatalf("要把「地址后面不是本机节点」记给主人看：%v", service.health)
+	}
+}
+
+// NAT / 反代刚切过后端时，连接池可能短暂复用到另一节点。对方以 401 拒绝说明
+// 单元肯定还没执行，此时用新连接重试既能自愈，也不会重复碰上游。
+func TestPushRetriesRejectedIdentityMismatchOnAFreshConnection(t *testing.T) {
+	service := &fakeGalaxy{}
+	exchange := corepkg.NewExchange()
+	writer := &recordingWriter{}
+	exchange.Open("u_1", writer, nil)
+	var calls atomic.Int32
+	target := startNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("X-Galaxy-Node", "n_other")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("X-Galaxy-Node", "n_export")
+		_, _ = w.Write([]byte("data: recovered\n\n"))
+	})
+
+	New(service, exchange, nil).push(context.Background(), target, claimed("u_1"))
+
+	if calls.Load() != 2 {
+		t.Fatalf("身份错位且未执行时应换新连接重试一次，实际请求 %d 次", calls.Load())
+	}
+	if writer.body.String() != "data: recovered\n\n" || writer.aborted != nil {
+		t.Fatalf("重试成功后应正常回流：body=%q aborted=%v", writer.body.String(), writer.aborted)
+	}
+	if len(service.failed) != 0 || strings.Join(service.health, ",") != "ok|" {
+		t.Fatalf("自愈成功不应留下失败结论：failed=%v health=%v", service.failed, service.health)
+	}
+}
+
+func TestPushExplainsPersistentIdentityMismatchForHardPinnedConversation(t *testing.T) {
+	service := &fakeGalaxy{}
+	exchange := corepkg.NewExchange()
+	writer := &recordingWriter{}
+	exchange.Open("u_1", writer, nil)
+	target := startNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Galaxy-Node", "n_other")
+		_, _ = w.Write([]byte("wrong node"))
+	})
+	unit := claimed("u_1")
+	unit.Unit["hardPin"] = "c_old"
+
+	New(service, exchange, nil).push(context.Background(), target, unit)
+
+	if len(service.failed) != 1 || !strings.Contains(service.failed[0].Message, "自动改派") {
+		t.Fatalf("硬绑定会话应自动解除旧节点绑定：%v", service.failed)
+	}
+	if strings.Join(service.fallbacks, ",") != "c_old" {
+		t.Fatalf("应登记旧贡献允许迁移，实际 %v", service.fallbacks)
 	}
 }
 

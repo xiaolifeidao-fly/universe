@@ -6,12 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"contract"
 	"service/galaxy/dto"
 	"service/galaxy/internal/repository"
 )
+
+const hardPinFallbackTTL = 24 * time.Hour
+
+type hardPinFallbacks struct {
+	sync.Mutex
+	until map[string]time.Time
+}
 
 // 通道层：放置 → 领活 → 上行 → 终态。这个文件里没有任何业务语义，
 // 它只处理三种原语共用的状态机与失败语义（设计文档 1.3 与 6.2）。
@@ -31,6 +39,15 @@ func (s *service) Submit(ctx context.Context, unit contract.WorkUnit) (Placement
 			fmt.Sprintf("能力 %s 未注册", contract.KindRef(unit.Kind, unit.KindVersion)))
 	}
 	now := time.Now()
+	// Responses 请求带着完整上下文；previous_response_id 只是优先回原贡献的加速线索。
+	// 原贡献的公网入口已经回到另一节点时，继续硬钉只会让同一个旧会话永久 502。
+	// 只有 Dispatcher 明确观测到身份错位后才走这里：删掉上游账号相关的 response id，
+	// 保留完整 input，随后按普通请求重新选择任意可用贡献。
+	if unit.HardPin != "" && s.hardPinFallbackEnabled(unit.HardPin, now) {
+		if detachPreviousResponse(&unit) {
+			unit.HardPin = ""
+		}
+	}
 	if unit.ID == "" {
 		unit.ID = "u_" + NewULID(now)
 	}
@@ -104,6 +121,66 @@ func (s *service) Submit(ctx context.Context, unit contract.WorkUnit) (Placement
 	}
 	_ = s.markUnitFailed(ctx, unit.ID, contract.NewUnitError(contract.ErrorClassHub, contract.CodeNoCapacity, true, "共享池暂无可用算力"))
 	return Placement{}, contract.NewUnitError(contract.ErrorClassHub, contract.CodeNoCapacity, true, "共享池暂无可用算力，请稍后重试")
+}
+
+// EnableHardPinFallback 由 export 派单器在「期望节点 A，公网入口实际回到节点 B」时调用。
+// 不立即改 Redis 的 response → cid 映射：当前请求已经解析完路由，下一次 Submit 仍会带
+// 原 cid；这份短期表正好同时覆盖当前请求的内部改派和客户端随后发来的下一条消息。
+func (s *service) EnableHardPinFallback(_ context.Context, cid string) error {
+	if cid == "" {
+		return nil
+	}
+	if s.hardPinFallbacks == nil {
+		s.hardPinFallbacks = &hardPinFallbacks{until: map[string]time.Time{}}
+	}
+	s.hardPinFallbacks.Lock()
+	s.hardPinFallbacks.until[cid] = time.Now().Add(hardPinFallbackTTL)
+	s.hardPinFallbacks.Unlock()
+	return nil
+}
+
+func (s *service) hardPinFallbackEnabled(cid string, now time.Time) bool {
+	if s.hardPinFallbacks == nil || cid == "" {
+		return false
+	}
+	s.hardPinFallbacks.Lock()
+	defer s.hardPinFallbacks.Unlock()
+	until, ok := s.hardPinFallbacks.until[cid]
+	if !ok {
+		return false
+	}
+	if now.Before(until) {
+		return true
+	}
+	delete(s.hardPinFallbacks.until, cid)
+	return false
+}
+
+// detachPreviousResponse 把上游账号相关的链式 id 摘掉，完整 input 保持不变。
+// body 在 relay Parse 时已经验证是 JSON；解析失败时 fail closed，继续保留硬钉，
+// 不能把一份自己没看懂的请求冒然改派给别的提供者。
+func detachPreviousResponse(unit *contract.WorkUnit) bool {
+	for index := range unit.Inputs {
+		input := &unit.Inputs[index]
+		if input.Name != "body" || input.Ref != nil {
+			continue
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(input.Inline, &body); err != nil {
+			return false
+		}
+		if _, ok := body["previous_response_id"]; !ok {
+			return true
+		}
+		delete(body, "previous_response_id")
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return false
+		}
+		input.Inline = encoded
+		return true
+	}
+	return false
 }
 
 // placeTrace 记这次放置走了哪条路、用了几次 Redis。

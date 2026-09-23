@@ -1024,3 +1024,23 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_usage_rollup` (
   PRIMARY KEY (`id`),
   UNIQUE INDEX `uk_gx_usage_rollup` (`biz_line`,`stat_hour`,`category`,`unit`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- -------------------------------------------------------------------------
+-- 9. 官网与模型广场埋点的日汇总
+-- 只存日期、位置、目标和次数，不保存逐条访客身份。模型点击保留 model_id，官网打开
+-- 的目标为空；数据库原子累加，两个并发点击不会互相覆盖。
+-- -------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `zt_galaxy_tracking_daily` (
+  `id`           bigint AUTO_INCREMENT,
+  `biz_line`     varchar(32),
+  `event_date`   date,                                                -- 服务端本地时区统计日期
+  `event_key`    varchar(48),                                         -- portal.open / model_square.model_click
+  `target_key`   varchar(96),                                         -- 模型 ID；官网打开为空串
+  `count`        bigint,                                              -- 触发次数
+  `created_time` datetime(3) NULL,
+  `updated_time` datetime(3) NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `uk_gx_tracking_daily` (`biz_line`,`event_date`,`event_key`,`target_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

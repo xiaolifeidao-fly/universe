@@ -48,6 +48,8 @@ func models() []any {
 		&GalaxyBridgeRelease{}, &GalaxyDesktopRelease{}, &GalaxyProviderReferral{},
 		// 管理端仪表盘的按小时用量汇总。派生数据，删了能重算
 		&GalaxyUsageRollup{},
+		// 官网与模型广场的埋点日汇总。它是原始计数，不是可重算缓存
+		&GalaxyTrackingDaily{},
 	}
 }
 

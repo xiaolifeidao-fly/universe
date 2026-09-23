@@ -57,6 +57,12 @@ func (s *service) AdminDashboard(ctx context.Context) (dto.AdminDashboard, error
 	}
 	view.Revenue = revenue
 
+	tracking, err := s.dashboardTracking(ctx, dayStart)
+	if err != nil {
+		return view, err
+	}
+	view.Tracking = tracking
+
 	capacity, err := s.dashboardCapacity(ctx, presence, now)
 	if err != nil {
 		return view, err

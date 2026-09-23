@@ -805,6 +805,12 @@ export async function fetchCatalog() {
   return getData(ConsumerCatalog, "/galaxy/consumer/catalog");
 }
 
+/** 模型广场只在展开模型时调用；收起不算一次新的兴趣点击。 */
+export async function recordModelSquareClick(modelId: string): Promise<void> {
+  const response = await instance.post<ApiResponse<null>>("/galaxy/consumer/events/model-click", { modelId });
+  unwrapApiResponse(response.data);
+}
+
 export async function fetchPoints() {
   return getData(PointsSummary, "/galaxy/consumer/points");
 }

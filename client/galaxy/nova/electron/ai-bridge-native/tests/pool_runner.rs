@@ -11,7 +11,7 @@ use axum::routing::post;
 use axum::Router;
 use base64::Engine;
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -30,6 +30,9 @@ struct HubState {
     heartbeats: Mutex<Vec<Value>>,
     /// 要搭在心跳响应上下发的工具指令。
     tool_command: Mutex<Option<Value>>,
+    /// progress 的响应码；0 表示正常 200。
+    progress_status: AtomicU16,
+    progress_calls: AtomicUsize,
 }
 
 async fn start_hub(state: Arc<HubState>) -> String {
@@ -74,7 +77,16 @@ async fn start_hub(state: Arc<HubState>) -> String {
             }
             axum::Json(json!({ "ok": true }))
         }))
-        .route("/agent/v1/units/{unit}/progress", post(|| async { axum::Json(json!({ "cancelRequested": false })) }))
+        .route("/agent/v1/units/{unit}/progress", post(|State(state): State<Arc<HubState>>| async move {
+            state.progress_calls.fetch_add(1, Ordering::SeqCst);
+            let status = state.progress_status.load(Ordering::SeqCst);
+            if status == 0 || status == 200 {
+                axum::Json(json!({ "cancelRequested": false })).into_response()
+            } else {
+                (axum::http::StatusCode::from_u16(status).unwrap(),
+                    axum::Json(json!({ "message": "租约已失效" }))).into_response()
+            }
+        }))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -112,6 +124,7 @@ fn enabled_lane(seats: u32, groups: Vec<&str>) -> Value {
 struct Harness {
     hub: Arc<HubState>,
     runner: ai_bridge_native::pool::runner::PoolRunner,
+    upstream_calls: Arc<AtomicUsize>,
     _dir: tempfile::TempDir,
 }
 
@@ -120,13 +133,19 @@ async fn harness(upstream_status: u16, enabled: Value, unit: Option<Value>) -> H
     let dir = tempfile::tempdir().unwrap();
 
     let response = "data: {\"ok\":true}\n\n".to_string();
+    let upstream_calls = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&upstream_calls);
     let origin = common::start_plain_upstream(move |req| {
         let response = response.clone();
+        let counted = Arc::clone(&counted);
         async move {
             // 模型清单端点在这条链路上无关紧要：拿不到就降级成空清单。
             if req.uri.path().ends_with("/models") {
                 return axum::http::StatusCode::NOT_FOUND.into_response();
             }
+            counted.fetch_add(1, Ordering::SeqCst);
+            // 拉长一点回合，让并发重复派发在测试里稳定重现。
+            tokio::time::sleep(Duration::from_millis(100)).await;
             (
                 axum::http::StatusCode::from_u16(upstream_status).unwrap(),
                 [("content-type", "text/event-stream"), ("retry-after", "300"), ("request-id", "req_up")],
@@ -160,8 +179,10 @@ async fn harness(upstream_status: u16, enabled: Value, unit: Option<Value>) -> H
     .expect("pool 配置");
 
     let http = reqwest::Client::builder().no_proxy().build().unwrap();
-    let runner = create_pool_runner(cfg, Env::default(), "test".into(), http).await.expect("建运行循环");
-    Harness { hub: hub_state, runner, _dir: dir }
+    let env = Env::from_pairs([("AI_BRIDGE_RUNTIME_DIR",
+        dir.path().join("runtime").to_string_lossy().into_owned())]);
+    let runner = create_pool_runner(cfg, env, "test".into(), http).await.expect("建运行循环");
+    Harness { hub: hub_state, runner, upstream_calls, _dir: dir }
 }
 
 fn unit_with_hub(mut unit: Value, hub: &str) -> Value {
@@ -214,6 +235,35 @@ async fn a_claimed_unit_is_relayed_upstream_and_streamed_back_byte_for_byte() {
     assert_eq!(completed[0]["state"], json!("completed"));
     assert_eq!(completed[0]["lease"], json!("lease_1"));
     assert!(completed[0].get("error").is_none());
+    h.runner.stop().await;
+}
+
+#[tokio::test]
+async fn an_expired_lease_is_rejected_before_the_upstream_is_called() {
+    let h = harness(200, enabled_lane(1, vec![]), Some(work_unit("", None))).await;
+    h.hub.progress_status.store(409, Ordering::SeqCst);
+    h.runner.start().await.expect("hello");
+
+    wait_for("租约预检", || h.hub.progress_calls.load(Ordering::SeqCst) > 0).await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(h.upstream_calls.load(Ordering::SeqCst), 0, "失效租约不能产生任何上游请求");
+    assert!(h.hub.completed.lock().unwrap().is_empty(), "已被 Hub 否定的租约不再报终态");
+    h.runner.stop().await;
+}
+
+#[tokio::test]
+async fn duplicate_inflight_units_only_touch_the_upstream_once() {
+    let h = harness(200, enabled_lane(2, vec![]), Some(work_unit("", None))).await;
+    {
+        let mut pending = h.hub.pending.lock().unwrap();
+        let duplicate = pending[0].clone();
+        pending.push(duplicate);
+    }
+    h.runner.start().await.expect("hello");
+
+    wait_for("唯一执行报终态", || !h.hub.completed.lock().unwrap().is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(h.upstream_calls.load(Ordering::SeqCst), 1, "同一 id 并发派发不能重复执行");
     h.runner.stop().await;
 }
 

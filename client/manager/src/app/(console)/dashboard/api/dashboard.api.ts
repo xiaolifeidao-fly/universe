@@ -146,6 +146,22 @@ export class DashboardCapacity {
   stale = false;
 }
 
+export class DashboardTrackingDay {
+  date = "";
+
+  portalOpens = 0;
+
+  modelSquareClicks = 0;
+}
+
+export class DashboardTracking {
+  from = "";
+
+  to = "";
+
+  days: DashboardTrackingDay[] = [];
+}
+
 export class AdminDashboard {
   generatedAt = "";
 
@@ -162,6 +178,8 @@ export class AdminDashboard {
   revenue: DashboardRevenue = new DashboardRevenue();
 
   capacity: DashboardCapacity = new DashboardCapacity();
+
+  tracking: DashboardTracking = new DashboardTracking();
 
   /** 取不到的那几块。取不到就说取不到，不显示成 0。 */
   degraded: string[] = [];

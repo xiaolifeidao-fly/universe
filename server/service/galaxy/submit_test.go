@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +180,7 @@ type fakePlane struct {
 	released bool
 	// busyUntil 之前读到的快照并发都是满的。
 	busyUntil time.Time
+	placed    PlaceCommand
 }
 
 func (f *fakePlane) read(snapshot ContributionSnapshot) ContributionSnapshot {
@@ -214,8 +216,42 @@ func (f *fakePlane) ListLaneContributions(context.Context, string) ([]Contributi
 	return snapshots, nil
 }
 
-func (f *fakePlane) Place(context.Context, PlaceCommand) (PlaceOutcome, error) {
+func (f *fakePlane) Place(_ context.Context, command PlaceCommand) (PlaceOutcome, error) {
+	f.placed = command
 	return PlaceOutcome{Placed: true}, nil
+}
+
+func TestSubmitMigratesPortableHardPinAfterEndpointIdentityMismatch(t *testing.T) {
+	now := time.Now()
+	target := healthy("n_new:relay_codex", now)
+	plane := &fakePlane{lane: []ContributionSnapshot{target}}
+	service := submitService(t, plane)
+	if err := service.EnableHardPinFallback(context.Background(), "n_old:relay_codex"); err != nil {
+		t.Fatalf("登记旧会话迁移失败：%v", err)
+	}
+	unit := relayUnit()
+	unit.HardPin = "n_old:relay_codex"
+	unit.Inputs = []contract.Payload{{
+		Name: "body", ContentType: "application/json",
+		Inline: []byte(`{"model":"gpt-test","previous_response_id":"resp_old","input":[{"role":"user","content":"继续"}]}`),
+	}}
+
+	placement, err := service.Submit(context.Background(), unit)
+	if err != nil {
+		t.Fatalf("旧会话应解除硬钉并自动改派：%v", err)
+	}
+	if placement.CID != target.CID {
+		t.Fatalf("旧会话应迁移到可用贡献，实际 %q", placement.CID)
+	}
+	if plane.placed.CID != target.CID {
+		t.Fatalf("控制面应收到新贡献，实际 %+v", plane.placed)
+	}
+	if strings.Contains(string(plane.placed.Body), "previous_response_id") {
+		t.Fatalf("跨提供者改派前必须摘掉账号相关 response id：%s", plane.placed.Body)
+	}
+	if !strings.Contains(string(plane.placed.Body), "继续") {
+		t.Fatalf("完整上下文必须保留：%s", plane.placed.Body)
+	}
 }
 
 // discardDriver 一个什么都不存的库：写一律成功，查一律空结果。

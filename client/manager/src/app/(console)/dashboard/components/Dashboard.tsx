@@ -9,6 +9,7 @@ import {
   fetchDashboard,
   type AdminDashboard,
   type DashboardCapacityWindow,
+  type DashboardTrackingDay,
   type DashboardUsageCategory,
 } from "../api/dashboard.api";
 import { formatClock, formatCompact, formatExact, formatMoney } from "./format";
@@ -83,12 +84,63 @@ export function Dashboard() {
       {data ? (
         <>
           <KpiRow data={data} />
+          <TrackingSection tracking={data.tracking} />
           <UsageSection usage={data.usage} />
           <CapacitySection data={data} />
           <RevenueSection data={data} />
         </>
       ) : null}
     </div>
+  );
+}
+
+/* ---------- 用户行为埋点 ---------- */
+
+function TrackingSection({ tracking }: { tracking: AdminDashboard["tracking"] }) {
+  const { t } = useLocale();
+  const days = tracking.days ?? [];
+  const portalTotal = days.reduce((sum, day) => sum + day.portalOpens, 0);
+  const modelTotal = days.reduce((sum, day) => sum + day.modelSquareClicks, 0);
+  const columns: ColumnsType<DashboardTrackingDay> = [
+    {
+      title: t("dashboard.tracking.date"),
+      dataIndex: "date",
+      render: (value: string) => <span className="manager-mono">{value}</span>,
+    },
+    {
+      title: t("dashboard.tracking.portalOpens"),
+      dataIndex: "portalOpens",
+      align: "right",
+      render: (value: number) => <span className="manager-mono">{formatExact(value)}</span>,
+    },
+    {
+      title: t("dashboard.tracking.modelClicks"),
+      dataIndex: "modelSquareClicks",
+      align: "right",
+      render: (value: number) => <span className="manager-mono">{formatExact(value)}</span>,
+    },
+  ];
+
+  return (
+    <section className="manager-data-card">
+      <SectionTitle
+        title={t("dashboard.tracking.title")}
+        hint={t("dashboard.tracking.hint", { from: tracking.from || "—", to: tracking.to || "—" })}
+      />
+      <Space size={[32, 12]} wrap style={{ marginBottom: 12 }}>
+        <Metric label={t("dashboard.tracking.portalTotal")} value={formatExact(portalTotal)} />
+        <Metric label={t("dashboard.tracking.modelTotal")} value={formatExact(modelTotal)} />
+      </Space>
+      <Table<DashboardTrackingDay>
+        rowKey="date"
+        size="small"
+        pagination={false}
+        columns={columns}
+        dataSource={[...days].reverse()}
+        locale={{ emptyText: t("dashboard.tracking.empty") }}
+        scroll={{ y: 420 }}
+      />
+    </section>
   );
 }
 

@@ -35,6 +35,7 @@ func TestConsoleRoutesRegisterWithoutConflict(t *testing.T) {
 		"POST /api/galaxy/consumer/disputes",
 		"POST /api/galaxy/consumer/disputes/:disputeId/withdraw",
 		"GET /api/galaxy/consumer/catalog",
+		"POST /api/galaxy/consumer/events/model-click",
 		"GET /api/galaxy/consumer/points",
 		"GET /api/galaxy/consumer/points/ledger",
 		"GET /api/galaxy/consumer/referral",
