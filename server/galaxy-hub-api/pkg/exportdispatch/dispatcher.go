@@ -386,7 +386,10 @@ func (d *Dispatcher) push(ctx context.Context, target galaxy.ExportTarget, claim
 		d.recordHealth(ctx, target.NodeID, "unreachable",
 			"这个地址后面不是本机节点，请核对公网地址与端口映射", false)
 		message := "回连到的不是这台节点，已放弃这次派单"
-		if cid := hardPinOf(claimed.Unit); cid != "" {
+		// 只有对方明确回 401/403 才能证明单元尚未执行。另一节点若回 2xx，
+		// 说明它可能已经碰过上游；此时不能自动迁移重跑，避免重复请求。
+		cid := hardPinOf(claimed.Unit)
+		if (response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) && cid != "" {
 			if err := d.galaxy.EnableHardPinFallback(ctx, cid); err == nil {
 				message = "原节点回连身份错位，已解除旧会话节点绑定并自动改派"
 			}

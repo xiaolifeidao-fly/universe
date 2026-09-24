@@ -84,6 +84,16 @@ export function Dashboard() {
       {data ? (
         <>
           <KpiRow data={data} />
+          {data.requests ? (
+            <section className="manager-data-card">
+              <SectionTitle title={t("dashboard.requests.title")} hint={t("dashboard.requests.hint")} />
+              <Space size={[32, 12]} wrap>
+                {(["total", "completed", "failed", "cancelled", "expired", "pending"] as const).map((state) => (
+                  <Metric key={state} label={t(`dashboard.requests.${state}`)} value={formatExact(data.requests![state])} />
+                ))}
+              </Space>
+            </section>
+          ) : null}
           <TrackingSection tracking={data.tracking} />
           <UsageSection usage={data.usage} />
           <CapacitySection data={data} />
@@ -179,7 +189,12 @@ function KpiRow({ data }: { data: AdminDashboard }) {
       label: t("dashboard.kpi.tokens"),
       value: formatCompact(usage.total.tokens),
       exact: formatExact(usage.total.tokens),
-      hint: t("dashboard.kpi.calls", { count: formatExact(usage.total.calls) }),
+      hint: data.requests ? t("dashboard.kpi.calls", { count: formatExact(data.requests.completed) }) : undefined,
+      extra: `${t("dashboard.kpi.tokenBreakdown", {
+        input: formatCompact(usage.total.tokenBuckets?.input ?? 0),
+        output: formatCompact(usage.total.tokenBuckets?.output ?? 0),
+        cache: formatCompact((usage.total.tokenBuckets?.cacheRead ?? 0) + (usage.total.tokenBuckets?.cacheWrite ?? 0)),
+      })}`,
     },
     {
       key: "income",
@@ -221,6 +236,7 @@ function KpiRow({ data }: { data: AdminDashboard }) {
             </Space>
           </Tooltip>
           <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{card.hint}</span>
+          {card.extra ? <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{card.extra}</span> : null}
         </section>
       ))}
     </div>

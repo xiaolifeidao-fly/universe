@@ -81,8 +81,12 @@ func Build(database *gorm.DB, registry *galaxy.KindRegistry, replayer galaxy.Sha
 // 那种值会让 account 里每一处 `guard == nil` 的判断都落空，闸看起来装上了，
 // 一调就是空指针。
 func Accounts(database *gorm.DB, keys account.KeyIssuer, control *redisctl.ControlPlane) (account.Service, *auth.Gate) {
+	var registrationGift account.RegistrationGiftIssuer
+	if issuer, ok := keys.(account.RegistrationGiftIssuer); ok {
+		registrationGift = issuer
+	}
 	options := account.Options{
-		TokenSecret: TokenSecret(), TokenTTL: TokenTTL(), Keys: keys,
+		TokenSecret: TokenSecret(), TokenTTL: TokenTTL(), Keys: keys, RegistrationGift: registrationGift,
 		MaxLoginFail:      signedProperty("galaxy.max_login_fail"),
 		MaxLoginFailPerIP: signedProperty("galaxy.max_login_fail_per_ip"),
 		LoginFailWindow:   DurationProperty("galaxy.login_fail_window_ms", 0),

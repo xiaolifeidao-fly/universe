@@ -300,12 +300,12 @@ func (s billingStmt) Query([]driver.Value) (driver.Rows, error) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	s.db.queries = append(s.db.queries, s.query)
-	from := strings.Index(s.query, " FROM `")
+	from := strings.Index(s.query, " FROM ")
 	if from < 0 {
 		return &billingRows{}, nil
 	}
-	rest := s.query[from+len(" FROM `"):]
-	table := rest[:strings.Index(rest, "`")]
+	rest := strings.Fields(s.query[from+len(" FROM "):])
+	table := strings.Trim(rest[0], "`")
 	return &billingRows{columns: s.db.columns[table], rows: s.db.tables[table]}, nil
 }
 

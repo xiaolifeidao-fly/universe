@@ -1,7 +1,7 @@
 "use client";
 
 import { ReloadOutlined, UndoOutlined } from "@ant-design/icons";
-import { Alert, Button, Input, InputNumber, Popconfirm, Space, Table, Tag, Tooltip, Typography, message } from "antd";
+import { Alert, Button, Input, InputNumber, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
@@ -48,20 +48,23 @@ const GROUPS: { key: string; labelKey: TranslationKey }[] = [
   { key: "risk", labelKey: "galaxy.setting.group.risk" },
   { key: "payout", labelKey: "galaxy.setting.group.payout" },
   { key: "referral", labelKey: "galaxy.setting.group.referral" },
+  { key: "registration", labelKey: "galaxy.setting.group.registration" },
   { key: "compliance", labelKey: "galaxy.setting.group.compliance" },
 ];
 
 /** 库里的字符串 → 界面上填的数。 */
-function toDisplay(row: SettingView): number | string {
+function toDisplay(row: SettingView): number | string | boolean {
   if (row.kind === "text") return row.value;
+  if (row.kind === "bool") return row.value === "true";
   const raw = Number(row.value);
   if (Number.isNaN(raw)) return row.value;
   return raw / scaleOf(row);
 }
 
 /** 界面上填的数 → 库里的字符串。换算过的取整 —— 半个毫秒、半个微积分都没有意义。 */
-function toStored(row: SettingView, value: number | string): string {
+function toStored(row: SettingView, value: number | string | boolean): string {
   if (row.kind === "text") return String(value);
+  if (row.kind === "bool") return value === true ? "true" : "false";
   const raw = Number(value);
   if (Number.isNaN(raw)) return String(value);
   const scale = scaleOf(row);
@@ -89,7 +92,7 @@ export function SettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
   // 正在编辑的那些：键 → 界面上填的值。没在里面的跟着服务端走。
-  const [drafts, setDrafts] = useState<Record<string, number | string>>({});
+  const [drafts, setDrafts] = useState<Record<string, number | string | boolean>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,6 +157,15 @@ export function SettingsPanel() {
               value={String(draft)}
               maxLength={200}
               onChange={(event) => setDrafts((prev) => ({ ...prev, [row.key]: event.target.value }))}
+            />
+          );
+        }
+        if (row.kind === "bool") {
+          return (
+            <Switch
+              disabled={!canWrite}
+              checked={Boolean(draft)}
+              onChange={(checked) => setDrafts((prev) => ({ ...prev, [row.key]: checked }))}
             />
           );
         }

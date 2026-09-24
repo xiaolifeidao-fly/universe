@@ -67,12 +67,20 @@ type KeyIssuer interface {
 	IssueRegistrationKey(ctx context.Context, ownerUserID string) (dto.IssuedKeyView, error)
 }
 
+// RegistrationGiftIssuer 负责在使用端注册完成后发放活动积分。
+// 账号服务只依赖这个最小接口，活动规则仍由 galaxy 账务服务统一判断。
+type RegistrationGiftIssuer interface {
+	GrantRegistrationGift(ctx context.Context, ownerUserID string) error
+}
+
 // Options 令牌参数。只做运营的装配方（manager-api）不签发也不校验令牌，可以留空。
 type Options struct {
 	TokenSecret string
 	TokenTTL    time.Duration
 	// Keys 注册即送那把密钥的签发方。留空就只建账号，不送密钥。
 	Keys KeyIssuer
+	// RegistrationGift 注册赠送积分的账务方。留空表示不启用该活动。
+	RegistrationGift RegistrationGiftIssuer
 
 	// Guard 连续登录失败的计数闸。**留空就不限制** —— 只做运营那一半的装配方
 	// （manager-api）根本不暴露登录接口，给它一个计数器没有意义。
@@ -101,10 +109,11 @@ const (
 )
 
 type service struct {
-	repository  *repository.GalaxyRepository
-	tokenSecret string
-	tokenTTL    time.Duration
-	keys        KeyIssuer
+	repository       *repository.GalaxyRepository
+	tokenSecret      string
+	tokenTTL         time.Duration
+	keys             KeyIssuer
+	registrationGift RegistrationGiftIssuer
 
 	guard             LoginGuard
 	maxLoginFail      int
@@ -133,7 +142,7 @@ func New(database *gorm.DB, options Options) Service {
 	}
 	return &service{
 		repository: repo, tokenSecret: strings.TrimSpace(options.TokenSecret),
-		tokenTTL: ttl, keys: options.Keys,
+		tokenTTL: ttl, keys: options.Keys, registrationGift: options.RegistrationGift,
 		guard: options.Guard, maxLoginFail: maxFail,
 		maxLoginFailPerIP: maxFailPerIP, loginFailWindow: window,
 	}

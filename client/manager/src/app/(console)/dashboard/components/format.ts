@@ -11,7 +11,7 @@ export const MICRO = 1_000_000;
  */
 export function formatYuan(micro: number): string {
   const yuan = micro / MICRO;
-  return yuan.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return yuan.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 }
 
 /**

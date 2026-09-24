@@ -515,7 +515,7 @@ export async function saveReferralSettings(defaultBps: number) {
 /* ---------- 使用者积分 ---------- */
 
 /** 1 积分 = ¥1。积分字段都是「微积分」，和金额同一量纲，除以 1_000_000 得到积分。 */
-export type PointsType = "recharge" | "purchase" | "referral";
+export type PointsType = "recharge" | "purchase" | "referral" | "registration_gift";
 
 export class PointsLedgerEntry {
   txnId = "";
@@ -1913,7 +1913,7 @@ export async function fetchLedger(query: {
 
 /* ---------- 运行参数 ---------- */
 
-export type SettingKind = "int" | "float" | "duration" | "text";
+export type SettingKind = "int" | "float" | "bool" | "duration" | "text";
 
 export type SettingGroup =
   | "placement"
@@ -1923,6 +1923,7 @@ export type SettingGroup =
   | "risk"
   | "payout"
   | "referral"
+  | "registration"
   | "compliance"
   // client 这一组不在「运行参数」页上画：两个客户端下载地址有自己的位置
   // （「ai-bridge 版本」页顶上那张卡片），在两处都能改只会让人不知道该信哪一处。
@@ -1934,7 +1935,7 @@ export type SettingGroup =
  * value 是此刻生效的值，default 是配置文件里的那份。overridden 为假表示这一项
  * 还跟着配置文件走 —— 「改回默认」做的是**删掉后台那一行**，不是写一个默认值进去。
  *
- * kind 为 duration 时，value 与 default 都是**毫秒**。
+ * kind 为 duration 时，value 与 default 都是**毫秒**；kind 为 bool 时是 true/false。
  */
 export class SettingView {
   key = "";

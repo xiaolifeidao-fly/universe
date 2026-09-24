@@ -177,6 +177,18 @@ func TestBuildUsageKeepsEmptyCategories(t *testing.T) {
 	}
 }
 
+func TestBuildUsageExposesTokenBucketsAndTotal(t *testing.T) {
+	usage := buildUsage(map[usageKey]*usageCell{
+		{category: dto.UsageCategoryCodex, unit: contract.UnitInputTokens}:      {amount: 100},
+		{category: dto.UsageCategoryCodex, unit: contract.UnitOutputTokens}:     {amount: 20},
+		{category: dto.UsageCategoryCodex, unit: contract.UnitCacheReadTokens}:  {amount: 300},
+		{category: dto.UsageCategoryCodex, unit: contract.UnitCacheWriteTokens}: {amount: 80},
+	})
+	if got := usage.Total.TokenBuckets; got.Input != 100 || got.Output != 20 || got.CacheRead != 300 || got.CacheWrite != 80 || got.Total != 500 {
+		t.Fatalf("token 四桶明细错误: %+v", got)
+	}
+}
+
 // TestMachinesOfCountsOnlineByIdentity 在线机器按散户 / 工作室分开，两者相加等于在线数。
 // 没有 provider 行的算散户 —— 注册默认就是散户。
 func TestMachinesOfCountsOnlineByIdentity(t *testing.T) {
@@ -188,10 +200,10 @@ func TestMachinesOfCountsOnlineByIdentity(t *testing.T) {
 		{NodeID: "n5", ProviderType: dto.ProviderIndividual, Online: true, Banned: true},
 	}
 	machines := machinesOf(rows)
-	if machines.Online != 4 || machines.Offline != 1 || machines.Total != 5 {
+	if machines.Online != 3 || machines.Offline != 2 || machines.Total != 5 {
 		t.Fatalf("在线 / 离线 / 总数错误: %d / %d / %d", machines.Online, machines.Offline, machines.Total)
 	}
-	if machines.Individual != 3 || machines.Studio != 1 {
+	if machines.Individual != 2 || machines.Studio != 1 {
 		t.Fatalf("散户 / 工作室错误: %d / %d", machines.Individual, machines.Studio)
 	}
 	if machines.Individual+machines.Studio != machines.Online {

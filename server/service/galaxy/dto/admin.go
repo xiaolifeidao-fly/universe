@@ -550,10 +550,10 @@ type AdminLedgerPage struct {
 type SettingView struct {
 	Key string `json:"key"`
 	// Group 界面上的分组：placement / score / key / artifact / risk / payout / referral /
-	// compliance / client。client 那两项不在「运行参数」页上画，它们有自己的位置
+	// registration / compliance / client。client 那两项不在「运行参数」页上画，它们有自己的位置
 	// （管理端的「ai-bridge 版本」页顶上那张卡片）。
 	Group string `json:"group"`
-	// Kind int / float / duration / text。duration 的值是**毫秒**。
+	// Kind int / float / bool / duration / text。duration 的值是**毫秒**。
 	Kind string `json:"kind"`
 	// Value 此刻生效的值。
 	Value string `json:"value"`

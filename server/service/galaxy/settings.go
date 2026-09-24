@@ -115,6 +115,7 @@ const (
 	SettingInt SettingKind = "int"
 	// SettingFloat 小数。
 	SettingFloat SettingKind = "float"
+	SettingBool  SettingKind = "bool"
 	// SettingDurationMs 时长，库里存**毫秒**。界面按秒或分展示由 Unit 决定。
 	SettingDurationMs SettingKind = "duration"
 	// SettingText 自由文本。
@@ -310,6 +311,18 @@ var settingSpecs = []SettingSpec{
 		read:  func(c Config) string { return strconv.Itoa(c.ReferralDays) },
 	},
 
+	// ---------- 注册赠送 ----------
+	{
+		Key: "registration.gift_enabled", Group: "registration", Kind: SettingBool,
+		apply: applyBool(func(c *Config, v bool) { c.RegistrationGiftEnabled = v }),
+		read:  func(c Config) string { return strconv.FormatBool(c.RegistrationGiftEnabled) },
+	},
+	{
+		Key: "registration.gift_points", Group: "registration", Kind: SettingInt, Min: 0, Max: maxRechargePoints, Unit: "credit",
+		apply: applyInt(func(c *Config, v int64) { c.RegistrationGiftPoints = v }),
+		read:  func(c Config) string { return strconv.FormatInt(c.RegistrationGiftPoints, 10) },
+	},
+
 	// ---------- 客户端安装包 ----------
 	//
 	// 两个桌面客户端的下载地址，一个端四条：通用下载页，加 Windows / mac Intel /
@@ -377,6 +390,17 @@ func applyInt(set func(*Config, int64)) func(*Config, string) error {
 		value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 		if err != nil {
 			return fmt.Errorf("要填一个整数，收到 %q", raw)
+		}
+		set(config, value)
+		return nil
+	}
+}
+
+func applyBool(set func(*Config, bool)) func(*Config, string) error {
+	return func(config *Config, raw string) error {
+		value, err := strconv.ParseBool(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("要填 true 或 false，收到 %q", raw)
 		}
 		set(config, value)
 		return nil
@@ -465,7 +489,7 @@ func validateSetting(spec SettingSpec, raw string) error {
 	if err := spec.apply(&probe, raw); err != nil {
 		return err
 	}
-	if spec.Kind == SettingText {
+	if spec.Kind == SettingText || spec.Kind == SettingBool {
 		return nil
 	}
 	value, ok := numericValue(spec.Kind, raw)
@@ -593,7 +617,7 @@ func sortedSpecs() []SettingSpec {
 	specs := append([]SettingSpec{}, settingSpecs...)
 	order := map[string]int{
 		"placement": 1, "score": 2, "key": 3, "artifact": 4,
-		"risk": 5, "payout": 6, "referral": 7, "compliance": 8, "client": 9,
+		"risk": 5, "payout": 6, "referral": 7, "registration": 8, "compliance": 9, "client": 10,
 	}
 	sort.SliceStable(specs, func(i, j int) bool {
 		if order[specs[i].Group] != order[specs[j].Group] {
