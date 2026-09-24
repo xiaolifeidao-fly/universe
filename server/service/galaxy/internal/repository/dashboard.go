@@ -230,6 +230,20 @@ func (r *GalaxyRepository) SumProviderSettleSlice(ctx context.Context, bizLine s
 
 // ---------- 用量汇总表 ----------
 
+type DashboardRequestState struct {
+	State string
+	Count int64
+}
+
+// DashboardRequestStates counts requests created in the reporting interval.
+func (r *GalaxyRepository) DashboardRequestStates(ctx context.Context, bizLine string, from, to time.Time) ([]DashboardRequestState, error) {
+	var rows []DashboardRequestState
+	err := r.Db.WithContext(ctx).Model(&GalaxyUnit{}).
+		Where("biz_line = ? AND created_time >= ? AND created_time < ?", bizLine, from, to).
+		Select("state, COUNT(*) AS count").Group("state").Scan(&rows).Error
+	return rows, err
+}
+
 // ListUsageRollup 取 [from, to) 里已经算好的小时桶，含标记行。
 func (r *GalaxyRepository) ListUsageRollup(ctx context.Context, bizLine string, from, to time.Time) ([]*GalaxyUsageRollup, error) {
 	var rows []*GalaxyUsageRollup

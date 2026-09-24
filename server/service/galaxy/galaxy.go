@@ -153,6 +153,11 @@ type Config struct {
 	// 叠加机制有个落点 —— 读它仍然读的是同一行。
 	ConsumerReferralBps int64
 
+	// RegistrationGiftEnabled / RegistrationGiftPoints 是使用端注册活动。
+	// 赠送积分只进入使用端消费账户，不属于共享端收益，因此没有提现资格。
+	RegistrationGiftEnabled bool
+	RegistrationGiftPoints  int64
+
 	// ReferralRate 共享端邀请返现的比例：0.1 表示被邀请人赚到的积分，平台额外给
 	// 邀请人 10%。0 表示这个活动没开。被邀请人自己的收益不受影响 —— 这笔钱是平台出的。
 	ReferralRate float64
@@ -189,6 +194,8 @@ func DefaultConfig() Config {
 		PayoutRate:               priceScale,
 		PayoutMinCredits:         10 * priceScale,
 		PayoutHoldDays:           7,
+		RegistrationGiftEnabled:  false,
+		RegistrationGiftPoints:   0,
 	}
 }
 
@@ -401,6 +408,8 @@ type Service interface {
 	PointsLedger(ctx context.Context, query dto.PointsLedgerQuery) (dto.PointsLedgerPage, error)
 	// RechargePoints 运营给使用者充积分。同一个 RequestID 只充一次。
 	RechargePoints(ctx context.Context, req dto.RechargePointsRequest) (dto.PointsLedgerEntry, error)
+	// GrantRegistrationGift 注册活动赠送积分。只给使用端消费，不进入可提现收益链路。
+	GrantRegistrationGift(ctx context.Context, ownerUserID string) error
 	// ReferralOverview 分享页：邀请码（老账号第一次打开时补一个）、邀请人数、累计返现、返现比例。
 	ReferralOverview(ctx context.Context, ownerUserID string) (dto.ReferralOverview, error)
 	ListInvitees(ctx context.Context, ownerUserID string, offset, limit int) (dto.InviteePage, error)

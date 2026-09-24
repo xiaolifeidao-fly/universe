@@ -1282,7 +1282,7 @@ type GalaxyPointsLedger struct {
 	BizLine     string `gorm:"column:biz_line;type:varchar(32);uniqueIndex:uk_gx_points_ledger,priority:1;index:idx_gx_points_ledger_owner,priority:1;index:idx_gx_points_ledger_type,priority:1;index:idx_gx_points_ledger_unit,priority:1"`
 	TxnID       string `gorm:"column:txn_id;type:varchar(96);uniqueIndex:uk_gx_points_ledger,priority:2" description:"幂等键：recharge:<请求号> / usage:<单元>:<尝试> / dispute:<工单>:refund / <充值流水>:referral"`
 	OwnerUserID string `gorm:"column:owner_user_id;type:varchar(64);index:idx_gx_points_ledger_owner,priority:2"`
-	Type        string `gorm:"column:type;type:varchar(16);index:idx_gx_points_ledger_type,priority:2" description:"recharge/usage/refund/referral；purchase 只剩历史"`
+	Type        string `gorm:"column:type;type:varchar(24);index:idx_gx_points_ledger_type,priority:2" description:"recharge/usage/refund/referral/registration_gift；purchase 只剩历史"`
 
 	Amount       int64 `gorm:"column:amount" description:"微积分，入账为正、出账为负"`
 	BalanceAfter int64 `gorm:"column:balance_after"`

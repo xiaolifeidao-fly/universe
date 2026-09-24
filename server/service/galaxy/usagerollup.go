@@ -63,7 +63,7 @@ func (s *service) usageRange(ctx context.Context, from, to time.Time) (dto.Dashb
 	for _, row := range rolled {
 		hour := row.StatHour.UTC()
 		if row.Category == "" && row.Unit == "" {
-			done[hour] = true
+			done[hour] = validRollup(hour, row.RolledAt)
 			continue
 		}
 		byHour[hour] = append(byHour[hour], row)
@@ -297,6 +297,7 @@ func buildUsage(totals map[usageKey]*usageCell) dto.DashboardUsage {
 	for _, group := range byCategory {
 		sort.Slice(group.Units, func(i, j int) bool { return group.Units[i].Unit < group.Units[j].Unit })
 		group.Tokens, group.Calls = tokensAndCalls(group.Units)
+		group.TokenBuckets = tokenBuckets(group.Units)
 		for _, unit := range group.Units {
 			group.ConsumerAmount += unit.ConsumerAmount
 			group.ProviderAmount += unit.ProviderAmount
@@ -320,6 +321,7 @@ func buildUsage(totals map[usageKey]*usageCell) dto.DashboardUsage {
 	}
 	sort.Slice(total.Units, func(i, j int) bool { return total.Units[i].Unit < total.Units[j].Unit })
 	total.Tokens, total.Calls = tokensAndCalls(total.Units)
+	total.TokenBuckets = tokenBuckets(total.Units)
 	for _, unit := range total.Units {
 		total.ConsumerAmount += unit.ConsumerAmount
 		total.ProviderAmount += unit.ProviderAmount
@@ -329,28 +331,48 @@ func buildUsage(totals map[usageKey]*usageCell) dto.DashboardUsage {
 	return usage
 }
 
+func tokenBuckets(units []dto.DashboardUsageUnit) dto.DashboardTokenBuckets {
+	var buckets dto.DashboardTokenBuckets
+	var splitWrite int64
+	for _, unit := range units {
+		switch unit.Unit {
+		case string(contract.UnitInputTokens):
+			buckets.Input = unit.Amount
+		case string(contract.UnitOutputTokens):
+			buckets.Output = unit.Amount
+		case string(contract.UnitCacheReadTokens):
+			buckets.CacheRead = unit.Amount
+		case string(contract.UnitCacheWriteTokens):
+			buckets.CacheWrite = unit.Amount
+		case contract.UnitCacheWrite5mTokens, contract.UnitCacheWrite1hTokens:
+			splitWrite += unit.Amount
+		}
+	}
+	if splitWrite > buckets.CacheWrite {
+		buckets.CacheWrite = splitWrite
+	}
+	buckets.Total = buckets.Input + buckets.Output + buckets.CacheRead + buckets.CacheWrite
+	return buckets
+}
+
 // tokensAndCalls 从分单位的明细里取出「多少 token」和「多少次调用」。
 //
-// token 数取 Hub 解析时算好的合计（llm.total_tokens = 输入 + 输出 + 缓存读 + 缓存写），
-// 也就是共享者额度计数器盯着的那个数。没有合计行的退回四个桶自己相加 ——
-// 但两者只取其一，不相加：合计本来就是那四个桶加出来的，一起算就是数两遍。
+// 合计与四桶之和取较大者：新旧计量混合时，合计行可能只覆盖部分请求。
+// 两者不能相加；缓存写入合计与 TTL 分项也只能取其一。
 //
 // 缓存写入的 5m / 1h 两个分项，以及推理 token，同样不进这个和：前者是
 // 缓存写入的拆分，后者是输出的一部分。
 func tokensAndCalls(units []dto.DashboardUsageUnit) (tokens, calls int64) {
-	var buckets int64
 	for _, unit := range units {
 		switch unit.Unit {
 		case contract.UnitTotalTokens:
 			tokens = unit.Amount
-		case contract.UnitInputTokens, contract.UnitOutputTokens,
-			contract.UnitCacheReadTokens, contract.UnitCacheWriteTokens:
-			buckets += unit.Amount
 		case contract.UnitCalls:
 			calls = unit.Amount
 		}
 	}
-	if tokens == 0 {
+	buckets := tokenBuckets(units).Total
+	if buckets > tokens {
 		tokens = buckets
 	}
 	return tokens, calls
@@ -376,19 +398,25 @@ func categoryOrder(category string) int {
 //
 // 往回只补 rollupBackfillHours 个小时，而且一轮补不完不要紧：没补上的桶会在
 // 仪表盘读到它的时候被现算一次并落库，两条路写的是同一张表、同一份数。
+func validRollup(hour, rolledAt time.Time) bool {
+	return !rolledAt.Before(hour.Add(time.Hour + rollupGrace))
+}
+
 func (s *service) rollupUsage(ctx context.Context, now time.Time) error {
 	closed := now.Add(-rollupGrace).UTC().Truncate(time.Hour)
 	first := closed.Add(-rollupBackfillHours * time.Hour)
-	hours, err := s.repository.ListRolledHours(ctx, bizLine, first, closed.Add(time.Hour))
+	rows, err := s.repository.ListUsageRollup(ctx, bizLine, first, closed)
 	if err != nil {
 		return err
 	}
 	done := map[time.Time]bool{}
-	for _, hour := range hours {
-		done[hour.UTC()] = true
+	for _, row := range rows {
+		if row.Category == "" && row.Unit == "" {
+			done[row.StatHour.UTC()] = validRollup(row.StatHour, row.RolledAt)
+		}
 	}
 	rolled := 0
-	for hour := first; !hour.After(closed); hour = hour.Add(time.Hour) {
+	for hour := first; hour.Before(closed); hour = hour.Add(time.Hour) {
 		if done[hour] {
 			continue
 		}

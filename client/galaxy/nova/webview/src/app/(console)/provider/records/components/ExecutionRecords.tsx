@@ -52,8 +52,8 @@ export function ExecutionRecords() {
   const [result, setResult] = useState<ProviderRecordPage | null>(null);
   const [dashboard, setDashboard] = useState<ProviderDashboard | null>(null);
   const [contributions, setContributions] = useState<string[]>([]);
-  /** 今日输出 token 的上限，用来把「1.21M」换算成「占上限 60%」。 */
-  const [outputLimit, setOutputLimit] = useState(0);
+  /** 今日总 token 的上限，用来把总量换算成额度占用比例。 */
+  const [tokenLimit, setTokenLimit] = useState(0);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -75,9 +75,9 @@ export function ExecutionRecords() {
       setContributions(Array.from(new Set(rows.map((item) => item.cid))));
       // 多条贡献各有各的上限，头上那个数字是它们的和 —— 和「输出 tokens」那个
       // 合计口径一致，否则 1.21M 会被拿去除以其中一条的上限。
-      setOutputLimit(
+      setTokenLimit(
         rows.reduce(
-          (sum, item) => sum + (item.quota.find((quota) => quota.unit === "llm.output_tokens")?.limit ?? 0),
+          (sum, item) => sum + (item.quota.find((quota) => quota.unit === "llm.total_tokens")?.limit ?? 0),
           0,
         ),
       );
@@ -106,7 +106,7 @@ export function ExecutionRecords() {
   }, [keyword, result]);
 
   const stats = result?.stats;
-  const outputToday = dashboard?.today.usage["llm.output_tokens"] ?? 0;
+  const totalToday = dashboard?.today.usage["llm.total_tokens"] ?? 0;
 
   return (
     <>
@@ -132,8 +132,8 @@ export function ExecutionRecords() {
           />
           <Kpi
             label={t("records.output")}
-            value={formatCompact(outputToday)}
-            hint={outputLimit > 0 ? t("records.outputHint", { value: `${Math.round((outputToday / outputLimit) * 100)}%` }) : undefined}
+            value={formatCompact(totalToday)}
+            hint={tokenLimit > 0 ? t("records.outputHint", { value: `${Math.round((totalToday / tokenLimit) * 100)}%` }) : undefined}
           />
           <Kpi
             label={t("records.latency")}
@@ -365,4 +365,3 @@ function durationOf(record: ExecutionRecord): string {
   if (!record.startedAt || !record.finishedAt) return "-";
   return formatMillis(new Date(record.finishedAt).getTime() - new Date(record.startedAt).getTime());
 }
-

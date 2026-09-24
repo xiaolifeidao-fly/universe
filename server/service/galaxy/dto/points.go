@@ -10,10 +10,11 @@ import "time"
 
 // 积分流水的类型。
 const (
-	PointsRecharge = "recharge" // 运营充值
-	PointsUsage    = "usage"    // 调模型按量扣掉
-	PointsRefund   = "refund"   // 申诉成立，那一笔退回来
-	PointsReferral = "referral" // 邀请来的人被充值，返给邀请人
+	PointsRecharge         = "recharge"          // 运营充值
+	PointsUsage            = "usage"             // 调模型按量扣掉
+	PointsRefund           = "refund"            // 申诉成立，那一笔退回来
+	PointsReferral         = "referral"          // 邀请来的人被充值，返给邀请人
+	PointsRegistrationGift = "registration_gift" // 注册活动赠送，只能用于消费，不能提现
 	// PointsPurchase 买额度包花掉。**只剩历史**：额度包已经下架，不再产生新的这类流水。
 	PointsPurchase = "purchase"
 )

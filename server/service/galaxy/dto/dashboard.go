@@ -26,7 +26,8 @@ type AdminDashboard struct {
 	// Machines 此刻在线的共享端机器，按散户 / 工作室分开。
 	Machines DashboardMachines `json:"machines"`
 	// Usage 今日用量与金额，按 Claude / Codex 分类，两端的钱分开记。
-	Usage DashboardUsage `json:"usage"`
+	Usage    DashboardUsage    `json:"usage"`
+	Requests DashboardRequests `json:"requests"`
 	// Revenue 今日进账。
 	Revenue DashboardRevenue `json:"revenue"`
 	// Capacity 此刻池子里还剩多少额度。
@@ -36,6 +37,16 @@ type AdminDashboard struct {
 	// Degraded 取不到的那几块。取不到就说取不到，**不显示成 0** ——
 	// 「今天零消耗」和「这块数据没取到」是完全不同的两件事，而 0 会被读成前者。
 	Degraded []string `json:"degraded"`
+}
+
+// DashboardRequests counts today's created requests by their current state.
+type DashboardRequests struct {
+	Total     int64 `json:"total"`
+	Completed int64 `json:"completed"`
+	Failed    int64 `json:"failed"`
+	Cancelled int64 `json:"cancelled"`
+	Expired   int64 `json:"expired"`
+	Pending   int64 `json:"pending"`
 }
 
 // ---------- 账号 ----------
@@ -113,7 +124,10 @@ type DashboardUsageCategory struct {
 	// 也就是共享者的额度计数器盯着的那个数。没有合计行的（非中转类能力、老数据）
 	// 退回四个桶自己相加。
 	Tokens int64 `json:"tokens"`
-	// Calls 成功的调用次数。失败的请求不记这一笔。
+	// TokenBuckets 是输入、输出、缓存读写的可核对明细。Tokens 是四桶合计，
+	// 但运营排查统计时不能只给一个合计数。
+	TokenBuckets DashboardTokenBuckets `json:"tokenBuckets"`
+	// Calls 计量流水里的调用数；成功数由 Requests.Completed 单独统计。
 	Calls int64 `json:"calls"`
 	// ConsumerAmount 使用端这一类花掉的钱（微元）：向使用者收的。
 	ConsumerAmount int64 `json:"consumerAmount"`
@@ -128,6 +142,15 @@ type DashboardUsageCategory struct {
 	// Units 分计量单位的明细。量纲随单位而定，跨单位相加没有意义 ——
 	// 界面上它是一张小表，不是几个可以加起来的数。
 	Units []DashboardUsageUnit `json:"units"`
+}
+
+// DashboardTokenBuckets 是一类算力的 token 四桶明细与合计。
+type DashboardTokenBuckets struct {
+	Input      int64 `json:"input"`
+	Output     int64 `json:"output"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+	Total      int64 `json:"total"`
 }
 
 // DashboardUsageUnit 一个计量单位今天的量与钱。

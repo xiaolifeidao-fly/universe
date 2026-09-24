@@ -59,6 +59,8 @@ export class DashboardUsageCategory {
 
   tokens = 0;
 
+  tokenBuckets: DashboardTokenBuckets = new DashboardTokenBuckets();
+
   calls = 0;
 
   /** 微元。使用端花掉的（收入）。 */
@@ -71,6 +73,14 @@ export class DashboardUsageCategory {
   margin = 0;
 
   units: DashboardUsageUnit[] = [];
+}
+
+export class DashboardTokenBuckets {
+  input = 0;
+  output = 0;
+  cacheRead = 0;
+  cacheWrite = 0;
+  total = 0;
 }
 
 export class DashboardUsage {
@@ -163,6 +173,8 @@ export class DashboardTracking {
 }
 
 export class AdminDashboard {
+
+  requests?: { total: number; completed: number; failed: number; cancelled: number; expired: number; pending: number };
   generatedAt = "";
 
   date = "";

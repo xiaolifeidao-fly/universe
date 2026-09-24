@@ -877,7 +877,7 @@ CREATE TABLE IF NOT EXISTS `zt_galaxy_points_ledger` (
   `biz_line`        varchar(32),
   `txn_id`          varchar(96),                                    -- 幂等键：recharge:<请求号> / usage:<单元>:<尝试> / dispute:<工单>:refund / <充值流水>:referral
   `owner_user_id`   varchar(64),
-  `type`            varchar(16),                                    -- recharge/usage/refund/referral；purchase 只剩历史
+  `type`            varchar(24),                                    -- recharge/usage/refund/referral/registration_gift；purchase 只剩历史
   `amount`          bigint,                                         -- 微积分，入账为正、出账为负
   `balance_after`   bigint,
   `base_amount`     bigint,                                         -- 充值=实付金额（微元）；返现=那笔充值的积分

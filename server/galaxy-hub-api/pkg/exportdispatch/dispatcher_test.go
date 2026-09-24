@@ -203,6 +203,7 @@ func TestPushExplainsPersistentIdentityMismatchForHardPinnedConversation(t *test
 	exchange.Open("u_1", writer, nil)
 	target := startNode(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Galaxy-Node", "n_other")
+		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte("wrong node"))
 	})
 	unit := claimed("u_1")
@@ -215,6 +216,25 @@ func TestPushExplainsPersistentIdentityMismatchForHardPinnedConversation(t *test
 	}
 	if strings.Join(service.fallbacks, ",") != "c_old" {
 		t.Fatalf("应登记旧贡献允许迁移，实际 %v", service.fallbacks)
+	}
+}
+
+func TestPushDoesNotMigrateAfterWrongNodeReturnsSuccess(t *testing.T) {
+	service := &fakeGalaxy{}
+	exchange := corepkg.NewExchange()
+	writer := &recordingWriter{}
+	exchange.Open("u_1", writer, nil)
+	target := startNode(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Galaxy-Node", "n_other")
+		_, _ = w.Write([]byte("possibly executed"))
+	})
+	unit := claimed("u_1")
+	unit.Unit["hardPin"] = "c_old"
+
+	New(service, exchange, nil).push(context.Background(), target, unit)
+
+	if len(service.fallbacks) != 0 {
+		t.Fatalf("错误节点返回 2xx 时不能自动迁移，避免重复执行：%v", service.fallbacks)
 	}
 }
 

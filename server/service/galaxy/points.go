@@ -76,7 +76,7 @@ func (s *service) PointsLedger(ctx context.Context, query dto.PointsLedgerQuery)
 	var types []string
 	switch kind := strings.TrimSpace(query.Type); kind {
 	case "":
-	case dto.PointsRecharge, dto.PointsUsage, dto.PointsRefund, dto.PointsReferral, dto.PointsPurchase:
+	case dto.PointsRecharge, dto.PointsUsage, dto.PointsRefund, dto.PointsReferral, dto.PointsPurchase, dto.PointsRegistrationGift:
 		types = []string{kind}
 	default:
 		return dto.PointsLedgerPage{}, fmt.Errorf("未知的流水类型：%s", kind)
@@ -198,6 +198,26 @@ func (s *service) RechargePoints(ctx context.Context, req dto.RechargePointsRequ
 	}
 	entry.OwnerName = names[userID]
 	return entry, nil
+}
+
+// GrantRegistrationGift 给新注册的使用端账号发活动积分。
+// txn_id 绑定账号，因此即使注册流程重试，也不会重复赠送；活动关闭或金额为 0
+// 时直接跳过。该流水只写使用端 points 账本，提供端提现读取的是另一套账。
+func (s *service) GrantRegistrationGift(ctx context.Context, ownerUserID string) error {
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if ownerUserID == "" {
+		return errors.New("注册赠送缺少使用端账号")
+	}
+	cfg := s.cfg()
+	if !cfg.RegistrationGiftEnabled || cfg.RegistrationGiftPoints <= 0 {
+		return nil
+	}
+	_, err := s.applyPoints(ctx, &repository.GalaxyPointsLedger{
+		BizLine: bizLine, TxnID: "registration_gift:" + ownerUserID, OwnerUserID: ownerUserID,
+		Type: dto.PointsRegistrationGift, Amount: cfg.RegistrationGiftPoints,
+		Remark: "注册活动赠送（仅限使用，不可提现）",
+	}, false, nil)
+	return err
 }
 
 // applyPoints 在一个事务里改余额、记流水，再把 within 也放进同一个事务。

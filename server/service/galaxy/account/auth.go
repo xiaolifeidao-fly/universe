@@ -133,6 +133,11 @@ func (s *service) Register(ctx context.Context, req dto.RegisterAccountRequest) 
 		}
 		return dto.AccountLoginResult{}, err
 	}
+	if row.Side == dto.SideConsumer && s.registrationGift != nil {
+		if err := s.registrationGift.GrantRegistrationGift(ctx, row.UserID); err != nil {
+			return dto.AccountLoginResult{}, fmt.Errorf("注册赠送积分失败：%w", err)
+		}
+	}
 	result, err := s.loginResult(ctx, row)
 	if err != nil {
 		return dto.AccountLoginResult{}, err

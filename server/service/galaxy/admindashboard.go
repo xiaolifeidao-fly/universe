@@ -50,6 +50,11 @@ func (s *service) AdminDashboard(ctx context.Context) (dto.AdminDashboard, error
 	}
 	view.Usage = usage
 	view.Usage.RolledUntil = rolledUntil
+	states, err := s.repository.DashboardRequestStates(ctx, bizLine, dayStart, now)
+	if err != nil {
+		return view, err
+	}
+	view.Requests = dashboardRequests(states)
 
 	revenue, err := s.dashboardRevenue(ctx, dayStart, now)
 	if err != nil {
@@ -101,7 +106,7 @@ func machinesOf(rows []repository.NodePresence) dto.DashboardMachines {
 		if row.Banned {
 			out.Banned++
 		}
-		if !row.Online {
+		if !row.Online || row.Banned {
 			out.Offline++
 			continue
 		}
@@ -156,7 +161,7 @@ func (s *service) dashboardCapacity(ctx context.Context, presence []repository.N
 	out := dto.DashboardCapacity{Windows: []dto.DashboardCapacityWindow{}}
 	online := map[string]bool{}
 	for _, row := range presence {
-		if row.Online {
+		if row.Online && !row.Banned {
 			online[row.NodeID] = true
 		}
 	}
@@ -170,9 +175,11 @@ func (s *service) dashboardCapacity(ctx context.Context, presence []repository.N
 		return out, err
 	}
 	live := make([]*repository.GalaxyContribution, 0, len(contributions))
+	sharing := map[string]bool{}
 	for _, row := range contributions {
 		if online[row.NodeID] {
 			live = append(live, row)
+			sharing[row.NodeID] = true
 		}
 	}
 	grants, err := s.loadGrants(ctx, cidsOf(live))
@@ -194,13 +201,13 @@ func (s *service) dashboardCapacity(ctx context.Context, presence []repository.N
 	if err != nil {
 		return out, err
 	}
-	type counter struct{ used, reserved int64 }
+	type counter struct {
+		used, reserved int64
+		at             time.Time
+	}
 	counters := map[string]counter{}
 	for _, row := range snapshots {
-		counters[row.CID+"\x00"+row.Unit+"\x00"+row.WindowKey] = counter{used: row.Used, reserved: row.Reserved}
-		if row.SnapshotAt.After(out.SnapshotAt) {
-			out.SnapshotAt = row.SnapshotAt
-		}
+		counters[row.CID+"\x00"+row.Unit+"\x00"+row.WindowKey] = counter{used: row.Used, reserved: row.Reserved, at: row.SnapshotAt}
 	}
 
 	buckets := map[string]*capacityBucket{}
@@ -219,6 +226,12 @@ func (s *service) dashboardCapacity(ctx context.Context, presence []repository.N
 				buckets[window] = bucket
 			}
 			counted := counters[row.CID+"\x00"+grant.Unit+"\x00"+grant.WindowKey(now)]
+			if counted.at.IsZero() || now.Sub(counted.at) > quotaSnapshotStaleAfter {
+				out.Stale = true
+			}
+			if !counted.at.IsZero() && (out.SnapshotAt.IsZero() || counted.at.Before(out.SnapshotAt)) {
+				out.SnapshotAt = counted.at
+			}
 			// 预留的那部分算「已用」：它是在途请求占着的量，此刻放不出来。
 			left := grant.Limit - counted.used - counted.reserved
 			if left < 0 {
@@ -240,7 +253,7 @@ func (s *service) dashboardCapacity(ctx context.Context, presence []repository.N
 		return windowOrder(out.Windows[i].Window) < windowOrder(out.Windows[j].Window)
 	})
 	out.Machines = int64(len(withLeft))
-	for nodeID := range online {
+	for nodeID := range sharing {
 		if !granted[nodeID] {
 			out.Unlimited++
 		}
@@ -251,6 +264,26 @@ func (s *service) dashboardCapacity(ctx context.Context, presence []repository.N
 		out.Stale = true
 	}
 	return out, nil
+}
+
+func dashboardRequests(rows []repository.DashboardRequestState) dto.DashboardRequests {
+	var out dto.DashboardRequests
+	for _, row := range rows {
+		out.Total += row.Count
+		switch row.State {
+		case "completed":
+			out.Completed += row.Count
+		case "failed":
+			out.Failed += row.Count
+		case "cancelled":
+			out.Cancelled += row.Count
+		case "expired":
+			out.Expired += row.Count
+		default:
+			out.Pending += row.Count
+		}
+	}
+	return out
 }
 
 type capacityBucket struct {

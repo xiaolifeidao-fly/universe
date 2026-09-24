@@ -98,6 +98,37 @@ function TokenFlow({ record }: { record: ExecutionRecord }) {
   );
 }
 
+function TokenSummary({ usage }: { usage: Record<string, number> }) {
+  const { t } = useLocale();
+  const input = usage["llm.input_tokens"] ?? 0;
+  const output = usage["llm.output_tokens"] ?? 0;
+  const cacheRead = usage["llm.cache_read_tokens"] ?? 0;
+  const cacheWrite = usage["llm.cache_write_tokens"] ?? 0;
+  const total = usage["llm.total_tokens"] ?? input + output + cacheRead + cacheWrite;
+  const items = [
+    [t("today.tokens.input"), input],
+    [t("today.tokens.output"), output],
+    [t("today.tokens.cache"), cacheRead + cacheWrite],
+    [t("today.tokens.total"), total],
+  ] as const;
+  return (
+    <Card className="gx-rise gx-rise--2" style={{ padding: "16px 20px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 12 }}>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>{t("today.tokens.title")}</span>
+        <span style={{ fontSize: 12, color: "var(--gx-faint)" }}>{t("today.tokens.hint")}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+        {items.map(([label, value]) => (
+          <div key={label} style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, color: "var(--gx-faint)", marginBottom: 4 }}>{label}</div>
+            <div className="gx-mono" style={{ fontSize: 20, color: "var(--gx-ink)", fontWeight: 600 }}>{formatCompact(value)}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 export function TodayBoard() {
   const { t, locale } = useLocale();
   const router = useRouter();
@@ -387,6 +418,8 @@ export function TodayBoard() {
                 <span style={{ fontSize: 12.5, color: "var(--gx-faint)" }}>{t("today.quotaEmpty")}</span>
               )}
             </Card>
+
+            <TokenSummary usage={dashboard.today.usage} />
 
             <Card className="gx-rise gx-rise--3" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
               <CardHead
