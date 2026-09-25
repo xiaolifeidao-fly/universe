@@ -7,3 +7,9 @@ export async function recordPortalOpen(): Promise<void> {
   const response = await instance.post<ApiResponse<null>>("/galaxy/portal/events/open");
   unwrapApiResponse(response.data);
 }
+
+/** 官网模型广场的模型点击，与 Orbit 的同名事件汇总到一起。 */
+export async function recordPortalModelClick(modelId: string): Promise<void> {
+  const response = await instance.post<ApiResponse<null>>("/galaxy/portal/events/model-click", { modelId });
+  unwrapApiResponse(response.data);
+}

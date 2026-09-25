@@ -26,6 +26,7 @@ import { CtaBand } from "@/components/home/HomeSections";
 import { VendorMark } from "@shared/brand/VendorMark";
 import { formatContext, formatDiscount, formatUnitPrice } from "@/utils/format";
 import type { PortalGroupPrice, PortalModel, PortalOverview } from "@/utils/portal";
+import { recordPortalModelClick } from "@/app/(site)/api/tracking.api";
 
 const ALL = "__all__";
 
@@ -53,6 +54,15 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
       );
     });
   }, [overview.models, family, keyword]);
+
+  const toggleModel = (modelId: string) => {
+    const opening = open !== modelId;
+    setOpen(opening ? modelId : "");
+    if (opening) {
+      // 埋点走旁路：展开立即发生，统计失败不打断来访者浏览。
+      void recordPortalModelClick(modelId).catch(() => undefined);
+    }
+  };
 
   return (
     <>
@@ -113,7 +123,7 @@ export function ModelExplorer({ overview }: { overview: PortalOverview }) {
                     key={model.modelId}
                     model={model}
                     open={open === model.modelId}
-                    onToggle={() => setOpen(open === model.modelId ? "" : model.modelId)}
+                    onToggle={() => toggleModel(model.modelId)}
                   />
                 ))}
               </div>

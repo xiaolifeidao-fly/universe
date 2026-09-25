@@ -3,13 +3,14 @@
 import { ReloadOutlined } from "@ant-design/icons";
 import { Alert, Button, Skeleton, Space, Table, Tooltip, Typography, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useState } from "react";
+import { ManagerDatePicker } from "@/components/date/DatePickers";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
 import {
   fetchDashboard,
   type AdminDashboard,
   type DashboardCapacityWindow,
-  type DashboardTrackingDay,
   type DashboardUsageCategory,
 } from "../api/dashboard.api";
 import { formatClock, formatCompact, formatExact, formatMoney } from "./format";
@@ -34,11 +35,12 @@ export function Dashboard() {
   const [data, setData] = useState<AdminDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState("");
+  const [trackingDate, setTrackingDate] = useState<Dayjs>(() => dayjs().startOf("day"));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setData(await fetchDashboard());
+      setData(await fetchDashboard(trackingDate.format("YYYY-MM-DD")));
       setFailure("");
     } catch (error) {
       // 页面留白加一条 toast 等于什么都没说：接口 403（角色还没授这条）和
@@ -49,7 +51,7 @@ export function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, trackingDate]);
 
   useEffect(() => {
     void load();
@@ -94,7 +96,12 @@ export function Dashboard() {
               </Space>
             </section>
           ) : null}
-          <TrackingSection tracking={data.tracking} />
+          <TrackingSection
+            tracking={data.tracking}
+            selectedDate={trackingDate}
+            loading={loading}
+            onDateChange={setTrackingDate}
+          />
           <UsageSection usage={data.usage} />
           <CapacitySection data={data} />
           <RevenueSection data={data} />
@@ -106,50 +113,45 @@ export function Dashboard() {
 
 /* ---------- 用户行为埋点 ---------- */
 
-function TrackingSection({ tracking }: { tracking: AdminDashboard["tracking"] }) {
+function TrackingSection({
+  tracking,
+  selectedDate,
+  loading,
+  onDateChange,
+}: {
+  tracking: AdminDashboard["tracking"];
+  selectedDate: Dayjs;
+  loading: boolean;
+  onDateChange: (date: Dayjs) => void;
+}) {
   const { t } = useLocale();
-  const days = tracking.days ?? [];
-  const portalTotal = days.reduce((sum, day) => sum + day.portalOpens, 0);
-  const modelTotal = days.reduce((sum, day) => sum + day.modelSquareClicks, 0);
-  const columns: ColumnsType<DashboardTrackingDay> = [
-    {
-      title: t("dashboard.tracking.date"),
-      dataIndex: "date",
-      render: (value: string) => <span className="manager-mono">{value}</span>,
-    },
-    {
-      title: t("dashboard.tracking.portalOpens"),
-      dataIndex: "portalOpens",
-      align: "right",
-      render: (value: number) => <span className="manager-mono">{formatExact(value)}</span>,
-    },
-    {
-      title: t("dashboard.tracking.modelClicks"),
-      dataIndex: "modelSquareClicks",
-      align: "right",
-      render: (value: number) => <span className="manager-mono">{formatExact(value)}</span>,
-    },
-  ];
 
   return (
     <section className="manager-data-card">
-      <SectionTitle
-        title={t("dashboard.tracking.title")}
-        hint={t("dashboard.tracking.hint", { from: tracking.from || "—", to: tracking.to || "—" })}
-      />
-      <Space size={[32, 12]} wrap style={{ marginBottom: 12 }}>
-        <Metric label={t("dashboard.tracking.portalTotal")} value={formatExact(portalTotal)} />
-        <Metric label={t("dashboard.tracking.modelTotal")} value={formatExact(modelTotal)} />
+      <Space align="center" wrap style={{ justifyContent: "space-between", width: "100%", marginBottom: 16 }}>
+        <Space direction="vertical" size={2}>
+          <Typography.Title level={5} style={{ margin: 0 }}>
+            {t("dashboard.tracking.title")}
+          </Typography.Title>
+          <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>
+            {t("dashboard.tracking.hint")}
+          </span>
+        </Space>
+        <ManagerDatePicker
+          aria-label={t("dashboard.tracking.date")}
+          value={selectedDate}
+          allowClear={false}
+          disabled={loading}
+          disabledDate={(date) => date.isAfter(dayjs(), "day")}
+          onChange={(date) => {
+            if (date) onDateChange(date.startOf("day"));
+          }}
+        />
       </Space>
-      <Table<DashboardTrackingDay>
-        rowKey="date"
-        size="small"
-        pagination={false}
-        columns={columns}
-        dataSource={[...days].reverse()}
-        locale={{ emptyText: t("dashboard.tracking.empty") }}
-        scroll={{ y: 420 }}
-      />
+      <Space size={[48, 12]} wrap>
+        <Metric label={t("dashboard.tracking.portalOpens")} value={formatExact(tracking.portalOpens)} />
+        <Metric label={t("dashboard.tracking.modelClicks")} value={formatExact(tracking.modelSquareClicks)} />
+      </Space>
     </section>
   );
 }

@@ -156,20 +156,12 @@ export class DashboardCapacity {
   stale = false;
 }
 
-export class DashboardTrackingDay {
+export class DashboardTracking {
   date = "";
 
   portalOpens = 0;
 
   modelSquareClicks = 0;
-}
-
-export class DashboardTracking {
-  from = "";
-
-  to = "";
-
-  days: DashboardTrackingDay[] = [];
 }
 
 export class AdminDashboard {
@@ -197,6 +189,6 @@ export class AdminDashboard {
   degraded: string[] = [];
 }
 
-export async function fetchDashboard() {
-  return getData(AdminDashboard, "/galaxy/admin/dashboard");
+export async function fetchDashboard(trackingDate: string) {
+  return getData(AdminDashboard, "/galaxy/admin/dashboard", { trackingDate });
 }

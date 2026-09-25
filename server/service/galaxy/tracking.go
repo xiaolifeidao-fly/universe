@@ -10,8 +10,6 @@ import (
 	"service/galaxy/internal/repository"
 )
 
-const dashboardTrackingDays = 14
-
 // RecordTrackingEvent 记录一个受支持的位置事件。
 // 时间只认服务端，避免客户端时钟错误或伪造日期把历史趋势改掉。
 func (s *service) RecordTrackingEvent(ctx context.Context, eventKey, targetKey string) error {
@@ -38,36 +36,21 @@ func (s *service) RecordTrackingEvent(ctx context.Context, eventKey, targetKey s
 	})
 }
 
-// dashboardTracking 返回含空日期的连续日序列。没有事件的日子必须明确是 0，
-// 否则管理端的表会把 9 月 20 日直接接到 9 月 22 日，看起来像趋势没有断过。
-func (s *service) dashboardTracking(ctx context.Context, today time.Time) (dto.DashboardTracking, error) {
-	from := today.AddDate(0, 0, -(dashboardTrackingDays - 1))
-	to := today.AddDate(0, 0, 1)
-	out := dto.DashboardTracking{
-		From: from.Format("2006-01-02"), To: today.Format("2006-01-02"),
-		Days: make([]dto.DashboardTrackingDay, dashboardTrackingDays),
-	}
-	byDate := make(map[string]*dto.DashboardTrackingDay, dashboardTrackingDays)
-	for index := 0; index < dashboardTrackingDays; index++ {
-		date := from.AddDate(0, 0, index).Format("2006-01-02")
-		out.Days[index] = dto.DashboardTrackingDay{Date: date}
-		byDate[date] = &out.Days[index]
-	}
-
-	rows, err := s.repository.ListTrackingDaily(ctx, bizLine, from, to)
+// dashboardTracking 只返回所选的一天。日期由管理端明确传入，服务端按自己的时区
+// 切成 [当天零点, 次日零点)，避免浏览器时区把一次点击分到相邻日期。
+func (s *service) dashboardTracking(ctx context.Context, selected time.Time) (dto.DashboardTracking, error) {
+	dayStart := startOfDay(selected)
+	out := dto.DashboardTracking{Date: dayStart.Format("2006-01-02")}
+	rows, err := s.repository.ListTrackingDaily(ctx, bizLine, dayStart, dayStart.AddDate(0, 0, 1))
 	if err != nil {
 		return out, err
 	}
 	for _, row := range rows {
-		day := byDate[row.EventDate.Format("2006-01-02")]
-		if day == nil {
-			continue
-		}
 		switch row.EventKey {
 		case dto.TrackingEventPortalOpen:
-			day.PortalOpens = row.Count
+			out.PortalOpens = row.Count
 		case dto.TrackingEventModelSquareClick:
-			day.ModelSquareClicks = row.Count
+			out.ModelSquareClicks = row.Count
 		}
 	}
 	return out, nil

@@ -264,7 +264,16 @@ func (h *Handler) dashboard(context *gin.Context) {
 	if !h.enabled(context) {
 		return
 	}
-	view, err := h.service.AdminDashboard(context.Request.Context())
+	trackingDate := time.Now()
+	if raw := strings.TrimSpace(context.Query("trackingDate")); raw != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+		if err != nil {
+			httpx.Fail(context, "埋点统计日期格式应为 YYYY-MM-DD")
+			return
+		}
+		trackingDate = parsed
+	}
+	view, err := h.service.AdminDashboard(context.Request.Context(), trackingDate)
 	httpx.JSON(context, view, err)
 }
 

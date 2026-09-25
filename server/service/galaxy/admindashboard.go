@@ -22,9 +22,12 @@ import (
 const quotaSnapshotStaleAfter = 3 * time.Minute
 
 // AdminDashboard 一次取回仪表盘要的全部数字。
-func (s *service) AdminDashboard(ctx context.Context) (dto.AdminDashboard, error) {
+func (s *service) AdminDashboard(ctx context.Context, trackingDate time.Time) (dto.AdminDashboard, error) {
 	now := time.Now()
 	dayStart := startOfDay(now)
+	if trackingDate.IsZero() {
+		trackingDate = dayStart
+	}
 	view := dto.AdminDashboard{
 		GeneratedAt: now,
 		Date:        dayStart.Format("2006-01-02"),
@@ -62,7 +65,7 @@ func (s *service) AdminDashboard(ctx context.Context) (dto.AdminDashboard, error
 	}
 	view.Revenue = revenue
 
-	tracking, err := s.dashboardTracking(ctx, dayStart)
+	tracking, err := s.dashboardTracking(ctx, trackingDate)
 	if err != nil {
 		return view, err
 	}

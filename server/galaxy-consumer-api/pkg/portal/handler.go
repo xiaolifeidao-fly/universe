@@ -6,7 +6,7 @@
 //   - 返回体里不能有任何用户维度的东西（余额、订单、节点、密钥一个都不能沾）；
 //   - 读接口要有缓存，否则一个公开地址就是一条直通数据库的压测通道；
 //   - 来访者自己填写内容的写接口（留资）要限流，而且不能只信 X-Forwarded-For；
-//     官网打开只累加服务端固定的日桶，不接受来访者内容。
+//     官网打开与模型点击只累加服务端固定的日桶，不接受来访者自定义事件。
 package portal
 
 import (
@@ -85,12 +85,28 @@ func (h *Handler) RegisterHandler(group *gin.RouterGroup) {
 	api.GET("/pricing", h.pricing)
 	// 官网打开。事件键在服务端固定，公开入口不能替别的位置伪造事件。
 	api.POST("/events/open", h.recordOpen)
+	// 官网模型广场的模型点击。和 Orbit 使用端记到同一个事件键，管理端看到的是
+	// 两个入口合起来的真实兴趣点击；来源不由浏览器填写，避免任意事件污染统计。
+	api.POST("/events/model-click", h.recordModelClick)
 	api.POST("/leads", h.submitLead)
 }
 
 func (h *Handler) recordOpen(context *gin.Context) {
 	httpx.JSON(context, nil, h.service.RecordTrackingEvent(
 		context.Request.Context(), dto.TrackingEventPortalOpen, "",
+	))
+}
+
+func (h *Handler) recordModelClick(context *gin.Context) {
+	var req struct {
+		ModelID string `json:"modelId" binding:"required"`
+	}
+	if err := context.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(context, err.Error())
+		return
+	}
+	httpx.JSON(context, nil, h.service.RecordTrackingEvent(
+		context.Request.Context(), dto.TrackingEventModelSquareClick, req.ModelID,
 	))
 }
 

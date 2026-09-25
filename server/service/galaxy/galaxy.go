@@ -598,8 +598,9 @@ type Service interface {
 	// AdminOverview 「今天要做什么」：各页的待办计数一次取回。
 	AdminOverview(ctx context.Context) (dto.AdminOverview, error)
 	// AdminDashboard 「今天做成了什么」：登录、在线机器、用量与金额、进账、算力剩余。
-	// 和上面那个是两页：一个数待办，一个数经营。
-	AdminDashboard(ctx context.Context) (dto.AdminDashboard, error)
+	// 和上面那个是两页：一个数待办，一个数经营。trackingDate 只控制埋点卡片的单日口径；
+	// 机器与额度是实时状态，没有可供回看的历史快照。
+	AdminDashboard(ctx context.Context, trackingDate time.Time) (dto.AdminDashboard, error)
 	// AdminMismatches 用量偏差。这张表此前只写不读 —— 落了行，没人看得见。
 	AdminMismatches(ctx context.Context, query dto.MismatchQuery) (dto.MismatchPage, error)
 	// AdminUnits 跨租户的运行工单，排障用。按人查的那条在 OwnedJobs。

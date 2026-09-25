@@ -5,7 +5,7 @@ name = "ai-bridge-native"
 # 0.4.0 起 Codex 协议头原样透传（会话身份跟着客户端走，上游前缀缓存才命中得了）。
 # 0.5.0 起上游余量改成问本机的 claude / codex 自己（usage_probe），不再解中转响应的限流头。
 # 0.6.0 起心跳带本机工具（claude / codex 的版本与安装进度），并认 Hub 下发的装 / 升指令。
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 
 [lib]

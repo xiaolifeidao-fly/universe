@@ -1,10 +1,27 @@
 package galaxy
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	galaxysvc "service/galaxy"
+	"service/galaxy/dto"
 )
+
+type dashboardDateService struct {
+	galaxysvc.Service
+	date time.Time
+}
+
+func (s *dashboardDateService) AdminDashboard(_ context.Context, date time.Time) (dto.AdminDashboard, error) {
+	s.date = date
+	return dto.AdminDashboard{}, nil
+}
 
 // TestAdminRoutesRegisterWithoutConflict 共享池的运营接口全在这一组：galaxy-api 那边已经没有了。
 //
@@ -79,5 +96,19 @@ func TestAdminRoutesRegisterWithoutConflict(t *testing.T) {
 		if !registered[route] {
 			t.Errorf("缺少路由 %s", route)
 		}
+	}
+}
+
+func TestDashboardPassesSelectedTrackingDate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := &dashboardDateService{}
+	engine := gin.New()
+	NewHandler(service, nil).RegisterHandler(engine.Group("/api"))
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet,
+		"/api/galaxy/admin/dashboard?trackingDate=2026-09-12", nil))
+
+	if got := service.date.Format("2006-01-02"); got != "2026-09-12" {
+		t.Fatalf("埋点日期没有传给服务层：%s", got)
 	}
 }

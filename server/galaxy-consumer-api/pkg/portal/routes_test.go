@@ -22,8 +22,10 @@ type stubService struct {
 	catalog  dto.PortalOverview
 	catalogs int
 	leads    []dto.SubmitLeadRequest
-	events   []string
+	events   []trackingCall
 }
+
+type trackingCall struct{ eventKey, targetKey string }
 
 func (s *stubService) PortalCatalog(context.Context, []string) (dto.PortalOverview, error) {
 	s.catalogs++
@@ -35,8 +37,8 @@ func (s *stubService) SubmitLead(_ context.Context, req dto.SubmitLeadRequest) (
 	return dto.LeadView{LeadID: "lead-1"}, nil
 }
 
-func (s *stubService) RecordTrackingEvent(_ context.Context, eventKey, _ string) error {
-	s.events = append(s.events, eventKey)
+func (s *stubService) RecordTrackingEvent(_ context.Context, eventKey, targetKey string) error {
+	s.events = append(s.events, trackingCall{eventKey: eventKey, targetKey: targetKey})
 	return nil
 }
 
@@ -62,6 +64,7 @@ func TestPortalRoutesRegisterWithoutConflict(t *testing.T) {
 		"GET /api/galaxy/portal/models",
 		"GET /api/galaxy/portal/pricing",
 		"POST /api/galaxy/portal/events/open",
+		"POST /api/galaxy/portal/events/model-click",
 		"POST /api/galaxy/portal/leads",
 	}
 	registered := map[string]bool{}
@@ -86,8 +89,23 @@ func TestPortalOpenUsesFixedEventKey(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/galaxy/portal/events/open", nil))
 
-	if len(service.events) != 1 || service.events[0] != dto.TrackingEventPortalOpen {
+	if len(service.events) != 1 || service.events[0].eventKey != dto.TrackingEventPortalOpen || service.events[0].targetKey != "" {
 		t.Fatalf("官网入口必须固定记录 portal.open，实际 %v", service.events)
+	}
+}
+
+func TestPortalModelClickUsesFixedEventKey(t *testing.T) {
+	service := &stubService{}
+	engine := newEngine(service, Options{})
+	request := httptest.NewRequest(http.MethodPost, "/api/galaxy/portal/events/model-click",
+		strings.NewReader(`{"modelId":"claude-sonnet-4-5"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, request)
+
+	want := trackingCall{eventKey: dto.TrackingEventModelSquareClick, targetKey: "claude-sonnet-4-5"}
+	if len(service.events) != 1 || service.events[0] != want {
+		t.Fatalf("官网模型点击必须固定事件并保留模型 ID，实际 %v", service.events)
 	}
 }
 

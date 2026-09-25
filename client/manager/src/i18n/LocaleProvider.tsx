@@ -137,13 +137,10 @@ const messages = {
     "dashboard.kpi.cashSplit": "积分充值 {recharge} · 渠道支付 {channel}",
 
     "dashboard.tracking.title": "用户行为埋点",
-    "dashboard.tracking.hint": "按服务端日期汇总 · {from} 至 {to}",
-    "dashboard.tracking.date": "日期",
+    "dashboard.tracking.hint": "只展示所选日期，按服务端时区统计",
+    "dashboard.tracking.date": "统计日期",
     "dashboard.tracking.portalOpens": "官网打开",
     "dashboard.tracking.modelClicks": "模型广场模型点击",
-    "dashboard.tracking.portalTotal": "区间官网打开",
-    "dashboard.tracking.modelTotal": "区间模型点击",
-    "dashboard.tracking.empty": "还没有埋点数据",
 
     "dashboard.usage.title": "今日消耗",
     "dashboard.usage.hint": "汇总已封口到 {at}，之后的量是现算的；展开看分计量单位的明细",
@@ -1330,13 +1327,10 @@ const messages = {
     "dashboard.kpi.cashSplit": "Credit top-ups {recharge} · card/wallet {channel}",
 
     "dashboard.tracking.title": "Product events",
-    "dashboard.tracking.hint": "Grouped by server date · {from} to {to}",
-    "dashboard.tracking.date": "Date",
+    "dashboard.tracking.hint": "Selected day only, grouped in the server time zone",
+    "dashboard.tracking.date": "Statistics date",
     "dashboard.tracking.portalOpens": "Website opens",
     "dashboard.tracking.modelClicks": "Model square clicks",
-    "dashboard.tracking.portalTotal": "Website opens in range",
-    "dashboard.tracking.modelTotal": "Model clicks in range",
-    "dashboard.tracking.empty": "No event data yet",
 
     "dashboard.usage.title": "Usage today",
     "dashboard.usage.hint": "Rolled up through {at}; anything after that is computed live. Expand a row for the per-unit detail.",
