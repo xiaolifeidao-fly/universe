@@ -1,0 +1,110 @@
+/**
+ * 管理端自己的设计令牌，盖在 @shared/styles/tokens.css 之上。
+ *
+ * 2026-10 管理端单独改版：shared 那份还被 web、Orbit、Nova、门户一起引用，改它会
+ * 连带动别人的界面，所以这里只**覆盖同名变量**，不改 shared。变量名保持
+ * --manager-*，现有页面里的 var(--manager-xxx) 全部自动换上新值。
+ *
+ * 和 src/styles/theme.ts（antd token）是手工对齐的两份，改配色两边一起改。
+ *
+ * 取向：中性的锌灰底 + 一支克制的靛紫做交互色。颜色只给「能点的」和「要注意的」，
+ * 其余全部靠字重、灰阶和留白分层 —— 一屏里彩色越少，真正要看的那个数越跳。
+ */
+
+:root {
+  /* surfaces */
+  --manager-bg: #f6f6f7;
+  --manager-bg-soft: #fafafa;
+  --manager-surface: #ffffff;
+  --manager-surface-raised: #ffffff;
+  --manager-panel: #f4f4f5;
+  --manager-panel-muted: rgba(24, 24, 27, 0.05);
+  --manager-hover: rgba(24, 24, 27, 0.045);
+  --manager-pressed: rgba(24, 24, 27, 0.07);
+
+  /* lines */
+  --manager-border: rgba(24, 24, 27, 0.08);
+  --manager-border-strong: rgba(24, 24, 27, 0.14);
+  --manager-border-hover: rgba(24, 24, 27, 0.22);
+
+  /* ink */
+  --manager-text: #18181b;
+  --manager-text-soft: #52525b;
+  --manager-text-faint: #71717a;
+  --manager-text-muted: #71717a;
+  --manager-text-ghost: #a1a1aa;
+
+  /* brand — interaction only */
+  --manager-primary: #5b5bd6;
+  --manager-primary-hover: #4c4cc4;
+  --manager-primary-active: #4141ad;
+  --manager-primary-light: rgba(91, 91, 214, 0.08);
+  --manager-primary-muted: rgba(91, 91, 214, 0.16);
+  --manager-primary-soft: #f3f3fd;
+  --manager-primary-ink: #3e3ea8;
+
+  /* categorical accents */
+  --manager-green: #1f9d55;
+  --manager-cyan: #0b8ec2;
+  --manager-blue: #2f6fe4;
+  --manager-violet: #7c4ddb;
+  --manager-amber: #c2700a;
+  --manager-orange: #e0631b;
+  --manager-red: #e5484d;
+
+  /* status semantics */
+  --manager-success: #1f9d55;
+  --manager-success-soft: #ecf8f0;
+  --manager-warning: #c2700a;
+  --manager-warning-soft: #fdf5e7;
+  --manager-danger: #e5484d;
+  --manager-danger-soft: #fdeeee;
+  --manager-info: #0b8ec2;
+  --manager-info-soft: #e9f6fb;
+
+  /* sidebar */
+  --manager-sidebar-bg: #fbfbfb;
+  --manager-sidebar-bg-soft: #f4f4f5;
+  --manager-sidebar-border: rgba(24, 24, 27, 0.07);
+  --manager-sidebar-text: #52525b;
+  --manager-sidebar-text-muted: #71717a;
+
+  /* elevation */
+  --manager-shadow-xs: 0 1px 1px rgba(24, 24, 27, 0.03);
+  --manager-shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.05);
+  --manager-shadow: 0 1px 2px rgba(24, 24, 27, 0.04), 0 2px 8px -2px rgba(24, 24, 27, 0.05);
+  --manager-shadow-md: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 20px -6px rgba(24, 24, 27, 0.1);
+  --manager-shadow-lg: 0 0 0 1px rgba(24, 24, 27, 0.06), 0 16px 40px -12px rgba(24, 24, 27, 0.22),
+    0 4px 10px -4px rgba(24, 24, 27, 0.06);
+  --manager-ring: 0 0 0 3px rgba(91, 91, 214, 0.18);
+
+  /* radii */
+  --manager-r-xs: 6px;
+  --manager-r-sm: 8px;
+  --manager-r: 10px;
+  --manager-r-lg: 12px;
+  --manager-r-xl: 16px;
+
+  /* type */
+  --manager-fs-micro: 11px;
+  --manager-fs-xs: 12px;
+  --manager-fs-sm: 13px;
+  --manager-fs-base: 14px;
+  --manager-fs-lg: 15px;
+  --manager-fs-xl: 22px;
+  --manager-fs-2xl: 28px;
+
+  /* motion */
+  --manager-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --manager-t: 0.16s var(--manager-ease);
+  --manager-t-slow: 0.28s var(--manager-ease);
+
+  --manager-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+
+  /* shell metrics */
+  --manager-sider-w: 248px;
+  --manager-sider-w-collapsed: 64px;
+  --manager-topbar-h: 56px;
+  --manager-content-max: 1600px;
+}

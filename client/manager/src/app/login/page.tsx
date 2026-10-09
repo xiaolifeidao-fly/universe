@@ -1,6 +1,7 @@
 "use client";
 
-import { Select } from "antd";
+import { TranslationOutlined } from "@ant-design/icons";
+import { Dropdown } from "antd";
 import { LoginFormCard } from "./components/LoginFormCard";
 import { LoginHero } from "./components/LoginHero";
 import { useLocale } from "@/i18n/LocaleProvider";
@@ -14,21 +15,27 @@ export default function LoginPage() {
   const { locale, setLocale, t } = useLocale();
 
   return (
-    <main className="manager-login-shell">
-      <section className="manager-grid-bg manager-login-panel" style={{ width: "100%" }}>
-        <Select
-          aria-label={t("locale.label")}
-          className="manager-login-locale-select"
-          value={locale}
-          onChange={(value) => setLocale(value as typeof locale)}
-          options={LOCALE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))}
-        />
-        <div className="manager-login-layout">
-          <LoginHero />
-          <div className="manager-login-layout__form">
-            <LoginFormCard />
-          </div>
+    <main className="manager-login">
+      <LoginHero />
+      <section className="manager-login-main">
+        <div className="manager-login-locale">
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomRight"
+            menu={{
+              selectable: true,
+              selectedKeys: [locale],
+              items: LOCALE_OPTIONS.map((item) => ({ key: item.value, label: t(item.labelKey) })),
+              onClick: ({ key }) => setLocale(key as typeof locale),
+            }}
+          >
+            <button type="button" className="manager-icon-button" aria-label={t("locale.label")} style={{ width: "auto", padding: "0 10px", gap: 6, display: "inline-flex", alignItems: "center", fontSize: 13 }}>
+              <TranslationOutlined />
+              {t(locale === "zh-CN" ? "locale.zh-CN" : "locale.en-US")}
+            </button>
+          </Dropdown>
         </div>
+        <LoginFormCard />
       </section>
     </main>
   );

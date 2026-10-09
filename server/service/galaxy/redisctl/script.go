@@ -139,18 +139,27 @@ if redis.call('HGET', reqKey, 'state') == 'settled' then
   return 0
 end
 
+-- 贡献哈希可能已经随心跳超时过期了：节点断线之后，Hub 的看门狗正是在这时
+-- 判这批在途请求失败。这时对它 HINCRBY / HSET 会凭空造出一个没有 TTL、
+-- 没有 kind/provider/lane 的壳 —— 心跳把壳当成「贡献还在」，不再按库重建，
+-- 机器回来之后就永久不在车道里。所以哈希不在就不碰它的字段，
+-- 额度计数器是独立的 key，照常回补。
+local alive = redis.call('EXISTS', contribKey) == 1
+
 -- 这个消费者在这台机器上还剩几条没结算的请求。放置时 +1，这里 -1，
 -- 减到 0 才算「他真的闲下来了」，座位的空闲计时从这一刻开始走。
 -- 计数只在放置成功之后加，所以脚本里那几条回滚返回的路径不会把它带偏。
-local running = redis.call('HINCRBY', contribKey, 'run:' .. consumerKey, -1)
-if running <= 0 then
-  redis.call('HDEL', contribKey, 'run:' .. consumerKey)
-  running = 0
-end
-
-local inflight = redis.call('HINCRBY', contribKey, 'inflight', -1)
-if inflight < 0 then
-  redis.call('HSET', contribKey, 'inflight', 0)
+local running = 0
+if alive then
+  running = redis.call('HINCRBY', contribKey, 'run:' .. consumerKey, -1)
+  if running <= 0 then
+    redis.call('HDEL', contribKey, 'run:' .. consumerKey)
+    running = 0
+  end
+  local inflight = redis.call('HINCRBY', contribKey, 'inflight', -1)
+  if inflight < 0 then
+    redis.call('HSET', contribKey, 'inflight', 0)
+  end
 end
 
 local base = 8
@@ -168,21 +177,23 @@ for i = 0, quotaCount - 1 do
     if reserved < estimate then giveBack = reserved end
     if giveBack > 0 then
       redis.call('DECRBY', reservedKey, giveBack)
-      redis.call('HINCRBY', contribKey, 'left:' .. unit, giveBack)
+      if alive then redis.call('HINCRBY', contribKey, 'left:' .. unit, giveBack) end
     end
   end
   if actual > 0 then
     redis.call('INCRBY', usedKey, actual)
     redis.call('EXPIRE', usedKey, expiry)
-    redis.call('HINCRBY', contribKey, 'used:' .. unit, actual)
-    redis.call('HINCRBY', contribKey, 'left:' .. unit, -actual)
+    if alive then
+      redis.call('HINCRBY', contribKey, 'used:' .. unit, actual)
+      redis.call('HINCRBY', contribKey, 'left:' .. unit, -actual)
+    end
   end
 end
 
 local cid = ARGV[base + quotaCount * 6]
 if releaseSeat == 1 then
   redis.call('ZREM', seatsKey, consumerKey)
-  redis.call('HDEL', contribKey, 'run:' .. consumerKey)
+  if alive then redis.call('HDEL', contribKey, 'run:' .. consumerKey) end
   if redis.call('GET', bindKey) == cid then
     redis.call('DEL', bindKey)
   end
@@ -196,7 +207,9 @@ elseif running == 0 then
     redis.call('PEXPIRE', bindKey, bindTTL)
   end
 end
-redis.call('HSET', contribKey, 'seatsUsed', redis.call('ZCARD', seatsKey))
+if alive then
+  redis.call('HSET', contribKey, 'seatsUsed', redis.call('ZCARD', seatsKey))
+end
 redis.call('HSET', reqKey, 'state', 'settled', 'finalState', state)
 return 1
 `)

@@ -15,6 +15,7 @@ import {
   AccountBookOutlined,
   AlertOutlined,
   ApiOutlined,
+  CheckOutlined,
   BranchesOutlined,
   ClusterOutlined,
   ContactsOutlined,
@@ -24,6 +25,7 @@ import {
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DesktopOutlined,
+  EllipsisOutlined,
   ExperimentOutlined,
   FolderOutlined,
   FundOutlined,
@@ -31,12 +33,16 @@ import {
   KeyOutlined,
   LogoutOutlined,
   LockOutlined,
+  MenuFoldOutlined,
   MenuOutlined,
+  MenuUnfoldOutlined,
   MoneyCollectOutlined,
   ProfileOutlined,
+  RightOutlined,
   RiseOutlined,
   SafetyCertificateOutlined,
   SafetyOutlined,
+  SearchOutlined,
   SettingOutlined,
   ShareAltOutlined,
   ShoppingOutlined,
@@ -48,11 +54,12 @@ import {
   TagsOutlined,
   TeamOutlined,
   TransactionOutlined,
+  TranslationOutlined,
   UserOutlined,
   UserSwitchOutlined,
   WalletOutlined,
 } from "@ant-design/icons";
-import { Button, Dropdown, Layout, Menu, Select, Skeleton, Space, message } from "antd";
+import { Dropdown, Menu, Modal, Tooltip, message } from "antd";
 import type { MenuProps } from "antd";
 import { usePathname, useRouter } from "next/navigation";
 import { type PropsWithChildren, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
@@ -67,8 +74,8 @@ import {
   type ResourceItem,
 } from "./api/profile.api";
 import { ChangePasswordModal } from "./ChangePasswordModal";
-
-const { Content, Header, Sider } = Layout;
+import { CommandPalette, type PaletteEntry } from "./CommandPalette";
+import { PageActionsProvider } from "./PageActions";
 
 const SIDEBAR_COLLAPSED_KEY = "ztb-manager-sidebar-collapsed";
 
@@ -244,6 +251,11 @@ const LOCALE_OPTIONS = [
 
 type MenuItem = Required<MenuProps>["items"][number];
 
+const RECENT_PAGES_KEY = "ztb-manager-recent-pages";
+
+/** 侧栏、面包屑、命令面板共用的一份「页面清单」。 */
+type NavPage = { href: string; label: string; icon?: ReactNode; group: string };
+
 export function ManagerShellStub({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const router = useRouter();
@@ -257,6 +269,12 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
   const [menus, setMenus] = useState<ResourceItem[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [recentPages, setRecentPages] = useState<string[]>([]);
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  // 点下菜单到新页面挂上之间那几百毫秒：顶上走一条进度线，告诉人「点到了，在路上」。
+  const [navigating, setNavigating] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   // 「菜单是拿不到，还是我们故意没去拿」——两者要分开。兜底导航是给前者的；
   // 后者（必须改初始密码）如果也退回兜底，就是在展示一批点了必然 403 的入口。
   const [menuUnavailable, setMenuUnavailable] = useState(false);
@@ -299,6 +317,8 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
   useEffect(() => {
     try {
       setCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
+      const stored = JSON.parse(window.localStorage.getItem(RECENT_PAGES_KEY) ?? "[]");
+      if (Array.isArray(stored)) setRecentPages(stored.filter((item): item is string => typeof item === "string"));
     } catch {
       // Storage is optional for the shell preference.
     }
@@ -315,14 +335,14 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
     return () => media.removeEventListener("change", updateViewport);
   }, []);
 
-  const updateCollapsed = (next: boolean) => {
+  const updateCollapsed = useCallback((next: boolean) => {
     setCollapsed(next);
     try {
       window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
     } catch {
       // Storage is optional for the shell preference.
     }
-  };
+  }, []);
 
   const activePath = pathname ?? "/dashboard";
 
@@ -345,22 +365,34 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
     return buildMenuItems(menus, resourceLabel);
   }, [menus, menuUnavailable, resourceLabel, t]);
 
-  // 能进的页面。后端已经按角色过滤过了，这里只是别让点击把人送去一个必然 403 的页面。
-  // 目录本身不算页面：它没有 pageUrl，点了只该展开。
-  const permittedPaths = useMemo(() => {
+  // 能进的页面，连同它在哪一组底下。后端已经按角色过滤过了，这里只是别让点击把人
+  // 送去一个必然 403 的页面。目录本身不算页面：它没有 pageUrl，点了只该展开。
+  const navPages = useMemo<NavPage[]>(() => {
+    const general = t("palette.general");
     if (menus.length === 0) {
-      return menuUnavailable ? new Set(fallbackPaths(FALLBACK_NAV)) : new Set<string>();
+      return menuUnavailable ? fallbackPages(FALLBACK_NAV, t, general) : [];
     }
-    return new Set(menus.filter((item) => item.pageUrl).map((item) => item.pageUrl));
-  }, [menus, menuUnavailable]);
+    const byID = new Map(menus.map((item) => [item.id, item]));
+    return [...menus]
+      .sort((a, b) => a.sortId - b.sortId || a.id - b.id)
+      .filter((item) => item.resourceType === "page" && item.pageUrl)
+      .map((item) => {
+        const parent = byID.get(item.parentId);
+        return {
+          href: item.pageUrl,
+          label: resourceLabel(item),
+          icon: MENU_ICONS[item.icon],
+          group: parent ? resourceLabel(parent) : general,
+        };
+      });
+  }, [menus, menuUnavailable, resourceLabel, t]);
+
+  const permittedPaths = useMemo(() => new Set(navPages.map((page) => page.href)), [navPages]);
 
   // 只展开当前页所在的那个一级菜单，不是全部展开。
   //
-  // 原来是全展开的，那时候「共享算力池」是唯一一个有子项的菜单，展不展开都一样。
-  // 现在它拆成了六个，全展开是三十多行 —— 侧栏一进来就要滚，而滚动条底下那几个
-  // 菜单等于没人看得见。
-  //
-  // 「进来的人得看到自己停在哪」这个要求仍然满足：当前页那一个是展开的。
+  // 「共享算力池」拆成了六个一级菜单，全展开是三十多行 —— 侧栏一进来就要滚，
+  // 而滚动条底下那几个菜单等于没人看得见。当前页那一个是展开的，进来的人看得到自己停在哪；
   // defaultOpenKeys 是非受控的，用户点开别的照样留着。
   const defaultOpenKeys = useMemo(() => {
     if (menus.length === 0) {
@@ -383,175 +415,360 @@ export function ManagerShellStub({ children }: PropsWithChildren) {
 
   const [fallbackTitle, fallbackSubtitle] =
     FALLBACK_PAGE_TITLES[activePath] ?? ["dashboard.title", "dashboard.subtitle"];
-  const activeResource = menus.find((item) => item.pageUrl && activePath.startsWith(item.pageUrl));
-  const pageTitle = activeResource ? resourceLabel(activeResource) : t(fallbackTitle);
+  const activePage = navPages.find((page) => activePath.startsWith(page.href));
+  const pageTitle = activePage?.label ?? t(fallbackTitle);
   const pageSubtitle = t(fallbackSubtitle);
+  const pageGroup = activePage && activePage.group !== t("palette.general") ? activePage.group : "";
 
-  const logout = () => {
+  useEffect(() => {
+    document.title = `${pageTitle} · ${t("brand.name")}`;
+  }, [pageTitle, t]);
+
+  // 路由落地：收起进度线、记一笔「最近访问」、内容区回到顶部。
+  useEffect(() => {
+    setNavigating(false);
+    if (!permittedPaths.has(activePath)) return;
+    setRecentPages((previous) => {
+      const next = [activePath, ...previous.filter((item) => item !== activePath)].slice(0, 8);
+      try {
+        window.localStorage.setItem(RECENT_PAGES_KEY, JSON.stringify(next));
+      } catch {
+        // Storage is optional for the shell preference.
+      }
+      return next;
+    });
+  }, [activePath, permittedPaths]);
+
+  const navigate = useCallback(
+    (href: string) => {
+      setMobileMenuOpen(false);
+      if (href === activePath) return;
+      setNavigating(true);
+      router.push(href);
+    },
+    [activePath, router],
+  );
+
+  const logout = useCallback(() => {
     // 先请服务端把令牌删掉再清本地。反过来的话，本地清了但服务端那条会话
     // 还活着，令牌被人抄走就一直有效。请求失败也照样跳走 —— 用户要的是登出。
     void logoutRequest().catch(() => undefined);
     clearAuthToken();
     router.replace("/login");
+  }, [router]);
+
+  const confirmLogout = useCallback(() => {
+    Modal.confirm({
+      title: t("shell.logoutConfirm"),
+      okText: t("shell.logout"),
+      okButtonProps: { danger: true },
+      cancelText: t("common.cancel"),
+      centered: true,
+      onOk: logout,
+    });
+  }, [logout, t]);
+
+  // 全局快捷键：⌘K / Ctrl+K 或 / 打开命令面板，⌘B / Ctrl+B 收起侧栏。
+  // 光标在输入框里时 / 和 ⌘B 不拦 —— 那是在打字。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = Boolean(target?.closest("input, textarea, select, [contenteditable='true']"));
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      } else if (!typing && !mod && event.key === "/") {
+        event.preventDefault();
+        setPaletteOpen(true);
+      } else if (!typing && mod && event.key.toLowerCase() === "b" && !isMobile) {
+        event.preventDefault();
+        updateCollapsed(!collapsed);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [collapsed, isMobile, updateCollapsed]);
+
+  const displayName = profile?.displayName || profile?.username || authUser?.displayName || authUser?.username || "—";
+  const roleName = profile?.superAdmin
+    ? t("shell.superAdmin")
+    : profile?.roles?.map((role) => role.name).join(" · ") || (profile ? t("shell.readOnly") : "");
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+
+  const paletteEntries = useMemo<PaletteEntry[]>(
+    () => [
+      ...navPages.map((page) => ({ key: page.href, label: page.label, group: page.group, icon: page.icon, href: page.href })),
+      {
+        key: "action:locale",
+        label: locale === "zh-CN" ? "Switch to English" : "切换到简体中文",
+        group: t("palette.actions"),
+        icon: <TranslationOutlined />,
+        run: () => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN"),
+      },
+      {
+        key: "action:password",
+        label: t("password.title"),
+        group: t("palette.actions"),
+        icon: <LockOutlined />,
+        run: () => setPasswordOpen(true),
+      },
+      {
+        key: "action:logout",
+        label: t("shell.logout"),
+        group: t("palette.actions"),
+        icon: <LogoutOutlined />,
+        run: confirmLogout,
+      },
+    ],
+    [confirmLogout, locale, navPages, setLocale, t],
+  );
+
+  const userMenu: MenuProps = {
+    items: [
+      {
+        key: "who",
+        type: "group",
+        label: (
+          <div className="manager-user-menu-head">
+            <strong>{displayName}</strong>
+            <span>{roleName}</span>
+          </div>
+        ),
+      },
+      { type: "divider" },
+      {
+        key: "locale",
+        icon: <TranslationOutlined />,
+        label: t("locale.label"),
+        children: LOCALE_OPTIONS.map((item) => ({
+          key: `locale:${item.value}`,
+          label: (
+            <span className="manager-user-menu-check">
+              {t(item.labelKey)}
+              {locale === item.value ? <CheckOutlined /> : null}
+            </span>
+          ),
+        })),
+      },
+      { key: "password", icon: <LockOutlined />, label: t("password.title") },
+      { type: "divider" },
+      { key: "logout", danger: true, icon: <LogoutOutlined />, label: t("shell.logout") },
+    ],
+    onClick: ({ key }) => {
+      if (key === "password") setPasswordOpen(true);
+      else if (key === "logout") confirmLogout();
+      else if (key.startsWith("locale:")) setLocale(key.slice("locale:".length) as typeof locale);
+    },
   };
+
+  const siderCollapsed = !isMobile && collapsed;
+  const searchHint = isMac ? "⌘K" : "Ctrl K";
 
   return (
     // 默认 false：profile 还没回来时按只读渲染，避免闪出一排点不动的写按钮。
     <WritePermissionProvider value={profile?.writable ?? false}>
-    <div className="manager-shell-root" data-can-write={profile?.writable ? "true" : "false"}>
-      <div className="manager-shell-surface">
+      <div
+        className={`manager-shell${siderCollapsed ? " is-collapsed" : ""}${isMobile && mobileMenuOpen ? " is-mobile-open" : ""}`}
+        data-can-write={profile?.writable ? "true" : "false"}
+      >
+        <div className={`manager-route-progress${navigating ? " is-active" : ""}`} aria-hidden="true" />
         {isMobile && mobileMenuOpen ? (
-          <button className="manager-mobile-sider-mask" type="button" aria-label={t("shell.closeMenu")} onClick={() => setMobileMenuOpen(false)} />
+          <button
+            className="manager-mobile-sider-mask"
+            type="button"
+            aria-label={t("shell.closeMenu")}
+            onClick={() => setMobileMenuOpen(false)}
+          />
         ) : null}
-        <Layout className="manager-shell-layout" style={{ height: "100%", minHeight: 0, background: "transparent" }}>
-          <Sider
-            className={`manager-shell-sider${isMobile && mobileMenuOpen ? " manager-shell-sider--mobile-open" : ""}`}
-            // 260 而不是原来的 236：二级菜单加上图标之后，子项的文字被往右推了一列。
-            // 英文下「Roles & permissions」「Customers & growth」这几条在 236 里会
-            // 截成省略号 —— 侧栏的标签一旦要猜，图标带来的那点速度就全还回去了。
-            // 这个值和 globals.css 里给折叠箭头留的 30px 右内边距是配套算出来的，
-            // 改一个要连着验另一个（窄了的症状是最长那条英文标签压在箭头上）。
-            width={260}
-            breakpoint="lg"
-            collapsedWidth={72}
-            collapsible
-            trigger={null}
-            collapsed={isMobile ? !mobileMenuOpen : collapsed}
-            style={{ background: "transparent" }}
-          >
-            <div
-              className="manager-sidebar-card manager-sidebar-scroll manager-stagger-1"
-              style={{ height: "100%", padding: "20px 14px", display: "flex", flexDirection: "column", gap: 12, overflowX: "hidden" }}
-            >
-              <div className="manager-brand-block">
-                <Space align="center" size={11}>
-                  <div className="manager-crest" aria-hidden="true">
-                    <GlobalOutlined className="manager-crest-planet" />
-                    <StarFilled className="manager-crest-star" />
-                  </div>
-                  <div className="manager-wordmark">
-                    <strong>{t("brand.name")}</strong>
-                    <small>{t("brand.subtitle")}</small>
-                  </div>
-                </Space>
+
+        <aside className="manager-sider" aria-label={t("shell.navigation")}>
+          <div className="manager-sider-head">
+            <div className="manager-brand">
+              <div className="manager-crest" aria-hidden="true">
+                <GlobalOutlined className="manager-crest-planet" />
+                <StarFilled className="manager-crest-star" />
               </div>
-
-              {menuLoading ? (
-                // 菜单是首屏，转圈会让整块区域空着；骨架屏至少保住了布局。
-                <div style={{ flex: 1, padding: "8px 6px" }}>
-                  <Skeleton active paragraph={{ rows: 5 }} title={false} />
-                </div>
-              ) : (
-                <Menu
-                  className="manager-shell-menu"
-                  mode="inline"
-                  selectedKeys={[activePath]}
-                  defaultOpenKeys={defaultOpenKeys}
-                  items={menuItems}
-                  onClick={({ key }) => {
-                    // 只跳进得去的页面。后端才是真正的门，这里只是别把人送去必然 403 的地方。
-                    if (typeof key === "string" && key.startsWith("/") && permittedPaths.has(key)) {
-                      router.push(key);
-                      setMobileMenuOpen(false);
-                    }
-                  }}
-                  style={{ fontSize: "var(--manager-fs-base)", flex: 1 }}
-                />
-              )}
-
-              <div className="manager-sidebar-foot">
-                <span className="manager-dot-live" />
-                <span>{t("shell.online")}</span>
+              <div className="manager-wordmark">
+                <strong>{t("brand.name")}</strong>
+                <small>{t("brand.subtitle")}</small>
               </div>
             </div>
-          </Sider>
+          </div>
 
-          <Layout className="manager-main-layout" style={{ background: "transparent" }}>
-            <Header
-              className="manager-command-bar manager-stagger-2"
-              style={{
-                height: "auto",
-                lineHeight: "normal",
-                padding: "16px clamp(20px, 3vw, 40px)",
-                borderBottom: "1px solid var(--manager-border)",
-                display: "flex",
-                gap: 12,
-                alignItems: "center",
+          <div className="manager-sider-search-wrap">
+            <Tooltip title={siderCollapsed ? `${t("palette.open")} · ${searchHint}` : null} placement="right">
+              <button type="button" className="manager-sider-search" onClick={() => setPaletteOpen(true)}>
+                <SearchOutlined />
+                <span className="manager-sider-search-label">{t("palette.trigger")}</span>
+                <kbd>{searchHint}</kbd>
+              </button>
+            </Tooltip>
+          </div>
+
+          <nav className="manager-sider-nav">
+            {menuLoading ? (
+              // 菜单是首屏，转圈会让整块区域空着；骨架屏至少保住了布局。
+              <div className="manager-nav-skeleton">
+                {Array.from({ length: 9 }, (_, i) => (
+                  <span key={i} style={{ width: `${52 + ((i * 37) % 40)}%` }} />
+                ))}
+              </div>
+            ) : (
+              <Menu
+                className="manager-shell-menu"
+                mode="inline"
+                inlineCollapsed={siderCollapsed}
+                inlineIndent={14}
+                selectedKeys={[activePage?.href ?? activePath]}
+                defaultOpenKeys={siderCollapsed ? [] : defaultOpenKeys}
+                items={menuItems}
+                onClick={({ key }) => {
+                  // 只跳进得去的页面。后端才是真正的门，这里只是别把人送去必然 403 的地方。
+                  if (typeof key === "string" && key.startsWith("/") && permittedPaths.has(key)) navigate(key);
+                }}
+              />
+            )}
+          </nav>
+
+          <div className="manager-sider-foot">
+            <Dropdown menu={userMenu} trigger={["click"]} placement="topLeft" overlayClassName="manager-user-dropdown">
+              <button type="button" className="manager-user-chip" aria-label={displayName}>
+                <span className="manager-avatar" aria-hidden="true">
+                  {initialOf(displayName)}
+                  <i className="manager-avatar-status" />
+                </span>
+                <span className="manager-user-chip-text">
+                  <strong>{displayName}</strong>
+                  <small>{roleName || t("shell.online")}</small>
+                </span>
+                <EllipsisOutlined className="manager-user-chip-more" />
+              </button>
+            </Dropdown>
+          </div>
+        </aside>
+
+        <div className="manager-main">
+          <header className={`manager-topbar${scrolled ? " is-scrolled" : ""}`}>
+            <Tooltip
+              title={isMobile ? null : `${collapsed ? t("shell.expandMenu") : t("shell.collapseMenu")} · ${isMac ? "⌘B" : "Ctrl B"}`}
+              placement="bottomLeft"
+            >
+              <button
+                type="button"
+                className="manager-icon-button"
+                aria-label={
+                  isMobile
+                    ? mobileMenuOpen
+                      ? t("shell.closeMenu")
+                      : t("shell.openMenu")
+                    : collapsed
+                      ? t("shell.expandMenu")
+                      : t("shell.collapseMenu")
+                }
+                onClick={() => (isMobile ? setMobileMenuOpen(!mobileMenuOpen) : updateCollapsed(!collapsed))}
+              >
+                {isMobile ? <MenuOutlined /> : collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              </button>
+            </Tooltip>
+            <span className="manager-topbar-divider" aria-hidden="true" />
+            <nav className="manager-breadcrumb" aria-label="breadcrumb">
+              {pageGroup ? (
+                <>
+                  <span className="manager-breadcrumb-group">{pageGroup}</span>
+                  <RightOutlined className="manager-breadcrumb-sep" />
+                </>
+              ) : null}
+              <span className="manager-breadcrumb-current">{pageTitle}</span>
+            </nav>
+            <span style={{ flex: 1 }} />
+            <button type="button" className="manager-topbar-search" onClick={() => setPaletteOpen(true)}>
+              <SearchOutlined />
+              <span>{t("palette.trigger")}</span>
+              <kbd>{searchHint}</kbd>
+            </button>
+            <Dropdown
+              trigger={["click"]}
+              placement="bottomRight"
+              menu={{
+                selectable: true,
+                selectedKeys: [locale],
+                items: LOCALE_OPTIONS.map((item) => ({ key: item.value, label: t(item.labelKey) })),
+                onClick: ({ key }) => setLocale(key as typeof locale),
               }}
             >
-              <Button
-                className="manager-menu-trigger"
-                type="default"
-                shape="circle"
-                aria-label={isMobile ? (mobileMenuOpen ? t("shell.closeMenu") : t("shell.openMenu")) : collapsed ? t("shell.expandMenu") : t("shell.collapseMenu")}
-                icon={<MenuOutlined />}
-                onClick={() => (isMobile ? setMobileMenuOpen(!mobileMenuOpen) : updateCollapsed(!collapsed))}
-              />
-              <div className="manager-prototype-title" style={{ minWidth: 0 }}>
-                <h1>{pageTitle}</h1>
-                <div>{pageSubtitle}</div>
-              </div>
-              <span style={{ flex: 1 }} />
-              <Space size={8}>
-                <Select
-                  aria-label={t("locale.label")}
-                  className="manager-locale-select"
-                  value={locale}
-                  onChange={(value) => setLocale(value as typeof locale)}
-                  options={LOCALE_OPTIONS.map((item) => ({ value: item.value, label: t(item.labelKey) }))}
-                />
-                <Dropdown
-                  trigger={["click"]}
-                  menu={{
-                    items: [
-                      { key: "password", icon: <LockOutlined />, label: t("password.title") },
-                      { key: "logout", danger: true, icon: <LogoutOutlined />, label: t("shell.logout") },
-                    ],
-                    onClick: ({ key }) => (key === "password" ? setPasswordOpen(true) : logout()),
-                  }}
-                >
-                  <Button aria-label={t("shell.logout")}>
-                    {profile?.displayName || profile?.username || authUser?.displayName || t("shell.logout")}
-                  </Button>
-                </Dropdown>
-              </Space>
-            </Header>
+              <button type="button" className="manager-icon-button" aria-label={t("locale.label")}>
+                <TranslationOutlined />
+              </button>
+            </Dropdown>
+            <span className="manager-topbar-status" title={t("shell.online")}>
+              <span className="manager-dot-live" />
+              <span>{t("shell.online")}</span>
+            </span>
+          </header>
 
-            <Content className="manager-console-content" style={{ padding: 20 }}>
-              <div className="manager-stagger-3">{children}</div>
-            </Content>
-          </Layout>
-        </Layout>
+          <main className="manager-content" onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 4)}>
+            <div className="manager-page">
+              <PageActionsProvider value={actionsSlot}>
+                <div className="manager-page-head">
+                  <div className="manager-page-head-text">
+                    <h1>{pageTitle}</h1>
+                    {pageSubtitle ? <p>{pageSubtitle}</p> : null}
+                  </div>
+                  <div className="manager-page-head-actions" ref={setActionsSlot} />
+                </div>
+                {/* 槽挂上之后再渲染页面：页面里的 <PageActions> 第一帧就能找到位置，不会先在原地闪一下。 */}
+                {actionsSlot ? (
+                  <div key={activePath} className="manager-page-body">
+                    {children}
+                  </div>
+                ) : null}
+              </PageActionsProvider>
+            </div>
+          </main>
+        </div>
+
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          entries={paletteEntries}
+          recent={recentPages}
+          onNavigate={navigate}
+        />
+        <ChangePasswordModal
+          open={passwordOpen}
+          forced={profile?.mustChangePassword}
+          onClose={() => setPasswordOpen(false)}
+          // 改完密码后端会把这个人的全部会话删掉，留在原地下一个请求必然失败。
+          onChanged={logout}
+        />
       </div>
-      <ChangePasswordModal
-        open={passwordOpen}
-        forced={profile?.mustChangePassword}
-        onClose={() => setPasswordOpen(false)}
-        // 改完密码后端会把这个人的全部会话删掉，留在原地下一个请求必然失败。
-        onChanged={logout}
-      />
-    </div>
     </WritePermissionProvider>
   );
+}
+
+/** 头像里放名字的第一个字：中文名取首字，英文名取首字母大写。 */
+function initialOf(name: string) {
+  const first = Array.from(name.trim())[0] ?? "?";
+  return first.toUpperCase();
 }
 
 /** 兜底导航拼成 antd 菜单树，形状和后端资源那条路径一致。 */
 function buildFallbackItems(entries: FallbackNavEntry[], t: (key: TranslationKey) => string): MenuItem[] {
   return entries.map((entry) => {
-    const content = (
-      <span className="manager-nav-item-content">
-        {entry.icon ? <span className="manager-nav-item-icon">{entry.icon}</span> : null}
-        <span className="manager-nav-item-label">{t(entry.labelKey)}</span>
-      </span>
-    );
-    if (!entry.children?.length) return { key: entry.key, label: content };
-    return { key: entry.key, label: content, children: buildFallbackItems(entry.children, t) };
+    const label = <span className="manager-nav-item-label">{t(entry.labelKey)}</span>;
+    if (!entry.children?.length) return { key: entry.key, icon: entry.icon, label, title: t(entry.labelKey) };
+    return { key: entry.key, icon: entry.icon, label, children: buildFallbackItems(entry.children, t) };
   });
 }
 
 /** 兜底导航里真正能点进去的那些路由；目录的 key 不是路由，不进来。 */
-function fallbackPaths(entries: FallbackNavEntry[]): string[] {
-  return entries.flatMap((entry) => (entry.children?.length ? fallbackPaths(entry.children) : [entry.key]));
+function fallbackPages(entries: FallbackNavEntry[], t: (key: TranslationKey) => string, group: string): NavPage[] {
+  return entries.flatMap((entry) =>
+    entry.children?.length
+      ? fallbackPages(entry.children, t, t(entry.labelKey))
+      : [{ href: entry.key, label: t(entry.labelKey), icon: entry.icon, group }],
+  );
 }
 
 /** 菜单项的 key 就是它的前端路由；没有 pageUrl 的（纯目录）退回资源编码。 */
@@ -577,21 +794,16 @@ function buildMenuItems(resources: ResourceItem[], label: (item: ResourceItem) =
 
   const build = (resource: ResourceItem): MenuItem | null => {
     const icon = MENU_ICONS[resource.icon];
-    const content = (
-      <span className="manager-nav-item-content">
-        {icon ? <span className="manager-nav-item-icon">{icon}</span> : null}
-        <span className="manager-nav-item-label">{label(resource)}</span>
-      </span>
-    );
+    const content = <span className="manager-nav-item-label">{label(resource)}</span>;
     if (resource.resourceType === "page") {
       if (!resource.pageUrl) return null;
-      return { key: menuKey(resource), label: content };
+      return { key: menuKey(resource), icon, label: content, title: label(resource) };
     }
     const children = (childrenByParent.get(resource.id) ?? [])
       .map(build)
       .filter((item): item is MenuItem => item !== null);
     if (children.length === 0) return null;
-    return { key: menuKey(resource), label: content, children };
+    return { key: menuKey(resource), icon, label: content, children };
   };
 
   return (childrenByParent.get(0) ?? []).map(build).filter((item): item is MenuItem => item !== null);

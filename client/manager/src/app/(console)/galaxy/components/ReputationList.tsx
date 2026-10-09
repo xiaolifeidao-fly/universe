@@ -5,6 +5,7 @@ import { Alert, Button, Empty, Form, Input, InputNumber, Modal, Progress, Space,
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { fetchReputations, setReputation, type ReputationPage, type ReputationView } from "../api/galaxy.api";
 
@@ -138,7 +139,7 @@ export function ReputationList() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className="manager-page-stack">
       <Alert
         type="info"
         showIcon
@@ -146,11 +147,11 @@ export function ReputationList() {
         description={t("galaxy.reputation.recovery").replace("{rate}", String(page?.recoveryPerDay ?? 0))}
       />
 
-      <Space>
+      <PageActions>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
-      </Space>
+      </PageActions>
 
       <Table<ReputationView>
         rowKey="subject"

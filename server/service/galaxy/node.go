@@ -478,6 +478,12 @@ func liveContributions(rows []*repository.GalaxyContribution) []*repository.Gala
 func missingFromControlPlane(rows []*repository.GalaxyContribution, snapshots []ContributionSnapshot) []string {
 	present := make(map[string]bool, len(snapshots))
 	for _, snapshot := range snapshots {
+		// 没有 kind 或 provider 的是壳，不算「在」：它进不了任何车道，
+		// 当成在的话这条贡献永远不会被重建。壳的来路是对已过期的哈希做了裸写
+		// （结算脚本以前就会），已经修了，但线上存量的壳要靠这里收拾掉。
+		if snapshot.Kind == "" || snapshot.Provider == "" {
+			continue
+		}
 		present[snapshot.CID] = true
 	}
 	var missing []string

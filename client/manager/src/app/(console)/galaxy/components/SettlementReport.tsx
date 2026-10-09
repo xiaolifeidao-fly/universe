@@ -1,10 +1,11 @@
 "use client";
 
 import { ReloadOutlined } from "@ant-design/icons";
-import { Button, Space, Table, message } from "antd";
+import { Button, Table, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { fetchAdminUsage, type UsageLine, type UsageReport } from "../api/galaxy.api";
 
 /** 结算汇总：近 30 天按能力与上游分组的用量和金额。 */
@@ -52,12 +53,12 @@ export function SettlementReport() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Space>
+    <div className="manager-page-stack">
+      <PageActions>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
-      </Space>
+      </PageActions>
 
       <div style={{ color: "var(--manager-text-muted)" }}>
         {t("galaxy.usage.total")}: ¥{((usage?.totalFee ?? 0) / 1_000_000).toFixed(2)}

@@ -360,6 +360,36 @@ func TestSettleReturnsReservationAndRecordsActual(t *testing.T) {
 	}
 }
 
+// 节点断线超过 45 秒、贡献哈希已经过期，Hub 的看门狗这时才判在途请求失败。
+// 结算不能把哈希写回来：那会是一个没有 TTL、没有 kind/lane 的壳，
+// 心跳把它当成贡献还在，机器回来之后就永远不在车道里。额度预留照常退回。
+func TestSettleDoesNotResurrectExpiredContribution(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	limits := contract.Metering{contract.UnitOutputTokens: 10_000}
+	seedContribution(t, plane, "c1", 3, 2, limits)
+	estimate := contract.Metering{contract.UnitOutputTokens: 1_000}
+	if outcome, err := plane.Place(ctx, placeCommand("u_1", "c1", "ck_a", limits, estimate, 3, 2)); err != nil || !outcome.Placed {
+		t.Fatalf("放置失败: %v %+v", err, outcome)
+	}
+	server.Del(plane.contribKey("c1"))
+
+	done, err := plane.Settle(ctx, galaxy.SettleCommand{
+		RID: "u_1", CID: "c1", ConsumerKey: "ck_a", Estimate: estimate,
+		WindowKeys: windowKeys(limits), Lane: "llm.chat|claude_oauth", State: contract.UnitFailed,
+	})
+	if err != nil || !done {
+		t.Fatalf("结算失败: %v done=%v", err, done)
+	}
+	if server.Exists(plane.contribKey("c1")) {
+		t.Fatal("结算把已过期的贡献写成了壳")
+	}
+	reserved := plane.quotaKey("c1", contract.UnitOutputTokens, windowKeys(limits)[contract.UnitOutputTokens], "reserved")
+	if got, _ := server.Get(reserved); got != "0" {
+		t.Fatalf("预留没有退回: %q", got)
+	}
+}
+
 func TestSettleIsIdempotent(t *testing.T) {
 	plane, _ := newTestPlane(t)
 	ctx := context.Background()
@@ -571,6 +601,46 @@ func TestListLaneContributionsEvictsDeadMembers(t *testing.T) {
 	}
 	if len(members) != 1 || members[0] != "c_live" {
 		t.Fatalf("死成员没被摘掉，集合里还是 %v", members)
+	}
+}
+
+// 哈希在、车道成员丢了：放置端摘死成员与心跳重建赛跑时会落到这个状态，
+// 上层的缺失检查只看哈希，看不出来。下一拍心跳必须把它补回车道。
+func TestTouchNodeRestoresLaneMembership(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	registerTestNode(t, plane, "n_1")
+	live := seedContribution(t, plane, "c1", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
+	lane := live.Lane()
+	server.SRem(plane.laneKey(lane), "c1")
+
+	if _, err := plane.TouchNode(ctx, "n_1", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := server.SIsMember(plane.laneKey(lane), "c1"); !ok {
+		t.Fatal("心跳续期没有把贡献补回车道，它会永久掉出候选")
+	}
+}
+
+// 读快照时哈希还不在、摘之前已经被重建：不能把刚回来的成员踢掉。
+func TestLaneEvictionSparesRebuiltContribution(t *testing.T) {
+	plane, server := newTestPlane(t)
+	ctx := context.Background()
+	live := seedContribution(t, plane, "c1", 3, 2, contract.Metering{contract.UnitOutputTokens: 1000})
+	lane := live.Lane()
+
+	if err := plane.client.Eval(ctx, evictDeadLaneMemberLua, []string{plane.laneKey(lane), plane.contribKey("c1")}, "c1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := server.SIsMember(plane.laneKey(lane), "c1"); !ok {
+		t.Fatal("哈希还在，却被当成死成员摘出了车道")
+	}
+	server.Del(plane.contribKey("c1"))
+	if err := plane.client.Eval(ctx, evictDeadLaneMemberLua, []string{plane.laneKey(lane), plane.contribKey("c1")}, "c1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := server.SIsMember(plane.laneKey(lane), "c1"); ok {
+		t.Fatal("哈希已经不在，成员却没被摘掉")
 	}
 }
 

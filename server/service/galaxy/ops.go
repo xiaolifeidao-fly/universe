@@ -248,6 +248,7 @@ func (s *service) Sweep(ctx context.Context) error {
 	if _, err := s.RequeueStaleJobs(ctx, now); err != nil {
 		return err
 	}
+	_, _ = s.reapOrphanRelays(ctx, now)
 	if err := s.repository.SnapshotQuotaWindow(ctx, windows); err != nil {
 		return err
 	}
@@ -261,6 +262,60 @@ func (s *service) Sweep(ctx context.Context) error {
 	// 直接回到运营眼前（见 admindashboard.go 的 usageRange）。
 	_ = s.rollupUsage(ctx, now)
 	return nil
+}
+
+// RelayOrphanGrace 中转单元过了截止时刻多久，仍然没结算就判它成了孤儿。
+const RelayOrphanGrace = 2 * time.Minute
+
+// reapOrphanRelays 收掉没人结算的中转单元。
+//
+// 中转单元的收尾全靠持有消费者连接的那条通道：它等到完成、失败或截止，
+// 然后结算。有两种情况这条通道不在了：Hub 重启（goroutine 跟着进程没了），
+// 以及消费者先断开、而领活的节点也掉了（Abandon 只是发取消，结算要等节点的 complete，
+// 可节点不会再来了）。没人结算，这台机器的 inflight、run 计数和额度预留就一直挂着 ——
+// 心跳又一直给哈希续期，于是这台机器回来之后并发永久少几个，额度也被吃掉一块，
+// 消费者看到的是「明明在线却总是 no_capacity」。
+//
+// 判据只用时间：过了所有中转 kind 里最长的那个 maxRunSec 再加一段宽限，
+// 通道层的总时限早就到了，这时还没结算，一定是没人管了。
+func (s *service) reapOrphanRelays(ctx context.Context, now time.Time) (int, error) {
+	longest := time.Duration(0)
+	for _, spec := range s.kinds.List() {
+		if spec.Primitive != contract.PrimitiveRelay {
+			continue
+		}
+		if run := time.Duration(spec.Lease.MaxRunSec) * time.Second; run > longest {
+			longest = run
+		}
+	}
+	if longest <= 0 {
+		return 0, nil
+	}
+	rows, err := s.repository.ListStaleUnits(ctx, bizLine, string(contract.PrimitiveRelay),
+		now.Add(-longest-RelayOrphanGrace), 100)
+	if err != nil {
+		return 0, err
+	}
+	cause := contract.NewUnitError(contract.ErrorClassHub, contract.CodeLeaseExpired, false,
+		"请求超过时限仍未结束，已由巡检收尾")
+	reaped := 0
+	for _, row := range rows {
+		// 控制面里已经结过账、只是库里的状态没写进去（结算后那一步 UpdateUnit 失败）：
+		// 按结算时的终态补上。不补的话 FailUnit 会因为幂等什么都不做，
+		// 这一行每轮都被捞出来，还占着这 100 条的名额，把后面真正的孤儿挡在外面。
+		if runtime, found, err := s.control.LoadUnit(ctx, row.UnitID); err == nil && found && runtime.State == "settled" {
+			final := runtime.FinalState
+			if final == "" {
+				final = contract.UnitFailed
+			}
+			_ = s.repository.UpdateUnit(ctx, bizLine, row.UnitID, map[string]any{"state": string(final), "finished_at": now})
+			continue
+		}
+		if err := s.FailUnit(ctx, row.UnitID, cause); err == nil {
+			reaped++
+		}
+	}
+	return reaped, nil
 }
 
 // sweepSessions 关掉长期没有回合的会话。座位是稀缺资源：

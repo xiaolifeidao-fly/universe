@@ -1,12 +1,13 @@
 "use client";
 
 import { ReloadOutlined } from "@ant-design/icons";
-import { Alert, Button, Skeleton, Space, Table, Tooltip, Typography, message } from "antd";
+import { Alert, Button, Skeleton, Table, Tooltip, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs, { type Dayjs } from "dayjs";
 import { useCallback, useEffect, useState } from "react";
 import { ManagerDatePicker } from "@/components/date/DatePickers";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import {
   fetchDashboard,
   type AdminDashboard,
@@ -59,27 +60,34 @@ export function Dashboard() {
 
   if (loading && !data) {
     return (
-      <section className="manager-data-card">
-        <Skeleton active paragraph={{ rows: 6 }} />
-      </section>
+      <div className="manager-page-stack">
+        <div className="manager-kpi-grid">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className="manager-kpi">
+              <Skeleton active title={false} paragraph={{ rows: 3, width: ["45%", "30%", "75%"] }} />
+            </div>
+          ))}
+        </div>
+        <section className="manager-data-card">
+          <Skeleton active paragraph={{ rows: 5 }} />
+        </section>
+      </div>
     );
   }
 
   return (
-    <div className="manager-page-stack" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Space align="center" wrap style={{ justifyContent: "space-between", width: "100%" }}>
-        <Space align="baseline" size={10}>
-          <span style={{ fontSize: "var(--manager-fs-lg)", fontWeight: 700, color: "var(--manager-text)" }}>
-            {data?.date || "—"}
-          </span>
-          <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>
+    <div className="manager-page-stack">
+      <PageActions>
+        <span className="manager-page-meta">
+          <span className="manager-mono">{data?.date || "—"}</span>
+          <span>
             {t("dashboard.generatedAt")} {formatClock(data?.generatedAt ?? "")}
           </span>
-        </Space>
+        </span>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("dashboard.refresh")}
         </Button>
-      </Space>
+      </PageActions>
 
       {failure ? <Alert type="error" showIcon message={t("dashboard.loadFailed")} description={failure} /> : null}
 
@@ -89,11 +97,11 @@ export function Dashboard() {
           {data.requests ? (
             <section className="manager-data-card">
               <SectionTitle title={t("dashboard.requests.title")} hint={t("dashboard.requests.hint")} />
-              <Space size={[32, 12]} wrap>
+              <div className="manager-metric-row">
                 {(["total", "completed", "failed", "cancelled", "expired", "pending"] as const).map((state) => (
                   <Metric key={state} label={t(`dashboard.requests.${state}`)} value={formatExact(data.requests![state])} />
                 ))}
-              </Space>
+              </div>
             </section>
           ) : null}
           <TrackingSection
@@ -128,15 +136,11 @@ function TrackingSection({
 
   return (
     <section className="manager-data-card">
-      <Space align="center" wrap style={{ justifyContent: "space-between", width: "100%", marginBottom: 16 }}>
-        <Space direction="vertical" size={2}>
-          <Typography.Title level={5} style={{ margin: 0 }}>
-            {t("dashboard.tracking.title")}
-          </Typography.Title>
-          <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>
-            {t("dashboard.tracking.hint")}
-          </span>
-        </Space>
+      <div className="manager-card-head">
+        <div>
+          <h3>{t("dashboard.tracking.title")}</h3>
+          <p>{t("dashboard.tracking.hint")}</p>
+        </div>
         <ManagerDatePicker
           aria-label={t("dashboard.tracking.date")}
           value={selectedDate}
@@ -147,11 +151,11 @@ function TrackingSection({
             if (date) onDateChange(date.startOf("day"));
           }}
         />
-      </Space>
-      <Space size={[48, 12]} wrap>
+      </div>
+      <div className="manager-metric-row">
         <Metric label={t("dashboard.tracking.portalOpens")} value={formatExact(tracking.portalOpens)} />
         <Metric label={t("dashboard.tracking.modelClicks")} value={formatExact(tracking.modelSquareClicks)} />
-      </Space>
+      </div>
     </section>
   );
 }
@@ -219,26 +223,22 @@ function KpiRow({ data }: { data: AdminDashboard }) {
   ];
 
   return (
-    // 190 是「六格在常见的桌面宽度下正好排成一行」的下限。再宽一点就会挤成
+    // 168 是「六格在常见的桌面宽度（含 248 的侧栏）下正好排成一行」的下限。再宽一点就会挤成
     // 五格加一个孤零零的第二行 —— 六个数是一组，断在第五个上会让人以为漏看了什么。
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }}>
+    <div className="manager-kpi-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(168px, 1fr))" }}>
       {cards.map((card) => (
-        <section key={card.key} className="manager-data-card" style={{ padding: 16, display: "flex", flexDirection: "column", gap: 4 }}>
-          <span style={{ color: "var(--manager-text-soft)", fontSize: "var(--manager-fs-sm)" }}>{card.label}</span>
+        <section key={card.key} className="manager-kpi">
+          <span className="manager-kpi-label">{card.label}</span>
           <Tooltip title={card.exact}>
-            <Space align="baseline" size={6}>
-              <span className="manager-mono" style={{ fontSize: 28, fontWeight: 700, lineHeight: 1.1, color: "var(--manager-text)" }}>
-                {card.value}
-              </span>
-              {card.suffix ? (
-                <span className="manager-mono" style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-sm)" }}>
-                  {card.suffix}
-                </span>
-              ) : null}
-            </Space>
+            <span className="manager-kpi-value">
+              {card.value}
+              {card.suffix ? <small>{card.suffix}</small> : null}
+            </span>
           </Tooltip>
-          <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{card.hint}</span>
-          {card.extra ? <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{card.extra}</span> : null}
+          <span className="manager-kpi-foot">
+            {card.hint}
+            {card.extra ? <><br />{card.extra}</> : null}
+          </span>
         </section>
       ))}
     </div>
@@ -434,10 +434,10 @@ function CapacitySection({ data }: { data: AdminDashboard }) {
       {capacity.stale ? (
         <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={t("dashboard.capacity.stale")} />
       ) : null}
-      <Space size={[24, 8]} wrap style={{ marginBottom: 12 }}>
+      <div className="manager-metric-row" style={{ marginBottom: 16 }}>
         <Metric label={t("dashboard.capacity.withQuota")} value={`${capacity.machines} / ${capacity.onlineMachines}`} />
         <Metric label={t("dashboard.capacity.unlimited")} value={String(capacity.unlimited)} />
-      </Space>
+      </div>
       <Table<DashboardCapacityWindow>
         rowKey="window"
         size="small"
@@ -490,7 +490,7 @@ function RevenueSection({ data }: { data: AdminDashboard }) {
   return (
     <section className="manager-data-card">
       <SectionTitle title={t("dashboard.revenue.title")} hint={t("dashboard.revenue.hint")} />
-      <Space size={[32, 12]} wrap>
+      <div className="manager-metric-row">
         <Metric
           label={t("dashboard.revenue.recharge")}
           value={formatMoney(revenue.rechargePaid)}
@@ -507,7 +507,7 @@ function RevenueSection({ data }: { data: AdminDashboard }) {
           hint={t("dashboard.revenue.pointsHint", { count: revenue.pointsCount })}
           muted
         />
-      </Space>
+      </div>
     </section>
   );
 }
@@ -516,29 +516,24 @@ function RevenueSection({ data }: { data: AdminDashboard }) {
 
 function SectionTitle({ title, hint }: { title: string; hint?: string }) {
   return (
-    // 占满整行：antd 的 Space 默认是 inline-flex，不撑宽的话下一块内容会挤到
-    // 标题右边去 —— 表现是卡片里的指标标签跑到标题那一行上。
-    <Space align="baseline" size={10} style={{ marginBottom: 12, display: "flex", width: "100%" }} wrap>
-      <Typography.Title level={5} style={{ margin: 0 }}>
-        {title}
-      </Typography.Title>
-      {hint ? <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{hint}</span> : null}
-    </Space>
+    <div className="manager-card-head">
+      <div>
+        <h3>{title}</h3>
+        {hint ? <p>{hint}</p> : null}
+      </div>
+    </div>
   );
 }
 
 function Metric({ label, value, hint, muted }: { label: string; value: string; hint?: string; muted?: boolean }) {
   return (
-    <Space direction="vertical" size={0}>
-      <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{label}</span>
-      <span
-        className="manager-mono"
-        style={{ fontSize: 22, fontWeight: 700, color: muted ? "var(--manager-text-soft)" : "var(--manager-text)" }}
-      >
+    <div className="manager-metric">
+      <span className="manager-metric-label">{label}</span>
+      <span className="manager-metric-value" style={muted ? { color: "var(--manager-text-soft)" } : undefined}>
         {value}
       </span>
-      {hint ? <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{hint}</span> : null}
-    </Space>
+      {hint ? <span className="manager-kpi-foot">{hint}</span> : null}
+    </div>
   );
 }
 

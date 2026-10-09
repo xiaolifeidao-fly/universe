@@ -72,6 +72,7 @@ func (s *service) ConsumerDashboard(ctx context.Context, ownerUserID string, day
 		return view, err
 	}
 	view.SpentMicros = report.TotalFee
+	view.Tokens = usageReportTokens(report.Lines)
 	view.AvgFirstByteMs, err = s.repository.AvgFirstByteMs(ctx, repository.UnitQuery{
 		BizLine: bizLine, ConsumerKeys: keys, From: dayStart, To: dayStart.AddDate(0, 0, 1),
 	})
@@ -79,6 +80,25 @@ func (s *service) ConsumerDashboard(ctx context.Context, ownerUserID string, day
 		return view, err
 	}
 	return view, nil
+}
+
+// usageReportTokens 把账单行还原成「这段时间实际用了多少 token」。
+//
+// 账单会按模型、档次和单位拆行，而 llm.total_tokens、cache write 合计、
+// reasoning 又是其他桶的合计或子集，不能把所有 *_tokens 直接相加。
+// 先按单位汇总，再复用运营仪表盘已经验证过的四桶口径：分项与合计取较大值，
+// cache write 的合计与 5m / 1h 分项也只算一次。
+func usageReportTokens(lines []dto.UsageLine) int64 {
+	amounts := map[string]int64{}
+	for _, line := range lines {
+		amounts[line.Unit] += line.Amount
+	}
+	units := make([]dto.DashboardUsageUnit, 0, len(amounts))
+	for unit, amount := range amounts {
+		units = append(units, dto.DashboardUsageUnit{Unit: unit, Amount: amount})
+	}
+	tokens, _ := tokensAndCalls(units)
+	return tokens
 }
 
 // OwnedUsageRecords 逐笔扣费。范围由令牌决定，请求里的 keyId 只能收窄。

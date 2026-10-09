@@ -211,8 +211,10 @@ type UnitRuntime struct {
 	CID      string
 	Instance string
 	State    contract.UnitState
-	Lease    string
-	Estimate contract.Metering
+	// FinalState 结算时落下的终态；State 为 settled 时才有值。
+	FinalState contract.UnitState
+	Lease      string
+	Estimate   contract.Metering
 	// Envelope 是当初入队的那份工作单元 JSON。租约过期要重派时按它原样重放，
 	// 不需要消费者再提交一次 —— job 的输入本来就自包含。
 	Envelope []byte
@@ -360,16 +362,18 @@ const (
 	// MetricStreamGap 一次上行里最长的一段静默（毫秒）。
 	// 它是 streamIdleTimeoutMs 该设多少的唯一依据 —— 那个阈值要盖住
 	// 正常请求的静默上限，凭感觉拍一个数字，不是拍太松就是开始误杀慢上游。
-	MetricStreamGap      = "galaxy_stream_gap_ms"
-	MetricUnitTotal      = "galaxy_unit_total"
-	MetricReassignTotal  = "galaxy_reassign_total"
-	MetricSpillTotal     = "galaxy_spill_total"
-	MetricLaneInflight   = "galaxy_lane_inflight"
-	MetricLaneQuotaLeft  = "galaxy_lane_quota_left_ratio"
-	MetricThrottledTotal = "galaxy_throttled_total"
-	MetricUsageMismatch  = "galaxy_usage_mismatch_total"
-	MetricWaitQueueDepth = "galaxy_wait_queue_depth"
-	MetricAuditVerdict   = "galaxy_audit_verdict_total"
+	MetricStreamGap     = "galaxy_stream_gap_ms"
+	MetricUnitTotal     = "galaxy_unit_total"
+	MetricReassignTotal = "galaxy_reassign_total"
+	MetricSpillTotal    = "galaxy_spill_total"
+	// MetricHardPinDetached 链式请求的原贡献接不了单，摘掉 previous_response_id 改派的次数。
+	MetricHardPinDetached = "galaxy_hard_pin_detached_total"
+	MetricLaneInflight    = "galaxy_lane_inflight"
+	MetricLaneQuotaLeft   = "galaxy_lane_quota_left_ratio"
+	MetricThrottledTotal  = "galaxy_throttled_total"
+	MetricUsageMismatch   = "galaxy_usage_mismatch_total"
+	MetricWaitQueueDepth  = "galaxy_wait_queue_depth"
+	MetricAuditVerdict    = "galaxy_audit_verdict_total"
 
 	// MetricAccessSyncFailed hello 对齐接入方式失败的次数。
 	// 它不阻断 hello，所以没有这条指标就完全是静默的 —— 而它一旦持续发生，

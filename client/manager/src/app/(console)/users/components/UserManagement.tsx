@@ -5,6 +5,7 @@ import { Button, Checkbox, Form, Input, Modal, Popconfirm, Select, Space, Table,
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { fetchUser, fetchUsers, resetUserPassword, saveUser, deleteUser, type SaveUserPayload, UserRecord } from "../api/user.api";
 
@@ -204,18 +205,14 @@ export function UserManagement() {
 
   return (
     <div className="manager-page-stack">
-      <section className="manager-page-heading">
-        <div>
-          <span className="manager-section-label">USER MANAGEMENT</span>
-          <h1>{t("users.title")}</h1>
-          <p>{t("users.subtitle")}</p>
-        </div>
+      {/* 标题与说明由外壳的页头统一画，这里只把主按钮送过去。 */}
+      <PageActions>
         {canWrite ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             {t("users.new")}
           </Button>
         ) : null}
-      </section>
+      </PageActions>
 
       <section className="manager-data-card manager-table">
         <div className="manager-toolbar" style={{ marginBottom: 14 }}>

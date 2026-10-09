@@ -156,10 +156,16 @@ func (c *ControlPlane) TouchNode(ctx context.Context, nodeID string, beatAt time
 		})...)
 	for _, cid := range cids {
 		// 只给还在的贡献续期。已经过期的不能靠一句心跳复活成「只有 lastBeat」的壳 ——
-		// 它没有 kind 也没有 provider，选不上还占着车道，真要回到候选里得走一次 hello，
-		// 而节点断连重连本来就会重发 hello。
-		pipe.Eval(ctx, patchIfExistsLua, []string{c.contribKey(cid), c.seatsKey(cid)},
-			patchArgs(int(contributionTTL.Seconds()), map[string]any{"lastBeat": beatAt.UnixMilli()})...)
+		// 它没有 kind 也没有 provider，选不上还占着车道，要回到候选里得由上层按库里的行重建
+		// （Heartbeat 里的 missingFromControlPlane）。
+		//
+		// 还在的贡献顺手把自己 SADD 回车道。哈希在、车道成员却丢了的状态是真实存在的：
+		// 放置端 ListLaneContributions 读哈希和摘死成员不是同一步，心跳恰好在两者之间把
+		// 过期的贡献重建回来，刚建好的成员就被摘掉了。这之后哈希、节点集合都完好，
+		// 上层的缺失检查看不出任何问题，机器却永久不在候选里 —— 和当初要修的是同一个症状。
+		// 每拍心跳补一次成员，不管什么原因丢的，最多一个心跳周期就回来。
+		pipe.Eval(ctx, touchContributionLua, []string{c.contribKey(cid), c.seatsKey(cid)},
+			int(contributionTTL.Seconds()), beatAt.UnixMilli(), c.laneKey(""), cid)
 	}
 	pipe.Expire(ctx, c.nodeContribs(nodeID), nodeTTL)
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -202,6 +208,29 @@ if ttl > 0 then
   if KEYS[2] ~= nil then redis.call('EXPIRE', KEYS[2], ttl) end
 end
 return 1`
+
+// touchContributionLua 心跳给一条贡献续期，并确保它还在自己的车道里。
+// 和 patchIfExistsLua 一样绝不创建：哈希不在就什么都不做。
+//
+// KEYS[1] 贡献哈希，KEYS[2] 它的座位集合（跟着续期）。
+// ARGV[1] 续期秒数，ARGV[2] lastBeat，ARGV[3] 车道 key 前缀，ARGV[4] cid。
+const touchContributionLua = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return 0 end
+redis.call('HSET', KEYS[1], 'lastBeat', ARGV[2])
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[1]))
+local lane = redis.call('HGET', KEYS[1], 'lane')
+if lane and lane ~= '' then redis.call('SADD', ARGV[3] .. lane, ARGV[4]) end
+return 1`
+
+// evictDeadLaneMemberLua 哈希确实不在了才把成员摘出车道。
+// 读快照与摘除之间隔着一段，这期间心跳可能已经把贡献重建回来；
+// 摘之前再看一眼，避免把刚回来的成员踢出去。
+//
+// KEYS[1] 车道，KEYS[2] 贡献哈希；ARGV[1] cid。
+const evictDeadLaneMemberLua = `
+if redis.call('EXISTS', KEYS[2]) == 1 then return 0 end
+return redis.call('SREM', KEYS[1], ARGV[1])`
 
 func patchArgs(ttlSeconds int, fields map[string]any) []any {
 	args := make([]any, 0, 1+len(fields)*2)
@@ -409,15 +438,14 @@ func (c *ControlPlane) ListLaneContributions(ctx context.Context, lane string) (
 	// 放置本来就要把这条 lane 整个读一遍，在这儿清是零额外开销，而且不挑成因：
 	// 不管什么原因留下的死成员，第一次被读到就消失。
 	//
-	// 被误摘的代价也有限：能走到这里说明哈希已经不在，那条贡献本来就选不上
-	// （Place 的 Lua 第一件事就是 EXISTS contribKey），要回到候选里得靠一次 hello，
-	// 而节点断连重连本来就会重发 hello。
+	// 摘之前在 Lua 里再确认一次哈希不在：从上面读快照到这里，心跳可能已经把它重建回来了。
+	// 即便漏网被误摘，下一拍心跳（TouchNode）也会把还活着的贡献 SADD 回车道。
 	if len(missing) > 0 {
-		members := make([]any, 0, len(missing))
+		pipe := c.client.Pipeline()
 		for _, cid := range missing {
-			members = append(members, cid)
+			pipe.Eval(ctx, evictDeadLaneMemberLua, []string{c.laneKey(lane), c.contribKey(cid)}, cid)
 		}
-		_ = c.client.SRem(ctx, c.laneKey(lane), members...).Err()
+		_, _ = pipe.Exec(ctx)
 	}
 	return snapshots, nil
 }
@@ -626,7 +654,7 @@ func (c *ControlPlane) LoadUnit(ctx context.Context, rid string) (galaxy.UnitRun
 	}
 	runtime := galaxy.UnitRuntime{
 		RID: rid, ConsumerKey: values["consumerKey"], CID: values["cid"],
-		Instance: values["instance"], State: contract.UnitState(values["state"]), Lease: values["lease"],
+		Instance: values["instance"], State: contract.UnitState(values["state"]), FinalState: contract.UnitState(values["finalState"]), Lease: values["lease"],
 		Estimate: decodeMetering(values["estimate"]), HubUsage: decodeMetering(values["hubUsage"]),
 		Envelope: []byte(values["unit"]),
 	}

@@ -254,6 +254,51 @@ func TestSubmitMigratesPortableHardPinAfterEndpointIdentityMismatch(t *testing.T
 	}
 }
 
+// 提供端断线：链式请求的原贡献已经不在控制面里了。请求带着完整上下文，
+// 摘掉 previous_response_id 换一台接着聊，而不是让这个会话一直报「原节点已离线」。
+func TestSubmitMigratesHardPinWhenPinnedNodeIsGone(t *testing.T) {
+	now := time.Now()
+	target := healthy("n_new:relay_codex", now)
+	plane := &fakePlane{lane: []ContributionSnapshot{target}}
+	unit := relayUnit()
+	unit.HardPin = "n_old:relay_codex"
+	unit.Inputs = []contract.Payload{{
+		Name: "body", ContentType: "application/json",
+		Inline: []byte(`{"model":"gpt-test","previous_response_id":"resp_old","input":[{"role":"user","content":"继续"}]}`),
+	}}
+
+	placement, err := submitService(t, plane).Submit(context.Background(), unit)
+	if err != nil {
+		t.Fatalf("原节点掉线时应改派：%v", err)
+	}
+	if placement.CID != target.CID {
+		t.Fatalf("应改落可用贡献，实际 %q", placement.CID)
+	}
+	if strings.Contains(string(plane.placed.Body), "previous_response_id") {
+		t.Fatalf("改派前必须摘掉链式 id：%s", plane.placed.Body)
+	}
+}
+
+// 原贡献还在、只是暂停了：主人关掉的机器连链式请求也不该再接。
+func TestSubmitMigratesHardPinWhenPinnedNodePaused(t *testing.T) {
+	now := time.Now()
+	paused := healthy("n_old:relay_codex", now)
+	paused.Paused = true
+	target := healthy("n_new:relay_codex", now)
+	plane := &fakePlane{lane: []ContributionSnapshot{paused, target}}
+	unit := relayUnit()
+	unit.HardPin = paused.CID
+	unit.Inputs = []contract.Payload{{
+		Name: "body", ContentType: "application/json",
+		Inline: []byte(`{"previous_response_id":"resp_old","input":[]}`),
+	}}
+
+	placement, err := submitService(t, plane).Submit(context.Background(), unit)
+	if err != nil || placement.CID != target.CID {
+		t.Fatalf("暂停的原节点不该再接链式请求：cid=%q err=%v", placement.CID, err)
+	}
+}
+
 // discardDriver 一个什么都不存的库：写一律成功，查一律空结果。
 type discardDriver struct{}
 

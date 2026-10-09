@@ -5,6 +5,7 @@ import { Button, Popconfirm, Space, Table, Tag, Typography, message } from "antd
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { UpstreamUsagePanel } from "./UpstreamUsagePanel";
 import {
@@ -179,12 +180,12 @@ export function NodeRoster() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <Space>
+    <div className="manager-page-stack">
+      <PageActions>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
-      </Space>
+      </PageActions>
 
       <Table<AdminNodeView>
         rowKey="nodeId"

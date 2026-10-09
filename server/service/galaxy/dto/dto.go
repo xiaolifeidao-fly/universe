@@ -1355,9 +1355,13 @@ type ConsumerDashboard struct {
 	Balance int64    `json:"balance"`
 	Today   DayStats `json:"today"`
 	// SpentMicros 最近 N 天的花费（微分），Days 说明是几天。
-	SpentMicros int64  `json:"spentMicros"`
-	Days        int    `json:"days"`
-	Currency    string `json:"currency"`
+	SpentMicros int64 `json:"spentMicros"`
+	// Tokens 是与 SpentMicros **同一时间窗**内的原始 token 总量。
+	// 这里是 input / output / cache read / cache write 四个互不重叠的桶之和，
+	// 不是用金额按某个单价反推的「折算 token」。
+	Tokens   int64  `json:"tokens"`
+	Days     int    `json:"days"`
+	Currency string `json:"currency"`
 	// AvgFirstByteMs 首字延迟。排队 + 上游，端到端口径。
 	AvgFirstByteMs int64 `json:"avgFirstByteMs"`
 }

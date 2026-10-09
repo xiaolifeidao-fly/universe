@@ -48,6 +48,17 @@ func (s *service) Submit(ctx context.Context, unit contract.WorkUnit) (Placement
 			unit.HardPin = ""
 		}
 	}
+	// 原贡献此刻接不了（掉线、主人暂停或排空、上游余量到线）也按同一个口径处理：
+	// 摘掉链式 id、保留完整 input，换一台接着聊。以前这里直接回「原节点已离线」，
+	// 而且不可重试 —— 提供端断一下，消费者手上那个会话就一直报错，
+	// 要等那台机器回来才能继续，可请求里明明带着全部上下文。
+	// 丢掉的只是原机器上游那份 prompt cache。
+	if unit.HardPin != "" && !s.hardPinServable(ctx, unit.HardPin, now) {
+		if detachPreviousResponse(&unit) {
+			s.metrics.Count(MetricHardPinDetached, map[string]string{"kind": unit.Kind}, 1)
+			unit.HardPin = ""
+		}
+	}
 	if unit.ID == "" {
 		unit.ID = "u_" + NewULID(now)
 	}
@@ -137,6 +148,19 @@ func (s *service) EnableHardPinFallback(_ context.Context, cid string) error {
 	s.hardPinFallbacks.until[cid] = time.Now().Add(hardPinFallbackTTL)
 	s.hardPinFallbacks.Unlock()
 	return nil
+}
+
+// hardPinServable 硬钉的那条贡献此刻还接不接得了单。
+// 读不到快照（Redis 抖动）不算证据，照旧交给 tryPlace 去判。
+func (s *service) hardPinServable(ctx context.Context, cid string, now time.Time) bool {
+	snapshot, found, err := s.control.GetContribution(ctx, cid)
+	if err != nil {
+		return true
+	}
+	if !found || snapshot.Kind == "" || !Online(snapshot, now, s.cfg().HeartbeatTimeout) {
+		return false
+	}
+	return !snapshot.Draining && !snapshot.Paused && !UpstreamHolding(snapshot)
 }
 
 func (s *service) hardPinFallbackEnabled(cid string, now time.Time) bool {

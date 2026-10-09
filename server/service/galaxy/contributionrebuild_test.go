@@ -20,7 +20,9 @@ func TestMissingFromControlPlane(t *testing.T) {
 	row := func(cid, status string, available bool) *repository.GalaxyContribution {
 		return &repository.GalaxyContribution{CID: cid, Status: status, Available: available}
 	}
-	snapshot := func(cid string) ContributionSnapshot { return ContributionSnapshot{CID: cid} }
+	snapshot := func(cid string) ContributionSnapshot {
+		return ContributionSnapshot{CID: cid, Kind: "llm.chat", Provider: "codex"}
+	}
 	cases := []struct {
 		name      string
 		rows      []*repository.GalaxyContribution
@@ -36,6 +38,14 @@ func TestMissingFromControlPlane(t *testing.T) {
 			name: "哈希过期了要报出来",
 			rows: []*repository.GalaxyContribution{row("n_1:relay_codex", statusActive, true)},
 			want: []string{"n_1:relay_codex"},
+		},
+		// 对已过期的哈希做裸写会留下一个只有计数字段的壳：读得出来，却进不了任何车道。
+		// 当它「在」，这条贡献就再也不会被重建。
+		{
+			name:      "只剩计数字段的壳要报出来",
+			rows:      []*repository.GalaxyContribution{row("n_1:relay_codex", statusActive, true)},
+			snapshots: []ContributionSnapshot{{CID: "n_1:relay_codex"}},
+			want:      []string{"n_1:relay_codex"},
 		},
 		// 同一台机器上的贡献不一定同生同死：主人新开的那条是单独推进控制面的，
 		// 和别的不在同一个 TTL 节拍上。所以比的是集合，不是条数。

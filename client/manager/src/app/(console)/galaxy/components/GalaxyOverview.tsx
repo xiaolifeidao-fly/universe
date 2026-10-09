@@ -1,10 +1,11 @@
 "use client";
 
 import { ArrowRightOutlined, ReloadOutlined } from "@ant-design/icons";
-import { Alert, Button, Skeleton, Space, Typography, message } from "antd";
+import { Alert, Button, Skeleton, message } from "antd";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { fetchOverview, type AdminOverview } from "../api/galaxy.api";
 
 /** 一格待办：数字 + 一句话 + 去哪一页。 */
@@ -80,7 +81,7 @@ export function GalaxyOverview() {
           labelKey: "galaxy.overview.unpriced",
           hintKey: "galaxy.overview.unpricedHint",
           count: data.unpricedUnits,
-          href: "/galaxy/pricing",
+          href: "/galaxy/commerce",
           urgent: true,
         },
         {
@@ -112,91 +113,70 @@ export function GalaxyOverview() {
   const poolDown = data?.degraded?.includes("pool") ?? false;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Space>
+    <div className="manager-page-stack">
+      <PageActions>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
-      </Space>
+      </PageActions>
 
       {loading && !data ? (
-        <section className="manager-data-card">
-          <Skeleton active paragraph={{ rows: 4 }} />
-        </section>
+        <div className="manager-kpi-grid">
+          {Array.from({ length: 4 }, (_, i) => (
+            <div key={i} className="manager-kpi">
+              <Skeleton active title={false} paragraph={{ rows: 3, width: ["40%", "25%", "70%"] }} />
+            </div>
+          ))}
+        </div>
       ) : (
         <>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-              gap: 12,
-            }}
-          >
+          <div className="manager-kpi-grid">
             {todos.map((todo) => {
-              const active = todo.count > 0;
+              // 只有「不是零、而且有人在等」才上强调色。全站都染色等于没有强调。
+              const alert = todo.count > 0 && todo.urgent;
               return (
                 <button
                   key={todo.key}
                   type="button"
-                  className="manager-data-card"
+                  className={`manager-kpi${alert ? " is-alert" : ""}`}
                   onClick={() => router.push(todo.href)}
-                  style={{
-                    textAlign: "left",
-                    cursor: "pointer",
-                    padding: 16,
-                    // 只有「不是零」才上强调色。全站都染色等于没有强调。
-                    borderColor: active && todo.urgent ? "var(--manager-primary)" : "var(--manager-border)",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 4,
-                  }}
                 >
-                  <Space align="center" style={{ justifyContent: "space-between", width: "100%" }}>
-                    <span style={{ color: "var(--manager-text-soft)", fontSize: "var(--manager-fs-sm)" }}>
-                      {t(todo.labelKey)}
-                    </span>
-                    <ArrowRightOutlined style={{ color: "var(--manager-text-faint)", fontSize: 12 }} />
-                  </Space>
-                  <span
-                    style={{
-                      fontSize: 30,
-                      fontWeight: 700,
-                      lineHeight: 1.1,
-                      color: active && todo.urgent ? "var(--manager-primary)" : "var(--manager-text)",
-                    }}
-                  >
-                    {todo.count}
+                  <span className="manager-kpi-label">
+                    {t(todo.labelKey)}
+                    <ArrowRightOutlined className="manager-kpi-arrow" />
                   </span>
-                  <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>
-                    {t(todo.hintKey)}
-                  </span>
+                  <span className="manager-kpi-value">{todo.count}</span>
+                  <span className="manager-kpi-foot">{t(todo.hintKey)}</span>
                 </button>
               );
             })}
           </div>
 
           <section className="manager-data-card">
-            <Typography.Title level={5} style={{ marginTop: 0 }}>
-              {t("galaxy.overview.poolTitle")}
-            </Typography.Title>
+            <div className="manager-card-head">
+              <h3>{t("galaxy.overview.poolTitle")}</h3>
+            </div>
             {poolDown ? (
               <Alert type="warning" showIcon message={t("galaxy.overview.poolDown")} />
             ) : (
-              <Space size={[32, 12]} wrap>
+              <div className="manager-metric-row">
                 <Metric label={t("galaxy.overview.online")} value={`${data?.pool.online ?? 0} / ${data?.pool.contributions ?? 0}`} />
                 <Metric label={t("galaxy.overview.seats")} value={`${data?.pool.seatsUsed ?? 0} / ${data?.pool.seatsTotal ?? 0}`} />
                 <Metric label={t("galaxy.overview.inflight")} value={String(data?.pool.inflight ?? 0)} />
                 <Metric label={t("galaxy.overview.waitQueue")} value={String(data?.pool.waitQueue ?? 0)} />
                 <Metric label={t("galaxy.overview.lanes")} value={String(data?.pool.lanes ?? 0)} />
-              </Space>
+              </div>
             )}
           </section>
 
           <section className="manager-data-card">
-            <Typography.Title level={5} style={{ marginTop: 0 }}>
-              {t("galaxy.overview.todayTitle")}
-            </Typography.Title>
-            <Space size={[32, 12]} wrap>
+            <div className="manager-card-head">
+              <h3>{t("galaxy.overview.todayTitle")}</h3>
+              <Button type="link" size="small" onClick={() => router.push("/galaxy/units")}>
+                {t("galaxy.overview.toUnits")} <ArrowRightOutlined />
+              </Button>
+            </div>
+            <div className="manager-metric-row">
               <Metric label={t("galaxy.overview.todayUnits")} value={String(data?.today.units ?? 0)} />
               <Metric label={t("galaxy.overview.todayRunning")} value={String(data?.today.running ?? 0)} />
               <Metric
@@ -204,11 +184,6 @@ export function GalaxyOverview() {
                 value={String(data?.today.failed ?? 0)}
                 tone={(data?.today.failed ?? 0) > 0 ? "danger" : undefined}
               />
-            </Space>
-            <div style={{ marginTop: 12 }}>
-              <Button type="link" size="small" style={{ paddingLeft: 0 }} onClick={() => router.push("/galaxy/units")}>
-                {t("galaxy.overview.toUnits")}
-              </Button>
             </div>
           </section>
         </>
@@ -219,18 +194,9 @@ export function GalaxyOverview() {
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
   return (
-    <Space direction="vertical" size={0}>
-      <span style={{ color: "var(--manager-text-faint)", fontSize: "var(--manager-fs-xs)" }}>{label}</span>
-      <span
-        className="manager-mono"
-        style={{
-          fontSize: 22,
-          fontWeight: 700,
-          color: tone === "danger" ? "var(--manager-danger)" : "var(--manager-text)",
-        }}
-      >
-        {value}
-      </span>
-    </Space>
+    <div className="manager-metric">
+      <span className="manager-metric-label">{label}</span>
+      <span className={`manager-metric-value${tone === "danger" ? " is-danger" : ""}`}>{value}</span>
+    </div>
   );
 }

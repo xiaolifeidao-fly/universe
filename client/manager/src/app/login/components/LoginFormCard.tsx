@@ -1,14 +1,12 @@
 "use client";
 
-import { LockOutlined, MailOutlined } from "@ant-design/icons";
-import { Button, Checkbox, Form, Input, Typography, message } from "antd";
+import { GlobalOutlined, LockOutlined, StarFilled, UserOutlined } from "@ant-design/icons";
+import { Button, Checkbox, Form, Input, message } from "antd";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
 import { setAuthToken, setAuthUser } from "@/utils/auth";
 import { login } from "../api/login.api";
-
-const { Title } = Typography;
 
 interface LoginValues {
   account: string;
@@ -41,40 +39,33 @@ export function LoginFormCard() {
   };
 
   return (
-    <div
-      className="manager-shell-card manager-stagger-4 manager-brand-frame"
-      style={{ borderRadius: 10, padding: 32, background: "var(--manager-surface)" }}
-    >
-      <Title
-        level={3}
-        style={{ marginTop: 0, marginBottom: 24, color: "var(--manager-text)", textAlign: "center" }}
-      >
-        {t("login.title")}
-      </Title>
+    <div className="manager-login-form">
+      <div className="manager-crest" aria-hidden="true">
+        <GlobalOutlined className="manager-crest-planet" />
+        <StarFilled className="manager-crest-star" />
+      </div>
+      <h1>{t("login.title")}</h1>
+      <p>{t("login.subtitle")}</p>
 
-      <Form<LoginValues> layout="vertical" initialValues={{ remember: true }} onFinish={(values) => void handleFinish(values)}>
+      <Form<LoginValues>
+        layout="vertical"
+        requiredMark={false}
+        initialValues={{ remember: true }}
+        onFinish={(values) => void handleFinish(values)}
+      >
         <Form.Item label={t("login.account")} name="account" rules={[{ required: true, message: t("login.accountRequired") }]}>
-          <Input prefix={<MailOutlined style={{ color: "rgba(16,40,64,0.42)" }} />} placeholder={t("login.accountPlaceholder")} size="large" />
+          <Input prefix={<UserOutlined />} placeholder={t("login.accountPlaceholder")} size="large" autoComplete="username" autoFocus />
         </Form.Item>
 
         <Form.Item label={t("login.password")} name="password" rules={[{ required: true, message: t("login.passwordRequired") }]}>
-          <Input.Password prefix={<LockOutlined style={{ color: "rgba(16,40,64,0.42)" }} />} placeholder={t("login.passwordPlaceholder")} size="large" />
+          <Input.Password prefix={<LockOutlined />} placeholder={t("login.passwordPlaceholder")} size="large" autoComplete="current-password" />
         </Form.Item>
 
-        <div style={{ marginBottom: 24 }}>
-          <Form.Item name="remember" valuePropName="checked" noStyle>
-            <Checkbox>{t("login.remember")}</Checkbox>
-          </Form.Item>
-        </div>
+        <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 24 }}>
+          <Checkbox>{t("login.remember")}</Checkbox>
+        </Form.Item>
 
-        <Button
-          type="primary"
-          htmlType="submit"
-          block
-          size="large"
-          loading={submitting}
-          style={{ height: 50, color: "#ffffff", background: "var(--manager-primary)", border: "none", fontWeight: 800 }}
-        >
+        <Button className="manager-login-submit" type="primary" htmlType="submit" block size="large" loading={submitting}>
           {t("login.submit")}
         </Button>
       </Form>

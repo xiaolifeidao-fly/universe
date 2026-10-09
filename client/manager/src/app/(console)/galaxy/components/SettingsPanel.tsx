@@ -5,6 +5,7 @@ import { Alert, Button, Input, InputNumber, Popconfirm, Space, Switch, Table, Ta
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale, type TranslationKey } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { fetchSettings, saveSetting, type AdminSettingsPage, type SettingView } from "../api/galaxy.api";
 
@@ -262,11 +263,11 @@ export function SettingsPanel() {
         description={t("galaxy.setting.excluded")}
       />
 
-      <Space>
+      <PageActions>
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           {t("galaxy.refresh")}
         </Button>
-      </Space>
+      </PageActions>
 
       {GROUPS.map((group) => {
         const rows = (page?.settings ?? []).filter((row) => row.group === group.key);

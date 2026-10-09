@@ -1,709 +1,1131 @@
 /**
- * manager 的 design token 全部来自 @shared/styles/tokens.css（单一数据源，
- * 别在这里重新定义 --manager-* 变量）。这个文件只放 manager 自己的布局/组件类。
+ * 管理端的布局与组件样式。
  *
- * 下面这些类是从 client/web/src/app/globals.css 里挑出来、按 manager 目前的
- * stub 需要精简过的拷贝（比如去掉了 web 侧栏的分组/子菜单样式，manager 现在
- * 导航是平的，没有分组）。web 的 globals.css 有 8000+ 行页面专属样式，
- * 不是"抽公共层"的对象，这里没有照抄，只挑了骨架页面真正用到的部分。
- * 复用前先看 client/shared/README.md 的取舍说明。
+ * 令牌分两层：@shared/styles/tokens.css 是几个端共用的底，src/styles/tokens.css 是
+ * 管理端自己盖在上面的那层（2026-10 改版，只动管理端，不碰 shared）。这个文件只放类，
+ * 不重新定义 --manager-* 变量。
+ *
+ * 结构：基础 → 外壳（侧栏 / 顶栏 / 页头 / 进度线）→ 命令面板 → 页面积木
+ * （卡片、工具条、KPI、空态）→ antd 组件统一打磨 → 登录页。
  */
 
 @import "../../../shared/styles/tokens.css";
 /* 字体地址要带 basePath（管理端挂在 /manager 下），只能由应用自己声明；
    必须排在 tokens.css 后面，见 fonts.css 顶注。 */
 @import "./fonts.css";
+@import "../styles/tokens.css";
 
-/* ─── Shell layout ─── */
+/* ════════════════════════ Base ════════════════════════ */
 
-.manager-shell-root {
-  position: relative;
-  z-index: 1;
-  height: 100dvh;
-  overflow: hidden;
-  background: transparent;
-}
-
-.manager-shell-surface {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-  background: transparent;
-}
-
-.manager-shell-layout {
-  gap: 0;
-  width: 100%;
-  height: 100%;
-  min-height: 0 !important;
-}
-
-.manager-shell-sider {
-  height: 100%;
-  min-height: 0;
-}
-
-.manager-sidebar-scroll {
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.manager-main-layout {
-  min-width: 0;
-  min-height: 0 !important;
-  height: 100%;
-  overflow: hidden;
-}
-
-.manager-command-bar {
-  flex: 0 0 auto;
-}
-
-.manager-console-content {
-  min-height: 0 !important;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.manager-locale-select {
-  width: 150px;
-}
-
-.manager-sidebar-card {
-  background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 46%, #f4f7fb 100%);
-  border-right: 1px solid var(--manager-border);
-  box-shadow: 1px 0 0 rgba(24, 34, 48, 0.02), var(--manager-shadow-sm);
-}
-
-.manager-brand-block {
-  position: relative;
-  padding: 4px 6px 16px;
-  border-bottom: 1px solid var(--manager-border);
-}
-
-.manager-wordmark {
-  display: inline-block;
-}
-
-.manager-wordmark strong {
-  font-size: var(--manager-fs-lg);
-  line-height: 1.15;
-  letter-spacing: 0;
-  font-weight: 700;
+html,
+body {
+  background: var(--manager-bg);
   color: var(--manager-text);
+  font-family: var(--manager-sans);
+  font-feature-settings: "cv11", "ss01";
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.manager-wordmark small {
-  display: block;
-  margin-top: 3px;
-  color: var(--manager-text-faint);
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-micro);
-  letter-spacing: 0;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.manager-prototype-title h1 {
-  margin: 0;
-  color: var(--manager-text);
-  font-size: var(--manager-fs-xl);
-  font-weight: 800;
-  line-height: 1.25;
-}
-
-.manager-prototype-title > div {
-  margin-top: 4px;
-  overflow: hidden;
-  color: var(--manager-text-faint);
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-xs);
-  letter-spacing: 0.06em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.manager-menu-trigger {
-  display: inline-grid;
-  place-items: center;
-  width: 36px !important;
-  min-width: 36px !important;
-  height: 36px !important;
-  padding: 0 !important;
-  border-color: var(--manager-border-strong) !important;
-  color: var(--manager-text-faint) !important;
-}
-
-.manager-menu-trigger:hover {
-  border-color: var(--manager-primary) !important;
-  color: var(--manager-primary) !important;
-}
-
-.manager-mobile-sider-mask {
+/* shared 那层给 body 铺了两团彩色光晕；管理端是一张工作台，底色保持干净。 */
+body::before {
   display: none;
 }
 
-@media (max-width: 900px) {
-  .manager-shell-sider {
-    position: fixed !important;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 101;
-    width: 260px !important;
-    max-width: 260px !important;
-    height: 100dvh;
-    transform: translateX(-100%);
-    transition: transform 0.25s var(--manager-ease) !important;
-    box-shadow: var(--manager-shadow-lg);
-  }
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--manager-primary) 55%, transparent);
+  outline-offset: 2px;
+}
 
-  .manager-shell-sider.manager-shell-sider--mobile-open {
-    transform: translateX(0);
-  }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(24, 24, 27, 0.12);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(24, 24, 27, 0.24);
+  background-clip: content-box;
+}
 
-  .manager-shell-sider .manager-sidebar-card {
-    padding-inline: 14px !important;
-  }
+kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--manager-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--manager-surface);
+  color: var(--manager-text-faint);
+  font-family: var(--manager-sans);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
 
-  .manager-mobile-sider-mask {
-    display: block;
-    position: fixed;
-    z-index: 100;
-    inset: 0;
-    border: 0;
-    background: rgba(16, 24, 40, 0.24);
-  }
+.manager-mono {
+  font-family: var(--manager-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.94em;
+  letter-spacing: -0.01em;
+}
 
-  .manager-command-bar {
-    padding: 12px 16px !important;
+/* ════════════════════════ Shell ════════════════════════ */
+
+.manager-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--manager-sider-w) minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+  transition: grid-template-columns var(--manager-t-slow);
+}
+
+.manager-shell.is-collapsed {
+  grid-template-columns: var(--manager-sider-w-collapsed) minmax(0, 1fr);
+}
+
+/* ─── route progress ─── */
+
+.manager-route-progress {
+  position: fixed;
+  z-index: 1200;
+  top: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, var(--manager-primary), #8b7cf6);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--manager-primary) 60%, transparent);
+  transition:
+    width 0.2s ease,
+    opacity 0.35s ease 0.12s;
+}
+
+.manager-route-progress.is-active {
+  opacity: 1;
+  transition: none;
+  animation: managerProgress 2.4s cubic-bezier(0.1, 0.7, 0.3, 1) forwards;
+}
+
+@keyframes managerProgress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 86%;
   }
 }
 
-@media (max-width: 700px) {
-  .manager-console-content {
-    padding: 18px 16px 40px !important;
-  }
+/* ─── sider ─── */
 
-  .manager-prototype-title h1 {
-    font-size: var(--manager-fs-lg);
-  }
+.manager-sider {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100dvh;
+  background: var(--manager-sidebar-bg);
+  border-right: 1px solid var(--manager-sidebar-border);
+  overflow: hidden;
+}
 
-  .manager-prototype-title > div {
-    display: none;
-  }
+.manager-sider-head {
+  display: flex;
+  align-items: center;
+  height: var(--manager-topbar-h);
+  padding: 0 16px;
+  flex: none;
+}
+
+.manager-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
 }
 
 .manager-crest {
   position: relative;
-  width: 36px;
-  height: 36px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   color: #ffffff;
-  background: linear-gradient(145deg, #14233f 0%, #276bd8 68%, #21a1a1 100%);
-  box-shadow: 0 6px 16px -6px rgba(39, 107, 216, 0.62);
+  background: linear-gradient(150deg, #6d6df0 0%, #5b5bd6 45%, #3c3ca8 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 1px 2px rgba(24, 24, 27, 0.18),
+    0 4px 10px -4px rgba(91, 91, 214, 0.6);
   overflow: hidden;
 }
 
 .manager-crest-planet {
   position: relative;
   z-index: 1;
-  font-size: 25px;
-  filter: drop-shadow(0 2px 4px rgba(4, 17, 40, 0.28));
+  font-size: 17px;
 }
 
 .manager-crest-star {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 3px;
+  right: 3px;
   z-index: 2;
-  color: #ffd56a;
-  font-size: var(--manager-fs-micro);
-  filter: drop-shadow(0 1px 2px rgba(4, 17, 40, 0.35));
+  color: #ffd76e;
+  font-size: 8px;
 }
 
-.manager-sidebar-foot {
+.manager-wordmark {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 10px 2px;
-  border-top: 1px solid var(--manager-border);
-  color: var(--manager-text-faint);
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-xs);
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.manager-dot-live {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--manager-success);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--manager-success) 70%, transparent);
-  animation: managerPulse 2s infinite;
-}
-@keyframes managerPulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-/* ─── Nav menu ─── */
-
-.manager-shell-menu.ant-menu .ant-menu-item {
-  height: 44px;
-  min-height: 44px;
-  margin: 2px 0 !important;
-  padding: 0 10px !important;
-  border-radius: 11px;
-  color: var(--manager-text-soft) !important;
-  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t);
-}
-
-.manager-nav-item-content {
-  display: flex;
-  align-items: center;
-  width: 100%;
+  flex-direction: column;
   min-width: 0;
-  gap: 11px;
+  transition: opacity var(--manager-t);
 }
 
-.manager-nav-item-icon {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  place-items: center;
-  box-sizing: border-box;
-  padding-bottom: 2px;
-  line-height: 1;
-  border-radius: 8px;
-  color: var(--manager-text-faint);
-  background: rgba(24, 34, 48, 0.045);
-  font-size: var(--manager-fs-lg);
-  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t), transform var(--manager-t);
-}
-
-.manager-nav-item-label {
-  flex: 1;
+.manager-wordmark strong {
   overflow: hidden;
-  font-size: var(--manager-fs-base);
+  color: var(--manager-text);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.manager-shell-menu.ant-menu .ant-menu-item:hover {
-  color: var(--manager-text) !important;
-  background: rgba(24, 34, 48, 0.045) !important;
+.manager-wordmark small {
+  overflow: hidden;
+  margin-top: 1px;
+  color: var(--manager-text-faint);
+  font-size: 11.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.manager-shell-menu.ant-menu .ant-menu-item:hover .manager-nav-item-icon {
-  color: var(--manager-primary);
-  background: #fff;
+.manager-sider-search-wrap {
+  flex: none;
+  padding: 4px 12px 10px;
+}
+
+.manager-sider-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--manager-border);
+  border-radius: 8px;
+  background: var(--manager-surface);
+  box-shadow: var(--manager-shadow-xs);
+  color: var(--manager-text-faint);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color var(--manager-t),
+    box-shadow var(--manager-t),
+    color var(--manager-t);
+}
+
+.manager-sider-search:hover {
+  border-color: var(--manager-border-strong);
+  color: var(--manager-text-soft);
   box-shadow: var(--manager-shadow-sm);
-  transform: translateY(-1px);
+}
+
+.manager-sider-search-label {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-sider-nav {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  padding: 2px 12px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  mask-image: linear-gradient(180deg, transparent 0, #000 8px, #000 calc(100% - 16px), transparent 100%);
+}
+
+.manager-sider-nav::-webkit-scrollbar {
+  width: 6px;
+}
+
+.manager-nav-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 10px 8px;
+}
+
+.manager-nav-skeleton span {
+  display: block;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--manager-panel) 0%, #ececee 50%, var(--manager-panel) 100%);
+  background-size: 200% 100%;
+  animation: managerShimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes managerShimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* ─── nav menu ─── */
+
+.manager-shell-menu.ant-menu {
+  border-inline-end: 0 !important;
+  background: transparent;
+  font-size: 13.5px;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item,
+.manager-shell-menu.ant-menu .ant-menu-submenu-title {
+  height: 34px;
+  line-height: 34px;
+  margin-block: 1px;
+  padding-inline-end: 10px;
+  border-radius: 8px;
+  color: var(--manager-text-soft);
+  transition:
+    background var(--manager-t),
+    color var(--manager-t),
+    box-shadow var(--manager-t);
+}
+
+.manager-shell-menu.ant-menu-inline .ant-menu-submenu-title {
+  padding-inline-end: 30px;
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item .ant-menu-item-icon,
+.manager-shell-menu.ant-menu .ant-menu-submenu-title .ant-menu-item-icon {
+  color: var(--manager-text-faint);
+  font-size: 15px;
+  transition: color var(--manager-t);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-item:hover .ant-menu-item-icon,
+.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover .ant-menu-item-icon {
+  color: var(--manager-text);
 }
 
 .manager-shell-menu.ant-menu .ant-menu-item-selected {
-  position: relative;
-  color: var(--manager-text) !important;
-  font-weight: 600;
-  background: linear-gradient(90deg, var(--manager-primary-muted), transparent) !important;
-  box-shadow: inset 0 0 0 1px var(--manager-primary-muted);
+  color: var(--manager-text);
+  font-weight: 550;
+  background: var(--manager-surface);
+  box-shadow:
+    0 0 0 1px var(--manager-border),
+    0 1px 2px rgba(24, 24, 27, 0.06);
 }
 
-.manager-shell-menu.ant-menu .ant-menu-item-selected::before {
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: -5px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--manager-primary);
-  content: "";
-}
-
-.manager-shell-menu.ant-menu .ant-menu-item-selected .manager-nav-item-icon {
-  border-color: transparent;
-  color: #fff;
-  background: linear-gradient(135deg, var(--manager-primary), color-mix(in srgb, var(--manager-primary) 48%, #fff));
-  box-shadow: 0 4px 12px -5px color-mix(in srgb, var(--manager-primary) 78%, transparent);
-}
-
-/* ─── Nav submenu（系统设置这类折叠分组） ─── */
-
-/*
- * 子菜单标题要和顶层菜单项**逐项对齐**：antd 给它的默认值是另一套
- * （高 40 / 圆角 16 / 上下 margin 4 / 内联 padding-left 24），混在一起就成了
- * 一个方框，视觉上像从菜单里掉出来的。
- */
-.manager-shell-menu.ant-menu .ant-menu-submenu-title {
-  height: 44px;
-  min-height: 44px;
-  margin: 2px 0 !important;
-  /*
-   * 右边 30 而不是 10：折叠箭头是**绝对定位**的，它不占标签的盒子 —— 标签算宽度时
-   * 当它不存在，于是最长那条英文（Customers & growth）正好压在箭头上，
-   * 而 scrollWidth 一点都不超，自动省略号也不会触发。这 30px 就是给箭头留的位。
-   */
-  padding: 0 30px 0 10px !important;
-  border-radius: 11px;
-  color: var(--manager-text-soft) !important;
-  transition: background var(--manager-t), color var(--manager-t), box-shadow var(--manager-t);
-}
-
-.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover {
-  color: var(--manager-text) !important;
-  background: rgba(24, 34, 48, 0.045) !important;
-}
-
-.manager-shell-menu.ant-menu .ant-menu-submenu-title:hover .manager-nav-item-icon {
-  color: var(--manager-primary);
-  background: #fff;
-  box-shadow: var(--manager-shadow-sm);
-  transform: translateY(-1px);
-}
-
-/* 折叠箭头：antd 默认色比这套弱对比的文字还重，压一档。 */
-.manager-shell-menu.ant-menu .ant-menu-submenu-arrow {
-  color: var(--manager-text-faint);
-}
-
-/*
- * 子列表：antd 给 inline 子菜单铺了一层 rgba(0,0,0,0.02) 的底 —— 在这套
- * 药丸式菜单里它就是一个突兀的灰块。去掉底色，改用一条竖导引线表达层级，
- * 位置正好落在父项图标的中线上。
- */
-.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline {
-  position: relative;
-  background: transparent !important;
-}
-
-.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline::before {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: 22px;
-  width: 1px;
-  background: var(--manager-border);
-  content: "";
-}
-
-/*
- * 子项的缩进必须在这里显式写。antd 是用**内联样式** padding-left 做层级缩进的，
- * 而上面 .ant-menu-item 那条规则带了 !important，会把它盖掉 —— 结果就是子项
- * 贴着左边、和父项左对齐，看不出从属关系。
- *
- * 32px：子项也有图标之后，这里缩进的是**图标**而不是文字了。原先是 47
- * （父项 padding 10 + 图标 26 + gap 11），让子项文字对齐父项文字；现在照搬
- * 那个值会把子项图标推到父项文字的位置上，右边只剩九十来像素装标签。
- * 32 让子项图标落在导引线（left: 22）右侧半格，文字起点 32 + 20 + 9 = 61。
- */
-.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline > .ant-menu-item {
-  padding-right: 6px !important;
-  padding-left: 32px !important;
-}
-
-/*
- * 子项图标：小一号、**没有底托**。
- *
- * 一级菜单那个圆角底托是层级信号，子项再来一个，两层就一样重了 —— 展开之后
- * 侧栏是一整片色块，反而比没有图标更难扫。子项只留字形，靠颜色和位置区分。
- */
-.manager-shell-menu.ant-menu .ant-menu-sub .manager-nav-item-content {
-  gap: 9px;
-}
-
-.manager-shell-menu.ant-menu .ant-menu-sub .manager-nav-item-icon {
-  width: 20px;
-  height: 20px;
-  padding-bottom: 0;
-  border-radius: 6px;
-  background: transparent;
-  font-size: var(--manager-fs-base);
-}
-
-/* 悬停/选中时子项图标只换颜色：底托和浮起是一级菜单的语言。 */
-.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item:hover .manager-nav-item-icon {
-  color: var(--manager-primary);
-  background: transparent;
-  box-shadow: none;
-  transform: none;
-}
-
-.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item-selected .manager-nav-item-icon {
-  color: var(--manager-primary);
-  background: transparent;
-  box-shadow: none;
-}
-
-/*
- * 侧栏收起来之后二级菜单改从悬浮层出，而 antd 把那一层渲染到 body 上的
- * .ant-menu-submenu-popup 里 —— 上面那些以 .manager-shell-menu 开头的规则全都够不着它，
- * 同一个菜单项在悬浮层里会退回一级菜单那个带底托的大图标。这里再交代一次，
- * 让它和展开时长得一样。
- */
-.ant-menu-submenu-popup .manager-nav-item-content {
-  gap: 9px;
-}
-
-.ant-menu-submenu-popup .manager-nav-item-icon {
-  width: 20px;
-  height: 20px;
-  padding-bottom: 0;
-  border-radius: 6px;
-  color: var(--manager-text-faint);
-  background: transparent;
-  box-shadow: none;
-  font-size: var(--manager-fs-base);
-}
-
-.ant-menu-submenu-popup .ant-menu-item:hover .manager-nav-item-icon,
-.ant-menu-submenu-popup .ant-menu-item-selected .manager-nav-item-icon {
+.manager-shell-menu.ant-menu .ant-menu-item-selected .ant-menu-item-icon {
   color: var(--manager-primary);
 }
 
 /* 父项在子页面被选中时也要有在场感，否则折叠起来就完全看不出自己在哪。 */
 .manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title {
-  color: var(--manager-text) !important;
-  font-weight: 600;
+  color: var(--manager-text);
+  font-weight: 550;
 }
 
-.manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .manager-nav-item-icon {
-  color: var(--manager-primary);
-  background: #fff;
-  box-shadow: var(--manager-shadow-sm);
+.manager-shell-menu.ant-menu .ant-menu-submenu-selected > .ant-menu-submenu-title .ant-menu-item-icon {
+  color: var(--manager-text);
 }
 
-/* ─── Data card / empty state ─── */
+.manager-shell-menu.ant-menu .ant-menu-submenu-arrow {
+  color: var(--manager-text-ghost);
+  transform: scale(0.85);
+}
 
-.manager-data-card {
+/* 子列表：一条竖导引线表达层级，落在父项图标中线上。 */
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline {
   position: relative;
-  border-radius: var(--manager-r-lg);
-  padding: 20px;
-  background: var(--manager-surface);
-  border: 1px solid var(--manager-border);
-  box-shadow: var(--manager-shadow);
-}
-
-.manager-empty-state {
-  padding: var(--manager-sp-8) var(--manager-sp-4);
-}
-
-.manager-empty-state .ant-empty-image {
-  height: 100px;
-  margin-bottom: var(--manager-sp-3);
-}
-
-.manager-empty-state .ant-empty-description {
-  color: var(--manager-text-soft);
-  font-size: var(--manager-fs-sm);
-  line-height: var(--manager-lh-snug);
-}
-
-/* ─── Login ─── */
-
-.manager-shell-card {
-  background: var(--manager-surface);
-  border: 1px solid var(--manager-border);
-  box-shadow: var(--manager-shadow-sm);
-}
-
-.manager-login-shell {
-  position: relative;
-  z-index: 1;
-  min-height: 100vh;
-  padding: 24px;
-  display: flex;
-  align-items: stretch;
   background: transparent;
 }
 
-.manager-login-panel {
-  width: 100%;
-  border-radius: var(--manager-r-xl);
-  padding: clamp(24px, 4vw, 42px);
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--manager-border);
-  background: var(--manager-surface);
-  box-shadow: var(--manager-shadow-lg);
-}
-
-.manager-login-locale-select {
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline::before {
   position: absolute;
-  z-index: 2;
-  top: 20px;
-  right: 20px;
-  width: 150px;
+  top: 3px;
+  bottom: 3px;
+  left: 21px;
+  width: 1px;
+  background: var(--manager-border);
+  content: "";
 }
 
-.manager-login-layout {
-  position: relative;
-  z-index: 1;
-  min-height: calc(100vh - 96px);
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
-  align-items: center;
-  gap: clamp(24px, 5vw, 64px);
+.manager-shell-menu.ant-menu .ant-menu-sub.ant-menu-inline > .ant-menu-item {
+  padding-inline-start: 34px !important;
+  font-size: 13px;
 }
 
-.manager-login-layout__form {
+/* 子项图标弱一档：一级是层级锚点，二级只做「扫一眼认出来」。 */
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item .ant-menu-item-icon {
+  font-size: 13.5px;
+  color: var(--manager-text-ghost);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item-selected .ant-menu-item-icon {
+  color: var(--manager-primary);
+}
+
+.manager-shell-menu.ant-menu .ant-menu-sub .ant-menu-item-selected::after {
+  display: none;
+}
+
+.manager-nav-item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 收起态：只剩图标，子菜单从悬浮层出。 */
+.manager-shell-menu.ant-menu-inline-collapsed {
+  width: 100%;
+}
+
+.manager-shell-menu.ant-menu-inline-collapsed > .ant-menu-item,
+.manager-shell-menu.ant-menu-inline-collapsed > .ant-menu-submenu > .ant-menu-submenu-title {
+  padding-inline: calc(50% - 8px) !important;
+}
+
+.ant-menu-submenu-popup > .ant-menu {
+  padding: 4px !important;
+  border-radius: 10px !important;
+  box-shadow: var(--manager-shadow-lg) !important;
+}
+
+.ant-menu-submenu-popup .ant-menu-item {
+  height: 34px !important;
+  line-height: 34px !important;
+  margin: 1px 0 !important;
+  border-radius: 7px !important;
+  font-size: 13px;
+}
+
+.ant-menu-submenu-popup .ant-menu-item-selected {
+  background: var(--manager-primary-soft) !important;
+  color: var(--manager-primary-ink) !important;
+  font-weight: 550;
+}
+
+.ant-menu-submenu-popup .ant-menu-item .ant-menu-item-icon {
+  color: var(--manager-text-faint);
+}
+
+.ant-menu-submenu-popup .ant-menu-item-selected .ant-menu-item-icon {
+  color: var(--manager-primary);
+}
+
+/* ─── sider foot / user chip ─── */
+
+.manager-sider-foot {
+  flex: none;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--manager-sidebar-border);
+}
+
+.manager-user-chip {
   display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--manager-t);
+}
+
+.manager-user-chip:hover,
+.manager-user-chip.ant-dropdown-open {
+  background: var(--manager-hover);
+}
+
+.manager-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #ffffff;
+  background: linear-gradient(140deg, #7a7af0, #4b4bc4);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.manager-avatar-status {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--manager-sidebar-bg);
+  border-radius: 50%;
+  background: var(--manager-success);
+}
+
+.manager-user-chip-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.manager-user-chip-text strong,
+.manager-user-chip-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-user-chip-text strong {
+  color: var(--manager-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.manager-user-chip-text small {
+  color: var(--manager-text-faint);
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.manager-user-chip-more {
+  color: var(--manager-text-ghost);
+}
+
+.manager-user-dropdown .ant-dropdown-menu {
+  min-width: 220px;
+}
+
+.manager-user-menu-head {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0;
+}
+
+.manager-user-menu-head strong {
+  color: var(--manager-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.manager-user-menu-head span {
+  color: var(--manager-text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.manager-user-menu-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 120px;
+}
+
+.manager-user-menu-check .anticon {
+  color: var(--manager-primary);
+}
+
+/* collapsed sider */
+
+.manager-shell.is-collapsed .manager-sider-head {
+  justify-content: center;
+  padding: 0;
+}
+
+.manager-shell.is-collapsed .manager-wordmark,
+.manager-shell.is-collapsed .manager-sider-search-label,
+.manager-shell.is-collapsed .manager-sider-search kbd,
+.manager-shell.is-collapsed .manager-user-chip-text,
+.manager-shell.is-collapsed .manager-user-chip-more {
+  display: none;
+}
+
+.manager-shell.is-collapsed .manager-sider-search-wrap {
+  padding-inline: 12px;
+}
+
+.manager-shell.is-collapsed .manager-sider-search {
+  justify-content: center;
+  padding: 0;
+}
+
+.manager-shell.is-collapsed .manager-sider-nav {
+  padding-inline: 10px;
+}
+
+.manager-shell.is-collapsed .manager-user-chip {
   justify-content: center;
 }
 
-.manager-login-layout__form > * {
-  width: 100%;
-  max-width: 440px;
-}
+/* ─── main / topbar ─── */
 
-.manager-login-hero {
-  position: relative;
-  padding: 12px clamp(8px, 2vw, 32px) 12px 8px;
+.manager-main {
   display: flex;
   flex-direction: column;
-  gap: var(--manager-sp-6);
+  min-width: 0;
+  height: 100dvh;
+  overflow: hidden;
 }
 
-.manager-login-hero__glow {
-  position: absolute;
-  z-index: 0;
-  inset: -80px -40px auto -80px;
-  height: 360px;
-  pointer-events: none;
-  background: radial-gradient(420px 300px at 20% 20%, var(--manager-primary-light), transparent 70%);
-}
-
-.manager-login-hero__grid {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image:
-    linear-gradient(rgba(16, 24, 40, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(16, 24, 40, 0.05) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: radial-gradient(ellipse 100% 80% at 30% 30%, #000 40%, transparent 85%);
-}
-
-.manager-login-hero__brand,
-.manager-login-hero__tagline,
-.manager-login-hero__features {
+.manager-topbar {
   position: relative;
-  z-index: 1;
+  z-index: 10;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: var(--manager-topbar-h);
+  padding: 0 20px 0 14px;
+  border-bottom: 1px solid transparent;
+  background: color-mix(in srgb, var(--manager-bg) 82%, transparent);
+  backdrop-filter: saturate(1.6) blur(12px);
+  transition:
+    border-color var(--manager-t),
+    box-shadow var(--manager-t);
 }
 
-.manager-login-hero__brand {
+.manager-topbar.is-scrolled {
+  border-bottom-color: var(--manager-border);
+  box-shadow: 0 1px 0 rgba(24, 24, 27, 0.02);
+}
+
+.manager-icon-button {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--manager-text-faint);
+  font-size: 15px;
+  cursor: pointer;
+  transition:
+    background var(--manager-t),
+    color var(--manager-t);
+}
+
+.manager-icon-button:hover,
+.manager-icon-button.ant-dropdown-open {
+  background: var(--manager-hover);
+  color: var(--manager-text);
+}
+
+.manager-icon-button:active {
+  background: var(--manager-pressed);
+}
+
+.manager-topbar-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--manager-border-strong);
+}
+
+.manager-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.5px;
+  white-space: nowrap;
 }
 
-.manager-login-hero__tagline {
-  margin: 0;
-  max-width: 30em;
-  font-family: var(--manager-serif);
-  font-size: clamp(22px, 2.4vw, 30px);
-  line-height: var(--manager-lh-snug);
-  color: var(--manager-text);
-}
-
-.manager-login-hero__features {
-  display: flex;
-  flex-direction: column;
-  gap: var(--manager-sp-4);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.manager-login-hero__features li {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--manager-sp-3);
-}
-
-.manager-login-hero__features li > span:last-child {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.manager-login-hero__features b {
-  font-size: var(--manager-fs-base);
-  color: var(--manager-text);
-}
-
-.manager-login-hero__features small {
+.manager-breadcrumb-group {
+  overflow: hidden;
   color: var(--manager-text-faint);
-  font-size: var(--manager-fs-xs);
-  line-height: var(--manager-lh-snug);
+  text-overflow: ellipsis;
 }
 
-.manager-login-hero__feature-icon {
-  flex: none;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--manager-r);
-  background: var(--manager-primary-light);
-  color: var(--manager-primary);
+.manager-breadcrumb-sep {
+  color: var(--manager-text-ghost);
+  font-size: 9px;
+}
+
+.manager-breadcrumb-current {
+  overflow: hidden;
+  color: var(--manager-text);
+  font-weight: 550;
+  text-overflow: ellipsis;
+}
+
+.manager-topbar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 240px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--manager-border);
+  border-radius: 8px;
+  background: var(--manager-surface);
+  box-shadow: var(--manager-shadow-xs);
+  color: var(--manager-text-ghost);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color var(--manager-t),
+    box-shadow var(--manager-t),
+    color var(--manager-t);
+}
+
+.manager-topbar-search > span:not(.anticon) {
+  flex: 1;
+  text-align: left;
+}
+
+.manager-topbar-search:hover {
+  border-color: var(--manager-border-strong);
+  color: var(--manager-text-faint);
+  box-shadow: var(--manager-shadow-sm);
+}
+
+/* 侧栏里已经有一个搜索入口，展开态下顶栏那个就多余了 —— 只在侧栏收起后出现。 */
+.manager-shell:not(.is-collapsed) .manager-topbar-search {
+  display: none;
+}
+
+.manager-topbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--manager-success-soft);
+  color: color-mix(in srgb, var(--manager-success) 80%, #0b3d22);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.manager-dot-live {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--manager-success);
+}
+
+.manager-dot-live::after {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: var(--manager-success);
+  opacity: 0.35;
+  animation: managerPing 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  content: "";
+}
+
+@keyframes managerPing {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.45;
+  }
+  80%,
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+/* ─── content / page head ─── */
+
+.manager-content {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+}
+
+.manager-page {
+  width: 100%;
+  max-width: var(--manager-content-max);
+  margin: 0 auto;
+  padding: 18px 32px 56px;
+}
+
+.manager-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-bottom: 22px;
+}
+
+.manager-page-head-text {
+  min-width: 0;
+  max-width: 820px;
+}
+
+.manager-page-head-text h1 {
+  margin: 0;
+  color: var(--manager-text);
+  font-size: var(--manager-fs-xl);
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.manager-page-head-text p {
+  margin: 6px 0 0;
+  color: var(--manager-text-faint);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.manager-page-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.manager-page-head-actions:empty {
+  display: none;
+}
+
+/* 页头动作里的一段说明文字（数据日期、生成时间）。 */
+.manager-page-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 4px;
+  color: var(--manager-text-faint);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.manager-page-meta > span + span::before {
+  margin-right: 8px;
+  color: var(--manager-text-ghost);
+  content: "·";
+}
+
+.manager-page-actions-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manager-page-body {
+  animation: managerPageIn 0.32s var(--manager-ease) both;
+}
+
+@keyframes managerPageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ─── mobile ─── */
+
+.manager-mobile-sider-mask {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .manager-shell,
+  .manager-shell.is-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .manager-sider {
+    position: fixed;
+    z-index: 1001;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 280px;
+    transform: translateX(-102%);
+    transition: transform 0.3s var(--manager-ease);
+    box-shadow: var(--manager-shadow-lg);
+  }
+
+  .manager-shell.is-mobile-open .manager-sider {
+    transform: none;
+  }
+
+  .manager-mobile-sider-mask {
+    display: block;
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    border: 0;
+    background: rgba(24, 24, 27, 0.32);
+    backdrop-filter: blur(2px);
+    animation: managerFade 0.2s ease both;
+  }
+
+  .manager-topbar {
+    padding: 0 12px 0 8px;
+  }
+
+  .manager-topbar-search {
+    display: none !important;
+  }
+
+  .manager-topbar-status span:last-child {
+    display: none;
+  }
+
+  .manager-topbar-status {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .manager-page {
+    padding: 14px 16px 40px;
+  }
+
+  .manager-page-head-text h1 {
+    font-size: 19px;
+  }
+}
+
+@keyframes managerFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ════════════════════════ Command palette ════════════════════════ */
+
+.manager-palette-root .ant-modal-mask {
+  background: rgba(24, 24, 27, 0.28) !important;
+  backdrop-filter: blur(3px);
+}
+
+.manager-palette .ant-modal-content {
+  overflow: hidden;
+  border-radius: 14px !important;
+  box-shadow:
+    0 0 0 1px rgba(24, 24, 27, 0.08),
+    0 24px 64px -16px rgba(24, 24, 27, 0.35),
+    0 8px 20px -8px rgba(24, 24, 27, 0.12) !important;
+}
+
+.manager-palette-zoom-enter,
+.manager-palette-zoom-appear {
+  opacity: 0;
+  transform: scale(0.97) translateY(-6px);
+}
+
+.manager-palette-zoom-enter-active,
+.manager-palette-zoom-appear-active {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.16s ease,
+    transform 0.2s var(--manager-ease);
+}
+
+.manager-palette-zoom-leave {
+  opacity: 1;
+}
+
+.manager-palette-zoom-leave-active {
+  opacity: 0;
+  transform: scale(0.98);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.manager-palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 54px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid var(--manager-border);
+  color: var(--manager-text-faint);
   font-size: 16px;
 }
 
-@media (max-width: 992px) {
-  .manager-login-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .manager-login-hero {
-    display: none;
-  }
+.manager-palette-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--manager-text);
+  font-size: 15px;
 }
 
-/* ─── Stagger animations ─── */
+.manager-palette-search input::placeholder {
+  color: var(--manager-text-ghost);
+}
 
-.manager-stagger-1,
-.manager-stagger-2,
-.manager-stagger-3,
-.manager-stagger-4 {
+.manager-palette-list {
+  max-height: min(420px, 56vh);
+  padding: 6px;
+  overflow-y: auto;
+  scroll-padding: 28px 0 6px;
+}
+
+.manager-palette-section + .manager-palette-section {
+  margin-top: 4px;
+}
+
+.manager-palette-section-title {
+  padding: 8px 10px 4px;
+  color: var(--manager-text-faint);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.manager-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--manager-text-soft);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.manager-palette-item.is-active {
+  background: var(--manager-primary-soft);
+  color: var(--manager-text);
+}
+
+.manager-palette-item-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--manager-border);
+  border-radius: 6px;
+  background: var(--manager-surface);
+  color: var(--manager-text-faint);
+  font-size: 12.5px;
+}
+
+.manager-palette-item.is-active .manager-palette-item-icon {
+  border-color: color-mix(in srgb, var(--manager-primary) 24%, transparent);
+  color: var(--manager-primary);
+}
+
+.manager-palette-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-palette-item-hint {
+  color: var(--manager-text-ghost);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.manager-palette-item-enter {
+  color: var(--manager-primary);
+  font-size: 12px;
   opacity: 0;
-  transform: translateY(12px);
-  animation: managerRise 500ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-.manager-stagger-2 {
-  animation-delay: 60ms;
-}
-.manager-stagger-3 {
-  animation-delay: 110ms;
-}
-.manager-stagger-4 {
-  animation-delay: 160ms;
+.manager-palette-item.is-active .manager-palette-item-enter {
+  opacity: 1;
 }
 
-@keyframes managerRise {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.manager-palette-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 0 36px;
+  color: var(--manager-text-faint);
+  font-size: 13px;
 }
 
-/* ─── Page / section scaffolding (对齐 client/web 同名类，管理页面用) ─── */
+.manager-palette-empty .anticon {
+  font-size: 22px;
+  color: var(--manager-text-ghost);
+}
+
+.manager-palette-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 38px;
+  padding: 0 14px;
+  border-top: 1px solid var(--manager-border);
+  background: var(--manager-bg-soft);
+  color: var(--manager-text-faint);
+  font-size: 12px;
+}
+
+.manager-palette-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.manager-palette-foot kbd {
+  min-width: 18px;
+  height: 18px;
+  font-size: 10.5px;
+}
+
+/* ════════════════════════ Page building blocks ════════════════════════ */
 
 .manager-page-stack {
   display: flex;
@@ -712,220 +1134,1026 @@
   width: 100%;
 }
 
-.manager-page-heading {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: center;
-  padding: 20px 22px;
-  border-radius: var(--manager-r-lg);
+.manager-data-card {
+  position: relative;
+  padding: 20px;
   border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r-lg);
   background: var(--manager-surface);
   box-shadow: var(--manager-shadow);
 }
 
-.manager-page-heading h1 {
-  margin: 6px 0 4px;
-  color: var(--manager-text);
-  font-size: var(--manager-fs-xl);
-  line-height: 1.25;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+/* 页面里也有把 manager-data-card 当按钮用的（运营总览的待办格），给它点击的手感。 */
+button.manager-data-card {
+  font: inherit;
+  color: inherit;
+  transition:
+    border-color var(--manager-t),
+    box-shadow var(--manager-t),
+    transform var(--manager-t);
 }
 
-.manager-page-heading .ant-typography {
-  color: var(--manager-text-soft);
-  line-height: 1.65;
+button.manager-data-card:hover {
+  border-color: var(--manager-border-strong);
+  box-shadow: var(--manager-shadow-md);
+  transform: translateY(-1px);
+}
+
+button.manager-data-card:active {
+  transform: none;
+  box-shadow: var(--manager-shadow);
+}
+
+/* 页面里那几行 <Typography.Title level={5}> 卡片标题统一一下字号与字重。 */
+.manager-data-card h5.ant-typography {
+  color: var(--manager-text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* 老页面的「页头卡片」：标题已经由外壳画了，这里只剩一行说明 + 主按钮。 */
+.manager-page-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .manager-section-title {
   display: flex;
-  align-items: center;
-  gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
 }
 
 .manager-section-title h2 {
-  position: relative;
   margin: 0;
-  padding-left: 11px;
   color: var(--manager-text);
-  font-size: var(--manager-fs-lg);
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 600;
   letter-spacing: -0.01em;
-}
-
-.manager-section-title h2::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 14px;
-  border-radius: 3px;
-  background: linear-gradient(180deg, var(--manager-primary), var(--manager-cyan, #0e8ba8));
 }
 
 .manager-section-title .manager-section-rule {
   flex: 1;
   min-width: 20px;
   height: 1px;
-  background: linear-gradient(90deg, var(--manager-border), transparent);
+  background: var(--manager-border);
 }
 
 .manager-section-label {
   color: var(--manager-text-faint);
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-xs);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 400;
-}
-
-/* ─── Table ─── */
-
-.manager-table .ant-table {
-  background: transparent !important;
-  color: var(--manager-text);
-  font-size: var(--manager-fs-base);
-}
-
-.manager-table .ant-table-container {
-  border: 1px solid var(--manager-border);
-  border-radius: var(--manager-r);
-  overflow: hidden;
-}
-
-.manager-table .ant-table-thead > tr > th {
-  background: var(--manager-panel) !important;
-  color: var(--manager-text-faint) !important;
-  border-bottom: 1px solid var(--manager-border) !important;
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-xs);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  font-weight: 400 !important;
-}
-
-.manager-table .ant-table-tbody > tr > td {
-  background: var(--manager-surface) !important;
-  border-bottom: 1px solid var(--manager-border) !important;
-  padding: 13px 12px;
-}
-
-/* 悬停底色要**不透明**：它会盖到右侧 fixed 列的单元格上，而那一格是 sticky 浮在
-   横向滚走的列上面的 —— 带 alpha 的话被压住的列会直接透出来叠在操作按钮上。
-   --manager-primary-light 本身是 rgba（渐变光晕要用它的透明度），这里用 color-mix
-   取它压在行底色上的等价实色，改主色时两处仍然跟着走。 */
-.manager-table .ant-table-tbody > tr:hover > td {
-  background: color-mix(in srgb, var(--manager-primary) 10%, var(--manager-surface)) !important;
-}
-
-.manager-table .ant-table-tbody > tr:hover > td:first-child {
-  box-shadow: inset 2px 0 0 var(--manager-primary);
-}
-
-.manager-table .ant-pagination {
-  margin-bottom: 0 !important;
-}
-
-.manager-table .ant-pagination .ant-pagination-item-active,
-.manager-table .ant-pagination .ant-pagination-item-active a {
-  color: var(--manager-text) !important;
-  font-weight: 700;
-}
-
-.manager-table-subline {
-  margin-top: 3px;
-  color: var(--manager-text-faint);
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-xs);
-  line-height: 1.4;
-}
-
-.manager-count-tag.ant-tag {
-  margin-inline-end: 0;
-  padding: 2px 9px;
-  border: 1px solid var(--manager-border);
-  background: var(--manager-panel);
-  color: var(--manager-text-faint);
-  border-radius: 20px;
-  font-family: var(--manager-mono);
-  font-size: var(--manager-fs-xs);
-  font-weight: 400;
-}
-
-/* ─── Form / modal skin ─── */
-
-.manager-filter-input.ant-input-affix-wrapper,
-.manager-filter-input.ant-select .ant-select-selector,
-.manager-filter-input.ant-input,
-.manager-filter-input.ant-picker,
-.manager-form-skin .ant-input-affix-wrapper,
-.manager-form-skin .ant-input,
-.manager-form-skin .ant-select .ant-select-selector,
-.manager-form-skin .ant-input-number,
-.manager-form-skin .ant-input-number-input,
-.manager-form-skin .ant-input-textarea textarea {
-  background: var(--manager-surface) !important;
-  border-color: var(--manager-border-strong) !important;
-  color: var(--manager-text) !important;
-  box-shadow: none !important;
-}
-
-.manager-filter-input.ant-input-affix-wrapper:hover,
-.manager-filter-input.ant-select:hover .ant-select-selector,
-.manager-filter-input.ant-input:hover,
-.manager-form-skin .ant-input-affix-wrapper:hover,
-.manager-form-skin .ant-input:hover,
-.manager-form-skin .ant-select:hover .ant-select-selector,
-.manager-form-skin .ant-input-number:hover,
-.manager-form-skin .ant-input-textarea textarea:hover {
-  border-color: var(--manager-primary) !important;
-}
-
-.manager-form-skin .ant-input-number,
-.manager-form-skin .ant-input-number-input-wrap {
-  width: 100%;
-}
-
-.manager-form-skin .ant-form-item-label > label,
-.manager-form-skin .ant-checkbox-wrapper,
-.manager-form-skin .ant-typography,
-.manager-filter-input .ant-select-selection-item,
-.manager-filter-input input,
-.manager-filter-input .ant-input,
-.manager-filter-input .ant-select-selection-placeholder {
-  color: var(--manager-text-soft) !important;
-}
-
-.manager-form-skin .ant-modal-content,
-.manager-form-skin .ant-drawer-content {
-  background: var(--manager-surface) !important;
-  border: 1px solid var(--manager-border-strong);
-  border-radius: var(--manager-r-xl);
-  box-shadow: var(--manager-shadow-lg);
-}
-
-.manager-form-skin .ant-modal-header,
-.manager-form-skin .ant-drawer-header {
-  background: transparent !important;
-  border-bottom: 1px solid var(--manager-border);
-  padding-bottom: 14px;
-}
-
-.manager-form-skin .ant-modal-title,
-.manager-form-skin .ant-drawer-title,
-.manager-form-skin .ant-modal-close {
-  color: var(--manager-text) !important;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .manager-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
+}
+
+.manager-toolbar-spacer {
+  flex: 1;
+}
+
+.manager-count-tag.ant-tag {
+  margin-inline-end: 0;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--manager-panel);
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.manager-table-subline {
+  margin-top: 2px;
+  color: var(--manager-text-faint);
+  font-family: var(--manager-mono);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.manager-empty-state {
+  padding: 40px 16px;
+}
+
+.manager-empty-state--compact {
+  padding: 20px 16px;
+}
+
+.manager-empty-state .ant-empty-description {
+  color: var(--manager-text-faint);
+  font-size: 13px;
+}
+
+/* KPI 格：标签 / 大数字 / 注脚。仪表盘与总览共用。 */
+.manager-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.manager-kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r-lg);
+  background: var(--manager-surface);
+  box-shadow: var(--manager-shadow);
+  text-align: left;
+}
+
+.manager-kpi-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--manager-text-faint);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.manager-kpi-value {
+  color: var(--manager-text);
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.manager-kpi-value small {
+  margin-left: 4px;
+  color: var(--manager-text-faint);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.manager-kpi-foot {
+  color: var(--manager-text-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.manager-kpi.is-alert {
+  border-color: color-mix(in srgb, var(--manager-primary) 30%, transparent);
+  background: linear-gradient(180deg, var(--manager-primary-soft), var(--manager-surface) 70%);
+}
+
+.manager-kpi.is-alert .manager-kpi-value {
+  color: var(--manager-primary-ink);
+}
+
+.manager-kpi.is-alert .manager-kpi-label::before {
+  position: absolute;
+  top: 18px;
+  left: -1px;
+  width: 3px;
+  height: 16px;
+  border-radius: 0 3px 3px 0;
+  background: var(--manager-primary);
+  content: "";
+}
+
+button.manager-kpi {
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--manager-t),
+    box-shadow var(--manager-t),
+    transform var(--manager-t);
+}
+
+button.manager-kpi .manager-kpi-arrow {
+  color: var(--manager-text-ghost);
+  font-size: 11px;
+  transition:
+    transform var(--manager-t),
+    color var(--manager-t);
+}
+
+button.manager-kpi:hover {
+  border-color: var(--manager-border-strong);
+  box-shadow: var(--manager-shadow-md);
+  transform: translateY(-1px);
+}
+
+button.manager-kpi:hover .manager-kpi-arrow {
+  color: var(--manager-primary);
+  transform: translateX(2px);
+}
+
+button.manager-kpi:active {
+  transform: none;
+}
+
+@media (max-width: 600px) {
+  /* 手机上一行两格：一格一行的话，七个待办要滑三屏才看完。 */
+  .manager-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px;
+  }
+
+  .manager-kpi {
+    padding: 14px;
+  }
+
+  .manager-kpi-value {
+    font-size: 24px;
+  }
+}
+
+/* 一行并排的小指标（总览的池水位、今日工单）。 */
+.manager-metric-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0;
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r);
+  overflow: hidden;
+}
+
+.manager-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-right: 1px solid var(--manager-border);
+  margin-right: -1px;
+}
+
+.manager-metric-label {
+  color: var(--manager-text-faint);
+  font-size: 12.5px;
+}
+
+.manager-metric-value {
+  color: var(--manager-text);
+  font-family: var(--manager-mono);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.manager-metric-value.is-danger {
+  color: var(--manager-danger);
+}
+
+.manager-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+}
+
+.manager-card-head h3 {
+  margin: 0;
+  color: var(--manager-text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.manager-card-head p {
+  margin: 2px 0 0;
+  color: var(--manager-text-faint);
+  font-size: 12.5px;
+}
+
+/* 旧类名兼容：入场动画。 */
+.manager-stagger-1,
+.manager-stagger-2,
+.manager-stagger-3,
+.manager-stagger-4 {
+  animation: managerPageIn 0.4s var(--manager-ease) both;
+}
+.manager-stagger-2 {
+  animation-delay: 50ms;
+}
+.manager-stagger-3 {
+  animation-delay: 90ms;
+}
+.manager-stagger-4 {
+  animation-delay: 130ms;
+}
+
+/* ════════════════════════ antd polish ════════════════════════ */
+
+/* ─── buttons ─── */
+
+.ant-btn {
+  transition:
+    background var(--manager-t),
+    border-color var(--manager-t),
+    color var(--manager-t),
+    box-shadow var(--manager-t),
+    transform 0.08s ease;
+}
+
+.ant-btn:not(:disabled):active {
+  transform: translateY(0.5px) scale(0.985);
+}
+
+.ant-btn-primary:not(:disabled):not(.ant-btn-dangerous) {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0));
+}
+
+.ant-btn-link {
+  padding-inline: 4px;
+}
+
+/* 表格行内的 link/text 小按钮：悬停给一个浅底，点击目标更清楚。 */
+.ant-table .ant-btn-link.ant-btn-sm,
+.ant-table .ant-btn-text.ant-btn-sm {
+  border-radius: 6px;
+}
+
+.ant-table .ant-btn-link.ant-btn-sm:not(:disabled):hover {
+  background: var(--manager-primary-light);
+}
+
+.ant-table .ant-btn-link.ant-btn-sm.ant-btn-dangerous:not(:disabled):hover {
+  background: var(--manager-danger-soft);
+}
+
+/* ─── tables ─── */
+
+.ant-table-wrapper .ant-table {
+  background: transparent;
+  font-size: 13.5px;
+}
+
+.ant-table-wrapper .ant-table-container {
+  border: 1px solid var(--manager-border);
+  border-radius: var(--manager-r-lg);
+  background: var(--manager-surface);
+  overflow: hidden;
+}
+
+/* 带卡片的页面：表格在卡里，外边框交给卡。 */
+.manager-data-card .ant-table-wrapper .ant-table-container {
+  border-radius: var(--manager-r);
+  box-shadow: none;
+}
+
+.ant-table-wrapper:not(.manager-data-card .ant-table-wrapper) .ant-table-container {
+  box-shadow: var(--manager-shadow);
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th,
+.ant-table-wrapper .ant-table-thead > tr > td {
+  border-bottom: 1px solid var(--manager-border) !important;
+  background: #fafafa !important;
+  color: var(--manager-text-faint) !important;
+  font-family: var(--manager-sans) !important;
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  white-space: nowrap;
+}
+
+.ant-table-wrapper .ant-table-thead > tr > th::before {
+  display: none;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  border-bottom: 1px solid var(--manager-border);
+  background: var(--manager-surface);
+  transition: background 0.12s ease;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:last-child > td {
+  border-bottom: 0;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr.ant-table-row:hover > td,
+.ant-table-wrapper .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+  background: #f8f8fe !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr.ant-table-expanded-row > td {
+  background: #fbfbfc !important;
+}
+
+.ant-table-wrapper .ant-table-placeholder .ant-table-cell {
+  background: var(--manager-surface) !important;
+}
+
+.ant-table-wrapper .ant-table-placeholder:hover > td {
+  background: var(--manager-surface) !important;
+}
+
+.ant-table-wrapper .ant-table-summary > tr > td {
+  border-top: 1px solid var(--manager-border);
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.ant-table-wrapper .ant-table-pagination.ant-pagination {
+  margin: 14px 2px 0;
+}
+
+.ant-table-wrapper .ant-table-row-expand-icon {
+  border-radius: 5px;
+  border-color: var(--manager-border-strong);
+}
+
+.ant-table-wrapper .ant-spin-container::after {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+/* 旧 .manager-table 的那份皮肤由上面的全局规则接管，这里只保留间距。 */
+.manager-table .ant-pagination {
+  margin-bottom: 0 !important;
+}
+
+/* ─── pagination ─── */
+
+.ant-pagination .ant-pagination-item {
+  border-radius: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ant-pagination .ant-pagination-item-active {
+  border-color: var(--manager-border-strong);
+  box-shadow: var(--manager-shadow-sm);
+}
+
+.ant-pagination .ant-pagination-item-active a {
+  color: var(--manager-text) !important;
+  font-weight: 600;
+}
+
+.ant-pagination .ant-pagination-total-text {
+  color: var(--manager-text-faint);
+  font-size: 13px;
+}
+
+/* ─── tags：软底、无边框，状态色前面加一个圆点 ─── */
+
+/* 双类名：antd 的预设色（.ant-tag-blue 等）自带一圈同色边框，单类名压不过它。 */
+.ant-tag.ant-tag {
+  margin-inline-end: 6px;
+  padding-inline: 8px;
+  border-color: transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.ant-tag.ant-tag-success,
+.ant-tag.ant-tag-processing,
+.ant-tag.ant-tag-error,
+.ant-tag.ant-tag-warning {
+  border-color: transparent;
+}
+
+.ant-tag.ant-tag-success:not(:has(.anticon))::before,
+.ant-tag.ant-tag-processing:not(:has(.anticon))::before,
+.ant-tag.ant-tag-error:not(:has(.anticon))::before,
+.ant-tag.ant-tag-warning:not(:has(.anticon))::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+  content: "";
+}
+
+.ant-tag.ant-tag-success {
+  background: var(--manager-success-soft);
+  color: #18794a;
+}
+
+.ant-tag.ant-tag-processing {
+  background: var(--manager-primary-soft);
+  color: var(--manager-primary-ink);
+}
+
+.ant-tag.ant-tag-error {
+  background: var(--manager-danger-soft);
+  color: #c4363b;
+}
+
+.ant-tag.ant-tag-warning {
+  background: var(--manager-warning-soft);
+  color: #a15c06;
+}
+
+/* ─── form controls ─── */
+
+.ant-input-affix-wrapper .ant-input-prefix {
+  color: var(--manager-text-ghost);
+  margin-inline-end: 6px;
+}
+
+.ant-select-dropdown,
+.ant-picker-dropdown .ant-picker-panel-container,
+.ant-dropdown .ant-dropdown-menu {
+  padding: 4px;
+  border-radius: 10px !important;
+  box-shadow: var(--manager-shadow-lg) !important;
+}
+
+.ant-select-dropdown .ant-select-item {
+  border-radius: 6px;
+}
+
+.ant-dropdown .ant-dropdown-menu .ant-dropdown-menu-item,
+.ant-dropdown .ant-dropdown-menu .ant-dropdown-menu-submenu-title {
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.ant-dropdown-menu-submenu-popup .ant-dropdown-menu {
+  padding: 4px;
+  border-radius: 10px;
+  box-shadow: var(--manager-shadow-lg);
+}
+
+.ant-form-item .ant-form-item-label > label {
+  font-weight: 500;
+}
+
+.ant-form-item .ant-form-item-extra {
+  margin-top: 4px;
+  color: var(--manager-text-faint);
+  font-size: 12.5px;
+}
+
+/* 旧的筛选 / 表单皮肤：主题已经接管了颜色，这里只留尺寸。 */
+.manager-form-skin .ant-input-number,
+.manager-form-skin .ant-input-number-input-wrap {
+  width: 100%;
+}
+
+/* Input.Search 的搜索按钮：antd 默认给成主色实心方块，在一排筛选里比「新建」还抢眼。
+   压成中性按钮 —— 回车同样能搜，它只是个补充入口。 */
+.ant-input-search .ant-input-search-button.ant-btn-primary:not(:disabled) {
+  border-color: var(--manager-border-strong);
+  background: var(--manager-surface);
+  background-image: none;
+  box-shadow: none;
+  color: var(--manager-text-faint);
+}
+
+.ant-input-search .ant-input-search-button.ant-btn-primary:not(:disabled):hover {
+  border-color: var(--manager-border-hover);
+  background: #fafafa;
+  color: var(--manager-text);
+}
+
+/* ─── segmented ─── */
+
+.ant-segmented {
+  font-size: 13px;
+}
+
+.ant-segmented .ant-segmented-item-selected {
+  box-shadow:
+    0 0 0 1px var(--manager-border),
+    0 1px 2px rgba(24, 24, 27, 0.08);
+  font-weight: 550;
+}
+
+/* ─── tabs ─── */
+
+.ant-tabs-top > .ant-tabs-nav::before {
+  border-bottom-color: var(--manager-border);
+}
+
+.ant-tabs .ant-tabs-tab {
+  font-weight: 500;
+}
+
+.ant-tabs .ant-tabs-ink-bar {
+  height: 2px !important;
+  border-radius: 2px 2px 0 0;
+}
+
+/* ─── modal / drawer / popover ─── */
+
+.ant-modal-root .ant-modal-mask,
+.ant-drawer .ant-drawer-mask {
+  background: rgba(24, 24, 27, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.ant-modal .ant-modal-content {
+  padding: 22px 24px 20px;
+  box-shadow: var(--manager-shadow-lg);
+}
+
+.ant-modal .ant-modal-header {
+  margin-bottom: 18px;
+}
+
+.ant-modal .ant-modal-title {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ant-modal .ant-modal-close {
+  top: 18px;
+  inset-inline-end: 18px;
+  border-radius: 8px;
+}
+
+.ant-modal .ant-modal-footer {
+  margin-top: 22px;
+}
+
+.ant-modal-confirm .ant-modal-confirm-title {
+  font-weight: 600;
+}
+
+.ant-drawer .ant-drawer-header {
+  padding: 16px 22px;
+  border-bottom-color: var(--manager-border);
+}
+
+.ant-drawer .ant-drawer-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.ant-drawer .ant-drawer-body {
+  padding: 22px;
+}
+
+.ant-drawer .ant-drawer-footer {
+  padding: 12px 22px;
+  border-top-color: var(--manager-border);
+}
+
+.ant-popover .ant-popover-inner {
+  padding: 14px 16px;
+  box-shadow: var(--manager-shadow-lg);
+}
+
+.ant-popconfirm .ant-popconfirm-message-title {
+  font-weight: 600;
+}
+
+.ant-popconfirm .ant-popconfirm-description {
+  color: var(--manager-text-soft);
+}
+
+/* ─── alerts：浅底 + 同色细边，图标是唯一的强色 ─── */
+
+.ant-alert {
+  border-radius: 10px;
+  font-size: 13.5px;
+}
+
+.ant-alert-info {
+  border-color: color-mix(in srgb, var(--manager-info) 18%, transparent);
+  background: var(--manager-info-soft);
+}
+
+.ant-alert-success {
+  border-color: color-mix(in srgb, var(--manager-success) 18%, transparent);
+  background: var(--manager-success-soft);
+}
+
+.ant-alert-warning {
+  border-color: color-mix(in srgb, var(--manager-warning) 20%, transparent);
+  background: var(--manager-warning-soft);
+}
+
+.ant-alert-error {
+  border-color: color-mix(in srgb, var(--manager-danger) 18%, transparent);
+  background: var(--manager-danger-soft);
+}
+
+.ant-alert .ant-alert-message {
+  color: var(--manager-text);
+  font-weight: 550;
+}
+
+.ant-alert .ant-alert-description {
+  color: var(--manager-text-soft);
+  font-size: 13px;
+}
+
+/* ─── card / descriptions / misc ─── */
+
+.ant-card {
+  border-color: var(--manager-border);
+  box-shadow: var(--manager-shadow);
+}
+
+.ant-card .ant-card-head {
+  border-bottom-color: var(--manager-border);
+}
+
+.ant-card .ant-card-head-title {
+  font-weight: 600;
+}
+
+.ant-descriptions .ant-descriptions-item-label {
+  color: var(--manager-text-faint);
+}
+
+.ant-empty-normal .ant-empty-image {
+  height: 36px;
+  opacity: 0.7;
+}
+
+.ant-message .ant-message-notice-content {
+  border-radius: 10px;
+  box-shadow: var(--manager-shadow-lg) !important;
+  font-size: 13.5px;
+}
+
+.ant-tooltip .ant-tooltip-inner {
+  padding: 6px 9px;
+  font-size: 12.5px;
+}
+
+.ant-typography code {
+  border-radius: 5px;
+  border-color: var(--manager-border);
+  background: var(--manager-panel);
+  font-family: var(--manager-mono);
+  font-size: 0.88em;
+}
+
+/* ════════════════════════ Login ════════════════════════ */
+
+.manager-login {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(420px, 0.92fr);
+  min-height: 100dvh;
+  background: var(--manager-surface);
+}
+
+.manager-login-art {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  margin: 12px;
+  padding: 40px 44px;
+  border-radius: 20px;
+  color: #ffffff;
+  overflow: hidden;
+  background:
+    radial-gradient(900px 520px at 85% -10%, rgba(139, 124, 246, 0.55), transparent 60%),
+    radial-gradient(700px 560px at -10% 110%, rgba(56, 189, 248, 0.28), transparent 60%),
+    linear-gradient(160deg, #1d1d4f 0%, #2a2a7a 48%, #3b3bb0 100%);
+}
+
+.manager-login-art::before {
+  position: absolute;
+  inset: 0;
+  opacity: 0.4;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 80% 70% at 70% 30%, #000 30%, transparent 80%);
+  pointer-events: none;
+  content: "";
+}
+
+.manager-login-orbit {
+  position: absolute;
+  top: 50%;
+  right: -180px;
+  width: 560px;
+  height: 560px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.manager-login-orbit::before,
+.manager-login-orbit::after {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 50%;
+  content: "";
+}
+
+.manager-login-orbit::before {
+  inset: 70px;
+}
+
+.manager-login-orbit::after {
+  inset: 150px;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08), transparent 70%);
+}
+
+.manager-login-orbit i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin: -4px;
+  border-radius: 50%;
+  background: #ffd76e;
+  box-shadow: 0 0 16px 4px rgba(255, 215, 110, 0.55);
+  animation: managerOrbit 18s linear infinite;
+}
+
+.manager-login-orbit i:nth-child(2) {
+  width: 6px;
+  height: 6px;
+  margin: -3px;
+  background: #a5f3fc;
+  box-shadow: 0 0 14px 3px rgba(165, 243, 252, 0.5);
+  animation-duration: 26s;
+  animation-direction: reverse;
+  --orbit-r: 210px;
+}
+
+@keyframes managerOrbit {
+  from {
+    transform: rotate(0deg) translateX(var(--orbit-r, 280px)) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(var(--orbit-r, 280px)) rotate(-360deg);
+  }
+}
+
+.manager-login-art-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
   gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.manager-login-art-brand .manager-crest {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px);
+}
+
+.manager-login-art-copy {
+  position: relative;
+  max-width: 460px;
+}
+
+.manager-login-art-copy h2 {
+  margin: 0 0 28px;
+  color: #ffffff;
+  font-family: var(--manager-sans);
+  font-size: clamp(26px, 2.6vw, 34px);
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.02em;
+}
+
+.manager-login-art-features {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manager-login-art-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.manager-login-art-features .anticon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  font-size: 14px;
+}
+
+.manager-login-art-features b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.manager-login-art-features small {
+  display: block;
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.manager-login-art-foot {
+  position: relative;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.manager-login-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+}
+
+.manager-login-locale {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+}
+
+.manager-login-form {
+  width: 100%;
+  max-width: 380px;
+  animation: managerPageIn 0.5s var(--manager-ease) both;
+}
+
+.manager-login-form .manager-crest {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  margin-bottom: 22px;
+}
+
+.manager-login-form .manager-crest-planet {
+  font-size: 22px;
+}
+
+.manager-login-form h1 {
+  margin: 0;
+  color: var(--manager-text);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.manager-login-form > p {
+  margin: 6px 0 28px;
+  color: var(--manager-text-faint);
+  font-size: 14px;
+}
+
+.manager-login-form .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.manager-login-form .ant-input-affix-wrapper-lg {
+  padding-block: 8px;
+  border-radius: 10px;
+}
+
+.manager-login-submit.ant-btn {
+  height: 44px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+@media (max-width: 960px) {
+  .manager-login {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-login-art {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

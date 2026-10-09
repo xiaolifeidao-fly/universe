@@ -5,6 +5,7 @@ import { Button, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, Tool
 import type { ColumnsType } from "antd/es/table";
 import { useCallback, useEffect, useState } from "react";
 import { useLocale } from "@/i18n/LocaleProvider";
+import { PageActions } from "@/components/shell/PageActions";
 import { useCanWrite } from "@/components/permission/WritePermission";
 import { getAuthUser } from "@/utils/auth";
 import {
@@ -202,18 +203,14 @@ export function AccountManagement() {
 
   return (
     <div className="manager-page-stack">
-      <section className="manager-page-heading">
-        <div>
-          <span className="manager-section-label">CONSOLE ACCOUNTS</span>
-          <h1>{t("accounts.title")}</h1>
-          <p>{t("accounts.subtitle")}</p>
-        </div>
+      {/* 标题与说明由外壳的页头统一画，这里只把主按钮送过去。 */}
+      <PageActions>
         {canWrite ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             {t("accounts.new")}
           </Button>
         ) : null}
-      </section>
+      </PageActions>
 
       <section className="manager-data-card manager-table">
         <div className="manager-toolbar" style={{ marginBottom: 14 }}>

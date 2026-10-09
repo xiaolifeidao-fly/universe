@@ -524,6 +524,9 @@ export class ConsumerDashboard {
   /** 微分。折算成元的口径只有服务端一处。 */
   spentMicros = 0;
 
+  /** 与 spentMicros 同一时间窗内的原始 token 总量，由服务端按互不重叠的 token 桶汇总。 */
+  tokens = 0;
+
   days = 10;
 
   currency = "CNY";

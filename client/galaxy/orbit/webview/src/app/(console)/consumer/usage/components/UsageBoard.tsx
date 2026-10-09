@@ -16,7 +16,7 @@ import { PageHeader } from "@/components/shell/GalaxyShell";
 import { IconDownload, IconRefresh, IconSearch } from "@/components/ui/icons";
 import { Card, DataTable, IconBtn, Kpi, Loading, Pager, Pill, Seg, Tabs } from "@/components/ui/kit";
 import { useLocale } from "@/i18n/LocaleProvider";
-import { DERIVED_TOKEN_UNITS, formatCny, formatCompact, formatDateTime, formatInt, formatMillis, formatPoints } from "@/utils/format";
+import { formatCny, formatCompact, formatDateTime, formatInt, formatMillis, formatPoints } from "@/utils/format";
 import {
   fetchDashboard,
   fetchKeys,
@@ -161,7 +161,7 @@ export function UsageBoard() {
           <Kpi
             label={t("usage.spent", { days: dashboard?.days ?? 10 })}
             value={formatCny(dashboard?.spentMicros ?? 0)}
-            hint={t("usage.spentHint", { tokens: formatCompact(usedTokens(dashboard)) })}
+            hint={t("usage.spentHint", { tokens: formatCompact(dashboard?.tokens ?? 0) })}
           />
           <Kpi
             label={t("usage.calls")}
@@ -373,11 +373,3 @@ export function UsageBoard() {
     </>
   );
 }
-
-function usedTokens(dashboard: ConsumerDashboard | null): number {
-  if (!dashboard) return 0;
-  return Object.entries(dashboard.today.usage ?? {})
-    .filter(([unit]) => unit.endsWith("_tokens") && !DERIVED_TOKEN_UNITS.has(unit))
-    .reduce((sum, [, value]) => sum + value, 0);
-}
-
